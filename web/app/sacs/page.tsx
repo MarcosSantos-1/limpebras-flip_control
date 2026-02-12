@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -13,15 +13,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 
 export default function SACsPage() {
   const [sacs, setSacs] = useState<SAC[]>([]);
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(0);
   const [selectedSAC, setSelectedSAC] = useState<SAC | null>(null);
+  const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
   const [filters, setFilters] = useState(() => {
     const now = new Date();
     return {
@@ -31,13 +32,24 @@ export default function SACsPage() {
       data_fim: format(endOfMonth(now), "yyyy-MM-dd"),
       fora_prazo: false,
       tipo: "all" as "IA" | "IRD" | "all",
+      tipo_servico: "todos",
+      procedente: "todos" as "todos" | "PROCEDE" | "NAO_PROCEDE",
     };
   });
 
+  const parseDateInputLocal = (value?: string) => {
+    if (!value) return null;
+    const m = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return null;
+    return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  };
+
   const periodoLabel = useMemo(() => {
     if (!filters.data_inicio || !filters.data_fim) return "Sem período definido";
-    const inicio = format(new Date(filters.data_inicio), "dd/MM/yyyy");
-    const fim = format(new Date(filters.data_fim), "dd/MM/yyyy");
+    const inicioDate = parseDateInputLocal(filters.data_inicio);
+    const fimDate = parseDateInputLocal(filters.data_fim);
+    const inicio = inicioDate ? format(inicioDate, "dd/MM/yyyy") : "--";
+    const fim = fimDate ? format(fimDate, "dd/MM/yyyy") : "--";
     return `${inicio} → ${fim}`;
   }, [filters.data_inicio, filters.data_fim]);
 
@@ -73,7 +85,7 @@ export default function SACsPage() {
     try {
       setLoading(true);
       const apiFilters: any = {
-        limit: 2000,
+        limit: 10000,
       };
       if (filters.data_inicio) apiFilters.periodo_inicial = filters.data_inicio;
       if (filters.data_fim) apiFilters.periodo_final = filters.data_fim;
@@ -81,6 +93,8 @@ export default function SACsPage() {
       if (filters.subprefeitura && filters.subprefeitura !== "todas") apiFilters.subprefeitura = filters.subprefeitura;
       if (filters.fora_prazo) apiFilters.fora_do_prazo = true;
       if (filters.tipo !== "all") apiFilters.tipo = filters.tipo;
+      if (filters.tipo_servico !== "todos") apiFilters.tipo_servico = filters.tipo_servico;
+      if (filters.procedente !== "todos") apiFilters.procedente = filters.procedente;
 
       const data = await apiService.getSACs(apiFilters);
       const items = Array.isArray(data) ? data : (data?.items ?? []);
@@ -104,6 +118,10 @@ export default function SACsPage() {
       "Executado": "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
     };
     return colors[status] || "bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300";
+  };
+
+  const toggleExpand = (id: string) => {
+    setExpandedIds((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
   return (
@@ -188,7 +206,6 @@ export default function SACsPage() {
                   type="date"
                   value={filters.data_inicio}
                   onChange={(e) => setFilters({ ...filters, data_inicio: e.target.value })}
-                  className="bg-background"
                 />
               </div>
               
@@ -198,7 +215,6 @@ export default function SACsPage() {
                   type="date"
                   value={filters.data_fim}
                   onChange={(e) => setFilters({ ...filters, data_fim: e.target.value })}
-                  className="bg-background"
                 />
               </div>
 
@@ -238,6 +254,25 @@ export default function SACsPage() {
                   </SelectContent>
                 </Select>
               </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground">Procedência</label>
+                <Select
+                  value={filters.procedente}
+                  onValueChange={(value: "todos" | "PROCEDE" | "NAO_PROCEDE") =>
+                    setFilters({ ...filters, procedente: value })
+                  }
+                >
+                  <SelectTrigger className="bg-background">
+                    <SelectValue placeholder="Todos" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todos">Todos</SelectItem>
+                    <SelectItem value="PROCEDE">PROCEDE</SelectItem>
+                    <SelectItem value="NAO_PROCEDE">NÃO PROCEDE</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
               
               <div className="space-y-1">
                 <label className="text-xs font-medium text-muted-foreground">Subprefeitura</label>
@@ -254,6 +289,28 @@ export default function SACsPage() {
                     <SelectItem value="Jaçanã/Tremembé">Jaçanã/Tremembé</SelectItem>
                     <SelectItem value="Santana/Tucuruvi">Santana/Tucuruvi</SelectItem>
                     <SelectItem value="Vila Maria/Vila Guilherme">Vila Maria/Vila Guilherme</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground">Tipo de Serviço</label>
+                <Select
+                  value={filters.tipo_servico}
+                  onValueChange={(value) => setFilters({ ...filters, tipo_servico: value })}
+                >
+                  <SelectTrigger className="bg-background">
+                    <SelectValue placeholder="Todos" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todos">Todos</SelectItem>
+                    <SelectItem value="Coleta">Coleta</SelectItem>
+                    <SelectItem value="Remoção">Remoção</SelectItem>
+                    <SelectItem value="Animais mortos">Animais mortos</SelectItem>
+                    <SelectItem value="Bueiros">Bueiros</SelectItem>
+                    <SelectItem value="Papeleiras">Papeleiras</SelectItem>
+                    <SelectItem value="Mutirão">Mutirão</SelectItem>
+                    <SelectItem value="Varrição">Varrição</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -292,6 +349,7 @@ export default function SACsPage() {
                 <table className="w-full text-sm text-left">
                   <thead className="bg-muted/50 text-muted-foreground border-b border-border">
                     <tr>
+                      <th className="px-3 py-3"></th>
                       <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider">Protocolo</th>
                       <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider">Tipo</th>
                       <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider">Endereço</th>
@@ -303,54 +361,79 @@ export default function SACsPage() {
                   </thead>
                   <tbody className="divide-y divide-border">
                     {sacs.map((sac) => (
-                      <tr
-                        key={sac.id}
-                        className={`hover:bg-muted/50 transition-colors cursor-pointer ${
-                          (sac.responsividade_execucao?.trim() || "") === "NÃO" ? "bg-red-50/50 dark:bg-red-900/10" : ""
-                        }`}
-                        onClick={() => setSelectedSAC(sac)}
-                      >
-                        <td className="px-6 py-4 font-medium font-mono text-primary">
-                          {sac.protocolo}
-                        </td>
-                        <td className="px-6 py-4">
-                          {sac.tipo_servico}
-                        </td>
-                        <td className="px-6 py-4 max-w-xs truncate text-muted-foreground" title={sac.endereco_text}>
-                          {sac.endereco_text}
-                        </td>
-                        <td className="px-6 py-4">
-                          <span className={`px-2.5 py-0.5 text-xs font-medium rounded-full border ${getStatusColor(sac.status)} bg-opacity-10 border-opacity-20`}>
-                            {sac.status}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-center text-muted-foreground">
-                          {sac.classificacao_servico || "—"}
-                        </td>
-                        <td className="px-6 py-4 text-center">
-                          {(sac.responsividade_execucao?.trim() || "") === "NÃO" ? (
-                            <span className="px-2 py-1 text-xs font-semibold rounded-md bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 border border-red-200 dark:border-red-800">
-                              Fora do prazo
+                      <Fragment key={sac.id}>
+                        <tr
+                          className={`hover:bg-muted/50 transition-colors cursor-pointer ${
+                            (sac.responsividade_execucao?.trim() || "") === "NÃO" ? "bg-red-50/50 dark:bg-red-900/10" : ""
+                          }`}
+                          onClick={() => setSelectedSAC(sac)}
+                        >
+                          <td className="px-3 py-4">
+                            <button
+                              className="text-muted-foreground hover:text-foreground"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleExpand(sac.id);
+                              }}
+                              aria-label="Expandir detalhes"
+                            >
+                              {expandedIds[sac.id] ? "▾" : "▸"}
+                            </button>
+                          </td>
+                          <td className="px-6 py-4 font-medium font-mono text-primary">
+                            {sac.protocolo}
+                          </td>
+                          <td className="px-6 py-4">
+                            {sac.tipo_servico}
+                          </td>
+                          <td className="px-6 py-4 max-w-xs truncate text-muted-foreground" title={sac.endereco_text}>
+                            {sac.endereco_text}
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className={`px-2.5 py-0.5 text-xs font-medium rounded-full border ${getStatusColor(sac.status)} bg-opacity-10 border-opacity-20`}>
+                              {sac.status}
                             </span>
-                          ) : (sac.responsividade_execucao?.trim() || "") === "SIM" ? (
-                            <span className="px-2 py-1 text-xs font-medium rounded-md bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 border border-green-200 dark:border-green-800">
-                              No prazo
-                            </span>
-                          ) : (
-                            <span className="text-xs font-medium text-blue-600 dark:text-blue-400">
-                              {sac.data_execucao ? "—" : "Em andamento"}
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-6 py-4 text-xs text-muted-foreground">
-                          <div>C: {format(new Date(sac.data_criacao), "dd/MM/yy")}</div>
-                          {sac.data_execucao && (
-                            <div className="text-green-600 dark:text-green-400 font-medium mt-0.5">
-                              E: {format(new Date(sac.data_execucao), "dd/MM/yy")}
-                            </div>
-                          )}
-                        </td>
-                      </tr>
+                          </td>
+                          <td className="px-6 py-4 text-center text-muted-foreground">
+                            {sac.classificacao_servico || "—"}
+                          </td>
+                          <td className="px-6 py-4 text-center">
+                            {(sac.responsividade_execucao?.trim() || "") === "NÃO" ? (
+                              <span className="px-2 py-1 text-xs font-semibold rounded-md bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 border border-red-200 dark:border-red-800">
+                                Fora do prazo
+                              </span>
+                            ) : (sac.responsividade_execucao?.trim() || "") === "SIM" ? (
+                              <span className="px-2 py-1 text-xs font-medium rounded-md bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 border border-green-200 dark:border-green-800">
+                                No prazo
+                              </span>
+                            ) : (
+                              <span className="text-xs font-medium text-blue-600 dark:text-blue-400">
+                                {sac.data_execucao ? "—" : "Em andamento"}
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 text-xs text-muted-foreground">
+                            <div>C: {format(new Date(sac.data_criacao), "dd/MM/yy")}</div>
+                            {sac.data_execucao && (
+                              <div className="text-green-600 dark:text-green-400 font-medium mt-0.5">
+                                E: {format(new Date(sac.data_execucao), "dd/MM/yy")}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                        {expandedIds[sac.id] && (
+                          <tr className="bg-muted/20">
+                            <td colSpan={8} className="px-6 py-3 text-xs">
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                <div><strong>Procedência:</strong> {sac.procedente_por_status || "—"}</div>
+                                <div><strong>Fora de escopo:</strong> {sac.finalizado_fora_de_escopo || "—"}</div>
+                                <div><strong>Resp. execução:</strong> {sac.responsividade_execucao || "—"}</div>
+                                <div className="md:col-span-3"><strong>Endereço completo:</strong> {sac.endereco_text || "—"}</div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
                     ))}
                   </tbody>
                 </table>

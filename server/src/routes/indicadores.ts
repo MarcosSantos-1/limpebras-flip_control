@@ -10,6 +10,21 @@ import {
 } from "../services/indicadores.js";
 import { BFS_NAO_DEMANDANTES } from "../constants/bfs.js";
 
+async function getSavedIPT(client: any, inicio: string, fim: string): Promise<number | null> {
+  const r = await client.query(
+    `SELECT percentual_total
+     FROM ipt_registros
+     WHERE periodo_inicial = $1::date
+       AND periodo_final = $2::date
+     ORDER BY updated_at DESC
+     LIMIT 1`,
+    [inicio, fim]
+  );
+  if (!r.rows.length) return null;
+  const v = Number(r.rows[0]?.percentual_total);
+  return Number.isFinite(v) ? v : null;
+}
+
 export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
   /** KPIs do dashboard: contagens e indicadores no período */
   fastify.get<{
@@ -83,6 +98,9 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         total_fiscalizacoes: totalBfs,
         total_sem_irregularidade: semIrreg,
       };
+      const savedIptPercent = await getSavedIPT(client, inicio, fim);
+      const iptDashboard =
+        savedIptPercent != null ? pontuacaoIPT(savedIptPercent) : { valor: 0, percentual: 0, pontuacao: 0 };
 
       // SACs hoje (opcional: período = hoje)
       const hoje = new Date().toISOString().slice(0, 10);
@@ -92,7 +110,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
       );
 
       return {
-        indicadores: { ird, ia: iaDashboard, if: ifDashboard },
+        indicadores: { ird, ia: iaDashboard, if: ifDashboard, ipt: iptDashboard },
         sacs_hoje: Number(sacsHoje.rows[0]?.total ?? 0),
         cncs_urgentes: 0,
       };
@@ -112,7 +130,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
 
     const client = await pool.connect();
     try {
-      const iptPercent = valor_ipt != null ? Number(valor_ipt) : undefined;
+      let iptPercent = valor_ipt != null ? Number(valor_ipt) : undefined;
 
       // IA: fora do prazo = Responsividade_Execução = NÃO; no prazo = SIM
       const iaTotal = await client.query(
@@ -153,6 +171,11 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
       const ifSemIrregularidade = Number(ifRow?.sem_irregularidade ?? 0);
       const ifTotal = Number(ifRow?.total ?? 0);
       const ifInd = pontuacaoIF(ifSemIrregularidade, ifTotal);
+
+      if (iptPercent == null || isNaN(iptPercent)) {
+        const saved = await getSavedIPT(client, inicio, fim);
+        if (saved != null) iptPercent = saved;
+      }
 
       const ipt: IndicadorResult = iptPercent != null && !isNaN(iptPercent)
         ? pontuacaoIPT(iptPercent)
@@ -325,7 +348,14 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
             : "IF = (sem irregularidade / total BFS) × 1000 — Nenhum BFS não demandante no período.",
       };
 
-      const ipt = undefined;
+      const savedIptPercent = await getSavedIPT(client, inicio, fim);
+      const ipt =
+        savedIptPercent != null
+          ? {
+              ...pontuacaoIPT(savedIptPercent),
+              valor: savedIptPercent,
+            }
+          : undefined;
 
       return {
         periodo,
@@ -347,6 +377,34 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post<{
     Querystring: { periodo_inicial: string; periodo_final: string; percentual_total: string };
   }>("/indicadores/salvar/ipt", async (request, reply) => {
-    return { ok: true };
+    const { periodo_inicial: inicio, periodo_final: fim, percentual_total } = request.query;
+    if (!inicio || !fim || percentual_total == null) {
+      return reply.code(400).send({ detail: "periodo_inicial, periodo_final e percentual_total são obrigatórios" });
+    }
+    const percentual = Number(percentual_total);
+    if (!Number.isFinite(percentual) || percentual < 0 || percentual > 100) {
+      return reply.code(400).send({ detail: "percentual_total deve ser um número entre 0 e 100" });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query(
+        `INSERT INTO ipt_registros (periodo_inicial, periodo_final, percentual_total, updated_at)
+         VALUES ($1::date, $2::date, $3, NOW())
+         ON CONFLICT (periodo_inicial, periodo_final)
+         DO UPDATE SET percentual_total = EXCLUDED.percentual_total, updated_at = NOW()`,
+        [inicio, fim, percentual]
+      );
+      const ipt = pontuacaoIPT(percentual);
+      return {
+        ok: true,
+        periodo_inicial: inicio,
+        periodo_final: fim,
+        percentual_total: percentual,
+        pontuacao: ipt.pontuacao,
+      };
+    } finally {
+      client.release();
+    }
   });
 };

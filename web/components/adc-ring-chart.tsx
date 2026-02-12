@@ -95,7 +95,7 @@ export function ADCRingChart({ total, percentual }: ADCRingChartProps) {
             <div 
               className="text-5xl font-bold mb-2"
               style={{
-                background: `linear-gradient(to right, ${colors.start}, ${colors.middle}, ${colors.end})`,
+                backgroundImage: `linear-gradient(to right, ${colors.start}, ${colors.middle}, ${colors.end})`,
                 WebkitBackgroundClip: "text",
                 WebkitTextFillColor: "transparent",
                 backgroundClip: "text",
@@ -109,7 +109,7 @@ export function ADCRingChart({ total, percentual }: ADCRingChartProps) {
             <div 
               className="text-lg font-semibold mt-1"
               style={{
-                background: `linear-gradient(to right, ${colors.start}, ${colors.middle})`,
+                backgroundImage: `linear-gradient(to right, ${colors.start}, ${colors.middle})`,
                 WebkitBackgroundClip: "text",
                 WebkitTextFillColor: "transparent",
                 backgroundClip: "text",

@@ -16,18 +16,15 @@ import {
   isSameMonth,
 } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { IndicatorsChart } from "@/components/indicators-chart";
 import { ADCRingChart } from "@/components/adc-ring-chart";
 import { IndicatorTooltip } from "@/components/indicator-tooltip";
 import { IPTModal } from "@/components/ipt-modal";
+import Lottie from "lottie-react";
+import loadingAnimation from "@/public/Loading.json";
 import { SACsChart } from "@/components/sacs-chart";
 import { SACsBySubChart, type SACsBySubDatum } from "@/components/sacs-by-sub-chart";
 import { CNCsBySubChart, type CNCsBySubDatum } from "@/components/cncs-by-sub-chart";
-import {
-  SACDemandantesResponseChart,
-  type SACDemandantesResponseDatum,
-} from "@/components/sac-demand-response-chart";
-import { ChartMonthNav } from "@/components/chart-month-nav";
+import { SACsTopServicesChart, type SACsTopServiceDatum } from "@/components/sacs-top-services-chart";
 import {
   TIPOS_DEMANDANTES,
   TIPOS_ESCALONADOS,
@@ -57,11 +54,10 @@ const normalizeDateForComparison = (date: Date) => {
 
 export default function DashboardPage() {
   const [indicators, setIndicators] = useState<any>(null);
-  const [indicatorsHistory, setIndicatorsHistory] = useState<any[]>([]);
   const [sacsHistory, setSacsHistory] = useState<{ date: string; count: number }[]>([]);
   const [sacsBySub, setSacsBySub] = useState<SACsBySubDatum[]>([]);
   const [cncsBySub, setCncsBySub] = useState<CNCsBySubDatum[]>([]);
-  const [demandResponseHistory, setDemandResponseHistory] = useState<SACDemandantesResponseDatum[]>([]);
+  const [sacsTopServices, setSacsTopServices] = useState<SACsTopServiceDatum[]>([]);
   const [selectedMonth, setSelectedMonth] = useState(() => startOfMonth(new Date()));
   const [loading, setLoading] = useState(true);
   const [iptModalOpen, setIptModalOpen] = useState(false);
@@ -160,9 +156,7 @@ export default function DashboardPage() {
       acc[sub.code] = {
         subprefeitura: sub.code,
         label: sub.label,
-        pendentes: 0,
-        regularizados: 0,
-        vistoria: 0,
+        quantidade: 0,
       };
       return acc;
     }, {});
@@ -181,14 +175,7 @@ export default function DashboardPage() {
         if (!code || !baseMap[code]) {
           return;
         }
-        const status = (cnc.status || "").toLowerCase();
-        if (status === "regularizado") {
-          baseMap[code].regularizados += 1;
-        } else if (status.includes("aguardando")) {
-          baseMap[code].vistoria += 1;
-        } else {
-          baseMap[code].pendentes += 1;
-        }
+        baseMap[code].quantidade += 1;
       } catch {
         // Ignorar linhas inválidas
       }
@@ -197,76 +184,14 @@ export default function DashboardPage() {
     return SUBPREFEITURAS.map((sub) => baseMap[sub.code]);
   };
 
-  const computeDemandResponseHistory = (
-    items: SAC[],
-    periodStart: Date,
-    periodEnd: Date
-  ): SACDemandantesResponseDatum[] => {
-    const startBoundary = normalizeDateForComparison(startOfDay(periodStart));
-    const endBoundary = normalizeDateForComparison(endOfDay(periodEnd));
-
-    if (startBoundary > endBoundary) {
-      return [];
-    }
-
-    const dates = eachDayOfInterval({ start: periodStart, end: periodEnd });
-    const map = new Map<
-      string,
-      { totalHours: number; samples: number; total: number; foraPrazo: number }
-    >();
-
-    dates.forEach((date) => {
-      const key = format(normalizeDateForComparison(startOfDay(date)), "yyyy-MM-dd");
-      map.set(key, {
-        totalHours: 0,
-        samples: 0,
-        total: 0,
-        foraPrazo: 0,
-      });
-    });
-
+  const computeTopServices = (items: SAC[]): SACsTopServiceDatum[] => {
+    const counter = new Map<string, number>();
     items.forEach((sac) => {
-      if (!TIPOS_DEMANDANTES.includes(sac.tipo_servico)) {
-        return;
-      }
-      const createdAt = normalizeDateForComparison(new Date(sac.data_criacao));
-      if (isNaN(createdAt.getTime()) || createdAt < startBoundary || createdAt > endBoundary) {
-        return;
-      }
-      const key = format(createdAt, "yyyy-MM-dd");
-      const bucket = map.get(key);
-      if (!bucket) return;
-
-      bucket.total += 1;
-      if (sac.fora_do_prazo) {
-        bucket.foraPrazo += 1;
-      }
-
-      let hours = sac.horas_ate_execucao;
-      if ((hours === undefined || hours === null) && sac.data_execucao) {
-        const executedAt = normalizeDateForComparison(new Date(sac.data_execucao));
-        if (!isNaN(executedAt.getTime())) {
-          hours = (executedAt.getTime() - createdAt.getTime()) / (1000 * 60 * 60);
-        }
-      }
-
-      if (hours !== undefined && hours !== null && !isNaN(hours)) {
-        bucket.totalHours += hours;
-        bucket.samples += 1;
-      }
+      const key = (sac.tipo_servico || "").trim();
+      if (!key) return;
+      counter.set(key, (counter.get(key) || 0) + 1);
     });
-
-    return dates.map((date) => {
-      const key = format(normalizeDateForComparison(startOfDay(date)), "yyyy-MM-dd");
-      const bucket = map.get(key)!;
-      const avgHours = bucket.samples > 0 ? bucket.totalHours / bucket.samples : null;
-      return {
-        date: key,
-        avgHours,
-        foraPrazoCount: bucket.foraPrazo,
-        volume: bucket.total,
-      };
-    });
+    return Array.from(counter.entries()).map(([tipoServico, quantidade]) => ({ tipoServico, quantidade }));
   };
 
   const loadData = useCallback(async () => {
@@ -277,14 +202,14 @@ export default function DashboardPage() {
       const dataInicio = format(periodStart, "yyyy-MM-dd");
       const dataFim = format(periodEnd, "yyyy-MM-dd");
 
-      const [kpisData, historyData, sacsData, cncsData] = await Promise.all([
+      const [kpisData, sacsData, cncsData] = await Promise.all([
         apiService.getKPIs(dataInicio, dataFim).catch(() => null),
-        apiService.getIndicadoresHistorico(dataInicio, dataFim).catch(() => ({ data: [] })),
         apiService
           .getSACs({
-            data_inicio: dataInicio,
-            data_fim: dataFim,
+            periodo_inicial: dataInicio,
+            periodo_final: dataFim,
             full: true,
+            limit: 10000,
           })
           .catch(() => ({ items: [] })),
         apiService
@@ -333,33 +258,10 @@ export default function DashboardPage() {
           });
         }
 
-      const historicData = historyData?.data || [];
-      if (historicData.length > 0) {
-        setIndicatorsHistory(historicData);
-      } else if (kpisData?.indicadores) {
-        const fallbackHistory = eachDayOfInterval({ start: periodStart, end: periodEnd }).map(
-          (day) => ({
-            data: format(day, "yyyy-MM-dd"),
-            ia: {
-              valor: kpisData.indicadores?.ia?.valor ?? null,
-            },
-            ird: {
-              valor: kpisData.indicadores?.ird?.valor ?? null,
-            },
-            if: {
-              valor: kpisData.indicadores?.if?.valor ?? null,
-            },
-          })
-        );
-        setIndicatorsHistory(fallbackHistory);
-      } else {
-        setIndicatorsHistory([]);
-      }
-
       const sacItems = (sacsData?.items || []) as SAC[];
       setSacsHistory(groupByDate(sacItems, "data_criacao", periodStart, periodEnd));
       setSacsBySub(computeSacsBySub(sacItems));
-      setDemandResponseHistory(computeDemandResponseHistory(sacItems, periodStart, periodEnd));
+      setSacsTopServices(computeTopServices(sacItems));
 
       const cncItems = (cncsData?.items || []) as CNC[];
       setCncsBySub(computeCncsBySub(cncItems, periodStart, periodEnd));
@@ -377,10 +279,21 @@ export default function DashboardPage() {
   return (
     <MainLayout>
       <div className="space-y-8">
-        <div className="relative overflow-hidden rounded-xl bg-linear-to-r from-violet-600/10 via-violet-600/5 to-transparent p-8 border border-violet-200/50 dark:border-violet-800/50">
-          <div className="absolute top-0 right-0 -mt-4 -mr-4 w-32 h-32 bg-violet-600/10 rounded-full blur-3xl"></div>
+        {loading && (
+          <div className="fixed inset-0 z-90 bg-background/90 backdrop-blur-sm flex items-center justify-center">
+            <div className="flex flex-col items-center gap-3 rounded-2xl border border-border bg-card/90 px-8 py-6 shadow-xl">
+              <div className="h-48 w-48">
+                <Lottie animationData={loadingAnimation} loop autoplay />
+              </div>
+              <p className="text-sm font-semibold text-muted-foreground">Carregando dashboard...</p>
+            </div>
+          </div>
+        )}
+
+        <div className="relative overflow-hidden rounded-xl bg-linear-to-r from-cyan-600/10 via-zinc-600/5 to-transparent p-8 border border-cyan-200/50 dark:border-cyan-800/50">
+          <div className="absolute top-0 right-0 -mt-4 -mr-4 w-32 h-32 bg-cyan-600/10 rounded-full blur-3xl"></div>
           <div className="relative">
-            <h1 className="text-4xl font-bold tracking-tight bg-linear-to-r from-primary to-violet-600 bg-clip-text text-transparent pb-2">Dashboard</h1>
+            <h1 className="text-4xl font-bold tracking-tight bg-linear-to-r from-primary to-indigo-600 bg-clip-text text-transparent pb-2">Dashboard</h1>
             <p className="text-muted-foreground mt-2 text-lg max-w-2xl">
               Visão geral dos indicadores de desempenho.
             </p>
@@ -516,47 +429,26 @@ export default function DashboardPage() {
           />
               </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <CNCsBySubChart
-            data={cncsBySub}
-            monthLabel={monthLabel}
-            onPrevMonth={handlePrevMonth}
-            onNextMonth={handleNextMonth}
-            disableNextMonth={disableNextMonth}
-          />
-          <SACDemandantesResponseChart
-            data={demandResponseHistory}
-            monthLabel={monthLabel}
-            onPrevMonth={handlePrevMonth}
-            onNextMonth={handleNextMonth}
-            disableNextMonth={disableNextMonth}
-          />
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="md:col-span-1">
+            <CNCsBySubChart
+              data={cncsBySub}
+              monthLabel={monthLabel}
+              onPrevMonth={handlePrevMonth}
+              onNextMonth={handleNextMonth}
+              disableNextMonth={disableNextMonth}
+            />
+          </div>
+          <div className="md:col-span-2">
+            <SACsTopServicesChart
+              data={sacsTopServices}
+              monthLabel={monthLabel}
+              onPrevMonth={handlePrevMonth}
+              onNextMonth={handleNextMonth}
+              disableNextMonth={disableNextMonth}
+            />
+          </div>
         </div>
-
-        {/* Gráficos dos Indicadores */}
-        <Card className="hover:shadow-md transition-shadow duration-200">
-          <CardHeader>
-            <div className="flex flex-col gap-2">
-              <div className="flex flex-wrap items-center gap-2">
-            <CardTitle className="text-xl font-semibold bg-linear-to-r from-zinc-800 to-zinc-600 dark:from-zinc-200 dark:to-zinc-400 bg-clip-text text-transparent">
-                  Evolução dos Indicadores
-            </CardTitle>
-                <ChartMonthNav
-                  label={monthLabel}
-                  onPrev={handlePrevMonth}
-                  onNext={handleNextMonth}
-                  disableNext={disableNextMonth}
-                />
-              </div>
-            <CardDescription>
-                Série diária dos indicadores IA, IRD e IF no mês selecionado
-            </CardDescription>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <IndicatorsChart data={indicatorsHistory} />
-          </CardContent>
-        </Card>
 
         <IPTModal
           open={iptModalOpen}

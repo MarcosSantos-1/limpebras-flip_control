@@ -5,6 +5,7 @@ import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { apiService } from "@/lib/api";
 import { endOfMonth, format, startOfMonth } from "date-fns";
+import { ArrowRight, Sparkles } from "lucide-react";
 import { Input } from "@/components/ui/input";
 
 export default function IndicadoresPage() {
@@ -44,10 +45,12 @@ export default function IndicadoresPage() {
             </div>
             <a
               href="/indicadores/explicacao"
-              className="px-4 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 transition-all shadow-md hover:shadow-lg hover:-translate-y-0.5 text-sm font-medium flex items-center gap-2 whitespace-nowrap"
+              className="group relative overflow-hidden px-5 py-3 rounded-xl border border-emerald-300/60 dark:border-emerald-700/60 bg-linear-to-r from-emerald-500 to-teal-500 text-white transition-all shadow-lg hover:shadow-emerald-500/30 hover:-translate-y-0.5 text-sm font-semibold flex items-center gap-2 whitespace-nowrap"
             >
-              <span>📊</span>
-              Ver Explicação Detalhada
+              <span className="absolute inset-0 opacity-0 group-hover:opacity-100 transition bg-linear-to-r from-white/15 to-transparent" />
+              <Sparkles className="h-4 w-4 relative z-10" />
+              <span className="relative z-10">Ver Explicação Detalhada</span>
+              <ArrowRight className="h-4 w-4 relative z-10 transition-transform group-hover:translate-x-0.5" />
             </a>
           </div>
         </div>
@@ -67,7 +70,6 @@ export default function IndicadoresPage() {
                   type="date"
                   value={periodoInicial}
                   onChange={(e) => setPeriodoInicial(e.target.value)}
-                  className="bg-background"
                 />
               </div>
               <div className="space-y-2">
@@ -76,7 +78,6 @@ export default function IndicadoresPage() {
                   type="date"
                   value={periodoFinal}
                   onChange={(e) => setPeriodoFinal(e.target.value)}
-                  className="bg-background"
                 />
               </div>
               <div>

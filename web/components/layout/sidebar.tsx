@@ -23,18 +23,30 @@ const navItems = [
   { href: "/upload", label: "Upload", icon: Upload },
 ]
 
-export function Sidebar() {
+interface SidebarProps {
+  collapsed?: boolean
+}
+
+export function Sidebar({ collapsed = false }: SidebarProps) {
   const pathname = usePathname()
 
   return (
-    <aside className="fixed left-0 top-0 z-40 h-screen w-64 border-r border-border bg-background">
+    <aside
+      className={cn(
+        "app-sidebar fixed left-0 top-0 z-40 h-screen border-r border-border/70 transition-all duration-300",
+        "bg-linear-to-b from-blue-600/8 via-background to-cyan-600/5 dark:from-cyan-500/15 dark:via-background dark:to-cyan-500/10",
+        "backdrop-blur-sm shadow-[0_0_50px_-25px_rgba(99,102,241,0.55)]",
+        collapsed ? "w-0 -translate-x-full opacity-0 pointer-events-none" : "w-72"
+      )}
+    >
       <div className="flex h-full flex-col">
-        <div className="flex h-16 items-center justify-between border-b border-border px-6">
-          <h1 className="text-xl font-bold bg-linear-to-r from-zinc-900 to-zinc-700 dark:from-zinc-50 dark:to-zinc-300 bg-clip-text text-transparent">
+        <div className="flex h-20 pt-12 items-center justify-between border-b border-border/70 px-6">
+          <h1 className="text-2xl font-extrabold bg-linear-to-r from-zinc-800 via-indigo-700 to-blue-700 dark:from-zinc-300 dark:via-indigo-300 dark:to-blue-300 bg-clip-text text-transparent tracking-tight">
             FLIP Control
           </h1>
+          <Settings className="h-4 w-4 text-indigo-500/70" />
         </div>
-        <nav className="flex-1 space-y-1 p-4">
+        <nav className="flex-1 space-y-2 p-4">
           {navItems.map((item) => {
             const Icon = item.icon
             const isActive = pathname === item.href
@@ -43,19 +55,19 @@ export function Sidebar() {
                 key={item.href}
                 href={item.href}
                 className={cn(
-                  "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                  "group flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold transition-all duration-200",
                   isActive
-                    ? "bg-secondary text-secondary-foreground"
-                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                    ? "bg-linear-to-r from-indigo-600/20 to-cyan-500/20 text-foreground border border-indigo-500/35 shadow-sm"
+                    : "text-muted-foreground hover:bg-accent/70 hover:text-accent-foreground border border-transparent hover:border-violet-500/15"
                 )}
               >
-                <Icon className="h-5 w-5" />
+                <Icon className={cn("h-5 w-5 transition-transform group-hover:scale-110", isActive ? "text-blue-500" : "")} />
                 {item.label}
               </Link>
             )
           })}
         </nav>
-        <div className="border-t border-border p-4">
+        <div className="border-t border-border/70 p-4 bg-background/50">
           <div className="flex items-center justify-between gap-4 px-2">
             <span className="text-xs font-medium text-muted-foreground">Tema</span>
             <ThemeToggle />

@@ -27,9 +27,7 @@ ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend)
 export interface CNCsBySubDatum {
   subprefeitura: string
   label: string
-  pendentes: number
-  regularizados: number
-  vistoria: number
+  quantidade: number
 }
 
 interface CNCsBySubChartProps {
@@ -57,29 +55,18 @@ export function CNCsBySubChart({
   const isDark = theme === "dark"
   const gridColor = isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)"
   const tickColor = isDark ? "rgba(255, 255, 255, 0.8)" : "rgba(0, 0, 0, 0.7)"
-  const hasActivity = data.some(
-    (item) => item.pendentes > 0 || item.regularizados > 0 || item.vistoria > 0
-  )
+  const hasActivity = data.some((item) => item.quantidade > 0)
 
   const totals = useMemo(() => {
-    return data.reduce(
-      (acc, item) => {
-        acc.total += item.pendentes + item.regularizados + item.vistoria
-        acc.pendentes += item.pendentes
-        acc.regularizados += item.regularizados
-        acc.vistoria += item.vistoria
-        return acc
-      },
-      { total: 0, pendentes: 0, regularizados: 0, vistoria: 0 }
-    )
+    return data.reduce((acc, item) => acc + item.quantidade, 0)
   }, [data])
 
   if (!mounted) {
     return (
       <Card className="h-full">
         <CardHeader>
-          <CardTitle className="text-lg font-semibold text-emerald-600">CNCs por Sub</CardTitle>
-          <CardDescription>Distribuição mensal de BFS fiscalizados</CardDescription>
+          <CardTitle className="text-lg font-semibold text-emerald-600">BFS por Subprefeitura</CardTitle>
+          <CardDescription>Quantidade total de BFS por sub</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="flex h-64 items-center justify-center text-muted-foreground">
@@ -98,28 +85,10 @@ export function CNCsBySubChart({
     labels,
     datasets: [
       {
-        label: "Pendentes / Urgentes",
-        data: data.map((item) => item.pendentes),
-        backgroundColor: "rgba(239, 68, 68, 0.7)",
-        borderColor: "rgb(239, 68, 68)",
-        borderWidth: 1.5,
-        borderRadius: 6,
-        barPercentage: 0.65,
-      },
-      {
-        label: "Aguard. Vistoria",
-        data: data.map((item) => item.vistoria),
-        backgroundColor: "rgba(251, 191, 36, 0.7)",
-        borderColor: "rgb(251, 191, 36)",
-        borderWidth: 1.5,
-        borderRadius: 6,
-        barPercentage: 0.65,
-      },
-      {
-        label: "Regularizados",
-        data: data.map((item) => item.regularizados),
-        backgroundColor: "rgba(34, 197, 94, 0.7)",
-        borderColor: "rgb(34, 197, 94)",
+        label: "Quantidade de BFS",
+        data: data.map((item) => item.quantidade),
+        backgroundColor: "rgba(16, 185, 129, 0.7)",
+        borderColor: "rgb(16, 185, 129)",
         borderWidth: 1.5,
         borderRadius: 6,
         barPercentage: 0.65,
@@ -149,7 +118,6 @@ export function CNCsBySubChart({
     },
     scales: {
       x: {
-        stacked: true,
         grid: {
           color: gridColor,
         },
@@ -159,7 +127,6 @@ export function CNCsBySubChart({
         },
       },
       y: {
-        stacked: true,
         grid: {
           display: false,
         },
@@ -177,7 +144,7 @@ export function CNCsBySubChart({
           <div>
             <div className="flex items-center gap-2">
               <CardTitle className="text-lg font-semibold text-emerald-600">
-                CNCs por Subprefeitura
+                BFS por Subprefeitura
               </CardTitle>
               <ChartMonthNav
                 label={monthLabel}
@@ -186,18 +153,18 @@ export function CNCsBySubChart({
                 disableNext={disableNextMonth}
               />
             </div>
-            <CardDescription>Distribuição mensal das BFS por status</CardDescription>
+            <CardDescription>Quantidade mensal de BFS registradas por sub</CardDescription>
           </div>
           <div className="text-right text-sm">
             <p className="text-muted-foreground">Total no mês</p>
-            <p className="text-2xl font-semibold text-foreground">{totals.total}</p>
+            <p className="text-2xl font-semibold text-foreground">{totals}</p>
           </div>
         </div>
       </CardHeader>
       <CardContent>
         {!hasActivity ? (
           <div className="flex h-64 items-center justify-center text-muted-foreground">
-            Nenhuma CNC registrada neste período.
+            Nenhuma BFS registrada neste período.
           </div>
         ) : (
           <div className="h-72">
@@ -205,8 +172,7 @@ export function CNCsBySubChart({
           </div>
         )}
         <p className="mt-4 text-xs text-muted-foreground">
-          Acompanhe onde os boletins permanecem pendentes para priorizar equipes de fiscalização e
-          regularização.
+          Use este ranking para distribuir equipes e fiscalizações conforme volume por território.
         </p>
       </CardContent>
     </Card>

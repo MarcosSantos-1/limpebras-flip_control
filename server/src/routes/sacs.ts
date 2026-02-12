@@ -2,11 +2,34 @@ import { FastifyPluginAsync } from "fastify";
 import { pool } from "../db.js";
 
 export const sacsRoutes: FastifyPluginAsync = async (fastify) => {
-  fastify.get<{ Querystring: { periodo_inicial?: string; periodo_final?: string; subprefeitura?: string } }>(
+  fastify.get<{
+    Querystring: {
+      periodo_inicial?: string;
+      periodo_final?: string;
+      subprefeitura?: string;
+      fora_do_prazo?: string | boolean;
+      tipo?: "IA" | "IRD" | "all" | string;
+      tipo_servico?: string;
+      procedente?: "PROCEDE" | "NAO_PROCEDE" | "todos" | string;
+      status?: string;
+      limit?: number | string;
+    };
+  }>(
     "/sacs",
     async (request, reply) => {
-      const { periodo_inicial, periodo_final, subprefeitura } = request.query;
-      let sql = "SELECT id, numero_chamado, data_registro, classificacao_do_servico, responsividade_execucao, procedente_por_status, finalizado_fora_de_escopo, regional, servico, endereco, data_execucao FROM sacs WHERE 1=1";
+      const {
+        periodo_inicial,
+        periodo_final,
+        subprefeitura,
+        fora_do_prazo,
+        tipo,
+        tipo_servico,
+        procedente,
+        status,
+        limit,
+      } = request.query;
+      let sql =
+        "SELECT id, numero_chamado, data_registro, classificacao_do_servico, responsividade_execucao, procedente_por_status, finalizado_fora_de_escopo, regional, servico, endereco, data_execucao FROM sacs WHERE 1=1";
       const params: (string | number)[] = [];
       let i = 1;
       if (periodo_inicial) {
@@ -19,12 +42,60 @@ export const sacsRoutes: FastifyPluginAsync = async (fastify) => {
         params.push(periodo_final);
         i++;
       }
-      if (subprefeitura) {
+      if (subprefeitura && subprefeitura !== "todas") {
         sql += ` AND regional = $${i}`;
         params.push(subprefeitura);
         i++;
       }
-      sql += " ORDER BY data_registro DESC LIMIT 2000";
+
+      const foraDoPrazoFlag = fora_do_prazo === true || fora_do_prazo === "true";
+      if (foraDoPrazoFlag) {
+        sql += ` AND UPPER(TRIM(COALESCE(responsividade_execucao, ''))) = 'NÃO'`;
+      }
+
+      // IA/IRD com as regras de negócio
+      if (tipo === "IA") {
+        sql += ` AND TRIM(COALESCE(classificacao_do_servico, '')) = 'Solicitação'`;
+        sql += ` AND UPPER(TRIM(COALESCE(finalizado_fora_de_escopo, ''))) = 'NÃO'`;
+      } else if (tipo === "IRD") {
+        sql += ` AND TRIM(COALESCE(classificacao_do_servico, '')) = 'Reclamação'`;
+        sql += ` AND UPPER(TRIM(COALESCE(finalizado_fora_de_escopo, ''))) = 'NÃO'`;
+        sql += ` AND UPPER(TRIM(COALESCE(procedente_por_status, ''))) = 'PROCEDE'`;
+      }
+
+      if (tipo_servico && tipo_servico !== "todos") {
+        sql += ` AND servico ILIKE $${i}`;
+        params.push(`%${tipo_servico}%`);
+        i++;
+      }
+
+      if (procedente && procedente !== "todos") {
+        if (procedente === "PROCEDE") {
+          sql += ` AND UPPER(TRIM(COALESCE(procedente_por_status, ''))) = 'PROCEDE'`;
+        } else if (procedente === "NAO_PROCEDE") {
+          sql += ` AND UPPER(TRIM(COALESCE(procedente_por_status, ''))) <> 'PROCEDE'`;
+        }
+      }
+
+      if (status && status !== "todos") {
+        if (status === "Finalizado" || status === "Executado") {
+          sql += ` AND data_execucao IS NOT NULL`;
+        } else if (
+          status === "Em Execução" ||
+          status === "Aguardando Agendamento" ||
+          status === "Aguardando Análise"
+        ) {
+          sql += ` AND data_execucao IS NULL`;
+        }
+      }
+
+      const requestedLimit = Number(limit);
+      const effectiveLimit =
+        Number.isFinite(requestedLimit) && requestedLimit > 0
+          ? Math.min(requestedLimit, 50000)
+          : 10000;
+      sql += ` ORDER BY data_registro DESC LIMIT $${i}`;
+      params.push(effectiveLimit);
       const r = await pool.query(sql, params);
       const rows = r.rows.map((row) => ({
         id: String(row.id),
@@ -39,6 +110,7 @@ export const sacsRoutes: FastifyPluginAsync = async (fastify) => {
         responsividade_execucao: row.responsividade_execucao,
         finalizado_fora_de_escopo: row.finalizado_fora_de_escopo,
         procedente_por_status: row.procedente_por_status,
+        fora_do_prazo: (row.responsividade_execucao || "").trim().toUpperCase() === "NÃO",
       }));
       return { items: rows, total: rows.length };
     }

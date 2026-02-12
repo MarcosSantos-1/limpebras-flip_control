@@ -80,8 +80,12 @@ export function IPTModal({ open, onOpenChange, onSuccess, currentValue, currentP
       setSalvando(true)
       setErro(null)
 
-      // Criar período do mês selecionado
-      const mesDate = new Date(mes + "-01")
+      // Criar período do mês selecionado sem shift de timezone
+      // (new Date("yyyy-MM-01") pode cair no dia/mês anterior em alguns fusos)
+      const [anoStr, mesStr] = mes.split("-")
+      const ano = Number(anoStr)
+      const mesNumero = Number(mesStr)
+      const mesDate = new Date(ano, mesNumero - 1, 1)
       const periodoInicial = startOfMonth(mesDate)
       const periodoFinal = endOfMonth(mesDate)
 

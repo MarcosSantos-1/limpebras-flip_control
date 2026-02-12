@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { Fragment, useState, useEffect, useMemo } from "react";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -47,10 +47,20 @@ export default function BFSPage() {
     };
   });
 
+  const parseDateInputLocal = (value?: string) => {
+    if (!value) return null;
+    const m = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return null;
+    return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  };
+  const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
+
   const periodoLabel = useMemo(() => {
     if (!filters.periodo_inicial || !filters.periodo_final) return "Período não definido";
-    const inicio = format(new Date(filters.periodo_inicial), "dd/MM/yyyy", { locale: ptBR });
-    const fim = format(new Date(filters.periodo_final), "dd/MM/yyyy", { locale: ptBR });
+    const inicioDate = parseDateInputLocal(filters.periodo_inicial);
+    const fimDate = parseDateInputLocal(filters.periodo_final);
+    const inicio = inicioDate ? format(inicioDate, "dd/MM/yyyy", { locale: ptBR }) : "--";
+    const fim = fimDate ? format(fimDate, "dd/MM/yyyy", { locale: ptBR }) : "--";
     return `${inicio} → ${fim}`;
   }, [filters.periodo_inicial, filters.periodo_final]);
 
@@ -109,6 +119,10 @@ export default function BFSPage() {
       return "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300";
     }
     return "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300";
+  };
+
+  const toggleExpand = (id: string) => {
+    setExpandedIds((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
   return (
@@ -200,7 +214,6 @@ export default function BFSPage() {
                   type="date"
                   value={filters.periodo_inicial}
                   onChange={(e) => setFilters({ ...filters, periodo_inicial: e.target.value })}
-                  className="bg-background"
                 />
               </div>
               
@@ -210,7 +223,6 @@ export default function BFSPage() {
                   type="date"
                   value={filters.periodo_final}
                   onChange={(e) => setFilters({ ...filters, periodo_final: e.target.value })}
-                  className="bg-background"
                 />
               </div>
 
@@ -263,9 +275,12 @@ export default function BFSPage() {
                     <SelectItem value="todos">Todos</SelectItem>
                     <SelectItem value="Varrição manual">Varrição manual</SelectItem>
                     <SelectItem value="Varrição mecanizada">Varrição mecanizada</SelectItem>
+                    <SelectItem value="Lavagem">Lavagem</SelectItem>
                     <SelectItem value="Mutirão">Mutirão</SelectItem>
                     <SelectItem value="Bueiros">Bueiros</SelectItem>
                     <SelectItem value="Cata-Bagulho">Cata-Bagulho</SelectItem>
+                    <SelectItem value="Ecoponto">Ecoponto</SelectItem>
+                    <SelectItem value="PEV">PEV</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -293,46 +308,71 @@ export default function BFSPage() {
                 <table className="w-full text-sm text-left">
                   <thead className="bg-muted/50 text-muted-foreground border-b border-border">
                     <tr>
+                      <th className="px-3 py-3"></th>
                       <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider">BFS</th>
                       <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider">Status</th>
                       <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider">Tipo de Serviço</th>
                       <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider">Fiscal</th>
                       <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider">Subprefeitura</th>
                       <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider">Data Fiscalização</th>
-                      <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider">Endereço</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
                     {bfss.map((bfs) => (
-                      <tr
-                        key={bfs.id}
-                        className="hover:bg-muted/50 transition-colors cursor-pointer"
-                        onClick={() => setSelectedBFS(bfs)}
-                      >
-                        <td className="px-6 py-4 font-medium font-mono text-primary">
-                          {bfs.bfs}
-                        </td>
-                        <td className="px-6 py-4">
-                          <span className={`px-2.5 py-0.5 text-xs font-medium rounded-full border ${getStatusColor(bfs.status, bfs.sem_irregularidade)} bg-opacity-10 border-opacity-20`}>
-                            {formatStatus(bfs.status)}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 max-w-xs truncate text-muted-foreground" title={bfs.tipo_servico}>
-                          {bfs.tipo_servico || "—"}
-                        </td>
-                        <td className="px-6 py-4 text-muted-foreground">
-                          {bfs.fiscal || "—"}
-                        </td>
-                        <td className="px-6 py-4 text-muted-foreground">
-                          {bfs.subprefeitura || "—"}
-                        </td>
-                        <td className="px-6 py-4 text-muted-foreground">
-                          {bfs.data_abertura ? format(new Date(bfs.data_abertura), "dd/MM/yyyy HH:mm") : "—"}
-                        </td>
-                        <td className="px-6 py-4 max-w-xs truncate text-muted-foreground" title={bfs.endereco}>
-                          {bfs.endereco || "—"}
-                        </td>
-                      </tr>
+                      <Fragment key={bfs.id}>
+                        <tr
+                          className="hover:bg-muted/50 transition-colors cursor-pointer"
+                          onClick={() => setSelectedBFS(bfs)}
+                        >
+                          <td className="px-3 py-4">
+                            <button
+                              className="text-muted-foreground hover:text-foreground"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleExpand(bfs.id);
+                              }}
+                              aria-label="Expandir detalhes"
+                            >
+                              {expandedIds[bfs.id] ? "▾" : "▸"}
+                            </button>
+                          </td>
+                          <td className="px-6 py-4 font-medium font-mono text-primary">
+                            {bfs.bfs}
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className={`px-2.5 py-0.5 text-xs font-medium rounded-full border ${getStatusColor(bfs.status, bfs.sem_irregularidade)} bg-opacity-10 border-opacity-20`}>
+                              {formatStatus(bfs.status)}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 max-w-xs truncate text-muted-foreground" title={bfs.tipo_servico}>
+                            {bfs.tipo_servico || "—"}
+                          </td>
+                          <td className="px-6 py-4 text-muted-foreground">
+                            {bfs.fiscal || "—"}
+                          </td>
+                          <td className="px-6 py-4 text-muted-foreground">
+                            {bfs.subprefeitura || "—"}
+                          </td>
+                          <td className="px-6 py-4 text-muted-foreground">
+                            {bfs.data_abertura ? format(new Date(bfs.data_abertura), "dd/MM/yyyy HH:mm") : "—"}
+                          </td>
+                        </tr>
+                        {expandedIds[bfs.id] && (
+                          <tr className="bg-muted/20">
+                            <td colSpan={7} className="px-6 py-3 text-xs">
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                <div><strong>BFS:</strong> {bfs.bfs}</div>
+                                <div><strong>Fiscal:</strong> {bfs.fiscal || "—"}</div>
+                                <div><strong>Sem irregularidade:</strong> {bfs.sem_irregularidade ? "Sim" : "Não"}</div>
+                                <div><strong>Data fiscalização:</strong> {bfs.data_abertura ? format(new Date(bfs.data_abertura), "dd/MM/yyyy HH:mm") : "—"}</div>
+                                <div><strong>Data vistoria:</strong> {bfs.data_vistoria ? format(new Date(bfs.data_vistoria), "dd/MM/yyyy HH:mm") : "—"}</div>
+                                <div><strong>Subprefeitura:</strong> {bfs.subprefeitura || "—"}</div>
+                                <div className="md:col-span-3"><strong>Endereço completo:</strong> {bfs.endereco || "—"}</div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
                     ))}
                   </tbody>
                 </table>

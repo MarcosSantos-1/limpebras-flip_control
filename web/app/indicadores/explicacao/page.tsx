@@ -1,10 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { apiService } from "@/lib/api";
 import { endOfMonth, format, isValid, startOfMonth } from "date-fns";
+import { ADCRingChart } from "@/components/adc-ring-chart";
+import { IndicatorsChart } from "@/components/indicators-chart";
+import { Download, Printer, CalendarRange } from "lucide-react";
+import { Input } from "@/components/ui/input";
 
 interface IndicadorDetalhe {
   valor?: number;
@@ -99,6 +103,7 @@ export default function ExplicacaoIndicadoresPage() {
   const [periodoInicial, setPeriodoInicial] = useState(format(startOfMonth(new Date()), "yyyy-MM-dd"));
   const [periodoFinal, setPeriodoFinal] = useState(format(endOfMonth(new Date()), "yyyy-MM-dd"));
   const [detalhes, setDetalhes] = useState<IndicadoresDetalhesResponse | null>(null);
+  const [indicadoresHistory, setIndicadoresHistory] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -106,11 +111,15 @@ export default function ExplicacaoIndicadoresPage() {
     try {
       setLoading(true);
       setError(null);
-      const data = await apiService.getIndicadoresDetalhes(periodoInicial, periodoFinal);
+      const [data, history] = await Promise.all([
+        apiService.getIndicadoresDetalhes(periodoInicial, periodoFinal),
+        apiService.getIndicadoresHistorico(periodoInicial, periodoFinal).catch(() => ({ data: [] })),
+      ]);
       console.log("Detalhes recebidos:", data);
       console.log("IPT recebido:", data?.ipt);
       console.log("Período solicitado:", periodoInicial, "->", periodoFinal);
       setDetalhes(data);
+      setIndicadoresHistory(history?.data || []);
     } catch (err) {
       console.error(err);
       setError("Nao foi possivel carregar os indicadores. Verifique as datas e tente novamente.");
@@ -127,7 +136,18 @@ export default function ExplicacaoIndicadoresPage() {
 
 
   const safeFormat = (d: string | Date | undefined) => {
-    const date = typeof d === "string" ? new Date(d) : d;
+    let date: Date | undefined;
+    if (typeof d === "string") {
+      // Evita shift de timezone em "yyyy-MM-dd" (ex.: 01/01 virar 31/12)
+      const m = d.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (m) {
+        date = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+      } else {
+        date = new Date(d);
+      }
+    } else {
+      date = d;
+    }
     return date && isValid(date) ? format(date, "dd/MM/yyyy") : "--";
   };
   const periodoLabel = detalhes?.periodo
@@ -137,6 +157,32 @@ export default function ExplicacaoIndicadoresPage() {
   const pontuacaoParcial =
     (detalhes?.ird?.pontuacao ?? 0) + (detalhes?.ia?.pontuacao ?? 0) + (detalhes?.if?.pontuacao ?? 0);
   const pontuacaoTotal = pontuacaoParcial + (detalhes?.ipt?.pontuacao ?? 0);
+  const percentualADC = Math.max(0, Math.min(100, pontuacaoTotal));
+  const resumoIndicadores = useMemo(
+    () => [
+      { nome: "IRD", valor: formatarValor(detalhes?.ird?.valor, 3), pontos: formatarValor(detalhes?.ird?.pontuacao, 2), cor: "text-emerald-500" },
+      {
+        nome: "IA",
+        valor: `${formatarValor(detalhes?.ia?.percentual ?? ((detalhes?.ia?.valor ?? 0) / 10), 2)}%`,
+        pontos: formatarValor(detalhes?.ia?.pontuacao, 2),
+        cor: "text-blue-500",
+      },
+      {
+        nome: "IF",
+        valor: `${formatarValor(detalhes?.if?.percentual ?? ((detalhes?.if?.valor ?? 0) / 10), 2)}%`,
+        pontos: formatarValor(detalhes?.if?.pontuacao, 2),
+        cor: "text-amber-500",
+      },
+      {
+        nome: "IPT",
+        valor: detalhes?.ipt ? `${formatarValor(detalhes?.ipt?.valor, 2)}%` : "Não informado",
+        pontos: formatarValor(detalhes?.ipt?.pontuacao, 2),
+        cor: "text-fuchsia-500",
+      },
+    ],
+    [detalhes]
+  );
+  const handlePrint = () => window.print();
 
   // Calcular desconto baseado na pontuação total
   const calcularDesconto = (pontuacao: number): { percentual: number; desconto: number; explicacao: string } => {
@@ -181,40 +227,76 @@ export default function ExplicacaoIndicadoresPage() {
   };
 
   const infoDesconto = calcularDesconto(pontuacaoTotal);
+  const getPontosStyle = (pontos: number, max: number) => {
+    if (pontos >= max) {
+      return "bg-green-50 dark:bg-green-900/25 border-green-300 dark:border-green-700 text-green-700 dark:text-green-300";
+    }
+    if (pontos <= Math.max(4, max * 0.25)) {
+      return "bg-red-50 dark:bg-red-900/25 border-red-300 dark:border-red-700 text-red-700 dark:text-red-300";
+    }
+    if (pontos <= max * 0.6) {
+      return "bg-amber-50 dark:bg-amber-900/25 border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-300";
+    }
+    return "bg-zinc-50 dark:bg-zinc-900 border-zinc-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300";
+  };
 
   return (
     <MainLayout>
-      <div className="space-y-6 max-w-5xl">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Explicacao dos Calculos dos Indicadores</h1>
-          <p className="text-zinc-600 dark:text-zinc-400 mt-2">
-            Combine a teoria com os numeros reais vindos do backend para auditar qualquer mes ou subprefeitura.
-          </p>
+      <div className="space-y-6 w-full max-w-7xl mx-auto report-print-area">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 report-screen-only">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">Explicacao dos Calculos dos Indicadores</h1>
+            <p className="text-zinc-600 dark:text-zinc-400 mt-2">
+              Combine a teoria com os numeros reais vindos do backend para auditar qualquer mes ou subprefeitura.
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={handlePrint}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 text-white hover:bg-violet-700 transition shadow-sm"
+            >
+              <Printer className="h-4 w-4" />
+              Imprimir relatório
+            </button>
+            <button
+              onClick={handlePrint}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-violet-400/50 bg-violet-500/10 text-violet-700 dark:text-violet-300 hover:bg-violet-500/20 transition"
+            >
+              <Download className="h-4 w-4" />
+              Baixar PDF
+            </button>
+          </div>
         </div>
 
-        <Card>
+        <div className="hidden print:block">
+          <h1 className="text-2xl font-bold text-white dark:text-white">Relatório de Indicadores ADC</h1>
+          <p className="text-sm text-white dark:text-white mt-1">Gerado em {format(new Date(), "dd/MM/yyyy HH:mm")}</p>
+        </div>
+
+        <Card className="border-violet-400/40 shadow-sm">
           <CardHeader>
-            <CardTitle>Periodo analisado</CardTitle>
-            <CardDescription>Use o mesmo range configurado na tela principal</CardDescription>
+            <CardTitle className="flex items-center gap-2">
+              <CalendarRange className="h-5 w-5 text-violet-500" />
+              Período analisado
+            </CardTitle>
+            <CardDescription className="font-medium">{periodoLabel}</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 report-screen-only">
               <div>
                 <label className="block text-sm font-medium mb-2">Periodo inicial</label>
-                <input
+                <Input
                   type="date"
                   value={periodoInicial}
                   onChange={(e) => setPeriodoInicial(e.target.value)}
-                  className="w-full px-3 py-2 border border-zinc-300 dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-800"
                 />
               </div>
               <div>
                 <label className="block text-sm font-medium mb-2">Periodo final</label>
-                <input
+                <Input
                   type="date"
                   value={periodoFinal}
                   onChange={(e) => setPeriodoFinal(e.target.value)}
-                  className="w-full px-3 py-2 border border-zinc-300 dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-800"
                 />
               </div>
               <div className="flex items-end">
@@ -227,11 +309,51 @@ export default function ExplicacaoIndicadoresPage() {
                 </button>
               </div>
             </div>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-4">
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-4 report-screen-only">
               Sugestao: trabalhe com o mes corrente inteiro para replicar os calculos de IA e IRD do dashboard.
             </p>
           </CardContent>
         </Card>
+
+        <Card className="overflow-hidden border-2 border-violet-500/40 shadow-lg">
+          <CardHeader>
+            <CardTitle>Resumo executivo do relatório</CardTitle>
+            <CardDescription>Visão consolidada dos indicadores do período selecionado</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 items-stretch">
+              <div className="xl:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {resumoIndicadores.map((item) => (
+                  <div key={item.nome} className="rounded-xl border border-border bg-card/60 px-4 py-3">
+                    <div className={`text-xs font-bold uppercase tracking-wider ${item.cor}`}>{item.nome}</div>
+                    <div className="text-2xl font-bold">{item.valor}</div>
+                    <div className="text-xs text-muted-foreground">{item.pontos} pts</div>
+                  </div>
+                ))}
+              </div>
+              <div className="rounded-xl border border-border bg-card/40 p-3 min-h-[330px] flex items-center">
+                <IndicatorsChart data={indicadoresHistory} />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-center">
+              <div className="rounded-xl border-2 border-violet-500/60 bg-linear-to-br from-violet-500/15 to-fuchsia-500/10 px-4 py-4">
+                <div className="text-xs font-bold uppercase tracking-wider text-violet-600 dark:text-violet-300">ADC</div>
+                <div className="text-3xl font-extrabold text-violet-700 dark:text-violet-300">{formatarValor(pontuacaoTotal, 2)} pts</div>
+                <div className="text-sm text-violet-700/80 dark:text-violet-300/80">{formatarValor(percentualADC, 1)}% do total</div>
+              </div>
+              <div className="flex justify-center">
+                <ADCRingChart total={pontuacaoTotal} percentual={percentualADC} />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="report-screen-only">
+          <p className="text-zinc-600 dark:text-zinc-400 mt-2">
+            Combine a teoria com os numeros reais vindos do backend para auditar qualquer mes ou subprefeitura.
+          </p>
+        </div>
 
         {error && (
           <div className="rounded border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-900/20 px-4 py-3 text-sm text-red-700 dark:text-red-200">
@@ -729,35 +851,35 @@ export default function ExplicacaoIndicadoresPage() {
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              <div className="flex justify-between items-center p-3 bg-zinc-50 dark:bg-zinc-900 rounded">
+              <div className={`flex justify-between items-center p-3 rounded border ${getPontosStyle(detalhes?.ird?.pontuacao ?? 0, 20)}`}>
                 <span className="font-medium">
                   IRD = {formatarValor(detalhes?.ird?.valor, 3)} | {detalhes?.ird?.total_reclamacoes ?? 0} procedentes
                 </span>
-                <span className="font-bold text-green-600 dark:text-green-400">
+                <span className="font-bold">
                   {formatarValor(detalhes?.ird?.pontuacao, 2)} pts
                 </span>
               </div>
-              <div className="flex justify-between items-center p-3 bg-zinc-50 dark:bg-zinc-900 rounded">
+              <div className={`flex justify-between items-center p-3 rounded border ${getPontosStyle(detalhes?.ia?.pontuacao ?? 0, 20)}`}>
                 <span className="font-medium">
                   IA = {formatarValor(detalhes?.ia?.valor, 2)} (x1000) | {formatarValor(detalhes?.ia?.percentual ?? ((detalhes?.ia?.valor ?? 0) / 10), 2)}% | {detalhes?.ia?.total_no_prazo ?? 0} no prazo, {detalhes?.ia?.total_fora_prazo ?? 0} fora
                 </span>
-                <span className="font-bold text-yellow-600 dark:text-yellow-400">
+                <span className="font-bold">
                   {formatarValor(detalhes?.ia?.pontuacao, 2)} pts
                 </span>
               </div>
-              <div className="flex justify-between items-center p-3 bg-zinc-50 dark:bg-zinc-900 rounded">
+              <div className={`flex justify-between items-center p-3 rounded border ${getPontosStyle(detalhes?.if?.pontuacao ?? 0, 20)}`}>
                 <span className="font-medium">
                   IF = {formatarValor(detalhes?.if?.valor, 2)} (x1000) | {formatarValor(detalhes?.if?.percentual ?? ((detalhes?.if?.valor ?? 0) / 10), 2)}% | {detalhes?.if?.total_sem_irregularidade ?? 0} sem ocorrencia
                 </span>
-                <span className="font-bold text-green-600 dark:text-green-400">
+                <span className="font-bold">
                   {formatarValor(detalhes?.if?.pontuacao, 2)} pts
                 </span>
               </div>
-              <div className={`flex justify-between items-center p-3 rounded ${detalhes?.ipt ? 'bg-zinc-50 dark:bg-zinc-900' : 'bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800'}`}>
+              <div className={`flex justify-between items-center p-3 rounded border ${detalhes?.ipt ? getPontosStyle(detalhes.ipt.pontuacao ?? 0, 40) : 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800'}`}>
                 <span className="font-medium">
                   IPT = {detalhes?.ipt ? formatarValor(detalhes.ipt.valor, 2) + '%' : 'Não informado'}
                 </span>
-                <span className={`font-bold ${detalhes?.ipt ? 'text-violet-600 dark:text-violet-400' : 'text-yellow-600 dark:text-yellow-400'}`}>
+                <span className="font-bold">
                   {detalhes?.ipt ? formatarValor(detalhes.ipt.pontuacao, 2) + ' pts' : '0 pts'}
                 </span>
               </div>

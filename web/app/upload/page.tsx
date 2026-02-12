@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { MainLayout } from "@/components/layout/main-layout";
 import { apiService } from "@/lib/api";
 
@@ -46,8 +46,20 @@ export default function UploadPage() {
     ouvidoria: { status: "idle" },
   });
   const [draggedOver, setDraggedOver] = useState<string | null>(null);
-  const [clearing, setClearing] = useState<string | null>(null);
-  const [clearResult, setClearResult] = useState<Record<string, { message: string; deleted?: number }>>({});
+  const [lastUpdates, setLastUpdates] = useState<Record<string, { ultimo_import?: string | null; source_file?: string | null; total_registros?: number }>>({});
+
+  const carregarUltimasAtualizacoes = async () => {
+    try {
+      const data = await apiService.getUploadLastUpdates();
+      setLastUpdates(data || {});
+    } catch (err) {
+      console.error("Erro ao carregar últimas atualizações:", err);
+    }
+  };
+
+  useEffect(() => {
+    carregarUltimasAtualizacoes();
+  }, []);
 
   const handleUpload = async (type: string, file: File | null) => {
     if (!file) return;
@@ -80,6 +92,7 @@ export default function UploadPage() {
         ...prev,
         [type]: { status: "success", result: data },
       }));
+      await carregarUltimasAtualizacoes();
     } catch (error: any) {
       setUploadStates((prev) => ({
         ...prev,
@@ -112,46 +125,6 @@ export default function UploadPage() {
     []
   );
 
-  const handleClear = async (type: string) => {
-    if (!confirm("Tem certeza? Isso remove todos os dados importados deste tipo. Você pode reimportar o CSV em seguida.")) return;
-    setClearing(type);
-    setClearResult((prev) => ({ ...prev, [type]: undefined as any }));
-    try {
-      let data: any;
-      switch (type) {
-        case "sacs":
-          data = await apiService.clearSACsImportados();
-          break;
-        case "cnc":
-          data = await apiService.clearCNCImportados();
-          break;
-        case "acic":
-          data = await apiService.clearACICImportados();
-          break;
-        case "ouvidoria":
-          data = await apiService.clearOuvidoriaImportados();
-          break;
-        default:
-          return;
-      }
-      setClearResult((prev) => ({
-        ...prev,
-        [type]: {
-          message: data.message || "Dados removidos.",
-          deleted: data.deleted ?? data.deleted_cnc ?? data.deleted_acic,
-        },
-      }));
-      setUploadStates((prev) => ({ ...prev, [type]: { status: "idle" } }));
-    } catch (error: any) {
-      setClearResult((prev) => ({
-        ...prev,
-        [type]: { message: error.response?.data?.detail || error.message || "Erro ao limpar" },
-      }));
-    } finally {
-      setClearing(null);
-    }
-  };
-
   const UploadCard = ({
     title,
     type,
@@ -164,9 +137,14 @@ export default function UploadPage() {
     const state = uploadStates[type];
     const isDragged = draggedOver === type;
     const isUploading = state.status === "uploading";
-    const isClearing = clearing === type;
-    const clearMsg = clearResult[type];
+    const lastUpdate = lastUpdates[type];
     const colors = cardColors[type as keyof typeof cardColors];
+    const formatDateTime = (value?: string | null) => {
+      if (!value) return "Sem importação ainda";
+      const d = new Date(value);
+      if (isNaN(d.getTime())) return "Sem importação ainda";
+      return d.toLocaleString("pt-BR");
+    };
 
     return (
       <div
@@ -257,21 +235,17 @@ export default function UploadPage() {
             )}
           </div>
 
-          {/* Limpar dados importados */}
-          <div className="mt-3 flex items-center justify-between gap-2">
-            <button
-              type="button"
-              onClick={() => handleClear(type)}
-              disabled={isUploading || isClearing}
-              className="text-xs text-muted-foreground hover:text-destructive underline disabled:opacity-50"
-            >
-              {isClearing ? "Removendo..." : "Limpar dados importados"}
-            </button>
-            {clearMsg && (
-              <span className="text-xs text-muted-foreground">
-                {clearMsg.deleted !== undefined ? `${clearMsg.deleted} removidos` : clearMsg.message}
-              </span>
-            )}
+          <div className="mt-3 rounded-lg border border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+            <div className="font-medium">
+              Última atualização:{" "}
+              <span className="text-foreground">{formatDateTime(lastUpdate?.ultimo_import)}</span>
+            </div>
+            <div className="mt-1">
+              Arquivo: <span className="text-foreground">{lastUpdate?.source_file || "—"}</span>
+            </div>
+            <div className="mt-1">
+              Registros atuais: <span className="text-foreground">{lastUpdate?.total_registros ?? 0}</span>
+            </div>
           </div>
 
           {/* Resultado - só mostra para este card específico */}
@@ -306,6 +280,16 @@ export default function UploadPage() {
                         ⚠️ Erros: <strong>{state.result.erros}</strong>
                       </span>
                     )}
+                  </div>
+                )}
+                {(state.result.inseridos !== undefined || state.result.atualizados !== undefined) && (
+                  <div className="text-xs pt-2 flex gap-3 border-t border-green-200/50 dark:border-green-800/30">
+                    <span className="text-muted-foreground">
+                      Inseridos: <strong>{state.result.inseridos ?? 0}</strong>
+                    </span>
+                    <span className="text-muted-foreground">
+                      Atualizados: <strong>{state.result.atualizados ?? 0}</strong>
+                    </span>
                   </div>
                 )}
               </div>

@@ -141,6 +141,11 @@ export const apiService = {
     return data;
   },
 
+  getUploadLastUpdates: async () => {
+    const { data } = await api.get('/upload/last-updates');
+    return data;
+  },
+
   /** Remove SACs importados (inserted_from_csv). Use antes de reimportar para validar IA/IRD. */
   clearSACsImportados: async () => {
     const { data } = await api.post('/upload/clear-sacs');
