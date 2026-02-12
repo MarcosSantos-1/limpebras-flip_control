@@ -352,9 +352,9 @@ export default function UploadPage() {
             description="Upload do arquivo FLIP_CONSULTA_SAC_*.csv"
           />
           <UploadCard
-            title="CNCs"
+            title="BFS"
             type="cnc"
-            description="Upload do arquivo FLIP_CONSULTA_CNC_*.csv"
+            description="Upload do arquivo FLIP_CONSULTA_BFS_*.csv"
           />
           <UploadCard
             title="ACICs"

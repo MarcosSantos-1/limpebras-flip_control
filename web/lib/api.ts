@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 // Se NEXT_PUBLIC_API_URL já incluir /api/v1, usa direto, senão adiciona
-const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 const API_URL = baseUrl.includes('/api/v1') ? baseUrl : `${baseUrl}/api/v1`;
 
 export const api = axios.create({
@@ -24,9 +24,16 @@ export interface SAC {
   data_criacao: string;
   data_agendamento?: string;
   data_execucao?: string;
-  prazo_max_hours: number;
+  prazo_max_hours?: number;
   horas_ate_execucao?: number | null;
   fora_do_prazo?: boolean;
+  /** Coluna Classificação_do_Serviço: "Solicitação" (IA) ou "Reclamação" (IRD) */
+  classificacao_servico?: string;
+  /** Coluna Responsividade_Execução: "SIM" = no prazo, "NÃO" = fora do prazo */
+  responsividade_execucao?: string;
+  /** Coluna Finalizado_como_fora_de_escopo: "NÃO" para incluir no IA/IRD */
+  finalizado_fora_de_escopo?: string;
+  procedente_por_status?: string;
 }
 
 export interface CNC {

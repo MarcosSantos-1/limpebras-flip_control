@@ -4,10 +4,11 @@ import { useEffect, useState } from "react";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { apiService } from "@/lib/api";
-import { endOfMonth, format, startOfMonth } from "date-fns";
+import { endOfMonth, format, isValid, startOfMonth } from "date-fns";
 
 interface IndicadorDetalhe {
   valor?: number;
+  percentual?: number;
   pontuacao?: number;
   total_reclamacoes?: number;
   domicilios?: number;
@@ -15,10 +16,16 @@ interface IndicadorDetalhe {
   total_procedentes?: number;
   total_no_prazo?: number;
   total_fora_prazo?: number;
+  total_solicitacoes?: number;
   total_fiscalizacoes?: number;
   total_sem_irregularidade?: number;
+  total_com_irregularidade?: number;
   status_referencia?: string;
   servicos_nao_demandantes?: string[];
+  /** Fórmula preenchida com os números (memória de cálculo) */
+  memoria_calculo?: string;
+  /** Filtros usados na base para o indicador */
+  filtros_aplicados?: string[];
 }
 
 interface IndicadoresDetalhesResponse {
@@ -119,12 +126,13 @@ export default function ExplicacaoIndicadoresPage() {
   }, [periodoInicial, periodoFinal]);
 
 
-  const periodoLabel = detalhes
-    ? `${format(new Date(detalhes.periodo.inicial), "dd/MM/yyyy")} -> ${format(
-        new Date(detalhes.periodo.final),
-        "dd/MM/yyyy"
-      )}`
-    : `${format(new Date(periodoInicial), "dd/MM/yyyy")} -> ${format(new Date(periodoFinal), "dd/MM/yyyy")}`;
+  const safeFormat = (d: string | Date | undefined) => {
+    const date = typeof d === "string" ? new Date(d) : d;
+    return date && isValid(date) ? format(date, "dd/MM/yyyy") : "--";
+  };
+  const periodoLabel = detalhes?.periodo
+    ? `${safeFormat(detalhes.periodo.inicial)} -> ${safeFormat(detalhes.periodo.final)}`
+    : `${safeFormat(periodoInicial)} -> ${safeFormat(periodoFinal)}`;
 
   const pontuacaoParcial =
     (detalhes?.ird?.pontuacao ?? 0) + (detalhes?.ia?.pontuacao ?? 0) + (detalhes?.if?.pontuacao ?? 0);
@@ -251,7 +259,7 @@ export default function ExplicacaoIndicadoresPage() {
                   <strong>Procedentes escalonados:</strong> {detalhes?.ird?.tipos_considerados?.join(", ") ?? "varricao, mutirao, bueiro e cata-bagulho"} finalizados ou confirmados.
                 </li>
                 <li>
-                  <strong>Domicilios:</strong> 511093 ou o total especifico da subprefeitura filtrada.
+                  <strong>Domicilios:</strong> {detalhes?.ird?.domicilios?.toLocaleString("pt-BR") ?? "511.093"} (base IBGE 2024).
                 </li>
                 <li>
                   <strong>Fator 1000:</strong> expressa o indicador por mil domicilios.
@@ -259,18 +267,36 @@ export default function ExplicacaoIndicadoresPage() {
               </ul>
             </div>
 
+            {detalhes?.ird?.filtros_aplicados && detalhes.ird.filtros_aplicados.length > 0 && (
+              <div>
+                <h3 className="font-semibold mb-2">Filtros aplicados (base de dados)</h3>
+                <ul className="list-disc list-inside space-y-1 text-sm text-zinc-600 dark:text-zinc-400">
+                  {detalhes.ird.filtros_aplicados.map((f, i) => (
+                    <li key={i}>{f}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 p-4 rounded-lg">
+              <h3 className="font-semibold text-sm mb-2">Memória de cálculo – IRD</h3>
+              <p className="text-sm font-mono text-zinc-800 dark:text-zinc-200 whitespace-pre-wrap">
+                {detalhes?.ird?.memoria_calculo ?? "Aguardando dados do período."}
+              </p>
+            </div>
+
             <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg space-y-2">
               <h3 className="font-semibold text-sm">Resultado ({periodoLabel})</h3>
               <p className="text-sm text-zinc-700 dark:text-zinc-200">
                 {detalhes?.ird
-                  ? `IRD = (${detalhes.ird.total_reclamacoes ?? 0} / ${detalhes.ird.domicilios ?? 0}) x 1000 = ${formatarValor(
+                  ? `IRD = (${detalhes.ird.total_reclamacoes ?? 0} / ${detalhes.ird.domicilios?.toLocaleString("pt-BR") ?? 0}) x 1000 = ${formatarValor(
                       detalhes.ird.valor,
                       3
                     )}`
                   : "Nenhum SAC escalonado procedente encontrado no periodo."}
               </p>
               <p className="text-sm">
-                Pontuacao: <strong className="text-violet-600 dark:text-violet-300">{formatarValor(detalhes?.ird?.pontuacao, 2)} pts</strong>
+                Pontuação: <strong className="text-violet-600 dark:text-violet-300">{formatarValor(detalhes?.ird?.pontuacao, 2)} pts</strong>
               </p>
             </div>
 
@@ -327,32 +353,50 @@ export default function ExplicacaoIndicadoresPage() {
             <div>
               <h3 className="font-semibold mb-2">Formula</h3>
               <div className="bg-zinc-50 dark:bg-zinc-900 p-4 rounded-lg font-mono text-sm">
-                IA = (Demandantes atendidos no prazo / Demandantes procedentes) x 100
+                IA = (No prazo / (No prazo + Fora do prazo)) x 1000
               </div>
             </div>
 
             <div>
-              <h3 className="font-semibold mb-2">Componentes</h3>
+              <h3 className="font-semibold mb-2">Componentes (Filtros)</h3>
               <ul className="list-disc list-inside space-y-1 text-sm text-zinc-600 dark:text-zinc-400">
                 <li>
-                  <strong>Tipos:</strong> {detalhes?.ia?.tipos_considerados?.join(", ") ?? "entulho, animal morto e papeleiras"}.
+                  <strong>Data de Registro:</strong> periodo selecionado (inicial e final).
                 </li>
                 <li>
-                  <strong>Procedentes:</strong> SACs executados/finalizados no periodo.
+                  <strong>Classificação_do_Serviço:</strong> &quot;Solicitação&quot; (demandantes).
                 </li>
                 <li>
-                  <strong>No prazo:</strong> diferenca entre execucao e abertura menor ou igual ao SLA do protocolo.
+                  <strong>Finalizado_como_fora_de_escopo:</strong> &quot;NÃO&quot; (incluídos no IA).
+                </li>
+                <li>
+                  <strong>No prazo:</strong> Responsividade_Execução = &quot;SIM&quot;. Fora do prazo = &quot;NÃO&quot;.
                 </li>
               </ul>
+            </div>
+
+            {detalhes?.ia?.filtros_aplicados && detalhes.ia.filtros_aplicados.length > 0 && (
+              <div>
+                <h3 className="font-semibold mb-2">Filtros aplicados (base de dados)</h3>
+                <ul className="list-disc list-inside space-y-1 text-sm text-zinc-600 dark:text-zinc-400">
+                  {detalhes.ia.filtros_aplicados.map((f, i) => (
+                    <li key={i}>{f}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 p-4 rounded-lg">
+              <h3 className="font-semibold text-sm mb-2">Memória de cálculo – IA</h3>
+              <p className="text-sm font-mono text-zinc-800 dark:text-zinc-200 whitespace-pre-wrap">
+                {detalhes?.ia?.memoria_calculo ?? "Aguardando dados do período."}
+              </p>
             </div>
 
             <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg space-y-2">
               <h3 className="font-semibold text-sm">Resultado ({periodoLabel})</h3>
               {detalhes?.ia ? (
                 <>
-                  <p className="text-sm text-zinc-700 dark:text-zinc-200">
-                    Procedentes: <strong>{detalhes.ia.total_procedentes}</strong>
-                  </p>
                   <p className="text-sm text-green-700 dark:text-green-300">
                     No prazo: <strong>{detalhes.ia.total_no_prazo}</strong>
                   </p>
@@ -360,14 +404,14 @@ export default function ExplicacaoIndicadoresPage() {
                     Fora do prazo: <strong>{detalhes.ia.total_fora_prazo}</strong>
                   </p>
                   <p className="text-sm">
-                    IA = ({detalhes.ia.total_no_prazo} / {detalhes.ia.total_procedentes}) x 100 = {formatarValor(detalhes.ia.valor, 2)}%
+                    IA = ({detalhes.ia.total_no_prazo} / {(detalhes.ia.total_no_prazo ?? 0) + (detalhes.ia.total_fora_prazo ?? 0)}) x 1000 = {formatarValor(detalhes.ia.valor, 2)} (equiv. {formatarValor(detalhes.ia.percentual ?? ((detalhes.ia.valor ?? 0) / 10), 2)}%)
                   </p>
                   <p className="text-sm">
-                    Pontuacao: <strong className="text-violet-600 dark:text-violet-300">{formatarValor(detalhes.ia.pontuacao, 2)} pts</strong>
+                    Pontuação: <strong className="text-violet-600 dark:text-violet-300">{formatarValor(detalhes.ia.pontuacao, 2)} pts</strong>
                   </p>
                 </>
               ) : (
-                <p className="text-sm text-zinc-600 dark:text-zinc-300">Nenhum SAC demandante procedente no periodo.</p>
+                <p className="text-sm text-zinc-600 dark:text-zinc-300">Nenhum SAC demandante no periodo.</p>
               )}
             </div>
 
@@ -429,7 +473,7 @@ export default function ExplicacaoIndicadoresPage() {
             <div>
               <h3 className="font-semibold mb-2">Formula</h3>
               <div className="bg-zinc-50 dark:bg-zinc-900 p-4 rounded-lg font-mono text-sm">
-                IF = (BFS sem irregularidade / Total de BFS) x 100
+                IF = (BFS sem irregularidade / Total de BFS) x 1000
               </div>
             </div>
 
@@ -437,21 +481,37 @@ export default function ExplicacaoIndicadoresPage() {
               <h3 className="font-semibold mb-2">Componentes</h3>
               <ul className="list-disc list-inside space-y-1 text-sm text-zinc-600 dark:text-zinc-400">
                 <li>
-                  <strong>Status valido:</strong>{" "}
-                  {detalhes?.if?.status_referencia ??
-                    "BFS Não Demandantes sem irregularidade (tem_irregularidade = False)"}.
+                  <strong>Status válido:</strong>{" "}
+                  {detalhes?.if?.status_referencia ?? "BFS Não Demandantes com Status = Sem Irregularidades"}.
                 </li>
                 <li>
-                  <strong>Total BFS:</strong> fiscalizacoes registradas no periodo,
-                  apenas dos serviços classificados como BFS Nao Demandantes.
+                  <strong>Total BFS:</strong> fiscalizações no período, apenas serviços BFS Não Demandantes (lista SELIMP).
                 </li>
                 <li>
-                  <strong>Servicos Nao Demandantes (SELIMP):</strong>{" "}
+                  <strong>Serviços Não Demandantes (SELIMP):</strong>{" "}
                   {detalhes?.if?.servicos_nao_demandantes?.length
                     ? detalhes.if.servicos_nao_demandantes.join("; ")
-                    : "Varrição manual de vias e logradouros públicos; Varrição mecanizada de vias e logradouros públicos; Varrição de pós feiras livres e Lavagem e desinfecção de vias e logradouros públicos pós feiras livres; Operação dos Ecopontos; Equipe de Mutirão de Zeladoria de Vias e Logradouros Públicos; Lavagem especial de equipamentos públicos; Limpeza e desobstrução de bueiros, bocas de lobo e bocas de leão; Remoção dos Resíduos dos Ecopontos; Coleta programada e transporte de objetos volumosos e de entulho (Cata-Bagulho); Coleta manual de resíduos orgânicos de feiras-livres; Coleta e transporte de PEV-Ponto de Entrega Voluntária."}
+                    : "Varrição manual; Varrição mecanizada; Pós feiras livres; Operação dos Ecopontos; Mutirão de Zeladoria; Lavagem especial; Limpeza de bueiros; Remoção Ecopontos; Cata-Bagulho; Coleta feiras-livres; PEV."}
                 </li>
               </ul>
+            </div>
+
+            {detalhes?.if?.filtros_aplicados && detalhes.if.filtros_aplicados.length > 0 && (
+              <div>
+                <h3 className="font-semibold mb-2">Filtros aplicados (base de dados)</h3>
+                <ul className="list-disc list-inside space-y-1 text-sm text-zinc-600 dark:text-zinc-400">
+                  {detalhes.if.filtros_aplicados.map((f, i) => (
+                    <li key={i}>{f}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 p-4 rounded-lg">
+              <h3 className="font-semibold text-sm mb-2">Memória de cálculo – IF</h3>
+              <p className="text-sm font-mono text-zinc-800 dark:text-zinc-200 whitespace-pre-wrap">
+                {detalhes?.if?.memoria_calculo ?? "Aguardando dados do período."}
+              </p>
             </div>
 
             <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg space-y-2">
@@ -459,20 +519,25 @@ export default function ExplicacaoIndicadoresPage() {
               {detalhes?.if ? (
                 <>
                   <p className="text-sm text-zinc-700 dark:text-zinc-200">
-                    Total BFS: <strong>{detalhes.if.total_fiscalizacoes}</strong>
+                    Total BFS (não demandantes): <strong>{detalhes.if.total_fiscalizacoes}</strong>
                   </p>
                   <p className="text-sm text-green-700 dark:text-green-300">
                     Sem irregularidade: <strong>{detalhes.if.total_sem_irregularidade}</strong>
                   </p>
+                  {typeof detalhes.if.total_com_irregularidade === "number" && (
+                    <p className="text-sm text-red-700 dark:text-red-300">
+                      Com irregularidade: <strong>{detalhes.if.total_com_irregularidade}</strong>
+                    </p>
+                  )}
                   <p className="text-sm">
-                    IF = ({detalhes.if.total_sem_irregularidade} / {detalhes.if.total_fiscalizacoes}) x 100 = {formatarValor(detalhes.if.valor, 2)}%
+                    IF = ({detalhes.if.total_sem_irregularidade} / {detalhes.if.total_fiscalizacoes}) x 1000 = {formatarValor(detalhes.if.valor, 2)} (equiv. {formatarValor(detalhes.if.percentual ?? ((detalhes.if.valor ?? 0) / 10), 2)}%)
                   </p>
                   <p className="text-sm">
-                    Pontuacao: <strong className="text-violet-600 dark:text-violet-300">{formatarValor(detalhes.if.pontuacao, 2)} pts</strong>
+                    Pontuação: <strong className="text-violet-600 dark:text-violet-300">{formatarValor(detalhes.if.pontuacao, 2)} pts</strong>
                   </p>
                 </>
               ) : (
-                <p className="text-sm text-zinc-600 dark:text-zinc-300">Nao ha fiscalizacoes no periodo informado.</p>
+                <p className="text-sm text-zinc-600 dark:text-zinc-300">Nenhuma fiscalização BFS não demandante no período.</p>
               )}
             </div>
 
@@ -674,7 +739,7 @@ export default function ExplicacaoIndicadoresPage() {
               </div>
               <div className="flex justify-between items-center p-3 bg-zinc-50 dark:bg-zinc-900 rounded">
                 <span className="font-medium">
-                  IA = {formatarValor(detalhes?.ia?.valor, 2)}% | {detalhes?.ia?.total_no_prazo ?? 0} dentro / {detalhes?.ia?.total_procedentes ?? 0} total
+                  IA = {formatarValor(detalhes?.ia?.valor, 2)} (x1000) | {formatarValor(detalhes?.ia?.percentual ?? ((detalhes?.ia?.valor ?? 0) / 10), 2)}% | {detalhes?.ia?.total_no_prazo ?? 0} no prazo, {detalhes?.ia?.total_fora_prazo ?? 0} fora
                 </span>
                 <span className="font-bold text-yellow-600 dark:text-yellow-400">
                   {formatarValor(detalhes?.ia?.pontuacao, 2)} pts
@@ -682,7 +747,7 @@ export default function ExplicacaoIndicadoresPage() {
               </div>
               <div className="flex justify-between items-center p-3 bg-zinc-50 dark:bg-zinc-900 rounded">
                 <span className="font-medium">
-                  IF = {formatarValor(detalhes?.if?.valor, 2)}% | {detalhes?.if?.total_sem_irregularidade ?? 0} sem ocorrencia
+                  IF = {formatarValor(detalhes?.if?.valor, 2)} (x1000) | {formatarValor(detalhes?.if?.percentual ?? ((detalhes?.if?.valor ?? 0) / 10), 2)}% | {detalhes?.if?.total_sem_irregularidade ?? 0} sem ocorrencia
                 </span>
                 <span className="font-bold text-green-600 dark:text-green-400">
                   {formatarValor(detalhes?.if?.pontuacao, 2)} pts

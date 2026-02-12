@@ -20,7 +20,7 @@ const tooltips = {
   IA: {
     nome: "IA – ÍNDICADOR DE ATENDIMENTO",
     descricao: "Avalia o percentual de solicitações demandantes atendidas dentro do prazo estabelecido.",
-    formula: "IA = (Solicitações Atendidas no Prazo / Total Demandantes Procedentes) × 100",
+    formula: "IA = (No prazo / (No prazo + Fora do prazo)) × 100",
     pontuacaoMax: 20,
   },
   IF: {

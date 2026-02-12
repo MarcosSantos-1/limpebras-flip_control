@@ -123,13 +123,17 @@ export default function IndicadoresPage() {
                   
                   <div className="bg-card p-5 rounded-xl border border-border hover:border-blue-500/30 transition-colors shadow-sm group">
                     <div className="text-xs font-bold text-blue-600 dark:text-blue-400 uppercase tracking-wider mb-2">IA</div>
-                    <div className="text-3xl font-bold text-foreground group-hover:scale-105 transition-transform origin-left">{resultado.ia?.valor?.toFixed(1)}%</div>
+                    <div className="text-3xl font-bold text-foreground group-hover:scale-105 transition-transform origin-left">
+                      {(resultado.ia?.percentual ?? ((resultado.ia?.valor ?? 0) / 10)).toFixed(1)}%
+                    </div>
                     <div className="text-sm text-muted-foreground mt-1 font-medium">{resultado.ia?.pontuacao} pontos</div>
                   </div>
                   
                   <div className="bg-card p-5 rounded-xl border border-border hover:border-amber-500/30 transition-colors shadow-sm group">
                     <div className="text-xs font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider mb-2">IF</div>
-                    <div className="text-3xl font-bold text-foreground group-hover:scale-105 transition-transform origin-left">{resultado.if?.valor?.toFixed(1)}%</div>
+                    <div className="text-3xl font-bold text-foreground group-hover:scale-105 transition-transform origin-left">
+                      {(resultado.if?.percentual ?? ((resultado.if?.valor ?? 0) / 10)).toFixed(1)}%
+                    </div>
                     <div className="text-sm text-muted-foreground mt-1 font-medium">{resultado.if?.pontuacao} pontos</div>
                   </div>
                   
