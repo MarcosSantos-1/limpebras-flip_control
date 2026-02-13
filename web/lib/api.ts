@@ -44,6 +44,8 @@ export interface CNC {
   data_abertura: string;
   prazo_hours: number;
   endereco?: string;
+  tipo_servico?: string;
+  sem_irregularidade?: boolean;
 }
 
 export interface Indicador {

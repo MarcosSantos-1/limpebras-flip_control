@@ -116,7 +116,6 @@ export function SACsBySubChart({
   const options: ChartOptions<"bar"> = {
     responsive: true,
     maintainAspectRatio: false,
-    indexAxis: "y",
     plugins: {
       legend: {
         position: "top",
@@ -132,26 +131,26 @@ export function SACsBySubChart({
         borderWidth: 1,
         padding: 12,
         callbacks: {
-          label: (context) => `${context.dataset.label}: ${context.parsed.x ?? context.parsed.y}`,
+          label: (context) => `${context.dataset.label}: ${context.parsed.y ?? context.parsed.x}`,
         },
       },
     },
     scales: {
       x: {
         grid: {
+          display: false,
+        },
+        ticks: {
+          color: tickColor,
+        },
+      },
+      y: {
+        grid: {
           color: gridColor,
         },
         ticks: {
           color: tickColor,
           precision: 0,
-        },
-      },
-      y: {
-        grid: {
-          display: false,
-        },
-        ticks: {
-          color: tickColor,
         },
       },
     },

@@ -25,12 +25,9 @@ import { SACsChart } from "@/components/sacs-chart";
 import { SACsBySubChart, type SACsBySubDatum } from "@/components/sacs-by-sub-chart";
 import { CNCsBySubChart, type CNCsBySubDatum } from "@/components/cncs-by-sub-chart";
 import { SACsTopServicesChart, type SACsTopServiceDatum } from "@/components/sacs-top-services-chart";
-import {
-  TIPOS_DEMANDANTES,
-  TIPOS_ESCALONADOS,
-  STATUS_PROCEDENTES,
-  SUBPREFEITURAS,
-} from "@/constants/sacs";
+import { CNCsTopServicesChart, type CNCsTopServiceDatum } from "@/components/cncs-top-services-chart";
+import { SACsOverdueBySubChart, type SACOverdueBySubDatum } from "@/components/sacs-overdue-by-sub-chart";
+import { SUBPREFEITURAS } from "@/constants/sacs";
 
 const SUBPREF_LOOKUP = SUBPREFEITURAS.reduce<Record<string, string>>((acc, sub) => {
   acc[sub.code.toUpperCase()] = sub.code;
@@ -56,8 +53,10 @@ export default function DashboardPage() {
   const [indicators, setIndicators] = useState<any>(null);
   const [sacsHistory, setSacsHistory] = useState<{ date: string; count: number }[]>([]);
   const [sacsBySub, setSacsBySub] = useState<SACsBySubDatum[]>([]);
+  const [sacsOverdueBySub, setSacsOverdueBySub] = useState<SACOverdueBySubDatum[]>([]);
   const [cncsBySub, setCncsBySub] = useState<CNCsBySubDatum[]>([]);
   const [sacsTopServices, setSacsTopServices] = useState<SACsTopServiceDatum[]>([]);
+  const [cncsTopServices, setCncsTopServices] = useState<CNCsTopServiceDatum[]>([]);
   const [selectedMonth, setSelectedMonth] = useState(() => startOfMonth(new Date()));
   const [loading, setLoading] = useState(true);
   const [iptModalOpen, setIptModalOpen] = useState(false);
@@ -134,21 +133,47 @@ export default function DashboardPage() {
     }, {});
 
     items.forEach((sac) => {
-      const bucket = baseMap[sac.subprefeitura as string];
-      if (!bucket) return;
+      const normalized = normalizeSubprefeitura(sac.subprefeitura) || "";
+      const code = SUBPREF_LOOKUP[normalized] || SUBPREF_LOOKUP[sac.subprefeitura?.toUpperCase() || ""];
+      if (!code || !baseMap[code]) return;
 
-      if (!STATUS_PROCEDENTES.includes(sac.status)) {
-        return;
-      }
+      const classificacao = (sac.classificacao_servico || "").trim();
+      const foraEscopo = (sac.finalizado_fora_de_escopo || "").trim().toUpperCase();
+      const procedente = (sac.procedente_por_status || "").trim().toUpperCase();
 
-      if (TIPOS_DEMANDANTES.includes(sac.tipo_servico)) {
-        bucket.demandantes += 1;
-      } else if (TIPOS_ESCALONADOS.includes(sac.tipo_servico)) {
-        bucket.escalonados += 1;
-      }
+      const isDemandanteIA = classificacao === "Solicitação" && foraEscopo === "NÃO";
+      const isEscalonadoIRD =
+        classificacao === "Reclamação" && foraEscopo === "NÃO" && procedente === "PROCEDE";
+
+      if (isDemandanteIA) baseMap[code].demandantes += 1;
+      if (isEscalonadoIRD) baseMap[code].escalonados += 1;
     });
 
     return SUBPREFEITURAS.map((sub) => baseMap[sub.code]);
+  };
+
+  const computeSacsOverdueBySub = (items: SAC[]): SACOverdueBySubDatum[] => {
+    const map = SUBPREFEITURAS.reduce<Record<string, SACOverdueBySubDatum>>((acc, sub) => {
+      acc[sub.code] = { label: sub.label, foraPrazo: 0, totalDemandantes: 0 };
+      return acc;
+    }, {});
+
+    items.forEach((sac) => {
+      const normalized = normalizeSubprefeitura(sac.subprefeitura) || "";
+      const code = SUBPREF_LOOKUP[normalized] || SUBPREF_LOOKUP[sac.subprefeitura?.toUpperCase() || ""];
+      if (!code || !map[code]) return;
+
+      const classificacao = (sac.classificacao_servico || "").trim();
+      const foraEscopo = (sac.finalizado_fora_de_escopo || "").trim().toUpperCase();
+      const responsividade = (sac.responsividade_execucao || "").trim().toUpperCase();
+      const isIA = classificacao === "Solicitação" && foraEscopo === "NÃO";
+      if (!isIA) return;
+
+      map[code].totalDemandantes += 1;
+      if (responsividade === "NÃO") map[code].foraPrazo += 1;
+    });
+
+    return SUBPREFEITURAS.map((sub) => map[sub.code]);
   };
 
   const computeCncsBySub = (items: CNC[], periodStart: Date, periodEnd: Date): CNCsBySubDatum[] => {
@@ -157,6 +182,8 @@ export default function DashboardPage() {
         subprefeitura: sub.code,
         label: sub.label,
         quantidade: 0,
+        semIrregularidade: 0,
+        comIrregularidade: 0,
       };
       return acc;
     }, {});
@@ -176,6 +203,11 @@ export default function DashboardPage() {
           return;
         }
         baseMap[code].quantidade += 1;
+        if (cnc.sem_irregularidade === true) {
+          baseMap[code].semIrregularidade += 1;
+        } else {
+          baseMap[code].comIrregularidade += 1;
+        }
       } catch {
         // Ignorar linhas inválidas
       }
@@ -191,6 +223,28 @@ export default function DashboardPage() {
       if (!key) return;
       counter.set(key, (counter.get(key) || 0) + 1);
     });
+    return Array.from(counter.entries()).map(([tipoServico, quantidade]) => ({ tipoServico, quantidade }));
+  };
+
+  const computeTopBfsServices = (items: CNC[], periodStart: Date, periodEnd: Date): CNCsTopServiceDatum[] => {
+    const startBoundary = normalizeDateForComparison(startOfDay(periodStart));
+    const endBoundary = normalizeDateForComparison(endOfDay(periodEnd));
+    const counter = new Map<string, number>();
+
+    items.forEach((cnc) => {
+      try {
+        const abertura = normalizeDateForComparison(new Date(cnc.data_abertura));
+        if (isNaN(abertura.getTime()) || abertura < startBoundary || abertura > endBoundary) {
+          return;
+        }
+        const key = (cnc.tipo_servico || "").trim();
+        if (!key) return;
+        counter.set(key, (counter.get(key) || 0) + 1);
+      } catch {
+        // Ignorar linhas inválidas
+      }
+    });
+
     return Array.from(counter.entries()).map(([tipoServico, quantidade]) => ({ tipoServico, quantidade }));
   };
 
@@ -261,10 +315,12 @@ export default function DashboardPage() {
       const sacItems = (sacsData?.items || []) as SAC[];
       setSacsHistory(groupByDate(sacItems, "data_criacao", periodStart, periodEnd));
       setSacsBySub(computeSacsBySub(sacItems));
+      setSacsOverdueBySub(computeSacsOverdueBySub(sacItems));
       setSacsTopServices(computeTopServices(sacItems));
 
       const cncItems = (cncsData?.items || []) as CNC[];
       setCncsBySub(computeCncsBySub(cncItems, periodStart, periodEnd));
+      setCncsTopServices(computeTopBfsServices(cncItems, periodStart, periodEnd));
       } catch (error) {
         console.error("Error fetching dashboard data:", error);
       } finally {
@@ -410,7 +466,7 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* Gráficos operacionais */}
+        {/* Gráficos operacionais - grid 2x2 */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <SACsChart
             data={sacsHistory}
@@ -427,27 +483,40 @@ export default function DashboardPage() {
             onNextMonth={handleNextMonth}
             disableNextMonth={disableNextMonth}
           />
-              </div>
+          <SACsOverdueBySubChart
+            data={sacsOverdueBySub}
+            monthLabel={monthLabel}
+            onPrevMonth={handlePrevMonth}
+            onNextMonth={handleNextMonth}
+            disableNextMonth={disableNextMonth}
+          />
+          <CNCsBySubChart
+            data={cncsBySub}
+            monthLabel={monthLabel}
+            onPrevMonth={handlePrevMonth}
+            onNextMonth={handleNextMonth}
+            disableNextMonth={disableNextMonth}
+          />
+        </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="md:col-span-1">
-            <CNCsBySubChart
-              data={cncsBySub}
-              monthLabel={monthLabel}
-              onPrevMonth={handlePrevMonth}
-              onNextMonth={handleNextMonth}
-              disableNextMonth={disableNextMonth}
-            />
-          </div>
-          <div className="md:col-span-2">
-            <SACsTopServicesChart
-              data={sacsTopServices}
-              monthLabel={monthLabel}
-              onPrevMonth={handlePrevMonth}
-              onNextMonth={handleNextMonth}
-              disableNextMonth={disableNextMonth}
-            />
-          </div>
+        <div className="grid grid-cols-1 gap-4">
+          <SACsTopServicesChart
+            data={sacsTopServices}
+            monthLabel={monthLabel}
+            onPrevMonth={handlePrevMonth}
+            onNextMonth={handleNextMonth}
+            disableNextMonth={disableNextMonth}
+          />
+        </div>
+
+        <div className="grid grid-cols-1 gap-4">
+          <CNCsTopServicesChart
+            data={cncsTopServices}
+            monthLabel={monthLabel}
+            onPrevMonth={handlePrevMonth}
+            onNextMonth={handleNextMonth}
+            disableNextMonth={disableNextMonth}
+          />
         </div>
 
         <IPTModal

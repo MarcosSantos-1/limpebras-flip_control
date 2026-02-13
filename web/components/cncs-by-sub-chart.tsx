@@ -28,6 +28,8 @@ export interface CNCsBySubDatum {
   subprefeitura: string
   label: string
   quantidade: number
+  semIrregularidade: number
+  comIrregularidade: number
 }
 
 interface CNCsBySubChartProps {
@@ -55,10 +57,20 @@ export function CNCsBySubChart({
   const isDark = theme === "dark"
   const gridColor = isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)"
   const tickColor = isDark ? "rgba(255, 255, 255, 0.8)" : "rgba(0, 0, 0, 0.7)"
-  const hasActivity = data.some((item) => item.quantidade > 0)
+  const hasActivity = data.some(
+    (item) => item.quantidade > 0 || item.semIrregularidade > 0 || item.comIrregularidade > 0
+  )
 
   const totals = useMemo(() => {
-    return data.reduce((acc, item) => acc + item.quantidade, 0)
+    return data.reduce(
+      (acc, item) => {
+        acc.total += item.quantidade
+        acc.semIrregularidade += item.semIrregularidade
+        acc.comIrregularidade += item.comIrregularidade
+        return acc
+      },
+      { total: 0, semIrregularidade: 0, comIrregularidade: 0 }
+    )
   }, [data])
 
   if (!mounted) {
@@ -91,7 +103,25 @@ export function CNCsBySubChart({
         borderColor: "rgb(16, 185, 129)",
         borderWidth: 1.5,
         borderRadius: 6,
-        barPercentage: 0.65,
+        barPercentage: 0.55,
+      },
+      {
+        label: "BFS sem irregularidade",
+        data: data.map((item) => item.semIrregularidade),
+        backgroundColor: "rgba(59, 130, 246, 0.65)",
+        borderColor: "rgb(59, 130, 246)",
+        borderWidth: 1.2,
+        borderRadius: 6,
+        barPercentage: 0.55,
+      },
+      {
+        label: "BFS com irregularidade",
+        data: data.map((item) => item.comIrregularidade),
+        backgroundColor: "rgba(244, 63, 94, 0.65)",
+        borderColor: "rgb(244, 63, 94)",
+        borderWidth: 1.2,
+        borderRadius: 6,
+        barPercentage: 0.55,
       },
     ],
   }
@@ -157,7 +187,10 @@ export function CNCsBySubChart({
           </div>
           <div className="text-right text-sm">
             <p className="text-muted-foreground">Total no mês</p>
-            <p className="text-2xl font-semibold text-foreground">{totals}</p>
+            <p className="text-2xl font-semibold text-foreground">{totals.total}</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              Sem irreg.: {totals.semIrregularidade} | Com irreg.: {totals.comIrregularidade}
+            </p>
           </div>
         </div>
       </CardHeader>
