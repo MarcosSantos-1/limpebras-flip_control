@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import Link from "next/link";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { apiService, type SAC, type CNC } from "@/lib/api";
@@ -49,6 +50,74 @@ const normalizeDateForComparison = (date: Date) => {
   return new Date(date.getTime() + date.getTimezoneOffset() * 60_000);
 };
 
+interface SACLocationRankingDatum {
+  nome: string;
+  quantidade: number;
+  tipoMaisFrequente?: string;
+  tipos: { tipoServico: string; quantidade: number }[];
+}
+
+const sanitizeAddressPart = (value?: string | null) => {
+  return (value || "")
+    .replace(/\s+/g, " ")
+    .replace(/[;|]+/g, " ")
+    .trim();
+};
+
+const LOGRADOURO_PREFIX_REGEX =
+  /^(RUA|R\.|AVENIDA|AV\.|ALAMEDA|TRAVESSA|TV\.?|ESTRADA|RODOVIA|PRAÇA|PRACA|LARGO|VIELA|PASSAGEM)\b/i;
+
+const isLikelyLogradouro = (part: string) => LOGRADOURO_PREFIX_REGEX.test(part.trim());
+
+const extractLogradouro = (address?: string | null) => {
+  const raw = sanitizeAddressPart(address);
+  if (!raw) return null;
+  const firstChunk = raw.split("-")[0]?.split(",")[0]?.trim() || "";
+  if (!firstChunk) return null;
+  return firstChunk.replace(/\s+\d+.*$/, "").trim() || null;
+};
+
+const extractBairro = (address?: string | null) => {
+  const raw = sanitizeAddressPart(address);
+  if (!raw) return null;
+
+  const chunks = raw
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  const normalizeChunk = (value: string) =>
+    value
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toUpperCase();
+
+  const isInvalidBairroChunk = (value: string) => {
+    const normalized = normalizeChunk(value);
+    if (!normalized) return true;
+    if (/\bCEP\b/i.test(normalized) || /\d{5}-?\d{3}/.test(value)) return true;
+    if (normalized === "BRASIL" || normalized === "BRAZIL") return true;
+    if (normalized === "SAO PAULO") return true;
+    if (/^[A-Z]{2}$/.test(normalized)) return true;
+    if (isLikelyLogradouro(value)) return true;
+    return false;
+  };
+
+  // Endereço padrão: rua, numero, bairro, cep, cidade, estado, país.
+  const thirdChunk = chunks[2];
+  if (thirdChunk && !isInvalidBairroChunk(thirdChunk)) {
+    return thirdChunk.replace(/^BAIRRO[:\s-]*/i, "").trim();
+  }
+
+  for (let idx = chunks.length - 1; idx >= 0; idx -= 1) {
+    const part = chunks[idx];
+    if (!part || isInvalidBairroChunk(part)) continue;
+    return part.replace(/^BAIRRO[:\s-]*/i, "").trim();
+  }
+
+  return null;
+};
+
 export default function DashboardPage() {
   const [indicators, setIndicators] = useState<any>(null);
   const [sacsHistory, setSacsHistory] = useState<{ date: string; count: number }[]>([]);
@@ -57,6 +126,10 @@ export default function DashboardPage() {
   const [cncsBySub, setCncsBySub] = useState<CNCsBySubDatum[]>([]);
   const [sacsTopServices, setSacsTopServices] = useState<SACsTopServiceDatum[]>([]);
   const [cncsTopServices, setCncsTopServices] = useState<CNCsTopServiceDatum[]>([]);
+  const [topBairrosEscalonados, setTopBairrosEscalonados] = useState<SACLocationRankingDatum[]>([]);
+  const [topBairrosDemandantes, setTopBairrosDemandantes] = useState<SACLocationRankingDatum[]>([]);
+  const [topLogradourosEscalonados, setTopLogradourosEscalonados] = useState<SACLocationRankingDatum[]>([]);
+  const [topLogradourosDemandantes, setTopLogradourosDemandantes] = useState<SACLocationRankingDatum[]>([]);
   const [selectedMonth, setSelectedMonth] = useState(() => startOfMonth(new Date()));
   const [loading, setLoading] = useState(true);
   const [iptModalOpen, setIptModalOpen] = useState(false);
@@ -73,6 +146,15 @@ export default function DashboardPage() {
   const handleNextMonth = () => {
     if (disableNextMonth) return;
     setSelectedMonth((prev) => addMonths(prev, 1));
+  };
+
+  const handleMonthInputChange = (value: string) => {
+    if (!value) return;
+    const [year, month] = value.split("-");
+    const y = Number(year);
+    const m = Number(month);
+    if (!Number.isFinite(y) || !Number.isFinite(m) || m < 1 || m > 12) return;
+    setSelectedMonth(startOfMonth(new Date(y, m - 1, 1)));
   };
 
   // Função auxiliar para agrupar dados por data
@@ -226,6 +308,76 @@ export default function DashboardPage() {
     return Array.from(counter.entries()).map(([tipoServico, quantidade]) => ({ tipoServico, quantidade }));
   };
 
+  const computeTopSacLocations = (items: SAC[]) => {
+    type Bucket = { quantidade: number; tipos: Map<string, number> };
+
+    const bairrosEscalonados = new Map<string, Bucket>();
+    const bairrosDemandantes = new Map<string, Bucket>();
+    const logradourosEscalonados = new Map<string, Bucket>();
+    const logradourosDemandantes = new Map<string, Bucket>();
+
+    const upsertBucket = (map: Map<string, Bucket>, key: string, tipoServico?: string | null) => {
+      if (!key) return;
+      const bucket = map.get(key) || { quantidade: 0, tipos: new Map<string, number>() };
+      bucket.quantidade += 1;
+      const tipo = (tipoServico || "").trim();
+      if (tipo) {
+        bucket.tipos.set(tipo, (bucket.tipos.get(tipo) || 0) + 1);
+      }
+      map.set(key, bucket);
+    };
+
+    items.forEach((sac) => {
+      const classificacao = (sac.classificacao_servico || "").trim();
+      const foraEscopo = (sac.finalizado_fora_de_escopo || "").trim().toUpperCase();
+      const procedente = (sac.procedente_por_status || "").trim().toUpperCase();
+      const isDemandanteIA = classificacao === "Solicitação" && foraEscopo === "NÃO";
+      const isEscalonadoIRD = classificacao === "Reclamação" && foraEscopo === "NÃO" && procedente === "PROCEDE";
+      if (!isDemandanteIA && !isEscalonadoIRD) return;
+
+      const normalized = normalizeSubprefeitura(sac.subprefeitura) || "";
+      const subCode = SUBPREF_LOOKUP[normalized] || SUBPREF_LOOKUP[sac.subprefeitura?.toUpperCase() || ""];
+      const bairro = extractBairro(sac.endereco_text);
+      const logradouro = extractLogradouro(sac.endereco_text);
+      const tipoServico = sac.tipo_servico;
+
+      if (isEscalonadoIRD) {
+        if (bairro && subCode) upsertBucket(bairrosEscalonados, `${bairro} (${subCode})`, tipoServico);
+        if (logradouro) upsertBucket(logradourosEscalonados, logradouro, tipoServico);
+      }
+
+      if (isDemandanteIA) {
+        if (bairro && subCode) upsertBucket(bairrosDemandantes, `${bairro} (${subCode})`, tipoServico);
+        if (logradouro) upsertBucket(logradourosDemandantes, logradouro, tipoServico);
+      }
+    });
+
+    const toRanking = (map: Map<string, Bucket>, includeTipo: boolean): SACLocationRankingDatum[] => {
+      return Array.from(map.entries())
+        .map(([nome, bucket]) => {
+          const tipos = Array.from(bucket.tipos.entries())
+            .map(([tipoServico, quantidade]) => ({ tipoServico, quantidade }))
+            .sort((a, b) => b.quantidade - a.quantidade)
+            .slice(0, 8);
+          let tipoMaisFrequente: string | undefined;
+          if (includeTipo && tipos.length > 0) {
+            tipoMaisFrequente = tipos[0].tipoServico;
+          }
+          return { nome, quantidade: bucket.quantidade, tipoMaisFrequente, tipos };
+        })
+        .filter((item) => item.quantidade >= 3)
+        .sort((a, b) => b.quantidade - a.quantidade)
+        .slice(0, 50);
+    };
+
+    return {
+      bairrosEscalonados: toRanking(bairrosEscalonados, true),
+      bairrosDemandantes: toRanking(bairrosDemandantes, false),
+      logradourosEscalonados: toRanking(logradourosEscalonados, true),
+      logradourosDemandantes: toRanking(logradourosDemandantes, false),
+    };
+  };
+
   const computeTopBfsServices = (items: CNC[], periodStart: Date, periodEnd: Date): CNCsTopServiceDatum[] => {
     const startBoundary = normalizeDateForComparison(startOfDay(periodStart));
     const endBoundary = normalizeDateForComparison(endOfDay(periodEnd));
@@ -317,6 +469,11 @@ export default function DashboardPage() {
       setSacsBySub(computeSacsBySub(sacItems));
       setSacsOverdueBySub(computeSacsOverdueBySub(sacItems));
       setSacsTopServices(computeTopServices(sacItems));
+      const topLocations = computeTopSacLocations(sacItems);
+      setTopBairrosEscalonados(topLocations.bairrosEscalonados);
+      setTopBairrosDemandantes(topLocations.bairrosDemandantes);
+      setTopLogradourosEscalonados(topLocations.logradourosEscalonados);
+      setTopLogradourosDemandantes(topLocations.logradourosDemandantes);
 
       const cncItems = (cncsData?.items || []) as CNC[];
       setCncsBySub(computeCncsBySub(cncItems, periodStart, periodEnd));
@@ -452,10 +609,19 @@ export default function DashboardPage() {
 
             {/* ADC à direita - ring estilizado com design neon */}
             <div className="flex items-center justify-center">
-              <ADCRingChart 
-                total={indicators.data?.ADC?.total || 0}
-                percentual={indicators.data?.ADC?.percentual || 0}
-              />
+              <Link
+                href="/indicadores/explicacao"
+                className="group relative rounded-xl p-2 transition-all hover:scale-[1.02] hover:shadow-[0_0_24px_rgba(99,102,241,0.25)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                title="Clique para ver a explicação detalhada dos indicadores"
+              >
+                <ADCRingChart
+                  total={indicators.data?.ADC?.total || 0}
+                  percentual={indicators.data?.ADC?.percentual || 0}
+                />
+                <span className="pointer-events-none absolute left-1/2 top-full mt-2 -translate-x-1/2 whitespace-nowrap rounded-md bg-popover px-3 py-1 text-xs text-popover-foreground opacity-0 shadow-md ring-1 ring-border transition-opacity group-hover:opacity-100">
+                  Clique para ver detalhes dos indicadores
+                </span>
+              </Link>
             </div>
           </div>
         ) : (
@@ -517,6 +683,146 @@ export default function DashboardPage() {
             onNextMonth={handleNextMonth}
             disableNextMonth={disableNextMonth}
           />
+        </div>
+
+        <div className="grid grid-cols-1 gap-4">
+          <Card className="border-0 shadow-xl bg-linear-to-br from-background to-muted/20">
+            <CardHeader>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <CardTitle className="text-xl">Rankings Avançados de SAC</CardTitle>
+                  <CardDescription>
+                    Expanda cada ranking para detalhar bairros/logradouros e tipos de serviço com maior volume.
+                  </CardDescription>
+                </div>
+                <div className="flex items-center gap-2">
+                  <label htmlFor="dashboard-month-rankings" className="text-xs text-muted-foreground">
+                    Mês dos rankings
+                  </label>
+                  <input
+                    id="dashboard-month-rankings"
+                    type="month"
+                    value={format(selectedMonth, "yyyy-MM")}
+                    max={format(today, "yyyy-MM")}
+                    onChange={(e) => handleMonthInputChange(e.target.value)}
+                    className="h-9 rounded-md border border-border bg-background px-3 text-sm"
+                  />
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {[
+                {
+                  title: "Bairros com mais SACs Escalonados",
+                  subtitle: "Top 50 por bairro + subprefeitura (com detalhamento por tipo)",
+                  data: topBairrosEscalonados,
+                },
+                {
+                  title: "Bairros com mais SACs Demandantes",
+                  subtitle: "Top 50 por bairro + subprefeitura",
+                  data: topBairrosDemandantes,
+                },
+                {
+                  title: "Logradouros com mais SACs Escalonados",
+                  subtitle: "Top 50 de vias com maior volume e composição por tipo",
+                  data: topLogradourosEscalonados,
+                },
+                {
+                  title: "Logradouros com mais SACs Demandantes",
+                  subtitle: "Top 50 de vias com maior volume",
+                  data: topLogradourosDemandantes,
+                },
+              ].map((group) => (
+                <details
+                  key={group.title}
+                  className="group/ranking rounded-xl bg-card/70 shadow-md ring-1 ring-primary/10 px-4 py-3 open:shadow-lg transition-all hover:shadow-[0_0_24px_rgba(56,189,248,0.16)] hover:ring-primary/30"
+                >
+                  <summary className="cursor-pointer list-none select-none">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="font-semibold text-foreground">{group.title}</p>
+                        <p className="text-xs text-muted-foreground">{group.subtitle}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs rounded-full bg-primary/10 text-primary px-2 py-1">
+                          {group.data.length} itens
+                        </span>
+                        <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-primary transition-transform group-open/ranking:rotate-90">
+                          ▶
+                        </span>
+                      </div>
+                    </div>
+                    <p className="mt-2 text-[11px] text-muted-foreground">Clique para expandir/ocultar</p>
+                  </summary>
+
+                  <div className="mt-3 space-y-2">
+                    {group.data.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">Sem dados suficientes no período.</p>
+                    ) : (
+                      group.data.map((item, index) => (
+                        <details
+                          key={item.nome}
+                          className="group/item rounded-lg bg-background/90 p-3 shadow-sm ring-1 ring-border/40 open:shadow-md hover:shadow-[0_0_14px_rgba(99,102,241,0.12)]"
+                        >
+                          <summary className="cursor-pointer list-none">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="text-sm font-medium truncate">
+                                  {index + 1}. {item.nome}
+                                </p>
+                                {item.tipoMaisFrequente && (
+                                  <p className="text-xs text-muted-foreground truncate">
+                                    Tipo mais frequente: {item.tipoMaisFrequente}
+                                  </p>
+                                )}
+                              </div>
+                              <div className="text-right">
+                                <p className="text-lg font-semibold">{item.quantidade}</p>
+                                <p className="text-[11px] text-muted-foreground">solicitações</p>
+                              </div>
+                            </div>
+                            <div className="mt-1 flex items-center justify-end">
+                              <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-indigo-500/10 text-indigo-500 transition-transform group-open/item:rotate-90">
+                                ▶
+                              </span>
+                            </div>
+                          </summary>
+
+                          <div className="mt-3 pt-3 border-t border-border/50">
+                            <p className="text-xs font-semibold text-muted-foreground mb-2">
+                              Solicitações por tipo de serviço
+                            </p>
+                            {item.tipos.length === 0 ? (
+                              <p className="text-xs text-muted-foreground">Sem detalhamento de tipo neste item.</p>
+                            ) : (
+                              <div className="space-y-2">
+                                {item.tipos.map((tipo) => (
+                                  <div key={`${item.nome}-${tipo.tipoServico}`} className="space-y-1">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <p className="text-xs text-foreground truncate">{tipo.tipoServico}</p>
+                                      <p className="text-xs font-medium text-muted-foreground">{tipo.quantidade}</p>
+                                    </div>
+                                    <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                                      <div
+                                        className="h-full rounded-full bg-linear-to-r from-cyan-500 to-indigo-500"
+                                        style={{
+                                          width: `${Math.max(6, (tipo.quantidade / item.quantidade) * 100)}%`,
+                                        }}
+                                      />
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </details>
+                      ))
+                    )}
+                  </div>
+                </details>
+              ))}
+            </CardContent>
+          </Card>
         </div>
 
         <IPTModal

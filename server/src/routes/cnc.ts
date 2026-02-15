@@ -49,7 +49,7 @@ export const cncRoutes: FastifyPluginAsync = async (fastify) => {
         params.push(`%${tipo_servico}%`);
         i++;
       }
-      sql += " ORDER BY data_fiscalizacao DESC LIMIT 2000";
+      sql += " ORDER BY data_fiscalizacao DESC";
       const r = await pool.query(sql, params);
       const rows = r.rows.map((row) => ({
         id: String(row.id),

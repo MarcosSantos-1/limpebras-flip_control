@@ -89,6 +89,17 @@ export function SACsChart({
     }
   })
 
+  const getWeekdayLabel = (rawDate?: string) => {
+    if (!rawDate) return ""
+    const date = new Date(rawDate)
+    if (isNaN(date.getTime())) return ""
+    const weekday = date
+      .toLocaleDateString("pt-BR", { weekday: "short" })
+      .replace(".", "")
+      .toUpperCase()
+    return weekday
+  }
+
   const chartData = {
     labels,
     datasets: [
@@ -118,6 +129,14 @@ export function SACsChart({
         borderWidth: 1,
         padding: 12,
         callbacks: {
+          title: function(context) {
+            const point = context[0]
+            if (!point) return ""
+            const row = data[point.dataIndex]
+            const baseLabel = labels[point.dataIndex] || ""
+            const weekday = getWeekdayLabel(row?.date)
+            return weekday ? `${baseLabel} - ${weekday}` : baseLabel
+          },
           label: function(context) {
             return `SACs: ${context.parsed.y}`
           }
