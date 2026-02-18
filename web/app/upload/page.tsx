@@ -36,6 +36,30 @@ const cardColors = {
     text: "text-purple-600 dark:text-purple-400",
     gradient: "from-purple-500 to-violet-500",
   },
+  iptHistoricoOs: {
+    border: "border-emerald-500",
+    bg: "bg-emerald-50 dark:bg-emerald-900/20",
+    text: "text-emerald-600 dark:text-emerald-400",
+    gradient: "from-emerald-500 to-teal-500",
+  },
+  iptHistoricoOsVarricao: {
+    border: "border-lime-500",
+    bg: "bg-lime-50 dark:bg-lime-900/20",
+    text: "text-lime-600 dark:text-lime-400",
+    gradient: "from-lime-500 to-green-500",
+  },
+  iptReport: {
+    border: "border-fuchsia-500",
+    bg: "bg-fuchsia-50 dark:bg-fuchsia-900/20",
+    text: "text-fuchsia-600 dark:text-fuchsia-400",
+    gradient: "from-fuchsia-500 to-pink-500",
+  },
+  iptStatusBateria: {
+    border: "border-sky-500",
+    bg: "bg-sky-50 dark:bg-sky-900/20",
+    text: "text-sky-600 dark:text-sky-400",
+    gradient: "from-sky-500 to-indigo-500",
+  },
 };
 
 export default function UploadPage() {
@@ -44,6 +68,10 @@ export default function UploadPage() {
     cnc: { status: "idle" },
     acic: { status: "idle" },
     ouvidoria: { status: "idle" },
+    iptHistoricoOs: { status: "idle" },
+    iptHistoricoOsVarricao: { status: "idle" },
+    iptReport: { status: "idle" },
+    iptStatusBateria: { status: "idle" },
   });
   const [draggedOver, setDraggedOver] = useState<string | null>(null);
   const [lastUpdates, setLastUpdates] = useState<Record<string, { ultimo_import?: string | null; source_file?: string | null; total_registros?: number }>>({});
@@ -84,6 +112,18 @@ export default function UploadPage() {
         case "ouvidoria":
           data = await apiService.uploadOuvidoriaCSV(file);
           break;
+        case "iptHistoricoOs":
+          data = await apiService.uploadIptHistoricoOsXlsx(file);
+          break;
+        case "iptHistoricoOsVarricao":
+          data = await apiService.uploadIptHistoricoOsVarricaoXlsx(file);
+          break;
+        case "iptReport":
+          data = await apiService.uploadIptReportXlsx(file);
+          break;
+        case "iptStatusBateria":
+          data = await apiService.uploadIptStatusBateriaXlsx(file);
+          break;
         default:
           return;
       }
@@ -118,7 +158,10 @@ export default function UploadPage() {
       e.preventDefault();
       setDraggedOver(null);
       const file = e.dataTransfer.files[0];
-      if (file && file.name.endsWith(".csv")) {
+      const lowerName = file?.name?.toLowerCase() || "";
+      const isIptType = type.startsWith("ipt");
+      const isValid = isIptType ? lowerName.endsWith(".xlsx") : lowerName.endsWith(".csv");
+      if (file && isValid) {
         handleUpload(type, file);
       }
     },
@@ -139,6 +182,9 @@ export default function UploadPage() {
     const isUploading = state.status === "uploading";
     const lastUpdate = lastUpdates[type];
     const colors = cardColors[type as keyof typeof cardColors];
+    const isIptType = type.startsWith("ipt");
+    const accept = isIptType ? ".xlsx" : ".csv";
+    const fileLabel = isIptType ? "XLSX" : "CSV";
     const formatDateTime = (value?: string | null) => {
       if (!value) return "Sem importação ainda";
       const d = new Date(value);
@@ -206,7 +252,7 @@ export default function UploadPage() {
               <>
                 <input
                   type="file"
-                  accept=".csv"
+                  accept={accept}
                   onChange={(e) => {
                     const file = e.target.files?.[0];
                     if (file) handleUpload(type, file);
@@ -224,10 +270,10 @@ export default function UploadPage() {
                   </div>
                   <div>
                     <p className="text-sm font-medium text-foreground mb-1 group-hover:text-primary transition-colors">
-                      Clique ou arraste o CSV aqui
+                      {`Clique ou arraste o ${fileLabel} aqui`}
                     </p>
                     <p className="text-xs text-muted-foreground/70">
-                      {isDragged ? "Solte para iniciar o upload!" : "Suporta arquivos .csv"}
+                      {isDragged ? "Solte para iniciar o upload!" : `Suporta arquivos ${accept}`}
                     </p>
                   </div>
                 </label>
@@ -324,7 +370,7 @@ export default function UploadPage() {
           <div className="relative">
             <h1 className="text-4xl font-bold tracking-tight bg-linear-to-r from-indigo-600 to-purple-500 bg-clip-text text-transparent pb-2">Upload de Dados</h1>
             <p className="text-muted-foreground mt-2 text-lg max-w-2xl">
-              Importação de arquivos CSV do sistema FLIP para atualização da base de dados.
+              Importação de arquivos CSV (ADC) e XLSX (IPT) para atualização da base de dados.
             </p>
           </div>
         </div>
@@ -349,6 +395,26 @@ export default function UploadPage() {
             title="Ouvidorias"
             type="ouvidoria"
             description="Upload do arquivo FLIP_CONSULTA_OUVIDORIA_*.csv"
+          />
+          <UploadCard
+            title="IPT - Histórico OS (Garbage Veículos)"
+            type="iptHistoricoOs"
+            description="Upload do arquivo historico_os.xlsx"
+          />
+          <UploadCard
+            title="IPT - Histórico OS (Varrição)"
+            type="iptHistoricoOsVarricao"
+            description="Upload do arquivo historico_os (1).xlsx"
+          />
+          <UploadCard
+            title="IPT - Report SELIMP"
+            type="iptReport"
+            description="Upload do arquivo report.xlsx"
+          />
+          <UploadCard
+            title="IPT - Status de Bateria"
+            type="iptStatusBateria"
+            description="Upload do arquivo Status de Bateria.xlsx"
           />
         </div>
       </div>

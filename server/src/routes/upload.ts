@@ -1,6 +1,7 @@
-import { FastifyPluginAsync } from "fastify";
+import { FastifyPluginAsync, FastifyRequest } from "fastify";
 import { pool } from "../db.js";
 import { parseSacCsv, parseBfsCsv, parseOuvidoriaCsv, parseAcicCsv } from "../services/parseCsv.js";
+import { parseIptWorkbook, type IptFileType } from "../services/parseIptXlsx.js";
 import { BFS_NAO_DEMANDANTES } from "../constants/bfs.js";
 
 export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
@@ -14,6 +15,85 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       source_file: last.rows[0]?.source_file ?? null,
       total_registros: Number(count.rows[0]?.total ?? 0),
     };
+  };
+
+  const getLastIptUpdate = async (fileType: IptFileType) => {
+    const last = await pool.query(
+      `SELECT source_file, updated_at
+       FROM ipt_imports
+       WHERE file_type = $1
+       ORDER BY updated_at DESC NULLS LAST, id DESC
+       LIMIT 1`,
+      [fileType]
+    );
+    const count = await pool.query(
+      `SELECT COUNT(*)::int AS total
+       FROM ipt_imports
+       WHERE file_type = $1`,
+      [fileType]
+    );
+    return {
+      ultimo_import: last.rows[0]?.updated_at ?? null,
+      source_file: last.rows[0]?.source_file ?? null,
+      total_registros: Number(count.rows[0]?.total ?? 0),
+    };
+  };
+
+  const importIptFile = async (fileType: IptFileType, request: FastifyRequest) => {
+    const data = await request.file();
+    if (!data) {
+      throw new Error("Arquivo XLSX obrigatório");
+    }
+    const buffer = await data.toBuffer();
+    const sourceFile = data.filename;
+    const rows = parseIptWorkbook(buffer, fileType);
+
+    const client = await pool.connect();
+    try {
+      let inserted = 0;
+      let updated = 0;
+
+      for (const row of rows) {
+        const result = await client.query(
+          `INSERT INTO ipt_imports (
+            file_type, record_key, setor, data_referencia, servico, raw, source_file, updated_at
+          ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, NOW())
+          ON CONFLICT (file_type, record_key)
+          DO UPDATE SET
+            setor = EXCLUDED.setor,
+            data_referencia = EXCLUDED.data_referencia,
+            servico = EXCLUDED.servico,
+            raw = EXCLUDED.raw,
+            source_file = EXCLUDED.source_file,
+            updated_at = NOW()
+          RETURNING (xmax = 0) AS inserted`,
+          [
+            fileType,
+            row.recordKey,
+            row.setor || null,
+            row.dataReferencia,
+            row.servico || null,
+            JSON.stringify(row.raw),
+            sourceFile,
+          ]
+        );
+        const wasInserted = Boolean(result.rows[0]?.inserted);
+        if (wasInserted) inserted += 1;
+        else updated += 1;
+      }
+
+      return {
+        processados: inserted + updated,
+        total: rows.length,
+        inseridos: inserted,
+        atualizados: updated,
+        duplicados: 0,
+        erros: 0,
+        ultimo_import: new Date().toISOString(),
+      };
+    } finally {
+      client.release();
+    }
   };
 
   fastify.post("/upload/sacs-csv", async (request, reply) => {
@@ -233,14 +313,64 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
+  fastify.post("/upload/ipt-historico-os", async (request, reply) => {
+    try {
+      return await importIptFile("ipt_historico_os", request);
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : "Falha no upload IPT";
+      return reply.code(400).send({ detail });
+    }
+  });
+
+  fastify.post("/upload/ipt-historico-os-varricao", async (request, reply) => {
+    try {
+      return await importIptFile("ipt_historico_os_varricao", request);
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : "Falha no upload IPT";
+      return reply.code(400).send({ detail });
+    }
+  });
+
+  fastify.post("/upload/ipt-report", async (request, reply) => {
+    try {
+      return await importIptFile("ipt_report_selimp", request);
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : "Falha no upload IPT";
+      return reply.code(400).send({ detail });
+    }
+  });
+
+  fastify.post("/upload/ipt-status-bateria", async (request, reply) => {
+    try {
+      return await importIptFile("ipt_status_bateria", request);
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : "Falha no upload IPT";
+      return reply.code(400).send({ detail });
+    }
+  });
+
   fastify.get("/upload/last-updates", async () => {
-    const [sacs, cnc, acic, ouvidoria] = await Promise.all([
+    const [sacs, cnc, acic, ouvidoria, iptHistoricoOs, iptHistoricoOsVarricao, iptReport, iptStatusBateria] =
+      await Promise.all([
       getLastUpdate("sacs"),
       getLastUpdate("bfs"),
       getLastUpdate("acic"),
       getLastUpdate("ouvidoria"),
-    ]);
-    return { sacs, cnc, acic, ouvidoria };
+      getLastIptUpdate("ipt_historico_os"),
+      getLastIptUpdate("ipt_historico_os_varricao"),
+      getLastIptUpdate("ipt_report_selimp"),
+      getLastIptUpdate("ipt_status_bateria"),
+      ]);
+    return {
+      sacs,
+      cnc,
+      acic,
+      ouvidoria,
+      iptHistoricoOs,
+      iptHistoricoOsVarricao,
+      iptReport,
+      iptStatusBateria,
+    };
   });
 
   fastify.post("/upload/clear-sacs", async (_request, reply) => {

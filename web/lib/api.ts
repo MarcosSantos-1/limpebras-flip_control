@@ -143,6 +143,42 @@ export const apiService = {
     return data;
   },
 
+  uploadIptHistoricoOsXlsx: async (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const { data } = await api.post('/upload/ipt-historico-os', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return data;
+  },
+
+  uploadIptHistoricoOsVarricaoXlsx: async (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const { data } = await api.post('/upload/ipt-historico-os-varricao', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return data;
+  },
+
+  uploadIptReportXlsx: async (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const { data } = await api.post('/upload/ipt-report', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return data;
+  },
+
+  uploadIptStatusBateriaXlsx: async (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const { data } = await api.post('/upload/ipt-status-bateria', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return data;
+  },
+
   getUploadLastUpdates: async () => {
     const { data } = await api.get('/upload/last-updates');
     return data;

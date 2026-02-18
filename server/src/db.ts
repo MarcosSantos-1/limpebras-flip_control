@@ -91,6 +91,29 @@ export async function runMigrations() {
         UNIQUE (periodo_inicial, periodo_final)
       );
     `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS ipt_imports (
+        id SERIAL PRIMARY KEY,
+        file_type TEXT NOT NULL,
+        record_key TEXT NOT NULL,
+        setor TEXT,
+        data_referencia TIMESTAMPTZ,
+        servico TEXT,
+        raw JSONB NOT NULL,
+        source_file TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client
+      .query("CREATE UNIQUE INDEX IF NOT EXISTS ux_ipt_imports_file_key ON ipt_imports(file_type, record_key)")
+      .catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_ipt_imports_tipo ON ipt_imports(file_type)").catch(() => {});
+    await client
+      .query("CREATE INDEX IF NOT EXISTS idx_ipt_imports_data_referencia ON ipt_imports(data_referencia)")
+      .catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_ipt_imports_setor ON ipt_imports(setor)").catch(() => {});
   } finally {
     client.release();
   }
