@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { apiService, type SAC, type CNC } from "@/lib/api";
@@ -19,7 +20,6 @@ import {
 import { ptBR } from "date-fns/locale";
 import { ADCRingChart } from "@/components/adc-ring-chart";
 import { IndicatorTooltip } from "@/components/indicator-tooltip";
-import { IPTModal } from "@/components/ipt-modal";
 import Lottie from "lottie-react";
 import loadingAnimation from "@/public/Loading.json";
 import { SACsChart } from "@/components/sacs-chart";
@@ -132,7 +132,7 @@ export default function DashboardPage() {
   const [topLogradourosDemandantes, setTopLogradourosDemandantes] = useState<SACLocationRankingDatum[]>([]);
   const [selectedMonth, setSelectedMonth] = useState(() => startOfMonth(new Date()));
   const [loading, setLoading] = useState(true);
-  const [iptModalOpen, setIptModalOpen] = useState(false);
+  const router = useRouter();
 
   const today = new Date();
   const disableNextMonth = isSameMonth(selectedMonth, startOfMonth(today));
@@ -582,7 +582,7 @@ export default function DashboardPage() {
 
               <Card 
                 className="p-4 cursor-pointer hover:scale-[1.02] transition-all duration-200 border-l-4 border-l-purple-500"
-                onClick={() => setIptModalOpen(true)}
+                onClick={() => router.push("/ipt")}
               >
                 <CardHeader className="p-0 pb-4">
                   <IndicatorTooltip 
@@ -597,7 +597,7 @@ export default function DashboardPage() {
                   <div className="text-lg font-semibold text-muted-foreground mb-1">
                     {indicators.data?.IPT?.pontuacao ?? 0} Pontos
                     {!indicators.data?.IPT?.valor && (
-                      <span className="text-xs text-muted-foreground/70"> (Clique para atualizar)</span>
+                      <span className="text-xs text-muted-foreground/70"> (Clique para abrir a página IPT)</span>
                     )}
                   </div>
                   <div className="text-3xl font-bold bg-linear-to-r from-purple-600 to-purple-400 bg-clip-text text-transparent">
@@ -825,17 +825,6 @@ export default function DashboardPage() {
           </Card>
         </div>
 
-        <IPTModal
-          open={iptModalOpen}
-          onOpenChange={setIptModalOpen}
-          onSuccess={() => {
-            // Recarregar dados após salvar IPT
-            setLoading(true);
-            loadData();
-          }}
-          currentValue={indicators?.data?.IPT?.valor}
-          currentPontuacao={indicators?.data?.IPT?.pontuacao}
-        />
       </div>
     </MainLayout>
   );

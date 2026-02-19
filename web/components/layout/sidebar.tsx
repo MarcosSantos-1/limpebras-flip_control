@@ -10,6 +10,7 @@ import {
   Settings,
   FileWarning,
   ChartPie,
+  Activity,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { ThemeToggle } from "@/components/theme-toggle"
@@ -17,6 +18,7 @@ import { ThemeToggle } from "@/components/theme-toggle"
 const navItems = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/indicadores", label: "Indicadores", icon: ChartPie  },
+  { href: "/ipt", label: "IPT", icon: Activity },
   { href: "/sacs", label: "SACs", icon: FileText },
   { href: "/bfs", label: "BFSs", icon: AlertTriangle },
   { href: "/acic", label: "ACICs", icon: FileWarning },

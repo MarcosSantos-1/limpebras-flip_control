@@ -64,6 +64,69 @@ export interface KPIs {
   cncs_urgentes: number;
 }
 
+export interface IptPreviewRow {
+  plano: string;
+  subprefeitura: string;
+  tipo_servico: string;
+  status_execucao: string;
+  percentual_execucao: number | null;
+  equipamentos: string[];
+  modulos_status: Array<{
+    codigo: string;
+    status_bateria: string;
+    status_comunicacao: string;
+    bateria: string;
+    dias_sem_comunicacao: number | null;
+    data_ultima_comunicacao: string;
+    ativo: boolean;
+  }>;
+  plano_ativo: boolean;
+  sem_status_bateria: boolean;
+  atualizado_em: string;
+}
+
+export interface IptPreviewResponse {
+  periodo: { inicial: string | null; final: string | null };
+  resumo: {
+    total_planos: number;
+    total_planos_ativos: number;
+    media_execucao_planos_ativos: number | null;
+    total_modulos_relacionados: number;
+    total_modulos_ativos: number;
+    total_modulos_inativos: number;
+    sem_status_bateria: number;
+    comunicacao_off: number;
+    bateria_critica: number;
+    bateria_alerta: number;
+  };
+  subprefeituras: Array<{
+    subprefeitura: string;
+    quantidade_planos: number;
+    media_execucao: number | null;
+  }>;
+  servicos: Array<{
+    tipo_servico: string;
+    quantidade_planos: number;
+    media_execucao: number | null;
+  }>;
+  mesclados: IptPreviewRow[];
+  comparativo: {
+    total_linhas: number;
+    divergencias: number;
+    somente_selimp: number;
+    somente_nosso: number;
+    itens: Array<{
+      plano: string;
+      subprefeitura: string;
+      tipo_servico: string;
+      percentual_selimp: number | null;
+      percentual_nosso: number | null;
+      diferenca_percentual: number | null;
+      origem: "ambos" | "somente_selimp" | "somente_nosso";
+    }>;
+  };
+}
+
 // API calls
 export const apiService = {
   // SACs
@@ -208,6 +271,13 @@ export const apiService = {
   // Indicadores
   getKPIs: async (periodoInicial?: string, periodoFinal?: string) => {
     const { data } = await api.get('/dashboard/kpis', {
+      params: { periodo_inicial: periodoInicial, periodo_final: periodoFinal },
+    });
+    return data;
+  },
+
+  getIptPreview: async (periodoInicial?: string, periodoFinal?: string): Promise<IptPreviewResponse> => {
+    const { data } = await api.get('/dashboard/ipt-preview', {
       params: { periodo_inicial: periodoInicial, periodo_final: periodoFinal },
     });
     return data;

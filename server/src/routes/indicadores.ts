@@ -25,6 +25,63 @@ async function getSavedIPT(client: any, inicio: string, fim: string): Promise<nu
   return Number.isFinite(v) ? v : null;
 }
 
+type IptRaw = Record<string, string>;
+
+const normalizeModuleCode = (value: string): string =>
+  String(value ?? "")
+    .trim()
+    .replace(/\s+/g, "")
+    .toUpperCase();
+
+const toExecPercent = (value: string): number | null => {
+  if (!value) return null;
+  const cleaned = value.replace(",", ".").replace("%", "").trim();
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : null;
+};
+
+const extractModuleCodes = (equipamentos: string): string[] => {
+  if (!equipamentos) return [];
+  const parts = equipamentos
+    .split(/[;,|]/g)
+    .map((p) => normalizeModuleCode(p))
+    .filter(Boolean);
+  return Array.from(new Set(parts));
+};
+
+const normalizeText = (value: string): string =>
+  String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+
+const parseDias = (value: string): number | null => {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  if (raw.startsWith("<")) return 0;
+  if (raw.startsWith("+")) {
+    const n = Number(raw.slice(1));
+    return Number.isFinite(n) ? n : null;
+  }
+  const n = Number(raw.replace(",", "."));
+  return Number.isFinite(n) ? n : null;
+};
+
+const isModuleInactive = (statusBateria: string, statusComunicacao: string, diasSemComunicacao: number | null): boolean => {
+  const bat = normalizeText(statusBateria);
+  const com = normalizeText(statusComunicacao);
+
+  if (com === "off") return true;
+  if (diasSemComunicacao != null && diasSemComunicacao >= 5) return true;
+  if (
+    /(descarregado|inativo|desativado|sem modulo|nao instalado|nao ativo|nao despachado)/.test(bat)
+  ) {
+    return true;
+  }
+  return false;
+};
+
 export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
   /** KPIs do dashboard: contagens e indicadores no período */
   fastify.get<{
@@ -372,6 +429,278 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
 
   fastify.get("/dashboard/indicadores/historico", async (_request, _reply) => {
     return { historico: [] };
+  });
+
+  fastify.get<{
+    Querystring: { periodo_inicial?: string; periodo_final?: string };
+  }>("/dashboard/ipt-preview", async (request, reply) => {
+    const { periodo_inicial: inicio, periodo_final: fim } = request.query;
+
+    const client = await pool.connect();
+    try {
+      const statusRows = await client.query(
+        `SELECT raw
+         FROM ipt_imports
+         WHERE file_type = 'ipt_status_bateria'`
+      );
+      const reportRows = await client.query(
+        `SELECT raw, updated_at
+         FROM ipt_imports
+         WHERE file_type = 'ipt_report_selimp'
+         ORDER BY updated_at DESC`
+      );
+      const nossoRows = await client.query(
+        `SELECT file_type, raw, updated_at
+         FROM ipt_imports
+         WHERE file_type IN ('ipt_historico_os', 'ipt_historico_os_varricao')
+         ORDER BY updated_at DESC`
+      );
+
+      const statusByModule = new Map<string, IptRaw>();
+      for (const row of statusRows.rows) {
+        const raw = (row.raw ?? {}) as IptRaw;
+        const code = normalizeModuleCode(raw.placa || raw.nome || "");
+        if (!code) continue;
+        statusByModule.set(code, raw);
+      }
+
+      const bySubprefeitura = new Map<string, { quantidade: number; execTotal: number; execCount: number }>();
+      const byServico = new Map<string, { quantidade: number; execTotal: number; execCount: number }>();
+      const comparativoRows: Array<{
+        plano: string;
+        subprefeitura: string;
+        tipo_servico: string;
+        percentual_selimp: number | null;
+        percentual_nosso: number | null;
+        diferenca_percentual: number | null;
+        origem: "ambos" | "somente_selimp" | "somente_nosso";
+      }> = [];
+
+      const nossoByPlano = new Map<
+        string,
+        {
+          plano: string;
+          setor: string;
+          tipo_servico: string;
+          percentual_nosso: number | null;
+          updated_at: string;
+        }
+      >();
+      for (const row of nossoRows.rows as Array<{ raw: IptRaw; updated_at: string }>) {
+        const raw = (row.raw ?? {}) as IptRaw;
+        const plano = String(raw.rota ?? "").trim();
+        if (!plano || nossoByPlano.has(plano)) continue;
+        nossoByPlano.set(plano, {
+          plano,
+          setor: String(raw.setor ?? "").trim(),
+          tipo_servico: String(raw.tipo_de_servico ?? raw.tipo_servico ?? "").trim(),
+          percentual_nosso: toExecPercent(String(raw.percentual_execucao ?? "").trim()),
+          updated_at: row.updated_at,
+        });
+      }
+      const planosSelimp = new Set<string>();
+
+      let totalPlanos = 0;
+      let totalPlanosAtivos = 0;
+      let totalModulosRelacionados = 0;
+      let totalModulosAtivos = 0;
+      let totalModulosInativos = 0;
+      let semStatus = 0;
+      let comunicacaoOff = 0;
+      let bateriaCritica = 0;
+      let bateriaBaixa = 0;
+      let execAtivaTotal = 0;
+      let execAtivaCount = 0;
+
+      const mergedRows = reportRows.rows.map((row: { raw: IptRaw; updated_at: string }) => {
+        const raw = (row.raw ?? {}) as IptRaw;
+        const plano = String(raw.plano ?? "").trim();
+        const subprefeitura = String(raw.subprefeitura ?? "").trim();
+        const tipoServico = String(raw.tipo_de_servico ?? "").trim();
+        const statusExecucao = String(raw.status ?? "").trim();
+        const percentualExecucaoStr = String(raw.de_execucao ?? raw.percentual_execucao ?? "").trim();
+        const percentualExecucao = toExecPercent(percentualExecucaoStr);
+        const equipamentosStr = String(raw.equipamentos ?? "").trim();
+
+        totalPlanos += 1;
+        if (plano) planosSelimp.add(plano);
+        const codes = extractModuleCodes(equipamentosStr);
+        totalModulosRelacionados += codes.length;
+
+        const moduleStatuses = codes
+          .map((code) => {
+            const statusRaw = statusByModule.get(code);
+            if (!statusRaw) return null;
+            const dias = parseDias(String(statusRaw.dias ?? ""));
+            const statusBateria = String(statusRaw.status_de_bateria ?? "").trim();
+            const statusComunicacao = String(statusRaw.status_de_comunicacao ?? "").trim();
+            const inativo = isModuleInactive(statusBateria, statusComunicacao, dias);
+            return {
+              codigo: code,
+              status_bateria: statusBateria,
+              status_comunicacao: statusComunicacao,
+              bateria: String(statusRaw.bateria ?? "").trim(),
+              dias_sem_comunicacao: dias,
+              data_ultima_comunicacao: String(statusRaw.data_de_ultima_comunicacao ?? "").trim(),
+              ativo: !inativo,
+            };
+          })
+          .filter(Boolean) as Array<{
+          codigo: string;
+          status_bateria: string;
+          status_comunicacao: string;
+          bateria: string;
+          dias_sem_comunicacao: number | null;
+          data_ultima_comunicacao: string;
+          ativo: boolean;
+        }>;
+
+        if (codes.length > 0 && moduleStatuses.length === 0) semStatus += 1;
+        if (moduleStatuses.some((m) => m.status_comunicacao.toUpperCase() === "OFF")) comunicacaoOff += 1;
+        totalModulosAtivos += moduleStatuses.filter((m) => m.ativo).length;
+        totalModulosInativos += moduleStatuses.filter((m) => !m.ativo).length;
+        if (
+          moduleStatuses.some((m) =>
+            /(descarga|iminencia|iminência|critica|cr[ií]tica|necessita recarga)/i.test(m.status_bateria)
+          )
+        ) {
+          bateriaCritica += 1;
+        } else if (moduleStatuses.some((m) => /(carga de trabalho|recarga breve|baixa)/i.test(m.status_bateria))) {
+          bateriaBaixa += 1;
+        }
+
+        const planoInativoPorStatus = normalizeText(statusExecucao).includes("nao despachado");
+        const temModuloAtivo = moduleStatuses.length === 0 ? true : moduleStatuses.some((m) => m.ativo);
+        const planoAtivo = !planoInativoPorStatus && temModuloAtivo;
+        if (planoAtivo) totalPlanosAtivos += 1;
+        if (planoAtivo && percentualExecucao != null) {
+          execAtivaTotal += percentualExecucao;
+          execAtivaCount += 1;
+        }
+
+        const subKey = subprefeitura || "Não informado";
+        const subAgg = bySubprefeitura.get(subKey) || { quantidade: 0, execTotal: 0, execCount: 0 };
+        subAgg.quantidade += 1;
+        if (planoAtivo && percentualExecucao != null) {
+          subAgg.execTotal += percentualExecucao;
+          subAgg.execCount += 1;
+        }
+        bySubprefeitura.set(subKey, subAgg);
+
+        const servKey = tipoServico || "Não informado";
+        const servAgg = byServico.get(servKey) || { quantidade: 0, execTotal: 0, execCount: 0 };
+        servAgg.quantidade += 1;
+        if (planoAtivo && percentualExecucao != null) {
+          servAgg.execTotal += percentualExecucao;
+          servAgg.execCount += 1;
+        }
+        byServico.set(servKey, servAgg);
+
+        const nosso = nossoByPlano.get(plano);
+        const percentualNosso = nosso?.percentual_nosso ?? null;
+        const diferenca =
+          percentualExecucao != null && percentualNosso != null
+            ? Number((percentualExecucao - percentualNosso).toFixed(2))
+            : null;
+        comparativoRows.push({
+          plano,
+          subprefeitura,
+          tipo_servico: tipoServico,
+          percentual_selimp: percentualExecucao,
+          percentual_nosso: percentualNosso,
+          diferenca_percentual: diferenca,
+          origem: nosso ? "ambos" : "somente_selimp",
+        });
+
+        return {
+          plano,
+          subprefeitura,
+          tipo_servico: tipoServico,
+          status_execucao: statusExecucao,
+          percentual_execucao: percentualExecucao,
+          plano_ativo: planoAtivo,
+          equipamentos: codes,
+          modulos_status: moduleStatuses,
+          sem_status_bateria: codes.length > 0 && moduleStatuses.length === 0,
+          atualizado_em: row.updated_at,
+        };
+      });
+
+      for (const [plano, nosso] of nossoByPlano.entries()) {
+        if (planosSelimp.has(plano)) continue;
+        comparativoRows.push({
+          plano,
+          subprefeitura: nosso.setor || "Não informado",
+          tipo_servico: nosso.tipo_servico,
+          percentual_selimp: null,
+          percentual_nosso: nosso.percentual_nosso,
+          diferenca_percentual: null,
+          origem: "somente_nosso",
+        });
+      }
+
+      const subprefeituras = Array.from(bySubprefeitura.entries())
+        .map(([subprefeitura, data]) => ({
+          subprefeitura,
+          quantidade_planos: data.quantidade,
+          media_execucao: data.execCount > 0 ? Number((data.execTotal / data.execCount).toFixed(2)) : null,
+        }))
+        .sort((a, b) => b.quantidade_planos - a.quantidade_planos);
+
+      const servicos = Array.from(byServico.entries())
+        .map(([tipo_servico, data]) => ({
+          tipo_servico,
+          quantidade_planos: data.quantidade,
+          media_execucao: data.execCount > 0 ? Number((data.execTotal / data.execCount).toFixed(2)) : null,
+        }))
+        .sort((a, b) => b.quantidade_planos - a.quantidade_planos);
+
+      const mesclados = mergedRows.slice(0, 200);
+      const comparativo = comparativoRows
+        .sort((a, b) => {
+          const ad = Math.abs(a.diferenca_percentual ?? -1);
+          const bd = Math.abs(b.diferenca_percentual ?? -1);
+          return bd - ad;
+        })
+        .slice(0, 400);
+      const divergencias = comparativoRows.filter(
+        (r) => r.diferenca_percentual != null && Math.abs(r.diferenca_percentual) >= 5
+      ).length;
+      const apenasSelimp = comparativoRows.filter((r) => r.origem === "somente_selimp").length;
+      const apenasNosso = comparativoRows.filter((r) => r.origem === "somente_nosso").length;
+
+      return {
+        periodo: {
+          inicial: inicio ?? null,
+          final: fim ?? null,
+        },
+        resumo: {
+          total_planos: totalPlanos,
+          total_planos_ativos: totalPlanosAtivos,
+          media_execucao_planos_ativos:
+            execAtivaCount > 0 ? Number((execAtivaTotal / execAtivaCount).toFixed(2)) : null,
+          total_modulos_relacionados: totalModulosRelacionados,
+          total_modulos_ativos: totalModulosAtivos,
+          total_modulos_inativos: totalModulosInativos,
+          sem_status_bateria: semStatus,
+          comunicacao_off: comunicacaoOff,
+          bateria_critica: bateriaCritica,
+          bateria_alerta: bateriaBaixa,
+        },
+        subprefeituras,
+        servicos,
+        mesclados,
+        comparativo: {
+          total_linhas: comparativoRows.length,
+          divergencias,
+          somente_selimp: apenasSelimp,
+          somente_nosso: apenasNosso,
+          itens: comparativo,
+        },
+      };
+    } finally {
+      client.release();
+    }
   });
 
   fastify.post<{
