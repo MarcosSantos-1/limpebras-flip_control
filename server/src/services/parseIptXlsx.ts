@@ -127,6 +127,19 @@ function detectHeaderRow(rawRows: unknown[][], config: ParseConfig): number {
 }
 
 function buildRecordKey(fileType: IptFileType, row: Record<string, string>, aliases: string[]): string {
+  if (fileType === "ipt_report_selimp") {
+    const composed = [
+      row[canonicalHeader("plano")] ?? "",
+      row[canonicalHeader("subprefeitura")] ?? row[canonicalHeader("sub_prefeitura")] ?? "",
+      row[canonicalHeader("tipo_de_servico")] ?? row[canonicalHeader("tipo_servico")] ?? "",
+      row[canonicalHeader("data")] ?? row[canonicalHeader("data_planejado")] ?? row[canonicalHeader("data_execucao")] ?? "",
+      row[canonicalHeader("de_execucao")] ?? row[canonicalHeader("percentual_execucao")] ?? "",
+      row[canonicalHeader("status")] ?? "",
+      row[canonicalHeader("equipamentos")] ?? "",
+    ].join("|");
+    return `hash_${createHash("sha1").update(fileType).update(composed).digest("hex")}`;
+  }
+
   const rawKey = firstByAliases(row, aliases);
   if (rawKey) return rawKey;
 

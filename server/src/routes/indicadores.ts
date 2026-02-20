@@ -25,6 +25,37 @@ async function getSavedIPT(client: any, inicio: string, fim: string): Promise<nu
   return Number.isFinite(v) ? v : null;
 }
 
+async function getAutoIPTFromReport(client: any, inicio: string, fim: string): Promise<number | null> {
+  const rows = await client.query(
+    `SELECT raw
+     FROM ipt_imports
+     WHERE file_type = 'ipt_report_selimp'
+       AND (data_referencia IS NULL OR data_referencia >= $1::date)
+       AND (data_referencia IS NULL OR data_referencia < ($2::date + interval '1 day'))`,
+    [inicio, fim]
+  );
+
+  const byPlano = new Map<string, { sum: number; count: number }>();
+  for (const row of rows.rows as Array<{ raw: IptRaw }>) {
+    const raw = (row.raw ?? {}) as IptRaw;
+    const plano = String(raw.plano ?? "").trim();
+    if (!plano) continue;
+    const percentual = toExecPercent(String(raw.de_execucao ?? raw.percentual_execucao ?? "").trim());
+    if (percentual == null) continue;
+    const current = byPlano.get(plano) ?? { sum: 0, count: 0 };
+    current.sum += percentual;
+    current.count += 1;
+    byPlano.set(plano, current);
+  }
+
+  const mediasPlanos = Array.from(byPlano.values())
+    .map((item) => (item.count > 0 ? item.sum / item.count : null))
+    .filter((item): item is number => item != null);
+  if (!mediasPlanos.length) return null;
+  const ipt = mediasPlanos.reduce((acc, value) => acc + value, 0) / mediasPlanos.length;
+  return Number(ipt.toFixed(2));
+}
+
 type IptRaw = Record<string, string>;
 
 const normalizeModuleCode = (value: string): string =>
@@ -66,6 +97,46 @@ const parseDias = (value: string): number | null => {
   }
   const n = Number(raw.replace(",", "."));
   return Number.isFinite(n) ? n : null;
+};
+
+const normalizeServiceName = (service: string, plano: string): string => {
+  const raw = String(service ?? "").trim();
+  const normalized = normalizeText(raw).replace(/\s+/g, " ");
+  const compact = normalized.replace(/[^a-z]/g, "");
+  const planoCode = String(plano ?? "").toUpperCase();
+
+  if (
+    compact.includes("varricaodepraca") ||
+    compact.includes("equipeparavarricaodepracas") ||
+    (compact.includes("praca") && compact.includes("vp")) ||
+    compact === "vp"
+  ) {
+    return "Equipe para varrição de praças";
+  }
+
+  if (
+    compact.includes("mutirao") ||
+    (compact.includes("zeladoria") && compact.includes("vias"))
+  ) {
+    return "Equipe de mutirão de zeladoria de vias e logradouros públicos";
+  }
+
+  if (
+    (compact.includes("lavagem") && compact.includes("especial")) ||
+    (compact.includes("equipamentos") && compact.includes("publicos")) ||
+    compact === "le"
+  ) {
+    return "Lavagem especial de equipamentos públicos";
+  }
+
+  if (planoCode.includes("VJ")) {
+    return "Varrição manual de vias e logradouros públicos - sarjetas";
+  }
+  if (planoCode.includes("VL")) {
+    return "Varrição manual de vias e logradouros públicos - sarjetas e calçadas";
+  }
+
+  return raw;
 };
 
 const isModuleInactive = (statusBateria: string, statusComunicacao: string, diasSemComunicacao: number | null): boolean => {
@@ -155,9 +226,10 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         total_fiscalizacoes: totalBfs,
         total_sem_irregularidade: semIrreg,
       };
-      const savedIptPercent = await getSavedIPT(client, inicio, fim);
+      const autoIptPercent = await getAutoIPTFromReport(client, inicio, fim);
+      const iptPercent = autoIptPercent;
       const iptDashboard =
-        savedIptPercent != null ? pontuacaoIPT(savedIptPercent) : { valor: 0, percentual: 0, pontuacao: 0 };
+        iptPercent != null ? pontuacaoIPT(iptPercent) : { valor: 0, percentual: 0, pontuacao: 0 };
 
       // SACs hoje (opcional: período = hoje)
       const hoje = new Date().toISOString().slice(0, 10);
@@ -447,13 +519,19 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         `SELECT raw, updated_at
          FROM ipt_imports
          WHERE file_type = 'ipt_report_selimp'
-         ORDER BY updated_at DESC`
+           AND ($1::date IS NULL OR data_referencia IS NULL OR data_referencia >= $1::date)
+           AND ($2::date IS NULL OR data_referencia IS NULL OR data_referencia < ($2::date + interval '1 day'))
+         ORDER BY updated_at DESC`,
+        [inicio ?? null, fim ?? null]
       );
       const nossoRows = await client.query(
         `SELECT file_type, raw, updated_at
          FROM ipt_imports
          WHERE file_type IN ('ipt_historico_os', 'ipt_historico_os_varricao')
-         ORDER BY updated_at DESC`
+           AND ($1::date IS NULL OR data_referencia IS NULL OR data_referencia >= $1::date)
+           AND ($2::date IS NULL OR data_referencia IS NULL OR data_referencia < ($2::date + interval '1 day'))
+         ORDER BY updated_at DESC`,
+        [inicio ?? null, fim ?? null]
       );
 
       const statusByModule = new Map<string, IptRaw>();
@@ -482,6 +560,8 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
           plano: string;
           setor: string;
           tipo_servico: string;
+          percentual_sum: number;
+          percentual_count: number;
           percentual_nosso: number | null;
           updated_at: string;
         }
@@ -489,16 +569,90 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
       for (const row of nossoRows.rows as Array<{ raw: IptRaw; updated_at: string }>) {
         const raw = (row.raw ?? {}) as IptRaw;
         const plano = String(raw.rota ?? "").trim();
-        if (!plano || nossoByPlano.has(plano)) continue;
-        nossoByPlano.set(plano, {
+        if (!plano) continue;
+        const percentual = toExecPercent(String(raw.percentual_execucao ?? "").trim());
+        const current = nossoByPlano.get(plano) ?? {
           plano,
-          setor: String(raw.setor ?? "").trim(),
-          tipo_servico: String(raw.tipo_de_servico ?? raw.tipo_servico ?? "").trim(),
-          percentual_nosso: toExecPercent(String(raw.percentual_execucao ?? "").trim()),
+          setor: "",
+          tipo_servico: "",
+          percentual_sum: 0,
+          percentual_count: 0,
+          percentual_nosso: null,
           updated_at: row.updated_at,
-        });
+        };
+        const setor = String(raw.setor ?? "").trim();
+        if (!current.setor && setor) current.setor = setor;
+        const tipoServico = normalizeServiceName(
+          String(raw.tipo_de_servico ?? raw.tipo_servico ?? "").trim(),
+          plano
+        );
+        if (!current.tipo_servico && tipoServico) current.tipo_servico = tipoServico;
+        if (percentual != null) {
+          current.percentual_sum += percentual;
+          current.percentual_count += 1;
+          current.percentual_nosso = Number((current.percentual_sum / current.percentual_count).toFixed(2));
+        }
+        if (row.updated_at > current.updated_at) current.updated_at = row.updated_at;
+        nossoByPlano.set(plano, current);
       }
-      const planosSelimp = new Set<string>();
+      const selimpByPlano = new Map<
+        string,
+        {
+          plano: string;
+          subprefeitura: string;
+          tipo_servico: string;
+          status_execucao: string;
+          percentual_sum: number;
+          percentual_count: number;
+          percentual_execucao: number | null;
+          equipamentos: Set<string>;
+          atualizado_em: string;
+          plano_inativo_por_status: boolean;
+        }
+      >();
+
+      for (const row of reportRows.rows as Array<{ raw: IptRaw; updated_at: string }>) {
+        const raw = (row.raw ?? {}) as IptRaw;
+        const plano = String(raw.plano ?? "").trim();
+        if (!plano) continue;
+        const subprefeitura = String(raw.subprefeitura ?? "").trim();
+        const tipoServico = normalizeServiceName(
+          String(raw.tipo_de_servico ?? raw.tipo_servico ?? "").trim(),
+          plano
+        );
+        const statusExecucao = String(raw.status ?? "").trim();
+        const percentualExecucaoStr = String(raw.de_execucao ?? raw.percentual_execucao ?? "").trim();
+        const percentualExecucao = toExecPercent(percentualExecucaoStr);
+        const equipamentosStr = String(raw.equipamentos ?? "").trim();
+
+        const current = selimpByPlano.get(plano) ?? {
+          plano,
+          subprefeitura: "",
+          tipo_servico: "",
+          status_execucao: "",
+          percentual_sum: 0,
+          percentual_count: 0,
+          percentual_execucao: null,
+          equipamentos: new Set<string>(),
+          atualizado_em: row.updated_at,
+          plano_inativo_por_status: false,
+        };
+
+        if (!current.subprefeitura && subprefeitura) current.subprefeitura = subprefeitura;
+        if (!current.tipo_servico && tipoServico) current.tipo_servico = tipoServico;
+        if (!current.status_execucao && statusExecucao) current.status_execucao = statusExecucao;
+        if (percentualExecucao != null) {
+          current.percentual_sum += percentualExecucao;
+          current.percentual_count += 1;
+          current.percentual_execucao = Number((current.percentual_sum / current.percentual_count).toFixed(2));
+        }
+        extractModuleCodes(equipamentosStr).forEach((code) => current.equipamentos.add(code));
+        if (normalizeText(statusExecucao).includes("nao despachado")) {
+          current.plano_inativo_por_status = true;
+        }
+        if (row.updated_at > current.atualizado_em) current.atualizado_em = row.updated_at;
+        selimpByPlano.set(plano, current);
+      }
 
       let totalPlanos = 0;
       let totalPlanosAtivos = 0;
@@ -512,19 +666,9 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
       let execAtivaTotal = 0;
       let execAtivaCount = 0;
 
-      const mergedRows = reportRows.rows.map((row: { raw: IptRaw; updated_at: string }) => {
-        const raw = (row.raw ?? {}) as IptRaw;
-        const plano = String(raw.plano ?? "").trim();
-        const subprefeitura = String(raw.subprefeitura ?? "").trim();
-        const tipoServico = String(raw.tipo_de_servico ?? "").trim();
-        const statusExecucao = String(raw.status ?? "").trim();
-        const percentualExecucaoStr = String(raw.de_execucao ?? raw.percentual_execucao ?? "").trim();
-        const percentualExecucao = toExecPercent(percentualExecucaoStr);
-        const equipamentosStr = String(raw.equipamentos ?? "").trim();
-
+      const mergedRows = Array.from(selimpByPlano.values()).map((row) => {
+        const codes = Array.from(row.equipamentos);
         totalPlanos += 1;
-        if (plano) planosSelimp.add(plano);
-        const codes = extractModuleCodes(equipamentosStr);
         totalModulosRelacionados += codes.length;
 
         const moduleStatuses = codes
@@ -569,73 +713,68 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
           bateriaBaixa += 1;
         }
 
-        const planoInativoPorStatus = normalizeText(statusExecucao).includes("nao despachado");
         const temModuloAtivo = moduleStatuses.length === 0 ? true : moduleStatuses.some((m) => m.ativo);
-        const planoAtivo = !planoInativoPorStatus && temModuloAtivo;
+        const planoAtivo = !row.plano_inativo_por_status && temModuloAtivo;
         if (planoAtivo) totalPlanosAtivos += 1;
-        if (planoAtivo && percentualExecucao != null) {
-          execAtivaTotal += percentualExecucao;
+        if (planoAtivo && row.percentual_execucao != null) {
+          execAtivaTotal += row.percentual_execucao;
           execAtivaCount += 1;
         }
 
-        const subKey = subprefeitura || "Não informado";
+        const subKey = row.subprefeitura || "Não informado";
         const subAgg = bySubprefeitura.get(subKey) || { quantidade: 0, execTotal: 0, execCount: 0 };
         subAgg.quantidade += 1;
-        if (planoAtivo && percentualExecucao != null) {
-          subAgg.execTotal += percentualExecucao;
+        if (planoAtivo && row.percentual_execucao != null) {
+          subAgg.execTotal += row.percentual_execucao;
           subAgg.execCount += 1;
         }
         bySubprefeitura.set(subKey, subAgg);
 
-        const servKey = tipoServico || "Não informado";
+        const servKey = row.tipo_servico || "Não informado";
         const servAgg = byServico.get(servKey) || { quantidade: 0, execTotal: 0, execCount: 0 };
         servAgg.quantidade += 1;
-        if (planoAtivo && percentualExecucao != null) {
-          servAgg.execTotal += percentualExecucao;
+        if (planoAtivo && row.percentual_execucao != null) {
+          servAgg.execTotal += row.percentual_execucao;
           servAgg.execCount += 1;
         }
         byServico.set(servKey, servAgg);
 
-        const nosso = nossoByPlano.get(plano);
-        const percentualNosso = nosso?.percentual_nosso ?? null;
-        const diferenca =
-          percentualExecucao != null && percentualNosso != null
-            ? Number((percentualExecucao - percentualNosso).toFixed(2))
-            : null;
-        comparativoRows.push({
-          plano,
-          subprefeitura,
-          tipo_servico: tipoServico,
-          percentual_selimp: percentualExecucao,
-          percentual_nosso: percentualNosso,
-          diferenca_percentual: diferenca,
-          origem: nosso ? "ambos" : "somente_selimp",
-        });
-
         return {
-          plano,
-          subprefeitura,
-          tipo_servico: tipoServico,
-          status_execucao: statusExecucao,
-          percentual_execucao: percentualExecucao,
+          plano: row.plano,
+          subprefeitura: row.subprefeitura,
+          tipo_servico: row.tipo_servico,
+          status_execucao: row.status_execucao,
+          percentual_execucao: row.percentual_execucao,
           plano_ativo: planoAtivo,
           equipamentos: codes,
           modulos_status: moduleStatuses,
           sem_status_bateria: codes.length > 0 && moduleStatuses.length === 0,
-          atualizado_em: row.updated_at,
+          atualizado_em: row.atualizado_em,
         };
       });
 
-      for (const [plano, nosso] of nossoByPlano.entries()) {
-        if (planosSelimp.has(plano)) continue;
+      const planosComparativo = new Set<string>([
+        ...Array.from(selimpByPlano.keys()),
+        ...Array.from(nossoByPlano.keys()),
+      ]);
+      for (const plano of planosComparativo) {
+        const selimp = selimpByPlano.get(plano);
+        const nosso = nossoByPlano.get(plano);
+        const percentualSelimp = selimp?.percentual_execucao ?? null;
+        const percentualNosso = nosso?.percentual_nosso ?? null;
+        const diferenca =
+          percentualSelimp != null && percentualNosso != null
+            ? Number((percentualSelimp - percentualNosso).toFixed(2))
+            : null;
+        const origem = selimp && nosso ? "ambos" : selimp ? "somente_selimp" : "somente_nosso";
         comparativoRows.push({
           plano,
-          subprefeitura: nosso.setor || "Não informado",
-          tipo_servico: nosso.tipo_servico,
-          percentual_selimp: null,
-          percentual_nosso: nosso.percentual_nosso,
-          diferenca_percentual: null,
-          origem: "somente_nosso",
+          subprefeitura: selimp?.subprefeitura || nosso?.setor || "Não informado",
+          tipo_servico: selimp?.tipo_servico || nosso?.tipo_servico || "Não informado",
+          percentual_selimp: percentualSelimp,
+          percentual_nosso: percentualNosso,
+          diferenca_percentual: diferenca,
+          origem,
         });
       }
 
@@ -655,16 +794,15 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         }))
         .sort((a, b) => b.quantidade_planos - a.quantidade_planos);
 
-      const mesclados = mergedRows.slice(0, 200);
+      const mesclados = mergedRows;
       const comparativo = comparativoRows
         .sort((a, b) => {
-          const ad = Math.abs(a.diferenca_percentual ?? -1);
-          const bd = Math.abs(b.diferenca_percentual ?? -1);
+          const ad = Math.abs((a.percentual_selimp ?? 0) - (a.percentual_nosso ?? 0));
+          const bd = Math.abs((b.percentual_selimp ?? 0) - (b.percentual_nosso ?? 0));
           return bd - ad;
-        })
-        .slice(0, 400);
+        });
       const divergencias = comparativoRows.filter(
-        (r) => r.diferenca_percentual != null && Math.abs(r.diferenca_percentual) >= 5
+        (r) => Math.abs((r.percentual_selimp ?? 0) - (r.percentual_nosso ?? 0)) >= 5
       ).length;
       const apenasSelimp = comparativoRows.filter((r) => r.origem === "somente_selimp").length;
       const apenasNosso = comparativoRows.filter((r) => r.origem === "somente_nosso").length;

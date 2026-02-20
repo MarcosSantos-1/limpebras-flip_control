@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { format, endOfMonth, startOfMonth } from "date-fns";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { IPTModal } from "@/components/ipt-modal";
 import { apiService, type IptPreviewResponse } from "@/lib/api";
 
 const pct = (value?: number | null) => (value == null ? "--" : `${value.toFixed(1)}%`);
@@ -65,16 +64,62 @@ const getOrigemBadgeClass = (origem: "ambos" | "somente_selimp" | "somente_nosso
   return "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
 };
 
+const toNum = (value?: number | null) => (value == null || Number.isNaN(value) ? null : value);
+const hasPercentual = (value?: number | null) => {
+  const num = toNum(value);
+  return num != null && num > 0;
+};
+const isZeroOrMissing = (value?: number | null) => {
+  const num = toNum(value);
+  return num == null || num <= 0;
+};
+const getDivergenceMagnitude = (selimp?: number | null, nosso?: number | null) => {
+  const s = toNum(selimp) ?? 0;
+  const n = toNum(nosso) ?? 0;
+  return Math.abs(s - n);
+};
+
+type TableColumnKey = "plano" | "sub" | "servico" | "selimp" | "nossa" | "origem";
+type SortDirection = "asc" | "desc";
+const SUB_SIGLAS = ["CV", "JT", "MG", "ST"] as const;
+const ORIGEM_VALUES = ["ambos", "somente_selimp", "somente_nosso"] as const;
+type OrigemValue = (typeof ORIGEM_VALUES)[number];
+const MIN_COL_WIDTH = 72;
+const MAX_COL_WIDTH = 520;
+
 export default function IPTPage() {
   const [selectedMonth, setSelectedMonth] = useState(() => startOfMonth(new Date()));
   const [loading, setLoading] = useState(true);
   const [iptPreview, setIptPreview] = useState<IptPreviewResponse | null>(null);
   const [iptCard, setIptCard] = useState<{ valor?: number; pontuacao?: number }>({});
-  const [iptModalOpen, setIptModalOpen] = useState(false);
   const [subprefeituraFilter, setSubprefeituraFilter] = useState("all");
-  const [somenteDivergencia, setSomenteDivergencia] = useState(false);
+  const [divergenciaFilter, setDivergenciaFilter] = useState<"all" | "somente" | "sem">("all");
+  const [highlightDivergencias, setHighlightDivergencias] = useState(true);
   const [origemFilter, setOrigemFilter] = useState<"all" | "ambos" | "somente_selimp" | "somente_nosso">("all");
+  const [zeroFilter, setZeroFilter] = useState<"all" | "zerados" | "nao_zerados">("all");
   const [tableExpanded, setTableExpanded] = useState(true);
+  const [headerMenuOpen, setHeaderMenuOpen] = useState<TableColumnKey | null>(null);
+  const [subSiglaFilter, setSubSiglaFilter] = useState<Array<(typeof SUB_SIGLAS)[number]>>([
+    "CV",
+    "JT",
+    "MG",
+    "ST",
+  ]);
+  const [serviceFilterValues, setServiceFilterValues] = useState<string[]>([]);
+  const [serviceFilterInitialized, setServiceFilterInitialized] = useState(false);
+  const [origemFilterValues, setOrigemFilterValues] = useState<OrigemValue[]>([...ORIGEM_VALUES]);
+  const [tableSort, setTableSort] = useState<{ column: TableColumnKey; direction: SortDirection }>({
+    column: "plano",
+    direction: "asc",
+  });
+  const [columnWidths, setColumnWidths] = useState<Record<TableColumnKey, number>>({
+    plano: 170,
+    sub: 90,
+    servico: 350,
+    selimp: 130,
+    nossa: 120,
+    origem: 130,
+  });
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -99,22 +144,142 @@ export default function IPTPage() {
     loadData();
   }, [loadData]);
 
+  useEffect(() => {
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target?.closest("[data-filter-anchor='true']")) {
+        setHeaderMenuOpen(null);
+      }
+    };
+    const handleEsc = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setHeaderMenuOpen(null);
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleEsc);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleEsc);
+    };
+  }, []);
+
   const subprefeituraOptions = useMemo(() => {
     const values = (iptPreview?.subprefeituras ?? []).map((item) => item.subprefeitura).filter(Boolean);
     return Array.from(new Set(values)).sort((a, b) => a.localeCompare(b, "pt-BR"));
   }, [iptPreview]);
 
+  const serviceOptions = useMemo(() => {
+    const values = (iptPreview?.comparativo.itens ?? []).map((item) => item.tipo_servico).filter(Boolean);
+    return Array.from(new Set(values)).sort((a, b) => a.localeCompare(b, "pt-BR"));
+  }, [iptPreview]);
+
+  useEffect(() => {
+    if (!serviceFilterInitialized && serviceOptions.length > 0) {
+      setServiceFilterValues(serviceOptions);
+      setServiceFilterInitialized(true);
+    }
+  }, [serviceFilterInitialized, serviceOptions]);
+
+  const planoAtivoMap = useMemo(() => {
+    const map = new Map<string, boolean>();
+    for (const row of iptPreview?.mesclados ?? []) {
+      const key = row.plano?.trim();
+      if (!key) continue;
+      const previous = map.get(key);
+      // Se em algum registro o plano aparece ativo, consideramos ativo.
+      map.set(key, Boolean(previous) || Boolean(row.plano_ativo));
+    }
+    return map;
+  }, [iptPreview]);
+
   const filteredComparativo = useMemo(() => {
     const rows = iptPreview?.comparativo.itens ?? [];
-    return rows.filter((row) => {
+    const filtered = rows.filter((row) => {
       if (subprefeituraFilter !== "all" && row.subprefeitura !== subprefeituraFilter) return false;
       if (origemFilter !== "all" && row.origem !== origemFilter) return false;
-      if (somenteDivergencia) {
-        if (row.diferenca_percentual == null || Math.abs(row.diferenca_percentual) < 5) return false;
+      if (origemFilterValues.length > 0 && !origemFilterValues.includes(row.origem)) return false;
+      if (serviceFilterValues.length > 0 && !serviceFilterValues.includes(row.tipo_servico)) return false;
+      const subSigla = getSubTag(row.subprefeitura).sigla;
+      if (
+        subSiglaFilter.length < SUB_SIGLAS.length &&
+        !subSiglaFilter.includes(subSigla as (typeof SUB_SIGLAS)[number])
+      ) {
+        return false;
       }
+      const zeradoAmbos = isZeroOrMissing(row.percentual_selimp) && isZeroOrMissing(row.percentual_nosso);
+      if (zeroFilter === "zerados" && !zeradoAmbos) return false;
+      if (zeroFilter === "nao_zerados" && zeradoAmbos) return false;
+      const divergence = getDivergenceMagnitude(row.percentual_selimp, row.percentual_nosso);
+      const diverge = divergence >= 5;
+      if (divergenciaFilter === "somente" && !diverge) return false;
+      if (divergenciaFilter === "sem" && diverge) return false;
       return true;
     });
-  }, [iptPreview, origemFilter, somenteDivergencia, subprefeituraFilter]);
+
+    return [...filtered].sort((a, b) => {
+      const byDirection = (base: number) => (tableSort.direction === "asc" ? base : -base);
+      let sortBase = 0;
+      if (tableSort.column === "plano") {
+        sortBase = (a.plano || "").localeCompare(b.plano || "", "pt-BR");
+      } else if (tableSort.column === "sub") {
+        sortBase = getSubTag(a.subprefeitura).sigla.localeCompare(getSubTag(b.subprefeitura).sigla, "pt-BR");
+      } else if (tableSort.column === "servico") {
+        sortBase = (a.tipo_servico || "").localeCompare(b.tipo_servico || "", "pt-BR");
+      } else if (tableSort.column === "selimp") {
+        sortBase = (toNum(a.percentual_selimp) ?? -1) - (toNum(b.percentual_selimp) ?? -1);
+      } else if (tableSort.column === "nossa") {
+        sortBase = (toNum(a.percentual_nosso) ?? -1) - (toNum(b.percentual_nosso) ?? -1);
+      } else {
+        sortBase = a.origem.localeCompare(b.origem, "pt-BR");
+      }
+      if (sortBase !== 0) return byDirection(sortBase);
+
+      const aDiv = getDivergenceMagnitude(a.percentual_selimp, a.percentual_nosso);
+      const bDiv = getDivergenceMagnitude(b.percentual_selimp, b.percentual_nosso);
+      if (aDiv !== bDiv) return bDiv - aDiv;
+      return (a.plano || "").localeCompare(b.plano || "", "pt-BR");
+    });
+  }, [
+    iptPreview,
+    origemFilter,
+    origemFilterValues,
+    divergenciaFilter,
+    subprefeituraFilter,
+    tableSort,
+    zeroFilter,
+    subSiglaFilter,
+    serviceFilterValues,
+  ]);
+
+  const comparativoInsights = useMemo(() => {
+    const rows = iptPreview?.comparativo.itens ?? [];
+    let selimpSemNossoCom = 0;
+    let selimpComNossoSem = 0;
+    let ambosZerados = 0;
+    let ambosZeradosAtivos = 0;
+    let ambosZeradosInativos = 0;
+
+    for (const row of rows) {
+      const temSelimp = hasPercentual(row.percentual_selimp);
+      const temNosso = hasPercentual(row.percentual_nosso);
+      const zeradoAmbos = !temSelimp && !temNosso;
+      if (zeradoAmbos) {
+        ambosZerados += 1;
+        const planoAtivo = planoAtivoMap.get((row.plano || "").trim());
+        if (planoAtivo === true) ambosZeradosAtivos += 1;
+        else ambosZeradosInativos += 1;
+      }
+      if (!temSelimp && temNosso) selimpSemNossoCom += 1;
+      if (temSelimp && !temNosso) selimpComNossoSem += 1;
+    }
+
+    return {
+      selimpSemNossoCom,
+      selimpComNossoSem,
+      ambosZerados,
+      ambosZeradosAtivos,
+      ambosZeradosInativos,
+    };
+  }, [iptPreview, planoAtivoMap]);
 
   const origemDistribution = useMemo(() => {
     const total = iptPreview?.comparativo.total_linhas ?? 0;
@@ -137,6 +302,56 @@ export default function IPTPage() {
     list.sort((a, b) => (b.media_execucao ?? -1) - (a.media_execucao ?? -1));
     return list.slice(0, 10);
   }, [iptPreview]);
+
+  const adjustColumnWidth = (column: TableColumnKey, delta: number) => {
+    setColumnWidths((prev) => ({
+      ...prev,
+      [column]: clamp(prev[column] + delta, MIN_COL_WIDTH, MAX_COL_WIDTH),
+    }));
+  };
+
+  const setSort = (column: TableColumnKey, direction: SortDirection) => {
+    setTableSort({ column, direction });
+    setHeaderMenuOpen(null);
+  };
+
+  const toggleSubSigla = (sigla: (typeof SUB_SIGLAS)[number]) => {
+    setSubSiglaFilter((prev) => {
+      if (prev.includes(sigla)) return prev.filter((item) => item !== sigla);
+      return [...prev, sigla];
+    });
+  };
+
+  const toggleServiceFilter = (servico: string) => {
+    setServiceFilterValues((prev) => {
+      if (prev.includes(servico)) return prev.filter((item) => item !== servico);
+      return [...prev, servico];
+    });
+  };
+
+  const toggleOrigemFilterValue = (origem: OrigemValue) => {
+    setOrigemFilterValues((prev) => {
+      if (prev.includes(origem)) return prev.filter((item) => item !== origem);
+      return [...prev, origem];
+    });
+  };
+
+  const getSortLabel = (column: TableColumnKey) => {
+    if (tableSort.column !== column) return "↕";
+    return tableSort.direction === "asc" ? "↑" : "↓";
+  };
+
+  const clearAllTableFilters = () => {
+    setDivergenciaFilter("all");
+    setHighlightDivergencias(true);
+    setOrigemFilter("all");
+    setZeroFilter("all");
+    setSubprefeituraFilter("all");
+    setSubSiglaFilter([...SUB_SIGLAS]);
+    setServiceFilterValues(serviceOptions);
+    setOrigemFilterValues([...ORIGEM_VALUES]);
+    setHeaderMenuOpen(null);
+  };
 
   return (
     <MainLayout>
@@ -202,8 +417,8 @@ export default function IPTPage() {
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
           <Card className="xl:col-span-1 border-0 shadow-[0_20px_50px_-30px_rgba(16,185,129,0.7)] bg-linear-to-br from-emerald-500/15 via-card to-card">
             <CardHeader>
-              <CardTitle className="text-base">IPT + Pontuacao Manual (simulacao)</CardTitle>
-              <CardDescription>Bloco separado das medicoes automaticas das importacoes.</CardDescription>
+              <CardTitle className="text-base">IPT (calculo automatico)</CardTitle>
+              <CardDescription>Percentual medio mensal por plano (report SELIMP) e pontuacao do ADC.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="rounded-xl bg-background/70 p-4 shadow-sm transition-all hover:shadow-md">
@@ -219,7 +434,7 @@ export default function IPTPage() {
               <div className="rounded-xl bg-background/70 p-4 shadow-sm transition-all hover:shadow-md">
                 <p className="text-xs text-muted-foreground">Pontuacao IPT</p>
                 <p className="text-3xl font-bold text-teal-600">{iptCard.pontuacao ?? 0}</p>
-                <p className="text-xs text-muted-foreground mt-2">Referencia de simulacao manual.</p>
+                <p className="text-xs text-muted-foreground mt-2">Faixa de pontuacao conforme parametros do ADC.</p>
               </div>
             </CardContent>
           </Card>
@@ -295,13 +510,13 @@ export default function IPTPage() {
           <Card className="border-0 shadow-lg">
             <CardHeader>
               <CardTitle className="text-base">Top Serviços (ativos)</CardTitle>
-              <CardDescription>Distribuicao por tipo de servico com barras e realce visual.</CardDescription>
+              <CardDescription>Distribuição por tipo de serviço com barras e realce visual.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-2">
               {topServicos.map((item) => (
                 <div key={item.tipo_servico} className="rounded-xl bg-background/60 p-2.5 shadow-sm transition-all hover:shadow-md">
                   <div className="mb-1 flex items-center justify-between gap-2 text-sm">
-                    <span className="truncate font-medium">{item.tipo_servico || "Nao informado"}</span>
+                    <span className="truncate font-medium">{item.tipo_servico || "Não informado"}</span>
                     <span className="text-muted-foreground">{item.quantidade_planos} planos</span>
                   </div>
                   <div className="h-2 rounded-full bg-muted/50">
@@ -358,16 +573,45 @@ export default function IPTPage() {
                 <p className="text-xl font-bold text-fuchsia-600">{iptPreview?.comparativo.somente_nosso ?? 0}</p>
                 <p className="text-xs text-muted-foreground mt-1">{origemDistribution.somenteNosso.toFixed(1)}%</p>
               </div>
+              <div className="rounded-xl p-3 bg-blue-500/10 shadow-sm">
+                <p className="text-xs text-muted-foreground">Sem % SELIMP e com % Nossa</p>
+                <p className="text-xl font-bold text-blue-700 dark:text-blue-300">{comparativoInsights.selimpSemNossoCom}</p>
+              </div>
+              <div className="rounded-xl p-3 bg-rose-500/10 shadow-sm">
+                <p className="text-xs text-muted-foreground">Com % SELIMP e sem % Nossa</p>
+                <p className="text-xl font-bold text-rose-700 dark:text-rose-300">{comparativoInsights.selimpComNossoSem}</p>
+              </div>
+              <div className="rounded-xl p-3 bg-stone-500/10 shadow-sm">
+                <p className="text-xs text-muted-foreground">Zerados em ambas</p>
+                <p className="text-xl font-bold text-stone-700 dark:text-stone-300">{comparativoInsights.ambosZerados}</p>
+              </div>
+              <div className="rounded-xl p-3 bg-emerald-500/10 shadow-sm">
+                <p className="text-xs text-muted-foreground">Zerados e ativos</p>
+                <p className="text-xl font-bold text-emerald-700 dark:text-emerald-300">{comparativoInsights.ambosZeradosAtivos}</p>
+              </div>
+              <div className="rounded-xl p-3 bg-slate-500/10 shadow-sm">
+                <p className="text-xs text-muted-foreground">Zerados e inativos</p>
+                <p className="text-xl font-bold text-slate-700 dark:text-slate-300">{comparativoInsights.ambosZeradosInativos}</p>
+              </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
+              <select
+                value={divergenciaFilter}
+                onChange={(e) => setDivergenciaFilter(e.target.value as "all" | "somente" | "sem")}
+                className="h-9 rounded-xl bg-background/80 px-3 text-sm shadow-inner ring-1 ring-white/10 outline-none"
+              >
+                <option value="all">Divergência: todos</option>
+                <option value="somente">Divergência: só destacados (|Δ| &gt;= 5)</option>
+                <option value="sem">Divergência: sem destacados</option>
+              </select>
               <label className="flex items-center gap-2 text-sm rounded-xl bg-background/70 px-3 py-2 shadow-sm">
                 <input
                   type="checkbox"
-                  checked={somenteDivergencia}
-                  onChange={(e) => setSomenteDivergencia(e.target.checked)}
+                  checked={highlightDivergencias}
+                  onChange={(e) => setHighlightDivergencias(e.target.checked)}
                 />
-                Mostrar só divergências
+                Destacar divergentes
               </label>
               <button
                 type="button"
@@ -377,42 +621,286 @@ export default function IPTPage() {
                 {tableExpanded ? "Encolher tabela" : "Mostrar tabela"}
               </button>
               <select
-                value={origemFilter}
-                onChange={(e) =>
-                  setOrigemFilter(e.target.value as "all" | "ambos" | "somente_selimp" | "somente_nosso")
-                }
+                value={zeroFilter}
+                onChange={(e) => setZeroFilter(e.target.value as "all" | "zerados" | "nao_zerados")}
                 className="h-9 rounded-xl bg-background/80 px-3 text-sm shadow-inner ring-1 ring-white/10 outline-none"
               >
-                <option value="all">Todas origens</option>
-                <option value="ambos">Apenas ambos</option>
-                <option value="somente_selimp">Somente SELIMP</option>
-                <option value="somente_nosso">Somente Nossa Base</option>
+                <option value="all">Todos percentuais</option>
+                <option value="zerados">Apenas zerados</option>
+                <option value="nao_zerados">Sem zerados</option>
               </select>
+              <button
+                type="button"
+                onClick={clearAllTableFilters}
+                className="h-9 rounded-xl px-3 text-sm bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 shadow-sm hover:shadow-md hover:bg-emerald-500/20 transition-all"
+              >
+                Limpar todos os filtros
+              </button>
             </div>
 
             {tableExpanded && (
               <div className="rounded-2xl bg-background/60 shadow-inner transition-all">
-                <table className="w-full text-sm">
-                  <thead className="bg-muted/50">
-                  <tr>
-                    <th className="text-left px-3 py-2">Plano</th>
-                    <th className="text-left px-3 py-2">Sub.</th>
-                    <th className="text-left px-3 py-2">Servico</th>
-                    <th className="text-left px-3 py-2">SELIMP</th>
-                    <th className="text-left px-3 py-2">Nossa</th>
-                    <th className="text-left px-3 py-2">Origem</th>
-                  </tr>
-                </thead>
+                <table className="w-full text-sm table-fixed">
+                  <colgroup>
+                    <col style={{ width: columnWidths.plano }} />
+                    <col style={{ width: columnWidths.sub }} />
+                    <col style={{ width: columnWidths.servico }} />
+                    <col style={{ width: columnWidths.selimp }} />
+                    <col style={{ width: columnWidths.nossa }} />
+                    <col style={{ width: columnWidths.origem }} />
+                  </colgroup>
+                  <thead className="bg-muted/50 border-b-2 border-emerald-500/30">
+                    <tr>
+                      <th className="text-left px-2 py-3.5 align-top">
+                        <div className="relative" data-filter-anchor="true">
+                          <button
+                            type="button"
+                            onClick={() => setHeaderMenuOpen((prev) => (prev === "plano" ? null : "plano"))}
+                            className="w-full rounded-xl bg-background/80 px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide shadow-md transition-all duration-200 hover:-translate-y-0.5 hover:bg-background hover:shadow-lg"
+                          >
+                            <span className="inline-flex items-center gap-1">📌 Plano {getSortLabel("plano")}</span>
+                          </button>
+                          {headerMenuOpen === "plano" && (
+                            <div className="absolute left-0 top-[calc(100%+8px)] z-30 w-44 rounded-xl bg-popover/95 p-2 shadow-[0_16px_45px_-20px_rgba(0,0,0,0.6)] backdrop-blur transition-all">
+                              <p className="text-[10px] font-semibold text-muted-foreground mb-1">Ordenação</p>
+                              <button onClick={() => setSort("plano", "asc")} className="w-full rounded px-2 py-1 text-left text-xs hover:bg-muted/60">
+                                Crescente
+                              </button>
+                              <button onClick={() => setSort("plano", "desc")} className="w-full rounded px-2 py-1 text-left text-xs hover:bg-muted/60">
+                                Decrescente
+                              </button>
+                              <p className="text-[10px] font-semibold text-muted-foreground mt-2 mb-1">Largura</p>
+                              <div className="flex items-center gap-1">
+                                <button onClick={() => adjustColumnWidth("plano", -16)} className="rounded px-2 py-1 text-xs bg-muted/60 hover:bg-muted">-</button>
+                                <button onClick={() => adjustColumnWidth("plano", 16)} className="rounded px-2 py-1 text-xs bg-muted/60 hover:bg-muted">+</button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </th>
+                      <th className="text-left px-2 py-3.5 align-top">
+                        <div className="relative" data-filter-anchor="true">
+                          <button
+                            type="button"
+                            onClick={() => setHeaderMenuOpen((prev) => (prev === "sub" ? null : "sub"))}
+                            className="w-full rounded-xl bg-background/80 px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide shadow-md transition-all duration-200 hover:-translate-y-0.5 hover:bg-background hover:shadow-lg"
+                          >
+                            <span className="inline-flex items-center gap-1">🏙 Sub. {getSortLabel("sub")}</span>
+                          </button>
+                          {headerMenuOpen === "sub" && (
+                            <div className="absolute left-0 top-[calc(100%+8px)] z-30 w-52 rounded-xl bg-popover/95 p-2 shadow-[0_16px_45px_-20px_rgba(0,0,0,0.6)] backdrop-blur transition-all">
+                              <p className="text-[10px] font-semibold text-muted-foreground mb-1">Ordenação</p>
+                              <button onClick={() => setSort("sub", "asc")} className="w-full rounded px-2 py-1 text-left text-xs hover:bg-muted/60">
+                                Crescente
+                              </button>
+                              <button onClick={() => setSort("sub", "desc")} className="w-full rounded px-2 py-1 text-left text-xs hover:bg-muted/60">
+                                Decrescente
+                              </button>
+                              <p className="text-[10px] font-semibold text-muted-foreground mt-2 mb-1">Filtrar siglas</p>
+                              {SUB_SIGLAS.map((sigla) => (
+                                <label key={sigla} className="flex items-center gap-2 rounded px-1 py-1 text-xs hover:bg-muted/50">
+                                  <input
+                                    type="checkbox"
+                                    checked={subSiglaFilter.includes(sigla)}
+                                    onChange={() => toggleSubSigla(sigla)}
+                                  />
+                                  {sigla}
+                                </label>
+                              ))}
+                              <div className="mt-1 flex gap-1">
+                                <button
+                                  onClick={() => setSubSiglaFilter([...SUB_SIGLAS])}
+                                  className="rounded px-2 py-1 text-[11px] bg-muted/60 hover:bg-muted"
+                                >
+                                  Todas
+                                </button>
+                                <button
+                                  onClick={() => setSubSiglaFilter([])}
+                                  className="rounded px-2 py-1 text-[11px] bg-muted/60 hover:bg-muted"
+                                >
+                                  Limpar
+                                </button>
+                              </div>
+                              <p className="text-[10px] font-semibold text-muted-foreground mt-2 mb-1">Largura</p>
+                              <div className="flex items-center gap-1">
+                                <button onClick={() => adjustColumnWidth("sub", -12)} className="rounded px-2 py-1 text-xs bg-muted/60 hover:bg-muted">-</button>
+                                <button onClick={() => adjustColumnWidth("sub", 12)} className="rounded px-2 py-1 text-xs bg-muted/60 hover:bg-muted">+</button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </th>
+                      <th className="text-left px-2 py-3.5 align-top">
+                        <div className="relative" data-filter-anchor="true">
+                          <button
+                            type="button"
+                            onClick={() => setHeaderMenuOpen((prev) => (prev === "servico" ? null : "servico"))}
+                            className="w-full rounded-xl bg-background/80 px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide shadow-md transition-all duration-200 hover:-translate-y-0.5 hover:bg-background hover:shadow-lg"
+                          >
+                            <span className="inline-flex items-center gap-1">🛠 Serviço {getSortLabel("servico")}</span>
+                          </button>
+                          {headerMenuOpen === "servico" && (
+                            <div className="absolute left-0 top-[calc(100%+8px)] z-30 w-72 rounded-xl bg-popover/95 p-2 shadow-[0_16px_45px_-20px_rgba(0,0,0,0.6)] backdrop-blur transition-all">
+                              <p className="text-[10px] font-semibold text-muted-foreground mb-1">Ordenação</p>
+                              <button onClick={() => setSort("servico", "asc")} className="w-full rounded px-2 py-1 text-left text-xs hover:bg-muted/60">
+                                Crescente
+                              </button>
+                              <button onClick={() => setSort("servico", "desc")} className="w-full rounded px-2 py-1 text-left text-xs hover:bg-muted/60">
+                                Decrescente
+                              </button>
+                              <p className="text-[10px] font-semibold text-muted-foreground mt-2 mb-1">Filtrar serviços</p>
+                              <div className="max-h-40 overflow-y-auto space-y-0.5 pr-1">
+                                {serviceOptions.map((servico) => (
+                                  <label key={servico} className="flex items-center gap-2 rounded px-1 py-1 text-xs hover:bg-muted/50 transition-colors">
+                                    <input
+                                      type="checkbox"
+                                      checked={serviceFilterValues.includes(servico)}
+                                      onChange={() => toggleServiceFilter(servico)}
+                                    />
+                                    <span className="truncate">{servico}</span>
+                                  </label>
+                                ))}
+                              </div>
+                              <div className="mt-1 flex gap-1">
+                                <button
+                                  onClick={() => setServiceFilterValues(serviceOptions)}
+                                  className="rounded px-2 py-1 text-[11px] bg-muted/60 hover:bg-muted transition-colors"
+                                >
+                                  Todos
+                                </button>
+                                <button
+                                  onClick={() => setServiceFilterValues([])}
+                                  className="rounded px-2 py-1 text-[11px] bg-muted/60 hover:bg-muted transition-colors"
+                                >
+                                  Limpar
+                                </button>
+                              </div>
+                              <p className="text-[10px] font-semibold text-muted-foreground mt-2 mb-1">Largura</p>
+                              <div className="flex items-center gap-1">
+                                <button onClick={() => adjustColumnWidth("servico", -20)} className="rounded px-2 py-1 text-xs bg-muted/60 hover:bg-muted">-</button>
+                                <button onClick={() => adjustColumnWidth("servico", 20)} className="rounded px-2 py-1 text-xs bg-muted/60 hover:bg-muted">+</button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </th>
+                      <th className="text-left px-2 py-3.5 align-top">
+                        <div className="relative" data-filter-anchor="true">
+                          <button
+                            type="button"
+                            onClick={() => setHeaderMenuOpen((prev) => (prev === "selimp" ? null : "selimp"))}
+                            className="w-full rounded-xl bg-background/80 px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide shadow-md transition-all duration-200 hover:-translate-y-0.5 hover:bg-background hover:shadow-lg"
+                          >
+                            <span className="inline-flex items-center gap-1">📈 SELIMP {getSortLabel("selimp")}</span>
+                          </button>
+                          {headerMenuOpen === "selimp" && (
+                            <div className="absolute left-0 top-[calc(100%+8px)] z-30 w-44 rounded-xl bg-popover/95 p-2 shadow-[0_16px_45px_-20px_rgba(0,0,0,0.6)] backdrop-blur transition-all">
+                              <p className="text-[10px] font-semibold text-muted-foreground mb-1">Ordenação</p>
+                              <button onClick={() => setSort("selimp", "asc")} className="w-full rounded px-2 py-1 text-left text-xs hover:bg-muted/60">
+                                Crescente
+                              </button>
+                              <button onClick={() => setSort("selimp", "desc")} className="w-full rounded px-2 py-1 text-left text-xs hover:bg-muted/60">
+                                Decrescente
+                              </button>
+                              <p className="text-[10px] font-semibold text-muted-foreground mt-2 mb-1">Largura</p>
+                              <div className="flex items-center gap-1">
+                                <button onClick={() => adjustColumnWidth("selimp", -12)} className="rounded px-2 py-1 text-xs bg-muted/60 hover:bg-muted">-</button>
+                                <button onClick={() => adjustColumnWidth("selimp", 12)} className="rounded px-2 py-1 text-xs bg-muted/60 hover:bg-muted">+</button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </th>
+                      <th className="text-left px-2 py-3.5 align-top">
+                        <div className="relative" data-filter-anchor="true">
+                          <button
+                            type="button"
+                            onClick={() => setHeaderMenuOpen((prev) => (prev === "nossa" ? null : "nossa"))}
+                            className="w-full rounded-xl bg-background/80 px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide shadow-md transition-all duration-200 hover:-translate-y-0.5 hover:bg-background hover:shadow-lg"
+                          >
+                            <span className="inline-flex items-center gap-1">📊 Nossa {getSortLabel("nossa")}</span>
+                          </button>
+                          {headerMenuOpen === "nossa" && (
+                            <div className="absolute left-0 top-[calc(100%+8px)] z-30 w-44 rounded-xl bg-popover/95 p-2 shadow-[0_16px_45px_-20px_rgba(0,0,0,0.6)] backdrop-blur transition-all">
+                              <p className="text-[10px] font-semibold text-muted-foreground mb-1">Ordenação</p>
+                              <button onClick={() => setSort("nossa", "asc")} className="w-full rounded px-2 py-1 text-left text-xs hover:bg-muted/60">
+                                Crescente
+                              </button>
+                              <button onClick={() => setSort("nossa", "desc")} className="w-full rounded px-2 py-1 text-left text-xs hover:bg-muted/60">
+                                Decrescente
+                              </button>
+                              <p className="text-[10px] font-semibold text-muted-foreground mt-2 mb-1">Largura</p>
+                              <div className="flex items-center gap-1">
+                                <button onClick={() => adjustColumnWidth("nossa", -12)} className="rounded px-2 py-1 text-xs bg-muted/60 hover:bg-muted">-</button>
+                                <button onClick={() => adjustColumnWidth("nossa", 12)} className="rounded px-2 py-1 text-xs bg-muted/60 hover:bg-muted">+</button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </th>
+                      <th className="text-left px-2 py-3.5 align-top">
+                        <div className="relative" data-filter-anchor="true">
+                          <button
+                            type="button"
+                            onClick={() => setHeaderMenuOpen((prev) => (prev === "origem" ? null : "origem"))}
+                            className="w-full rounded-xl bg-background/80 px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide shadow-md transition-all duration-200 hover:-translate-y-0.5 hover:bg-background hover:shadow-lg"
+                          >
+                            <span className="inline-flex items-center gap-1">🧭 Origem {getSortLabel("origem")}</span>
+                          </button>
+                          {headerMenuOpen === "origem" && (
+                            <div className="absolute right-0 top-[calc(100%+8px)] z-30 w-56 rounded-xl bg-popover/95 p-2 shadow-[0_16px_45px_-20px_rgba(0,0,0,0.6)] backdrop-blur transition-all">
+                              <p className="text-[10px] font-semibold text-muted-foreground mb-1">Ordenação</p>
+                              <button onClick={() => setSort("origem", "asc")} className="w-full rounded px-2 py-1 text-left text-xs hover:bg-muted/60">
+                                Crescente
+                              </button>
+                              <button onClick={() => setSort("origem", "desc")} className="w-full rounded px-2 py-1 text-left text-xs hover:bg-muted/60">
+                                Decrescente
+                              </button>
+                              <p className="text-[10px] font-semibold text-muted-foreground mt-2 mb-1">Filtrar origens</p>
+                              {ORIGEM_VALUES.map((origem) => (
+                                <label key={origem} className="flex items-center gap-2 rounded px-1 py-1 text-xs hover:bg-muted/50 transition-colors">
+                                  <input
+                                    type="checkbox"
+                                    checked={origemFilterValues.includes(origem)}
+                                    onChange={() => toggleOrigemFilterValue(origem)}
+                                  />
+                                  {origem === "ambos" ? "Ambos" : origem === "somente_selimp" ? "Só SELIMP" : "Só Nossa"}
+                                </label>
+                              ))}
+                              <div className="mt-1 flex gap-1">
+                                <button
+                                  onClick={() => setOrigemFilterValues([...ORIGEM_VALUES])}
+                                  className="rounded px-2 py-1 text-[11px] bg-muted/60 hover:bg-muted transition-colors"
+                                >
+                                  Todas
+                                </button>
+                                <button
+                                  onClick={() => setOrigemFilterValues([])}
+                                  className="rounded px-2 py-1 text-[11px] bg-muted/60 hover:bg-muted transition-colors"
+                                >
+                                  Limpar
+                                </button>
+                              </div>
+                              <p className="text-[10px] font-semibold text-muted-foreground mt-2 mb-1">Largura</p>
+                              <div className="flex items-center gap-1">
+                                <button onClick={() => adjustColumnWidth("origem", -12)} className="rounded px-2 py-1 text-xs bg-muted/60 hover:bg-muted">-</button>
+                                <button onClick={() => adjustColumnWidth("origem", 12)} className="rounded px-2 py-1 text-xs bg-muted/60 hover:bg-muted">+</button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </th>
+                    </tr>
+                  </thead>
                 <tbody>
                   {filteredComparativo.map((row, index) => {
-                    const delta = row.diferenca_percentual;
-                    const diverge = delta != null && Math.abs(delta) >= 5;
+                    const diverge = getDivergenceMagnitude(row.percentual_selimp, row.percentual_nosso) >= 5;
                     const subTag = getSubTag(row.subprefeitura);
                     return (
                       <tr
                         key={`${row.plano}-${row.origem}-${row.percentual_selimp}-${row.percentual_nosso}`}
-                        className={`transition-colors hover:bg-emerald-500/10 ${
-                          diverge
+                        className={`border-y border-border/40 transition-colors hover:bg-emerald-500/10 ${
+                          highlightDivergencias && diverge
                             ? "bg-amber-500/10"
                             : index % 2 === 0
                             ? "bg-background/35"
@@ -468,13 +956,6 @@ export default function IPTPage() {
           </CardContent>
         </Card>
 
-        <IPTModal
-          open={iptModalOpen}
-          onOpenChange={setIptModalOpen}
-          onSuccess={() => loadData()}
-          currentValue={iptCard.valor}
-          currentPontuacao={iptCard.pontuacao}
-        />
       </div>
     </MainLayout>
   );
