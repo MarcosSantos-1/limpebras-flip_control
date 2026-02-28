@@ -1,10 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { format, endOfMonth, startOfMonth } from "date-fns";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { apiService, type IptPreviewResponse } from "@/lib/api";
+import { getSortKey, getSubFromPlano } from "@/lib/ipt-utils";
 
 const pct = (value?: number | null) => (value == null ? "--" : `${value.toFixed(1)}%`);
 const clamp = (value: number, min = 0, max = 100) => Math.min(max, Math.max(min, value));
@@ -14,7 +16,16 @@ const normalizeText = (value?: string) =>
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase();
 
-const getSubTag = (subprefeitura?: string) => {
+/** Sigla SUB: primeiros 2 caracteres do plano (CV, JT, MG, ST). Fallback para nome da subprefeitura. */
+const getSubTag = (subprefeitura?: string, plano?: string) => {
+  const subFromPlano = getSubFromPlano(plano);
+  if (subFromPlano) {
+    const sigla = subFromPlano;
+    if (sigla === "CV") return { sigla: "CV", className: "border-lime-500/60 bg-lime-500/10 text-lime-700 dark:text-lime-400" };
+    if (sigla === "JT") return { sigla: "JT", className: "border-blue-800/60 bg-blue-700/10 text-blue-800 dark:text-blue-300" };
+    if (sigla === "MG") return { sigla: "MG", className: "border-cyan-500/60 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300" };
+    if (sigla === "ST") return { sigla: "ST", className: "border-amber-500/60 bg-amber-500/10 text-amber-700 dark:text-amber-300" };
+  }
   const normalized = normalizeText(subprefeitura);
   const compact = normalized.replace(/[^a-z]/g, "");
 
@@ -79,8 +90,27 @@ const getDivergenceMagnitude = (selimp?: number | null, nosso?: number | null) =
   return Math.abs(s - n);
 };
 
-type TableColumnKey = "plano" | "sub" | "servico" | "selimp" | "nossa" | "origem";
 type SortDirection = "asc" | "desc";
+
+/** Ordena por SUB + serviço (VP, VJ, GO...) + mapa (4 últimos dígitos). Ignora turno e frequência. */
+function compareByPlanoStructure(
+  a: { plano?: string },
+  b: { plano?: string },
+  column: "plano" | "sub" | "servico",
+  direction: SortDirection
+): number {
+  const ka = getSortKey(a.plano ?? "");
+  const kb = getSortKey(b.plano ?? "");
+  let cmp = 0;
+  if (column === "servico") {
+    cmp = ka.servico.localeCompare(kb.servico) || ka.sub.localeCompare(kb.sub) || ka.mapa.localeCompare(kb.mapa);
+  } else {
+    cmp = ka.sub.localeCompare(kb.sub) || ka.servico.localeCompare(kb.servico) || ka.mapa.localeCompare(kb.mapa);
+  }
+  return direction === "asc" ? cmp : -cmp;
+}
+
+type TableColumnKey = "plano" | "sub" | "servico" | "selimp" | "nossa" | "origem";
 const SUB_SIGLAS = ["CV", "JT", "MG", "ST"] as const;
 const ORIGEM_VALUES = ["ambos", "somente_selimp", "somente_nosso"] as const;
 type OrigemValue = (typeof ORIGEM_VALUES)[number];
@@ -112,6 +142,7 @@ export default function IPTPage() {
     column: "plano",
     direction: "asc",
   });
+  const [expandedPlano, setExpandedPlano] = useState<string | null>(null);
   const [columnWidths, setColumnWidths] = useState<Record<TableColumnKey, number>>({
     plano: 170,
     sub: 90,
@@ -167,10 +198,35 @@ export default function IPTPage() {
     return Array.from(new Set(values)).sort((a, b) => a.localeCompare(b, "pt-BR"));
   }, [iptPreview]);
 
+  const sourceRows = useMemo(
+    () =>
+      (iptPreview?.itens ?? iptPreview?.comparativo?.itens ?? []) as Array<{
+        plano: string;
+        subprefeitura: string;
+        tipo_servico: string;
+        percentual_selimp: number | null;
+        percentual_nosso: number | null;
+        origem: "ambos" | "somente_selimp" | "somente_nosso";
+        equipamentos?: string[];
+        frequencia?: string | null;
+        proxima_programacao?: string | null;
+        detalhes_diarios?: Array<{
+          data: string;
+          esperado: boolean;
+          percentual_selimp: number | null;
+          percentual_nosso: number | null;
+          despachos_selimp: number;
+          despachos_nosso: number;
+          data_estimada?: boolean;
+        }>;
+      }>,
+    [iptPreview]
+  );
+
   const serviceOptions = useMemo(() => {
-    const values = (iptPreview?.comparativo.itens ?? []).map((item) => item.tipo_servico).filter(Boolean);
+    const values = sourceRows.map((item) => item.tipo_servico).filter(Boolean);
     return Array.from(new Set(values)).sort((a, b) => a.localeCompare(b, "pt-BR"));
-  }, [iptPreview]);
+  }, [sourceRows]);
 
   useEffect(() => {
     if (!serviceFilterInitialized && serviceOptions.length > 0) {
@@ -192,13 +248,13 @@ export default function IPTPage() {
   }, [iptPreview]);
 
   const filteredComparativo = useMemo(() => {
-    const rows = iptPreview?.comparativo.itens ?? [];
+    const rows = sourceRows;
     const filtered = rows.filter((row) => {
       if (subprefeituraFilter !== "all" && row.subprefeitura !== subprefeituraFilter) return false;
       if (origemFilter !== "all" && row.origem !== origemFilter) return false;
       if (origemFilterValues.length > 0 && !origemFilterValues.includes(row.origem)) return false;
       if (serviceFilterValues.length > 0 && !serviceFilterValues.includes(row.tipo_servico)) return false;
-      const subSigla = getSubTag(row.subprefeitura).sigla;
+      const subSigla = getSubTag(row.subprefeitura, row.plano).sigla;
       if (
         subSiglaFilter.length < SUB_SIGLAS.length &&
         !subSiglaFilter.includes(subSigla as (typeof SUB_SIGLAS)[number])
@@ -216,14 +272,11 @@ export default function IPTPage() {
     });
 
     return [...filtered].sort((a, b) => {
-      const byDirection = (base: number) => (tableSort.direction === "asc" ? base : -base);
+      const dir = tableSort.direction;
+      const byDirection = (base: number) => (dir === "asc" ? base : -base);
       let sortBase = 0;
-      if (tableSort.column === "plano") {
-        sortBase = (a.plano || "").localeCompare(b.plano || "", "pt-BR");
-      } else if (tableSort.column === "sub") {
-        sortBase = getSubTag(a.subprefeitura).sigla.localeCompare(getSubTag(b.subprefeitura).sigla, "pt-BR");
-      } else if (tableSort.column === "servico") {
-        sortBase = (a.tipo_servico || "").localeCompare(b.tipo_servico || "", "pt-BR");
+      if (tableSort.column === "plano" || tableSort.column === "sub" || tableSort.column === "servico") {
+        sortBase = compareByPlanoStructure(a, b, tableSort.column, dir);
       } else if (tableSort.column === "selimp") {
         sortBase = (toNum(a.percentual_selimp) ?? -1) - (toNum(b.percentual_selimp) ?? -1);
       } else if (tableSort.column === "nossa") {
@@ -231,15 +284,15 @@ export default function IPTPage() {
       } else {
         sortBase = a.origem.localeCompare(b.origem, "pt-BR");
       }
-      if (sortBase !== 0) return byDirection(sortBase);
+      if (sortBase !== 0) return sortBase;
 
       const aDiv = getDivergenceMagnitude(a.percentual_selimp, a.percentual_nosso);
       const bDiv = getDivergenceMagnitude(b.percentual_selimp, b.percentual_nosso);
       if (aDiv !== bDiv) return bDiv - aDiv;
-      return (a.plano || "").localeCompare(b.plano || "", "pt-BR");
+      return compareByPlanoStructure(a, b, "plano", "asc");
     });
   }, [
-    iptPreview,
+    sourceRows,
     origemFilter,
     origemFilterValues,
     divergenciaFilter,
@@ -251,7 +304,7 @@ export default function IPTPage() {
   ]);
 
   const comparativoInsights = useMemo(() => {
-    const rows = iptPreview?.comparativo.itens ?? [];
+    const rows = iptPreview?.comparativo?.itens ?? [];
     let selimpSemNossoCom = 0;
     let selimpComNossoSem = 0;
     let ambosZerados = 0;
@@ -282,12 +335,12 @@ export default function IPTPage() {
   }, [iptPreview, planoAtivoMap]);
 
   const origemDistribution = useMemo(() => {
-    const total = iptPreview?.comparativo.total_linhas ?? 0;
+    const total = iptPreview?.comparativo?.total_linhas ?? 0;
     if (!total) return { ambos: 0, somenteSelimp: 0, somenteNosso: 0 };
     return {
-      ambos: ((total - (iptPreview?.comparativo.somente_selimp ?? 0) - (iptPreview?.comparativo.somente_nosso ?? 0)) / total) * 100,
-      somenteSelimp: ((iptPreview?.comparativo.somente_selimp ?? 0) / total) * 100,
-      somenteNosso: ((iptPreview?.comparativo.somente_nosso ?? 0) / total) * 100,
+      ambos: ((total - (iptPreview?.comparativo?.somente_selimp ?? 0) - (iptPreview?.comparativo?.somente_nosso ?? 0)) / total) * 100,
+      somenteSelimp: ((iptPreview?.comparativo?.somente_selimp ?? 0) / total) * 100,
+      somenteNosso: ((iptPreview?.comparativo?.somente_nosso ?? 0) / total) * 100,
     };
   }, [iptPreview]);
 
@@ -540,24 +593,24 @@ export default function IPTPage() {
             <CardTitle>Comparativo SELIMP x Nossa Base</CardTitle>
             <CardDescription>
               Conferencia por plano para validar divergencia percentual e cobertura entre planilhas.
-              Delta (Δ) representa a diferenca em pontos percentuais: SELIMP - Nossa Base.
+              Delta (Δ) representa a diferença em pontos percentuais: SELIMP - Nossa Base.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <div className="rounded-xl p-3 bg-background/70 shadow-sm">
                 <p className="text-xs text-muted-foreground">Linhas comparativas</p>
-                <p className="text-xl font-bold">{iptPreview?.comparativo.total_linhas ?? 0}</p>
+                <p className="text-xl font-bold">{iptPreview?.comparativo?.total_linhas ?? 0}</p>
               </div>
               <div className="rounded-xl p-3 bg-amber-500/10 shadow-sm">
-                <p className="text-xs text-muted-foreground">Divergencias (|Δ| &gt;= 5 p.p.)</p>
-                <p className="text-xl font-bold text-amber-600">{iptPreview?.comparativo.divergencias ?? 0}</p>
+                <p className="text-xs text-muted-foreground">Divergências (|Δ| &gt;= 5 p.p.)</p>
+                <p className="text-xl font-bold text-amber-600">{iptPreview?.comparativo?.divergencias ?? 0}</p>
                 <div className="mt-2 h-1.5 rounded-full bg-amber-200/50 dark:bg-amber-900/20">
                   <div
                     className="h-1.5 rounded-full bg-amber-500"
                     style={{
                       width: `${clamp(
-                        ((iptPreview?.comparativo.divergencias ?? 0) / Math.max(1, iptPreview?.comparativo.total_linhas ?? 1)) * 100
+                        ((iptPreview?.comparativo?.divergencias ?? 0) / Math.max(1, iptPreview?.comparativo?.total_linhas ?? 1)) * 100
                       )}%`,
                     }}
                   />
@@ -565,12 +618,12 @@ export default function IPTPage() {
               </div>
               <div className="rounded-xl p-3 bg-cyan-500/10 shadow-sm">
                 <p className="text-xs text-muted-foreground">Só SELIMP</p>
-                <p className="text-xl font-bold text-cyan-600">{iptPreview?.comparativo.somente_selimp ?? 0}</p>
+                <p className="text-xl font-bold text-cyan-600">{iptPreview?.comparativo?.somente_selimp ?? 0}</p>
                 <p className="text-xs text-muted-foreground mt-1">{origemDistribution.somenteSelimp.toFixed(1)}%</p>
               </div>
               <div className="rounded-xl p-3 bg-fuchsia-500/10 shadow-sm">
                 <p className="text-xs text-muted-foreground">Só Nossa Base</p>
-                <p className="text-xl font-bold text-fuchsia-600">{iptPreview?.comparativo.somente_nosso ?? 0}</p>
+                <p className="text-xl font-bold text-fuchsia-600">{iptPreview?.comparativo?.somente_nosso ?? 0}</p>
                 <p className="text-xs text-muted-foreground mt-1">{origemDistribution.somenteNosso.toFixed(1)}%</p>
               </div>
               <div className="rounded-xl p-3 bg-blue-500/10 shadow-sm">
@@ -642,6 +695,7 @@ export default function IPTPage() {
               <div className="rounded-2xl bg-background/60 shadow-inner transition-all">
                 <table className="w-full text-sm table-fixed">
                   <colgroup>
+                    <col style={{ width: 36 }} />
                     <col style={{ width: columnWidths.plano }} />
                     <col style={{ width: columnWidths.sub }} />
                     <col style={{ width: columnWidths.servico }} />
@@ -651,6 +705,7 @@ export default function IPTPage() {
                   </colgroup>
                   <thead className="bg-muted/50 border-b-2 border-emerald-500/30">
                     <tr>
+                      <th className="text-left px-1 py-3.5 align-top w-[36px]">&nbsp;</th>
                       <th className="text-left px-2 py-3.5 align-top">
                         <div className="relative" data-filter-anchor="true">
                           <button
@@ -818,7 +873,7 @@ export default function IPTPage() {
                             onClick={() => setHeaderMenuOpen((prev) => (prev === "nossa" ? null : "nossa"))}
                             className="w-full rounded-xl bg-background/80 px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide shadow-md transition-all duration-200 hover:-translate-y-0.5 hover:bg-background hover:shadow-lg"
                           >
-                            <span className="inline-flex items-center gap-1">📊 Nossa {getSortLabel("nossa")}</span>
+                            <span className="inline-flex items-center gap-1">🧩 Nossa {getSortLabel("nossa")}</span>
                           </button>
                           {headerMenuOpen === "nossa" && (
                             <div className="absolute left-0 top-[calc(100%+8px)] z-30 w-44 rounded-xl bg-popover/95 p-2 shadow-[0_16px_45px_-20px_rgba(0,0,0,0.6)] backdrop-blur transition-all">
@@ -845,7 +900,7 @@ export default function IPTPage() {
                             onClick={() => setHeaderMenuOpen((prev) => (prev === "origem" ? null : "origem"))}
                             className="w-full rounded-xl bg-background/80 px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide shadow-md transition-all duration-200 hover:-translate-y-0.5 hover:bg-background hover:shadow-lg"
                           >
-                            <span className="inline-flex items-center gap-1">🧭 Origem {getSortLabel("origem")}</span>
+                            <span className="inline-flex items-center gap-1">🔎 Origem {getSortLabel("origem")}</span>
                           </button>
                           {headerMenuOpen === "origem" && (
                             <div className="absolute right-0 top-[calc(100%+8px)] z-30 w-56 rounded-xl bg-popover/95 p-2 shadow-[0_16px_45px_-20px_rgba(0,0,0,0.6)] backdrop-blur transition-all">
@@ -895,56 +950,159 @@ export default function IPTPage() {
                 <tbody>
                   {filteredComparativo.map((row, index) => {
                     const diverge = getDivergenceMagnitude(row.percentual_selimp, row.percentual_nosso) >= 5;
-                    const subTag = getSubTag(row.subprefeitura);
+                    const subTag = getSubTag(row.subprefeitura, row.plano);
+                    const rowKey = `${row.plano}-${row.origem}`;
+                    const isExpanded = expandedPlano === row.plano;
+                    const hasDetails =
+                      (row.equipamentos && row.equipamentos.length > 0) ||
+                      row.frequencia ||
+                      row.proxima_programacao ||
+                      (row.detalhes_diarios && row.detalhes_diarios.length > 0);
                     return (
-                      <tr
-                        key={`${row.plano}-${row.origem}-${row.percentual_selimp}-${row.percentual_nosso}`}
-                        className={`border-y border-border/40 transition-colors hover:bg-emerald-500/10 ${
-                          highlightDivergencias && diverge
-                            ? "bg-amber-500/10"
-                            : index % 2 === 0
-                            ? "bg-background/35"
-                            : "bg-background/10"
-                        }`}
-                      >
-                        <td className="px-3 py-2 font-medium">{row.plano || "-"}</td>
-                        <td className="px-3 py-2">
-                          <span className={`inline-flex items-center justify-center rounded-full border px-2 py-0.5 text-xs font-semibold ${subTag.className}`}>
-                            {subTag.sigla}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 wrap-break-word whitespace-normal leading-snug">
-                          {row.tipo_servico || "-"}
-                        </td>
-                        <td className="px-3 py-2">
-                          <span
-                            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${getSelimpBadgeClass(
-                              row.percentual_selimp
-                            )}`}
-                          >
-                            {pct(row.percentual_selimp)}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2">{pct(row.percentual_nosso)}</td>
-                        <td className="px-3 py-2">
-                          <span
-                            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${getOrigemBadgeClass(
-                              row.origem
-                            )}`}
-                          >
-                            {row.origem === "ambos"
-                              ? "Ambos"
-                              : row.origem === "somente_selimp"
-                              ? "Só SELIMP"
-                              : "Só Nossa"}
-                          </span>
-                        </td>
-                      </tr>
+                      <Fragment key={rowKey}>
+                        <tr
+                          key={rowKey}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => hasDetails && setExpandedPlano((p) => (p === row.plano ? null : row.plano))}
+                          onKeyDown={(e) => {
+                            if ((e.key === "Enter" || e.key === " ") && hasDetails) {
+                              e.preventDefault();
+                              setExpandedPlano((p) => (p === row.plano ? null : row.plano));
+                            }
+                          }}
+                          className={`cursor-pointer border-y border-border/40 transition-colors hover:bg-emerald-500/10 ${
+                            highlightDivergencias && diverge
+                              ? "bg-amber-500/10"
+                              : index % 2 === 0
+                              ? "bg-background/35"
+                              : "bg-background/10"
+                          } ${!hasDetails ? "cursor-default" : ""}`}
+                        >
+                          <td className="px-3 py-2 w-8 align-middle">
+                            {hasDetails ? (
+                              isExpanded ? (
+                                <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                              ) : (
+                                <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                              )
+                            ) : (
+                              <span className="w-4 inline-block" />
+                            )}
+                          </td>
+                          <td className="px-3 py-2 font-medium">{row.plano || "-"}</td>
+                          <td className="px-3 py-2">
+                            <span className={`inline-flex items-center justify-center rounded-full border px-2 py-0.5 text-xs font-semibold ${subTag.className}`}>
+                              {subTag.sigla}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 wrap-break-word whitespace-normal leading-snug">
+                            {row.tipo_servico || "-"}
+                          </td>
+                          <td className="px-3 py-2">
+                            <span
+                              className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${getSelimpBadgeClass(
+                                row.percentual_selimp
+                              )}`}
+                            >
+                              {pct(row.percentual_selimp)}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2">{pct(row.percentual_nosso)}</td>
+                          <td className="px-3 py-2">
+                            <span
+                              className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${getOrigemBadgeClass(
+                                row.origem
+                              )}`}
+                            >
+                              {row.origem === "ambos"
+                                ? "Ambos"
+                                : row.origem === "somente_selimp"
+                                ? "Só SELIMP"
+                                : "Só Nossa"}
+                            </span>
+                          </td>
+                        </tr>
+                        {isExpanded && hasDetails && (
+                          <tr key={`${rowKey}-detail`}>
+                            <td colSpan={7} className="bg-muted/30 px-4 py-4 align-top">
+                              <div className="grid gap-4 sm:grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 text-sm">
+                                {row.equipamentos && row.equipamentos.length > 0 && (
+                                  <div className="rounded-lg bg-background/60 p-3 shadow-sm">
+                                    <p className="text-xs font-semibold text-muted-foreground mb-2">
+                                      Equipamentos (Placa/Lutocar)
+                                    </p>
+                                    <div className="flex flex-wrap gap-1.5">
+                                      {row.equipamentos.map((eq) => (
+                                        <span
+                                          key={eq}
+                                          className="rounded border border-border/50 bg-background/80 px-2 py-0.5 font-mono text-xs"
+                                        >
+                                          {eq}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                                {row.frequencia && (
+                                  <div className="rounded-lg bg-background/60 p-3 shadow-sm">
+                                    <p className="text-xs font-semibold text-muted-foreground mb-1">Frequência</p>
+                                    <p className="font-medium">{row.frequencia}</p>
+                                  </div>
+                                )}
+                                {row.proxima_programacao && (
+                                  <div className="rounded-lg bg-background/60 p-3 shadow-sm">
+                                    <p className="text-xs font-semibold text-muted-foreground mb-1">Próxima programação</p>
+                                    <p className="font-medium">
+                                      {row.proxima_programacao.replace(/^(\d{4})-(\d{2})-(\d{2})$/, "$3/$2/$1")}
+                                    </p>
+                                  </div>
+                                )}
+                                {row.detalhes_diarios && row.detalhes_diarios.length > 0 && (
+                                  <div className="rounded-lg bg-background/60 p-3 shadow-sm lg:col-span-2 xl:col-span-3">
+                                    <p className="text-xs font-semibold text-muted-foreground mb-2">
+                                      Percentual por dia (deveria ser lançado na SELIMP)
+                                    </p>
+                                    <div className="overflow-x-auto max-h-48 overflow-y-auto">
+                                      <table className="w-full text-xs">
+                                        <thead>
+                                          <tr className="border-b border-border/50">
+                                            <th className="text-left py-1.5 px-2">Data</th>
+                                            <th className="text-left py-1.5 px-2">Esperado</th>
+                                            <th className="text-left py-1.5 px-2">% SELIMP</th>
+                                            <th className="text-left py-1.5 px-2">% Nossa</th>
+                                            <th className="text-left py-1.5 px-2">D. Selimp</th>
+                                            <th className="text-left py-1.5 px-2">D. Nossa</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {row.detalhes_diarios.map((d) => (
+                                            <tr key={d.data} className="border-b border-border/30">
+                                              <td className="py-1.5 px-2 font-mono">
+                                                {d.data.replace(/^(\d{4})-(\d{2})-(\d{2})$/, "$3/$2/$1")}
+                                              </td>
+                                              <td className="py-1.5 px-2">{d.esperado ? "Sim" : "-"}</td>
+                                              <td className="py-1.5 px-2">{pct(d.percentual_selimp)}</td>
+                                              <td className="py-1.5 px-2">{pct(d.percentual_nosso)}</td>
+                                              <td className="py-1.5 px-2">{d.despachos_selimp}</td>
+                                              <td className="py-1.5 px-2">{d.despachos_nosso}</td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
                     );
                   })}
                   {!loading && filteredComparativo.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="px-3 py-6 text-center text-muted-foreground">
+                      <td colSpan={7} className="px-3 py-6 text-center text-muted-foreground">
                         Sem dados para os filtros selecionados.
                       </td>
                     </tr>

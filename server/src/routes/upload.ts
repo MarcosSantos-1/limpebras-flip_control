@@ -2,7 +2,7 @@ import { FastifyPluginAsync, FastifyRequest } from "fastify";
 import { pool } from "../db.js";
 import { parseSacCsv, parseBfsCsv, parseOuvidoriaCsv, parseAcicCsv } from "../services/parseCsv.js";
 import { parseIptWorkbook, type IptFileType } from "../services/parseIptXlsx.js";
-import { BFS_NAO_DEMANDANTES } from "../constants/bfs.js";
+import { parseCronogramaWorkbook } from "../services/parseCronogramaIpt.js";
 
 export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
   const getLastUpdate = async (table: "sacs" | "bfs" | "acic" | "ouvidoria") => {
@@ -47,6 +47,8 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
     const buffer = await data.toBuffer();
     const sourceFile = data.filename;
     const rows = parseIptWorkbook(buffer, fileType);
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
 
     const client = await pool.connect();
     try {
@@ -54,6 +56,14 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       let updated = 0;
 
       for (const row of rows) {
+        const raw = { ...(row.raw ?? {}) } as Record<string, unknown>;
+        let dataReferencia = row.dataReferencia;
+        if (fileType === "ipt_report_selimp" && !dataReferencia) {
+          // Fallback operacional: quando a SELIMP não traz data confiável, usamos D-1 e marcamos como estimado.
+          dataReferencia = new Date(yesterday);
+          raw._data_referencia_estimada = true;
+          raw._metodo_data_referencia = "fallback_d_1_upload";
+        }
         const result = await client.query(
           `INSERT INTO ipt_imports (
             file_type, record_key, setor, data_referencia, servico, raw, source_file, updated_at
@@ -71,9 +81,9 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
             fileType,
             row.recordKey,
             row.setor || null,
-            row.dataReferencia,
+            dataReferencia,
             row.servico || null,
-            JSON.stringify(row.raw),
+            JSON.stringify(raw),
             sourceFile,
           ]
         );
@@ -331,6 +341,15 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
+  fastify.post("/upload/ipt-historico-os-compactadores", async (request, reply) => {
+    try {
+      return await importIptFile("ipt_historico_os_compactadores", request);
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : "Falha no upload IPT";
+      return reply.code(400).send({ detail });
+    }
+  });
+
   fastify.post("/upload/ipt-report", async (request, reply) => {
     try {
       return await importIptFile("ipt_report_selimp", request);
@@ -349,8 +368,63 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
+  const getLastCronogramaUpdate = async () => {
+    const last = await pool.query(
+      `SELECT source_file, updated_at FROM ipt_cronograma ORDER BY updated_at DESC NULLS LAST LIMIT 1`
+    );
+    const count = await pool.query(`SELECT COUNT(*)::int AS total FROM ipt_cronograma`);
+    return {
+      ultimo_import: last.rows[0]?.updated_at ?? null,
+      source_file: last.rows[0]?.source_file ?? null,
+      total_registros: Number(count.rows[0]?.total ?? 0),
+    };
+  };
+
+  fastify.post("/upload/ipt-cronograma", async (request, reply) => {
+    const data = await request.file();
+    if (!data) return reply.code(400).send({ detail: "Arquivo XLSX obrigatório (BL.xlsx, MT.xlsx, NH.xlsx, LM.xlsx ou GO.xlsx)" });
+    const buffer = await data.toBuffer();
+    const sourceFile = data.filename;
+    const rows = parseCronogramaWorkbook(buffer, sourceFile);
+    if (rows.length === 0) {
+      return reply.code(400).send({
+        detail: "Nenhum registro extraído. Use BL.xlsx, MT.xlsx, NH.xlsx, LM.xlsx ou GO.xlsx com estrutura esperada.",
+      });
+    }
+
+    const servico = rows[0]?.servico;
+    const client = await pool.connect();
+    try {
+      await client.query("DELETE FROM ipt_cronograma WHERE servico = $1", [servico]);
+
+      let inserted = 0;
+      for (const row of rows) {
+        const dataStr = row.dataEsperada.toISOString().slice(0, 10);
+        await client.query(
+          `INSERT INTO ipt_cronograma (servico, setor, data_esperada, ano, raw, source_file, updated_at)
+           VALUES ($1, $2, $3::date, $4, $5::jsonb, $6, NOW())
+           ON CONFLICT (servico, setor, data_esperada)
+           DO UPDATE SET raw = EXCLUDED.raw, source_file = EXCLUDED.source_file, updated_at = NOW()`,
+          [row.servico, row.setor, dataStr, row.ano ?? null, JSON.stringify(row.raw), sourceFile]
+        );
+        inserted += 1;
+      }
+      return {
+        processados: inserted,
+        total: rows.length,
+        inseridos: inserted,
+        atualizados: 0,
+        duplicados: 0,
+        erros: 0,
+        ultimo_import: new Date().toISOString(),
+      };
+    } finally {
+      client.release();
+    }
+  });
+
   fastify.get("/upload/last-updates", async () => {
-    const [sacs, cnc, acic, ouvidoria, iptHistoricoOs, iptHistoricoOsVarricao, iptReport, iptStatusBateria] =
+    const [sacs, cnc, acic, ouvidoria, iptHistoricoOs, iptHistoricoOsVarricao, iptHistoricoOsCompactadores, iptReport, iptStatusBateria, iptCronograma] =
       await Promise.all([
       getLastUpdate("sacs"),
       getLastUpdate("bfs"),
@@ -358,8 +432,10 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       getLastUpdate("ouvidoria"),
       getLastIptUpdate("ipt_historico_os"),
       getLastIptUpdate("ipt_historico_os_varricao"),
+      getLastIptUpdate("ipt_historico_os_compactadores"),
       getLastIptUpdate("ipt_report_selimp"),
       getLastIptUpdate("ipt_status_bateria"),
+      getLastCronogramaUpdate(),
       ]);
     return {
       sacs,
@@ -368,8 +444,10 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       ouvidoria,
       iptHistoricoOs,
       iptHistoricoOsVarricao,
+      iptHistoricoOsCompactadores,
       iptReport,
       iptStatusBateria,
+      iptCronograma,
     };
   });
 

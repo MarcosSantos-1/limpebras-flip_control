@@ -48,6 +48,12 @@ const cardColors = {
     text: "text-lime-600 dark:text-lime-400",
     gradient: "from-lime-500 to-green-500",
   },
+  iptHistoricoOsCompactadores: {
+    border: "border-teal-500",
+    bg: "bg-teal-50 dark:bg-teal-900/20",
+    text: "text-teal-600 dark:text-teal-400",
+    gradient: "from-teal-500 to-cyan-500",
+  },
   iptReport: {
     border: "border-fuchsia-500",
     bg: "bg-fuchsia-50 dark:bg-fuchsia-900/20",
@@ -60,6 +66,12 @@ const cardColors = {
     text: "text-sky-600 dark:text-sky-400",
     gradient: "from-sky-500 to-indigo-500",
   },
+  iptCronograma: {
+    border: "border-violet-500",
+    bg: "bg-violet-50 dark:bg-violet-900/20",
+    text: "text-violet-600 dark:text-violet-400",
+    gradient: "from-violet-500 to-purple-500",
+  },
 };
 
 export default function UploadPage() {
@@ -70,8 +82,10 @@ export default function UploadPage() {
     ouvidoria: { status: "idle" },
     iptHistoricoOs: { status: "idle" },
     iptHistoricoOsVarricao: { status: "idle" },
+    iptHistoricoOsCompactadores: { status: "idle" },
     iptReport: { status: "idle" },
     iptStatusBateria: { status: "idle" },
+    iptCronograma: { status: "idle" },
   });
   const [draggedOver, setDraggedOver] = useState<string | null>(null);
   const [lastUpdates, setLastUpdates] = useState<Record<string, { ultimo_import?: string | null; source_file?: string | null; total_registros?: number }>>({});
@@ -118,11 +132,17 @@ export default function UploadPage() {
         case "iptHistoricoOsVarricao":
           data = await apiService.uploadIptHistoricoOsVarricaoXlsx(file);
           break;
+        case "iptHistoricoOsCompactadores":
+          data = await apiService.uploadIptHistoricoOsCompactadoresXlsx(file);
+          break;
         case "iptReport":
           data = await apiService.uploadIptReportXlsx(file);
           break;
         case "iptStatusBateria":
           data = await apiService.uploadIptStatusBateriaXlsx(file);
+          break;
+        case "iptCronograma":
+          data = await apiService.uploadIptCronogramaXlsx(file);
           break;
         default:
           return;
@@ -137,6 +157,51 @@ export default function UploadPage() {
       setUploadStates((prev) => ({
         ...prev,
         [type]: {
+          status: "error",
+          error: error.response?.data?.detail || error.message || "Erro desconhecido",
+        },
+      }));
+    }
+  };
+
+  const handleCronogramaBatchUpload = async (files: FileList | File[]) => {
+    const list = Array.from(files);
+    if (!list.length) return;
+    setUploadStates((prev) => ({
+      ...prev,
+      iptCronograma: { status: "uploading", progress: 0 },
+    }));
+    try {
+      let processados = 0;
+      let total = 0;
+      let inseridos = 0;
+      let atualizados = 0;
+      for (const file of list) {
+        const result = await apiService.uploadIptCronogramaXlsx(file);
+        processados += Number(result?.processados ?? 0);
+        total += Number(result?.total ?? 0);
+        inseridos += Number(result?.inseridos ?? 0);
+        atualizados += Number(result?.atualizados ?? 0);
+      }
+      setUploadStates((prev) => ({
+        ...prev,
+        iptCronograma: {
+          status: "success",
+          result: {
+            processados,
+            total,
+            inseridos,
+            atualizados,
+            duplicados: 0,
+            erros: 0,
+          },
+        },
+      }));
+      await carregarUltimasAtualizacoes();
+    } catch (error: any) {
+      setUploadStates((prev) => ({
+        ...prev,
+        iptCronograma: {
           status: "error",
           error: error.response?.data?.detail || error.message || "Erro desconhecido",
         },
@@ -185,6 +250,7 @@ export default function UploadPage() {
     const isIptType = type.startsWith("ipt");
     const accept = isIptType ? ".xlsx" : ".csv";
     const fileLabel = isIptType ? "XLSX" : "CSV";
+    const multiple = type === "iptCronograma";
     const formatDateTime = (value?: string | null) => {
       if (!value) return "Sem importação ainda";
       const d = new Date(value);
@@ -254,10 +320,17 @@ export default function UploadPage() {
                   type="file"
                   accept={accept}
                   onChange={(e) => {
-                    const file = e.target.files?.[0];
+                    const files = e.target.files;
+                    if (!files || files.length === 0) return;
+                    if (type === "iptCronograma" && files.length > 1) {
+                      handleCronogramaBatchUpload(files);
+                      return;
+                    }
+                    const file = files[0];
                     if (file) handleUpload(type, file);
                   }}
                   disabled={isUploading}
+                  multiple={multiple}
                   className="hidden"
                   id={`file-input-${type}`}
                 />
@@ -273,7 +346,11 @@ export default function UploadPage() {
                       {`Clique ou arraste o ${fileLabel} aqui`}
                     </p>
                     <p className="text-xs text-muted-foreground/70">
-                      {isDragged ? "Solte para iniciar o upload!" : `Suporta arquivos ${accept}`}
+                      {isDragged
+                        ? "Solte para iniciar o upload!"
+                        : type === "iptCronograma"
+                        ? "Suporta 1 ou mais XLSX (BL, MT, NH, LM, GO)"
+                        : `Suporta arquivos ${accept}`}
                     </p>
                   </div>
                 </label>
@@ -407,6 +484,11 @@ export default function UploadPage() {
             description="Upload do arquivo historico_os (1).xlsx"
           />
           <UploadCard
+            title="IPT - Histórico de Operações (Compactadores CV)"
+            type="iptHistoricoOsCompactadores"
+            description="Upload da planilha Histórico de operações - Compactadores que fazem serviço CV"
+          />
+          <UploadCard
             title="IPT - Report SELIMP"
             type="iptReport"
             description="Upload do arquivo report.xlsx"
@@ -415,6 +497,11 @@ export default function UploadPage() {
             title="IPT - Status de Bateria"
             type="iptStatusBateria"
             description="Upload do arquivo Status de Bateria.xlsx"
+          />
+          <UploadCard
+            title="IPT - Cronograma (BL, MT, NH, LM, GO)"
+            type="iptCronograma"
+            description="Upload dos arquivos BL.xlsx, MT.xlsx, NH.xlsx, LM.xlsx ou GO.xlsx da pasta docs/ipt/cronograma"
           />
         </div>
       </div>

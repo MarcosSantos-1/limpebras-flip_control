@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-// Se NEXT_PUBLIC_API_URL já incluir /api/v1, usa direto, senão adiciona
+// Se NEXT_PUBLIC_API_URL j├í incluir /api/v1, usa direto, sen├úo adiciona
 const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 const API_URL = baseUrl.includes('/api/v1') ? baseUrl : `${baseUrl}/api/v1`;
 
@@ -27,11 +27,11 @@ export interface SAC {
   prazo_max_hours?: number;
   horas_ate_execucao?: number | null;
   fora_do_prazo?: boolean;
-  /** Coluna Classificação_do_Serviço: "Solicitação" (IA) ou "Reclamação" (IRD) */
+  /** Coluna Classifica├º├úo_do_Servi├ºo: "Solicita├º├úo" (IA) ou "Reclama├º├úo" (IRD) */
   classificacao_servico?: string;
-  /** Coluna Responsividade_Execução: "SIM" = no prazo, "NÃO" = fora do prazo */
+  /** Coluna Responsividade_Execu├º├úo: "SIM" = no prazo, "N├âO" = fora do prazo */
   responsividade_execucao?: string;
-  /** Coluna Finalizado_como_fora_de_escopo: "NÃO" para incluir no IA/IRD */
+  /** Coluna Finalizado_como_fora_de_escopo: "N├âO" para incluir no IA/IRD */
   finalizado_fora_de_escopo?: string;
   procedente_por_status?: string;
 }
@@ -125,6 +125,27 @@ export interface IptPreviewResponse {
       origem: "ambos" | "somente_selimp" | "somente_nosso";
     }>;
   };
+  /** Itens completos com detalhes diários, equipamentos, frequência e próxima programação */
+  itens?: Array<{
+    plano: string;
+    subprefeitura: string;
+    tipo_servico: string;
+    percentual_selimp: number | null;
+    percentual_nosso: number | null;
+    origem: "ambos" | "somente_selimp" | "somente_nosso";
+    equipamentos: string[];
+    frequencia: string | null;
+    proxima_programacao: string | null;
+    detalhes_diarios: Array<{
+      data: string;
+      esperado: boolean;
+      percentual_selimp: number | null;
+      percentual_nosso: number | null;
+      despachos_selimp: number;
+      despachos_nosso: number;
+      data_estimada?: boolean;
+    }>;
+  }>;
 }
 
 // API calls

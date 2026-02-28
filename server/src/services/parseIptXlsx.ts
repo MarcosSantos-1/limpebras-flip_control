@@ -4,6 +4,7 @@ import * as XLSX from "xlsx";
 export type IptFileType =
   | "ipt_historico_os"
   | "ipt_historico_os_varricao"
+  | "ipt_historico_os_compactadores"
   | "ipt_report_selimp"
   | "ipt_status_bateria";
 
@@ -37,6 +38,13 @@ const FILE_CONFIG: Record<IptFileType, ParseConfig> = {
     dateAliases: ["data_planejado", "data_criacao", "data_liberacao", "data_inicio", "data_final"],
     servicoAliases: ["tipo_de_servico", "tipo_servico"],
     signalAliases: ["rota", "setor", "percentual_execucao", "data_planejado", "id"],
+  },
+  ipt_historico_os_compactadores: {
+    keyAliases: ["id", "rota", "plano", "veiculo"],
+    setorAliases: ["setor"],
+    dateAliases: ["data_planejado", "data_criacao", "data_liberacao", "data_inicio", "data_final"],
+    servicoAliases: ["tipo_de_servico", "tipo_servico", "servico"],
+    signalAliases: ["rota", "setor", "percentual_execucao", "percentual", "data_planejado", "id"],
   },
   ipt_report_selimp: {
     keyAliases: ["plano"],
@@ -126,7 +134,12 @@ function detectHeaderRow(rawRows: unknown[][], config: ParseConfig): number {
   return bestRow;
 }
 
-function buildRecordKey(fileType: IptFileType, row: Record<string, string>, aliases: string[]): string {
+function buildRecordKey(
+  fileType: IptFileType,
+  row: Record<string, string>,
+  aliases: string[],
+  dataReferencia: Date | null
+): string {
   if (fileType === "ipt_report_selimp") {
     const composed = [
       row[canonicalHeader("plano")] ?? "",
@@ -141,6 +154,8 @@ function buildRecordKey(fileType: IptFileType, row: Record<string, string>, alia
   }
 
   const rawKey = firstByAliases(row, aliases);
+  const dataStr = dataReferencia ? dataReferencia.toISOString().slice(0, 10) : "";
+  if (rawKey && dataStr) return `${rawKey}|${dataStr}`;
   if (rawKey) return rawKey;
 
   const hash = createHash("sha1")
@@ -179,9 +194,9 @@ export function parseIptWorkbook(buffer: Buffer, fileType: IptFileType): IptPars
       raw[key] = normalizeCell(values[c]);
     }
 
-    const recordKey = buildRecordKey(fileType, raw, config.keyAliases);
-    const setor = firstByAliases(raw, config.setorAliases);
     const dataReferencia = parseDate(firstByAliases(raw, config.dateAliases));
+    const recordKey = buildRecordKey(fileType, raw, config.keyAliases, dataReferencia);
+    const setor = firstByAliases(raw, config.setorAliases);
     const servico = firstByAliases(raw, config.servicoAliases);
     out.push({
       recordKey,

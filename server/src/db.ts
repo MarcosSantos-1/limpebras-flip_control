@@ -114,6 +114,24 @@ export async function runMigrations() {
       .query("CREATE INDEX IF NOT EXISTS idx_ipt_imports_data_referencia ON ipt_imports(data_referencia)")
       .catch(() => {});
     await client.query("CREATE INDEX IF NOT EXISTS idx_ipt_imports_setor ON ipt_imports(setor)").catch(() => {});
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS ipt_cronograma (
+        id SERIAL PRIMARY KEY,
+        servico TEXT NOT NULL,
+        setor TEXT NOT NULL,
+        data_esperada DATE NOT NULL,
+        ano INTEGER,
+        raw JSONB,
+        source_file TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (servico, setor, data_esperada)
+      );
+    `);
+    await client.query("CREATE INDEX IF NOT EXISTS idx_ipt_cronograma_servico ON ipt_cronograma(servico)").catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_ipt_cronograma_setor ON ipt_cronograma(setor)").catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_ipt_cronograma_data ON ipt_cronograma(data_esperada)").catch(() => {});
   } finally {
     client.release();
   }
