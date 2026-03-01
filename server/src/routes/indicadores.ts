@@ -896,6 +896,42 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         return findNextExpectedByFrequency(parsed.frequencia, baseDateKey);
       };
 
+      /** Retorna ~5 datas do cronograma: 2 anteriores, referência, 2 posteriores */
+      const getCronogramaPreview = (plano: string, referenciaKey: string): string[] => {
+        const parsed = parseSetor(plano);
+        if (!parsed) return [];
+        const out: string[] = [];
+        if (CRONOGRAMA_SERVICOS.has(parsed.servico)) {
+          const dates = cronogramaBySetor.get(plano) ?? [];
+          if (dates.length === 0) return [];
+          const idx = dates.findIndex((d) => d >= referenciaKey);
+          const centerIdx = idx >= 0 ? idx : dates.length - 1;
+          for (let i = -2; i <= 2; i += 1) {
+            const j = centerIdx + i;
+            if (j >= 0 && j < dates.length) out.push(dates[j]);
+          }
+          return out;
+        }
+        let curr = referenciaKey;
+        const prevs: string[] = [];
+        for (let i = 0; i < 2; i += 1) {
+          const p = findPreviousExpectedByFrequency(parsed.frequencia, curr);
+          if (!p) break;
+          prevs.unshift(p);
+          curr = p;
+        }
+        out.push(...prevs);
+        out.push(referenciaKey);
+        curr = referenciaKey;
+        for (let i = 0; i < 2; i += 1) {
+          const n = findNextExpectedByFrequency(parsed.frequencia, curr);
+          if (!n) break;
+          out.push(n);
+          curr = n;
+        }
+        return out;
+      };
+
       const rows = Array.from(byPlano.values())
         .map((item) => {
           const dates = Array.from(item.diario.keys()).sort((a, b) => a.localeCompare(b));
@@ -938,8 +974,9 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
             .filter((d): d is NonNullable<typeof d> => d != null)
             .sort((a, b) => b.data.localeCompare(a.data));
 
-          const percentualSelimp = countSelimp > 0 ? Number((sumSelimp / countSelimp).toFixed(2)) : null;
-          const percentualNosso = countNosso > 0 ? Number((sumNosso / countNosso).toFixed(2)) : null;
+          /* Mapa diário: percentual = soma(percentuais) / total_despachos (ex: 4 dias 100% + 1 dia 0% = 80%) */
+          const percentualSelimp = despachosSelimp > 0 ? Number((sumSelimp / despachosSelimp).toFixed(2)) : null;
+          const percentualNosso = despachosNosso > 0 ? Number((sumNosso / despachosNosso).toFixed(2)) : null;
           const origem =
             countSelimp > 0 && countNosso > 0 ? "ambos" : countSelimp > 0 ? "somente_selimp" : "somente_nosso";
 
@@ -961,6 +998,8 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
 
           const baseProxima = escopo === "periodo" ? (scopeEnd as string) : yesterdayKey;
           const nextDate = nextProgramacao(item.plano, baseProxima);
+          const refCronograma = nextDate ?? baseProxima;
+          const cronogramaPreview = getCronogramaPreview(item.plano, refCronograma);
           return {
             plano: item.plano,
             subprefeitura: item.subprefeitura || "Não informado",
@@ -977,6 +1016,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
             origem,
             equipamentos: Array.from(item.equipamentos),
             proxima_programacao: nextDate,
+            cronograma_preview: cronogramaPreview,
             data_estimativa_count: estimados,
             detalhes_diarios: detalhes,
           };

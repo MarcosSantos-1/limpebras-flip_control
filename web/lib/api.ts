@@ -136,6 +136,7 @@ export interface IptPreviewResponse {
     equipamentos: string[];
     frequencia: string | null;
     proxima_programacao: string | null;
+    cronograma_preview?: string[];
     detalhes_diarios: Array<{
       data: string;
       esperado: boolean;
@@ -297,10 +298,19 @@ export const apiService = {
     return data;
   },
 
-  getIptPreview: async (periodoInicial?: string, periodoFinal?: string): Promise<IptPreviewResponse> => {
-    const { data } = await api.get('/dashboard/ipt-preview', {
-      params: { periodo_inicial: periodoInicial, periodo_final: periodoFinal },
-    });
+  getIptPreview: async (
+    periodoInicial?: string,
+    periodoFinal?: string,
+    mostrarTodos?: boolean
+  ): Promise<IptPreviewResponse> => {
+    const params: Record<string, string | undefined> = {};
+    if (mostrarTodos) {
+      params.mostrar_todos = "1";
+    } else if (periodoInicial && periodoFinal) {
+      params.periodo_inicial = periodoInicial;
+      params.periodo_final = periodoFinal;
+    }
+    const { data } = await api.get('/dashboard/ipt-preview', { params });
     return data;
   },
   

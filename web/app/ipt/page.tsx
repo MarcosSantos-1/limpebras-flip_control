@@ -1,12 +1,20 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { format, endOfMonth, startOfMonth } from "date-fns";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { format, endOfMonth, startOfMonth, subDays } from "date-fns";
+import { Activity, BarChart2, Calendar, Check, ChevronDown, ChevronRight, Cpu, Info, Package, Truck, X } from "lucide-react";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { apiService, type IptPreviewResponse } from "@/lib/api";
 import { getSortKey, getSubFromPlano } from "@/lib/ipt-utils";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  ResponsiveContainer,
+  Tooltip as RechartsTooltip,
+} from "recharts";
 
 const pct = (value?: number | null) => (value == null ? "--" : `${value.toFixed(1)}%`);
 const clamp = (value: number, min = 0, max = 100) => Math.min(max, Math.max(min, value));
@@ -69,6 +77,38 @@ const getSelimpBadgeClass = (value?: number | null) => {
   return "border-red-500/60 bg-red-500/10 text-red-700 dark:text-red-300";
 };
 
+/** Cor da barra de percentual: verde >=90%, amarelo 60-89%, vermelho <60% */
+const getPercentualBarFill = (value?: number | null) => {
+  if (value == null) return "bg-muted-foreground/30";
+  if (value >= 90) return "bg-emerald-500";
+  if (value >= 60) return "bg-amber-500";
+  return "bg-red-500";
+};
+
+const getPercentualTextClass = (value?: number | null) => {
+  if (value == null) return "text-muted-foreground";
+  if (value >= 90) return "text-emerald-700 dark:text-emerald-300";
+  if (value >= 60) return "text-amber-700 dark:text-amber-300";
+  return "text-red-700 dark:text-red-300";
+};
+
+const PercentualBar = ({ value, compact }: { value?: number | null; compact?: boolean }) => {
+  const pctNum = value != null && !Number.isNaN(value) ? clamp(value, 0, 100) : 0;
+  const fillClass = getPercentualBarFill(value);
+  const hasValue = value != null && !Number.isNaN(value);
+  return (
+    <div className={`flex items-center gap-2 ${compact ? "min-w-[80px]" : "min-w-[100px]"}`}>
+      <div className="flex-1 h-2 rounded-full bg-muted/50 overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all ${fillClass}`}
+          style={{ width: hasValue ? `${pctNum}%` : "0" }}
+        />
+      </div>
+      <span className={`font-semibold tabular-nums shrink-0 ${getPercentualTextClass(value)}`}>{pct(value)}</span>
+    </div>
+  );
+};
+
 const getOrigemBadgeClass = (origem: "ambos" | "somente_selimp" | "somente_nosso") => {
   if (origem === "somente_selimp") return "border-blue-500/60 bg-blue-500/10 text-blue-700 dark:text-blue-300";
   if (origem === "somente_nosso") return "border-red-500/60 bg-red-500/10 text-red-700 dark:text-red-300";
@@ -117,14 +157,20 @@ type OrigemValue = (typeof ORIGEM_VALUES)[number];
 const MIN_COL_WIDTH = 72;
 const MAX_COL_WIDTH = 520;
 
+type TableScope = "dia_anterior" | "periodo" | "todos";
+
 export default function IPTPage() {
-  const [selectedMonth, setSelectedMonth] = useState(() => startOfMonth(new Date()));
+  const [tableScope, setTableScope] = useState<TableScope>("dia_anterior");
+  const [tablePeriodRange, setTablePeriodRange] = useState<{ inicio: Date; fim: Date } | null>(() => ({
+    inicio: startOfMonth(new Date()),
+    fim: endOfMonth(new Date()),
+  }));
   const [loading, setLoading] = useState(true);
   const [iptPreview, setIptPreview] = useState<IptPreviewResponse | null>(null);
   const [iptCard, setIptCard] = useState<{ valor?: number; pontuacao?: number }>({});
   const [subprefeituraFilter, setSubprefeituraFilter] = useState("all");
   const [divergenciaFilter, setDivergenciaFilter] = useState<"all" | "somente" | "sem">("all");
-  const [highlightDivergencias, setHighlightDivergencias] = useState(true);
+  const [highlightDivergencias, setHighlightDivergencias] = useState(false);
   const [origemFilter, setOrigemFilter] = useState<"all" | "ambos" | "somente_selimp" | "somente_nosso">("all");
   const [zeroFilter, setZeroFilter] = useState<"all" | "zerados" | "nao_zerados">("all");
   const [tableExpanded, setTableExpanded] = useState(true);
@@ -155,11 +201,28 @@ export default function IPTPage() {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const inicio = format(startOfMonth(selectedMonth), "yyyy-MM-dd");
-      const fim = format(endOfMonth(selectedMonth), "yyyy-MM-dd");
+      let periodoInicial: string | undefined;
+      let periodoFinal: string | undefined;
+      let mostrarTodos = false;
+
+      if (tableScope === "todos") {
+        mostrarTodos = true;
+        periodoInicial = format(startOfMonth(new Date()), "yyyy-MM-dd");
+        periodoFinal = format(new Date(), "yyyy-MM-dd");
+      } else if (tableScope === "periodo" && tablePeriodRange) {
+        periodoInicial = format(tablePeriodRange.inicio, "yyyy-MM-dd");
+        periodoFinal = format(tablePeriodRange.fim, "yyyy-MM-dd");
+      } else {
+        const ontem = subDays(new Date(), 1);
+        periodoInicial = format(ontem, "yyyy-MM-dd");
+        periodoFinal = format(ontem, "yyyy-MM-dd");
+      }
+
       const [preview, kpis] = await Promise.all([
-        apiService.getIptPreview(inicio, fim).catch(() => null),
-        apiService.getKPIs(inicio, fim).catch(() => null),
+        tableScope === "dia_anterior"
+          ? apiService.getIptPreview(undefined, undefined, false).catch(() => null)
+          : apiService.getIptPreview(periodoInicial, periodoFinal, mostrarTodos).catch(() => null),
+        apiService.getKPIs(periodoInicial, periodoFinal).catch(() => null),
       ]);
       setIptPreview(preview);
       setIptCard({
@@ -169,7 +232,7 @@ export default function IPTPage() {
     } finally {
       setLoading(false);
     }
-  }, [selectedMonth]);
+  }, [tableScope, tablePeriodRange]);
 
   useEffect(() => {
     loadData();
@@ -210,6 +273,7 @@ export default function IPTPage() {
         equipamentos?: string[];
         frequencia?: string | null;
         proxima_programacao?: string | null;
+        cronograma_preview?: string[];
         detalhes_diarios?: Array<{
           data: string;
           esperado: boolean;
@@ -423,21 +487,7 @@ export default function IPTPage() {
         </div>
 
         <div className="rounded-2xl bg-card/70 backdrop-blur p-4 shadow-lg">
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-3 items-end">
-            <div>
-              <p className="text-xs text-muted-foreground mb-1">Mês de referência</p>
-              <input
-                type="month"
-                value={format(selectedMonth, "yyyy-MM")}
-                max={format(new Date(), "yyyy-MM")}
-                onChange={(e) => {
-                  if (!e.target.value) return;
-                  const [year, month] = e.target.value.split("-");
-                  setSelectedMonth(startOfMonth(new Date(Number(year), Number(month) - 1, 1)));
-                }}
-                className="h-10 rounded-xl bg-background/90 px-3 text-sm w-full shadow-inner ring-1 ring-white/10 focus:ring-2 focus:ring-emerald-500/60 outline-none"
-              />
-            </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3 items-end">
             <div>
               <p className="text-xs text-muted-foreground mb-1">Subprefeitura</p>
               <select
@@ -590,10 +640,10 @@ export default function IPTPage() {
 
         <Card className="border-0 shadow-lg">
           <CardHeader>
-            <CardTitle>Comparativo SELIMP x Nossa Base</CardTitle>
+            <CardTitle>Comparativo SELIMP x DDMX</CardTitle>
             <CardDescription>
-              Conferencia por plano para validar divergencia percentual e cobertura entre planilhas.
-              Delta (Δ) representa a diferença em pontos percentuais: SELIMP - Nossa Base.
+              Conferência por plano para validar divergência percentual e cobertura entre planilhas.
+              Delta (Δ) representa a diferença em pontos percentuais: SELIMP - DDMX.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -622,16 +672,16 @@ export default function IPTPage() {
                 <p className="text-xs text-muted-foreground mt-1">{origemDistribution.somenteSelimp.toFixed(1)}%</p>
               </div>
               <div className="rounded-xl p-3 bg-fuchsia-500/10 shadow-sm">
-                <p className="text-xs text-muted-foreground">Só Nossa Base</p>
+                <p className="text-xs text-muted-foreground">Só DDMX</p>
                 <p className="text-xl font-bold text-fuchsia-600">{iptPreview?.comparativo?.somente_nosso ?? 0}</p>
                 <p className="text-xs text-muted-foreground mt-1">{origemDistribution.somenteNosso.toFixed(1)}%</p>
               </div>
               <div className="rounded-xl p-3 bg-blue-500/10 shadow-sm">
-                <p className="text-xs text-muted-foreground">Sem % SELIMP e com % Nossa</p>
+                <p className="text-xs text-muted-foreground">Sem % SELIMP e com % DDMX</p>
                 <p className="text-xl font-bold text-blue-700 dark:text-blue-300">{comparativoInsights.selimpSemNossoCom}</p>
               </div>
               <div className="rounded-xl p-3 bg-rose-500/10 shadow-sm">
-                <p className="text-xs text-muted-foreground">Com % SELIMP e sem % Nossa</p>
+                <p className="text-xs text-muted-foreground">Com % SELIMP e sem % DDMX</p>
                 <p className="text-xl font-bold text-rose-700 dark:text-rose-300">{comparativoInsights.selimpComNossoSem}</p>
               </div>
               <div className="rounded-xl p-3 bg-stone-500/10 shadow-sm">
@@ -682,6 +732,90 @@ export default function IPTPage() {
                 <option value="zerados">Apenas zerados</option>
                 <option value="nao_zerados">Sem zerados</option>
               </select>
+
+              <div className="flex items-center gap-2 rounded-xl bg-emerald-500/20 px-3 py-2 ring-2 ring-emerald-500/40 shadow-md">
+                <Calendar className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <input
+                    type="date"
+                    value={
+                      tableScope === "periodo" && tablePeriodRange
+                        ? format(tablePeriodRange.inicio, "yyyy-MM-dd")
+                        : tableScope === "todos"
+                        ? format(startOfMonth(new Date()), "yyyy-MM-dd")
+                        : format(subDays(new Date(), 1), "yyyy-MM-dd")
+                    }
+                    max={format(new Date(), "yyyy-MM-dd")}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (!v) return;
+                      const d = new Date(v);
+                      setTableScope("periodo");
+                      setTablePeriodRange((prev) => ({
+                        inicio: d,
+                        fim: prev?.fim && prev.fim >= d ? prev.fim : d,
+                      }));
+                    }}
+                    className="h-8 rounded-lg bg-background/90 px-2 text-sm font-medium ring-1 ring-emerald-500/50 focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                  <span className="text-muted-foreground text-xs">até</span>
+                  <input
+                    type="date"
+                    value={
+                      tableScope === "periodo" && tablePeriodRange
+                        ? format(tablePeriodRange.fim, "yyyy-MM-dd")
+                        : tableScope === "todos"
+                        ? format(new Date(), "yyyy-MM-dd")
+                        : format(subDays(new Date(), 1), "yyyy-MM-dd")
+                    }
+                    max={format(new Date(), "yyyy-MM-dd")}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (!v) return;
+                      const d = new Date(v);
+                      setTableScope("periodo");
+                      setTablePeriodRange((prev) => ({
+                        inicio: prev?.inicio && prev.inicio <= d ? prev.inicio : d,
+                        fim: d,
+                      }));
+                    }}
+                    className="h-8 rounded-lg bg-background/90 px-2 text-sm font-medium ring-1 ring-emerald-500/50 focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                  <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-300">
+                    {tableScope === "dia_anterior" && "Dia anterior"}
+                    {tableScope === "periodo" && "Período"}
+                    {tableScope === "todos" && "Todos"}
+                  </span>
+                </div>
+              </div>
+
+              {tableScope !== "dia_anterior" && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTableScope("dia_anterior");
+                    setTablePeriodRange(null);
+                  }}
+                  className="h-9 rounded-xl px-3 text-sm bg-amber-500/15 text-amber-700 dark:text-amber-300 shadow-sm hover:shadow-md hover:bg-amber-500/20 transition-all"
+                  title="Voltar ao dia anterior"
+                >
+                  Dia anterior
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  setTableScope("todos");
+                  setTablePeriodRange(null);
+                }}
+                className="h-9 rounded-xl px-3 text-sm bg-slate-500/15 text-slate-700 dark:text-slate-300 shadow-sm hover:shadow-md hover:bg-slate-500/20 transition-all"
+                title="Mostrar todos os setores (visão abrangente)"
+              >
+                <X className="h-4 w-4 inline mr-1 -mt-0.5" />
+                Apagar período
+              </button>
+
               <button
                 type="button"
                 onClick={clearAllTableFilters}
@@ -873,7 +1007,7 @@ export default function IPTPage() {
                             onClick={() => setHeaderMenuOpen((prev) => (prev === "nossa" ? null : "nossa"))}
                             className="w-full rounded-xl bg-background/80 px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide shadow-md transition-all duration-200 hover:-translate-y-0.5 hover:bg-background hover:shadow-lg"
                           >
-                            <span className="inline-flex items-center gap-1">🧩 Nossa {getSortLabel("nossa")}</span>
+                            <span className="inline-flex items-center gap-1">📊 DDMX {getSortLabel("nossa")}</span>
                           </button>
                           {headerMenuOpen === "nossa" && (
                             <div className="absolute left-0 top-[calc(100%+8px)] z-30 w-44 rounded-xl bg-popover/95 p-2 shadow-[0_16px_45px_-20px_rgba(0,0,0,0.6)] backdrop-blur transition-all">
@@ -953,7 +1087,8 @@ export default function IPTPage() {
                     const subTag = getSubTag(row.subprefeitura, row.plano);
                     const rowKey = `${row.plano}-${row.origem}`;
                     const isExpanded = expandedPlano === row.plano;
-                    const hasDetails =
+                    const hasDetails = true;
+                    const hasAnyDetails =
                       (row.equipamentos && row.equipamentos.length > 0) ||
                       row.frequencia ||
                       row.proxima_programacao ||
@@ -972,7 +1107,9 @@ export default function IPTPage() {
                             }
                           }}
                           className={`cursor-pointer border-y border-border/40 transition-colors hover:bg-emerald-500/10 ${
-                            highlightDivergencias && diverge
+                            isExpanded
+                              ? "bg-emerald-500/20 ring-1 ring-inset ring-emerald-500/40"
+                              : highlightDivergencias && diverge
                               ? "bg-amber-500/10"
                               : index % 2 === 0
                               ? "bg-background/35"
@@ -1000,15 +1137,11 @@ export default function IPTPage() {
                             {row.tipo_servico || "-"}
                           </td>
                           <td className="px-3 py-2">
-                            <span
-                              className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${getSelimpBadgeClass(
-                                row.percentual_selimp
-                              )}`}
-                            >
-                              {pct(row.percentual_selimp)}
-                            </span>
+                            <PercentualBar value={row.percentual_selimp} compact />
                           </td>
-                          <td className="px-3 py-2">{pct(row.percentual_nosso)}</td>
+                          <td className="px-3 py-2">
+                            <PercentualBar value={row.percentual_nosso} compact />
+                          </td>
                           <td className="px-3 py-2">
                             <span
                               className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${getOrigemBadgeClass(
@@ -1019,24 +1152,30 @@ export default function IPTPage() {
                                 ? "Ambos"
                                 : row.origem === "somente_selimp"
                                 ? "Só SELIMP"
-                                : "Só Nossa"}
+                                : "Só DDMX"}
                             </span>
                           </td>
                         </tr>
                         {isExpanded && hasDetails && (
                           <tr key={`${rowKey}-detail`}>
-                            <td colSpan={7} className="bg-muted/30 px-4 py-4 align-top">
+                            <td colSpan={7} className="bg-emerald-500/5 px-4 py-4 align-top border-b border-emerald-500/20">
                               <div className="grid gap-4 sm:grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 text-sm">
+                                {!hasAnyDetails && (
+                                  <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 p-4 text-amber-800 dark:text-amber-200">
+                                    Nenhum despacho registrado no período.
+                                  </div>
+                                )}
                                 {row.equipamentos && row.equipamentos.length > 0 && (
-                                  <div className="rounded-lg bg-background/60 p-3 shadow-sm">
-                                    <p className="text-xs font-semibold text-muted-foreground mb-2">
+                                  <div className="rounded-xl bg-cyan-500/10 border border-cyan-500/30 p-3 shadow-sm">
+                                    <p className="text-xs font-semibold text-cyan-700 dark:text-cyan-300 mb-2 flex items-center gap-1.5">
+                                      <Cpu className="h-4 w-4" />
                                       Equipamentos (Placa/Lutocar)
                                     </p>
                                     <div className="flex flex-wrap gap-1.5">
                                       {row.equipamentos.map((eq) => (
                                         <span
                                           key={eq}
-                                          className="rounded border border-border/50 bg-background/80 px-2 py-0.5 font-mono text-xs"
+                                          className="rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-2.5 py-1 font-mono text-xs font-medium text-cyan-800 dark:text-cyan-200"
                                         >
                                           {eq}
                                         </span>
@@ -1045,53 +1184,162 @@ export default function IPTPage() {
                                   </div>
                                 )}
                                 {row.frequencia && (
-                                  <div className="rounded-lg bg-background/60 p-3 shadow-sm">
-                                    <p className="text-xs font-semibold text-muted-foreground mb-1">Frequência</p>
-                                    <p className="font-medium">{row.frequencia}</p>
+                                  <div className="rounded-xl bg-blue-500/10 border border-blue-500/30 p-3 shadow-sm relative group">
+                                    <p className="text-xs font-semibold text-blue-700 dark:text-blue-300 mb-1 flex items-center gap-1.5">
+                                      <Calendar className="h-4 w-4" />
+                                      Frequência
+                                      {row.cronograma_preview && row.cronograma_preview.length > 0 && (
+                                        <span className="inline-flex items-center rounded-full bg-blue-500/20 px-1.5 cursor-help">
+                                          <Info className="h-3.5 w-3.5" />
+                                        </span>
+                                      )}
+                                    </p>
+                                    <p className="font-medium text-blue-900 dark:text-blue-100">{row.frequencia}</p>
+                                    {row.cronograma_preview && row.cronograma_preview.length > 0 && (
+                                      <div className="absolute left-0 top-full mt-2 z-50 hidden group-hover:block w-64 rounded-xl bg-popover border shadow-xl p-3 text-xs">
+                                        <p className="font-semibold text-muted-foreground mb-1.5">Prévia cronograma (5 datas)</p>
+                                        <div className="flex flex-wrap gap-1">
+                                          {row.cronograma_preview.map((d, i) => (
+                                            <span key={`${row.plano}-cron-${i}-${d}`} className="rounded bg-blue-500/20 px-2 py-0.5 font-mono">
+                                              {d.replace(/^(\d{4})-(\d{2})-(\d{2})$/, "$3/$2/$1")}
+                                            </span>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
                                   </div>
                                 )}
                                 {row.proxima_programacao && (
-                                  <div className="rounded-lg bg-background/60 p-3 shadow-sm">
-                                    <p className="text-xs font-semibold text-muted-foreground mb-1">Próxima programação</p>
-                                    <p className="font-medium">
+                                  <div className="rounded-xl bg-emerald-500/15 border border-emerald-500/40 p-3 shadow-sm relative group">
+                                    <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-300 mb-1 flex items-center gap-1.5">
+                                      <Activity className="h-4 w-4" />
+                                      Próxima programação
+                                      {row.cronograma_preview && row.cronograma_preview.length > 0 && (
+                                        <span className="inline-flex items-center rounded-full bg-emerald-500/20 px-1.5 cursor-help">
+                                          <Info className="h-3.5 w-3.5" />
+                                        </span>
+                                      )}
+                                    </p>
+                                    <p className="font-semibold text-emerald-900 dark:text-emerald-100 text-base">
                                       {row.proxima_programacao.replace(/^(\d{4})-(\d{2})-(\d{2})$/, "$3/$2/$1")}
                                     </p>
+                                    {row.cronograma_preview && row.cronograma_preview.length > 0 && (
+                                      <div className="absolute left-0 top-full mt-2 z-50 hidden group-hover:block w-64 rounded-xl bg-popover border shadow-xl p-3 text-xs">
+                                        <p className="font-semibold text-muted-foreground mb-1.5">Prévia cronograma (5 datas)</p>
+                                        <div className="flex flex-wrap gap-1">
+                                          {row.cronograma_preview.map((d, i) => (
+                                            <span key={`${row.plano}-cron-${i}-${d}`} className="rounded bg-emerald-500/20 px-2 py-0.5 font-mono">
+                                              {d.replace(/^(\d{4})-(\d{2})-(\d{2})$/, "$3/$2/$1")}
+                                            </span>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
                                   </div>
                                 )}
                                 {row.detalhes_diarios && row.detalhes_diarios.length > 0 && (
-                                  <div className="rounded-lg bg-background/60 p-3 shadow-sm lg:col-span-2 xl:col-span-3">
-                                    <p className="text-xs font-semibold text-muted-foreground mb-2">
-                                      Percentual por dia (deveria ser lançado na SELIMP)
-                                    </p>
-                                    <div className="overflow-x-auto max-h-48 overflow-y-auto">
-                                      <table className="w-full text-xs">
-                                        <thead>
-                                          <tr className="border-b border-border/50">
-                                            <th className="text-left py-1.5 px-2">Data</th>
-                                            <th className="text-left py-1.5 px-2">Esperado</th>
-                                            <th className="text-left py-1.5 px-2">% SELIMP</th>
-                                            <th className="text-left py-1.5 px-2">% Nossa</th>
-                                            <th className="text-left py-1.5 px-2">D. Selimp</th>
-                                            <th className="text-left py-1.5 px-2">D. Nossa</th>
-                                          </tr>
-                                        </thead>
-                                        <tbody>
-                                          {row.detalhes_diarios.map((d) => (
-                                            <tr key={d.data} className="border-b border-border/30">
-                                              <td className="py-1.5 px-2 font-mono">
-                                                {d.data.replace(/^(\d{4})-(\d{2})-(\d{2})$/, "$3/$2/$1")}
-                                              </td>
-                                              <td className="py-1.5 px-2">{d.esperado ? "Sim" : "-"}</td>
-                                              <td className="py-1.5 px-2">{pct(d.percentual_selimp)}</td>
-                                              <td className="py-1.5 px-2">{pct(d.percentual_nosso)}</td>
-                                              <td className="py-1.5 px-2">{d.despachos_selimp}</td>
-                                              <td className="py-1.5 px-2">{d.despachos_nosso}</td>
-                                            </tr>
-                                          ))}
-                                        </tbody>
-                                      </table>
+                                  <>
+                                    <div className="rounded-xl bg-teal-500/10 border border-teal-500/30 p-3 shadow-sm lg:col-span-2 xl:col-span-3">
+                                      <p className="text-xs font-semibold text-teal-700 dark:text-teal-300 mb-2 flex items-center gap-1.5">
+                                        <Activity className="h-4 w-4" />
+                                        Percentual por dia (SELIMP)
+                                      </p>
+                                      <div className="h-24 w-full mb-3">
+                                        <ResponsiveContainer width="100%" height="100%">
+                                          <LineChart
+                                            data={[...row.detalhes_diarios].reverse().map((d) => ({
+                                              data: d.data.replace(/^(\d{4})-(\d{2})-(\d{2})$/, "$3/$2"),
+                                              pct: d.percentual_selimp ?? 0,
+                                            }))}
+                                            margin={{ top: 5, right: 5, left: 5, bottom: 5 }}
+                                          >
+                                            <XAxis dataKey="data" tick={{ fontSize: 10 }} />
+                                            <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} width={28} />
+                                            <RechartsTooltip formatter={(v: number) => [`${v.toFixed(1)}%`, "% SELIMP"]} />
+                                            <Line type="monotone" dataKey="pct" stroke="#14b8a6" strokeWidth={2} dot={{ r: 3 }} />
+                                          </LineChart>
+                                        </ResponsiveContainer>
+                                      </div>
                                     </div>
-                                  </div>
+                                    <div className="rounded-xl bg-slate-500/10 border border-slate-500/30 p-3 shadow-sm lg:col-span-2 xl:col-span-3">
+                                      <p className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2 flex items-center gap-1.5">
+                                        <BarChart2 className="h-4 w-4" />
+                                        Despachos e percentuais
+                                      </p>
+                                      <div className="overflow-x-auto">
+                                        <table className="w-full text-xs">
+                                          <thead>
+                                            <tr className="border-b border-slate-500/30">
+                                              <th className="text-left py-2 px-2">
+                                                <span className="flex items-center gap-1"><Calendar className="h-3.5 w-3.5" /> Data</span>
+                                              </th>
+                                              <th className="text-left py-2 px-2">
+                                                <span className="flex items-center gap-1"><Check className="h-3.5 w-3.5" /> Esperado</span>
+                                              </th>
+                                              <th className="text-left py-2 px-2">% SELIMP</th>
+                                              <th className="text-left py-2 px-2">% DDMX</th>
+                                              <th className="text-left py-2 px-2">
+                                                <span className="flex items-center gap-1"><Truck className="h-3.5 w-3.5" /> D. Selimp</span>
+                                              </th>
+                                              <th className="text-left py-2 px-2">
+                                                <span className="flex items-center gap-1"><Package className="h-3.5 w-3.5" /> D. DDMX</span>
+                                              </th>
+                                            </tr>
+                                          </thead>
+                                          <tbody>
+                                            {row.detalhes_diarios.map((d) => {
+                                              const pctSel = toNum(d.percentual_selimp);
+                                              const rowBg =
+                                                pctSel != null && pctSel >= 90
+                                                  ? "bg-emerald-500/5"
+                                                  : pctSel != null && pctSel >= 60
+                                                  ? "bg-amber-500/5"
+                                                  : pctSel != null && pctSel > 0
+                                                  ? "bg-red-500/5"
+                                                  : "bg-transparent";
+                                              return (
+                                                <tr key={d.data} className={`border-b border-slate-500/20 ${rowBg}`}>
+                                                  <td className="py-2 px-2 font-mono font-medium">
+                                                    <span className="flex items-center gap-1.5">
+                                                      <Calendar className="h-3.5 w-3.5 text-slate-500" />
+                                                      {d.data.replace(/^(\d{4})-(\d{2})-(\d{2})$/, "$3/$2/$1")}
+                                                    </span>
+                                                  </td>
+                                                  <td className="py-2 px-2">
+                                                    {d.esperado ? (
+                                                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/20 px-2 py-0.5 text-emerald-700 dark:text-emerald-300">
+                                                        <Check className="h-3.5 w-3.5" /> Sim
+                                                      </span>
+                                                    ) : (
+                                                      <span className="text-muted-foreground">—</span>
+                                                    )}
+                                                  </td>
+                                                  <td className="py-2 px-2">
+                                                    <PercentualBar value={d.percentual_selimp} compact />
+                                                  </td>
+                                                  <td className="py-2 px-2">
+                                                    <PercentualBar value={d.percentual_nosso} compact />
+                                                  </td>
+                                                  <td className="py-2 px-2">
+                                                    <span className="inline-flex items-center gap-1 font-medium">
+                                                      <Truck className="h-3.5 w-3.5 text-blue-600" />
+                                                      {d.despachos_selimp}
+                                                    </span>
+                                                  </td>
+                                                  <td className="py-2 px-2">
+                                                    <span className="inline-flex items-center gap-1 font-medium">
+                                                      <Package className="h-3.5 w-3.5 text-violet-600" />
+                                                      {d.despachos_nosso}
+                                                    </span>
+                                                  </td>
+                                                </tr>
+                                              );
+                                            })}
+                                          </tbody>
+                                        </table>
+                                      </div>
+                                    </div>
+                                  </>
                                 )}
                               </div>
                             </td>
