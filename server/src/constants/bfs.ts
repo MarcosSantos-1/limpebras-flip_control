@@ -16,6 +16,16 @@ export const BFS_NAO_DEMANDANTES: string[] = [
   "Coleta e transporte de PEV-Ponto de Entrega Voluntária",
 ];
 
+/**
+ * Serviços BFS EXCLUÍDOS do cálculo do IF.
+ * IF = todos os BFS do período EXCETO estes 3.
+ */
+export const BFS_IF_EXCLUSAO_SQL: string[] = [
+  "%Coleta e transporte de entulho e grandes objetos depositados irregularmente nas vias, logradouros  e áreas públicas%",
+  "%Fornecimento, instalação e reposição de papeleiras e outros equipamentos de recepção de resíduos%",
+  "%Remoção de animais mortos de proprietários não identificados em vias e logradouros públicos%",
+];
+
 export function isBfsNaoDemandante(tipoServico: string | undefined): boolean {
   if (!tipoServico || !tipoServico.trim()) return false;
   const normalized = tipoServico.trim();

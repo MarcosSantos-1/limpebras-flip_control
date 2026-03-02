@@ -10,6 +10,23 @@ import { IndicatorsChart } from "@/components/indicators-chart";
 import { Download, Printer, CalendarRange } from "lucide-react";
 import { Input } from "@/components/ui/input";
 
+interface IfPorSub {
+  subprefeitura: string;
+  sem_irregularidades: number;
+  vistorias_total: number;
+  if_percentual: number;
+  media_mesclada?: number;
+  pontuacao_mesclada?: number;
+}
+
+interface IrdPorRegional {
+  subprefeitura: string;
+  label: string;
+  reclamacoes: number;
+  domicilios: number;
+  ird_valor: number;
+}
+
 interface IndicadorDetalhe {
   valor?: number;
   percentual?: number;
@@ -26,6 +43,8 @@ interface IndicadorDetalhe {
   total_com_irregularidade?: number;
   status_referencia?: string;
   servicos_nao_demandantes?: string[];
+  if_por_sub?: IfPorSub[];
+  ird_por_regional?: IrdPorRegional[];
   /** Fórmula preenchida com os números (memória de cálculo) */
   memoria_calculo?: string;
   /** Filtros usados na base para o indicador */
@@ -422,6 +441,45 @@ export default function ExplicacaoIndicadoresPage() {
               </p>
             </div>
 
+            {detalhes?.ird?.ird_por_regional && detalhes.ird.ird_por_regional.length > 0 && (
+              <div>
+                <h3 className="font-semibold mb-2">IRD por regional (visualização)</h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm border-collapse">
+                    <thead>
+                      <tr className="bg-zinc-100 dark:bg-zinc-800">
+                        <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-left">Regional</th>
+                        <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">Reclamações</th>
+                        <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">Domicílios</th>
+                        <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">IRD</th>
+                        <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">IRD Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {detalhes.ird.ird_por_regional.map((row, idx, arr) => (
+                        <tr key={row.subprefeitura}>
+                          <td className="border border-zinc-300 dark:border-zinc-700 p-2">{row.label}</td>
+                          <td className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">{row.reclamacoes.toLocaleString("pt-BR")}</td>
+                          <td className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">{row.domicilios.toLocaleString("pt-BR")}</td>
+                          <td className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">{row.ird_valor.toFixed(3)}</td>
+                          {idx === 0 ? (
+                            <td
+                              className="border border-zinc-300 dark:border-zinc-700 p-2 text-center font-semibold bg-emerald-50 dark:bg-emerald-900/20"
+                              rowSpan={arr.length}
+                            >
+                              {typeof detalhes?.ird?.valor === "number" && detalhes?.ird?.pontuacao != null
+                                ? `${(detalhes?.ird?.valor ?? 0).toFixed(3)} / ${detalhes?.ird?.pontuacao ?? "--"} pts`
+                                : "--"}
+                            </td>
+                          ) : null}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
             <div>
               <h3 className="font-semibold mb-2">Tabela de pontuacao</h3>
               <div className="overflow-x-auto">
@@ -595,25 +653,29 @@ export default function ExplicacaoIndicadoresPage() {
             <div>
               <h3 className="font-semibold mb-2">Formula</h3>
               <div className="bg-zinc-50 dark:bg-zinc-900 p-4 rounded-lg font-mono text-sm">
-                IF = (BFS sem irregularidade / Total de BFS) x 1000
+                IF por sub = (sem irregularidades / total BFS escalonados) × 100
               </div>
+              <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-2">
+                Média dos 4 percentuais (JT, CV, ST, MG) = IF final. Todos os BFS do período, exceto 3 serviços excluídos.
+              </p>
             </div>
 
             <div>
               <h3 className="font-semibold mb-2">Componentes</h3>
               <ul className="list-disc list-inside space-y-1 text-sm text-zinc-600 dark:text-zinc-400">
                 <li>
-                  <strong>Status válido:</strong>{" "}
-                  {detalhes?.if?.status_referencia ?? "BFS Não Demandantes com Status = Sem Irregularidades"}.
+                  <strong>Por sub (JT, CV, ST, MG):</strong> IF_sub = (sem irregularidades / vistorias total) × 100 (percentual).
                 </li>
                 <li>
-                  <strong>Total BFS:</strong> fiscalizações no período, apenas serviços BFS Não Demandantes (lista SELIMP).
+                  <strong>IF final:</strong> média dos 4 percentuais (soma ÷ 4). Ex: 67%.
                 </li>
                 <li>
-                  <strong>Serviços Não Demandantes (SELIMP):</strong>{" "}
-                  {detalhes?.if?.servicos_nao_demandantes?.length
-                    ? detalhes.if.servicos_nao_demandantes.join("; ")
-                    : "Varrição manual; Varrição mecanizada; Pós feiras livres; Operação dos Ecopontos; Mutirão de Zeladoria; Lavagem especial; Limpeza de bueiros; Remoção Ecopontos; Cata-Bagulho; Coleta feiras-livres; PEV."}
+                  <strong>Excluídos do cálculo (apenas 3 serviços):</strong>
+                  <ul className="list-disc list-inside ml-4 mt-1 space-y-0.5">
+                    <li>Coleta e transporte de entulho e grandes objetos depositados irregularmente nas vias, logradouros e áreas públicas</li>
+                    <li>Fornecimento, instalação e reposição de papeleiras e outros equipamentos de recepção de resíduos</li>
+                    <li>Remoção de animais mortos de proprietários não identificados em vias e logradouros públicos</li>
+                  </ul>
                 </li>
               </ul>
             </div>
@@ -636,12 +698,65 @@ export default function ExplicacaoIndicadoresPage() {
               </p>
             </div>
 
+            {detalhes?.if?.if_por_sub && detalhes.if.if_por_sub.length > 0 && (() => {
+              const ifPorSub = detalhes.if?.if_por_sub ?? [];
+              return (
+              <div>
+                <h3 className="font-semibold mb-2">IF por subprefeitura</h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm border-collapse">
+                    <thead>
+                      <tr className="bg-zinc-100 dark:bg-zinc-800">
+                        <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-left">Subprefeitura</th>
+                        <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">Sem Irregularidades</th>
+                        <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">Vistorias Total</th>
+                        <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">IF (%)</th>
+                        <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">Média (mesclado)</th>
+                        <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">Pontuação (mesclado)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ifPorSub.map((row, idx) => (
+                        <tr key={row.subprefeitura}>
+                          <td className="border border-zinc-300 dark:border-zinc-700 p-2">{row.subprefeitura}</td>
+                          <td className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">{row.sem_irregularidades.toLocaleString("pt-BR")}</td>
+                          <td className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">{row.vistorias_total.toLocaleString("pt-BR")}</td>
+                          <td className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">{row.if_percentual.toFixed(1)}%</td>
+                          {idx === 0 ? (
+                            <td
+                              className="border border-zinc-300 dark:border-zinc-700 p-2 text-center font-semibold bg-zinc-50 dark:bg-zinc-900"
+                              rowSpan={ifPorSub.length}
+                              style={{ verticalAlign: "middle" }}
+                            >
+                              {ifPorSub[0].media_mesclada != null
+                                ? ifPorSub[0].media_mesclada.toFixed(1) + "%"
+                                : "--"}
+                            </td>
+                          ) : null}
+                          {idx === 0 ? (
+                            <td
+                              className="border border-zinc-300 dark:border-zinc-700 p-2 text-center font-semibold bg-zinc-50 dark:bg-zinc-900"
+                              rowSpan={ifPorSub.length}
+                              style={{ verticalAlign: "middle" }}
+                            >
+                              {(ifPorSub[0].pontuacao_mesclada ?? detalhes?.if?.pontuacao ?? "--") + " pts"}
+                            </td>
+                          ) : null}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              );
+            })()}
+
             <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg space-y-2">
               <h3 className="font-semibold text-sm">Resultado ({periodoLabel})</h3>
               {detalhes?.if ? (
                 <>
                   <p className="text-sm text-zinc-700 dark:text-zinc-200">
-                    Total BFS (não demandantes): <strong>{detalhes.if.total_fiscalizacoes}</strong>
+                    Total BFS (escalonados): <strong>{detalhes.if.total_fiscalizacoes}</strong>
                   </p>
                   <p className="text-sm text-green-700 dark:text-green-300">
                     Sem irregularidade: <strong>{detalhes.if.total_sem_irregularidade}</strong>
@@ -652,14 +767,14 @@ export default function ExplicacaoIndicadoresPage() {
                     </p>
                   )}
                   <p className="text-sm">
-                    IF = ({detalhes.if.total_sem_irregularidade} / {detalhes.if.total_fiscalizacoes}) x 1000 = {formatarValor(detalhes.if.valor, 2)} (equiv. {formatarValor(detalhes.if.percentual ?? ((detalhes.if.valor ?? 0) / 10), 2)}%)
+                    IF = média dos 4 percentuais = {formatarValor(detalhes.if.percentual ?? ((detalhes.if.valor ?? 0) / 10), 2)}%
                   </p>
                   <p className="text-sm">
                     Pontuação: <strong className="text-violet-600 dark:text-violet-300">{formatarValor(detalhes.if.pontuacao, 2)} pts</strong>
                   </p>
                 </>
               ) : (
-                <p className="text-sm text-zinc-600 dark:text-zinc-300">Nenhuma fiscalização BFS não demandante no período.</p>
+                <p className="text-sm text-zinc-600 dark:text-zinc-300">Nenhuma fiscalização BFS escalonada no período.</p>
               )}
             </div>
 
@@ -869,7 +984,7 @@ export default function ExplicacaoIndicadoresPage() {
               </div>
               <div className={`flex justify-between items-center p-3 rounded border ${getPontosStyle(detalhes?.if?.pontuacao ?? 0, 20)}`}>
                 <span className="font-medium">
-                  IF = {formatarValor(detalhes?.if?.valor, 2)} (x1000) | {formatarValor(detalhes?.if?.percentual ?? ((detalhes?.if?.valor ?? 0) / 10), 2)}% | {detalhes?.if?.total_sem_irregularidade ?? 0} sem ocorrencia
+                  IF = {formatarValor(detalhes?.if?.percentual ?? ((detalhes?.if?.valor ?? 0) / 10), 2)}% | {detalhes?.if?.total_sem_irregularidade ?? 0} sem irregularidade
                 </span>
                 <span className="font-bold">
                   {formatarValor(detalhes?.if?.pontuacao, 2)} pts

@@ -4,11 +4,13 @@ import {
   pontuacaoIA,
   pontuacaoIRD,
   pontuacaoIF,
+  pontuacaoIFFromPercentual,
   pontuacaoIPT,
   descontoADC,
   type IndicadorResult,
 } from "../services/indicadores.js";
-import { BFS_NAO_DEMANDANTES } from "../constants/bfs.js";
+import { BFS_IF_EXCLUSAO_SQL } from "../constants/bfs.js";
+import { SUB_SIGLAS, DOMICILIOS_POR_REGIONAL, regionalToSigla } from "../constants/regionais.js";
 import {
   normalizarSetor,
   compareSetores,
@@ -417,19 +419,36 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
       const irdReclamacoes = Number(irdCount.rows[0]?.total ?? 0);
       const ird = pontuacaoIRD(irdReclamacoes);
 
-      // IF: apenas BFS Não Demandantes no período
-      const ifCount = await client.query(
-        `SELECT COUNT(*) AS total,
+      // IF: todos BFS no período EXCETO os 3 serviços excluídos
+      const ifExcludeSql = BFS_IF_EXCLUSAO_SQL.map((_, i) => `tipo_servico NOT ILIKE $${3 + i}`).join(" AND ");
+      const ifByRegional = await client.query(
+        `SELECT regional,
+                COUNT(*) AS total,
                 COUNT(*) FILTER (WHERE TRIM(status) = 'Sem Irregularidades') AS sem_irregularidade
          FROM bfs
          WHERE data_fiscalizacao >= $1::date AND data_fiscalizacao < ($2::date + interval '1 day')
-           AND tipo_servico = ANY($3::text[])`,
-        [inicio, fim, BFS_NAO_DEMANDANTES]
+           AND ${ifExcludeSql}
+         GROUP BY regional`,
+        [inicio, fim, ...BFS_IF_EXCLUSAO_SQL]
       );
-      const ifRow = ifCount.rows[0];
-      const totalBfs = Number(ifRow?.total ?? 0);
-      const semIrreg = Number(ifRow?.sem_irregularidade ?? 0);
-      const ifInd = pontuacaoIF(semIrreg, totalBfs);
+      const bySigla: Record<string, { total: number; sem_irregularidade: number }> = {};
+      for (const sigla of SUB_SIGLAS) bySigla[sigla] = { total: 0, sem_irregularidade: 0 };
+      for (const row of ifByRegional.rows as Array<{ regional: string; total: string; sem_irregularidade: string }>) {
+        const sigla = regionalToSigla(row.regional);
+        if (sigla && bySigla[sigla]) {
+          bySigla[sigla].total += Number(row.total ?? 0);
+          bySigla[sigla].sem_irregularidade += Number(row.sem_irregularidade ?? 0);
+        }
+      }
+      let somaPercentuais = 0;
+      for (const sigla of SUB_SIGLAS) {
+        const { total, sem_irregularidade } = bySigla[sigla];
+        somaPercentuais += total > 0 ? (sem_irregularidade / total) * 100 : 0;
+      }
+      const mediaPercentual = somaPercentuais / 4;
+      const ifInd = pontuacaoIFFromPercentual(mediaPercentual);
+      const totalBfs = Object.values(bySigla).reduce((a, x) => a + x.total, 0);
+      const semIrreg = Object.values(bySigla).reduce((a, x) => a + x.sem_irregularidade, 0);
 
       const iaDashboard = {
         ...ia,
@@ -442,10 +461,14 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
       };
       const ifDashboard = {
         ...ifInd,
-        // Para dashboard, IF deve mostrar percentual.
         valor: ifInd.percentual ?? 0,
         total_fiscalizacoes: totalBfs,
         total_sem_irregularidade: semIrreg,
+        if_por_sub: SUB_SIGLAS.map((sigla) => {
+          const { total, sem_irregularidade } = bySigla[sigla];
+          const pct = total > 0 ? (sem_irregularidade / total) * 100 : 0;
+          return { subprefeitura: sigla, total, sem_irregularidade, if_percentual: pct };
+        }),
       };
       const autoIptPercent = await getAutoIPTFromReport(client, inicio, fim);
       const savedIptPercent = await getSavedIPT(client, inicio, fim);
@@ -515,22 +538,39 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
       );
       const ird = pontuacaoIRD(Number(irdCount.rows[0]?.total ?? 0));
 
-      // IF
-      const ifCount = await client.query(
-        `SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE TRIM(status) = 'Sem Irregularidades') AS sem_irregularidade
+      // IF: todos BFS no período EXCETO os 3 serviços excluídos
+      const ifExcludeSql = BFS_IF_EXCLUSAO_SQL.map((_, i) => `tipo_servico NOT ILIKE $${3 + i}`).join(" AND ");
+      const ifByRegional = await client.query(
+        `SELECT regional, COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE TRIM(status) = 'Sem Irregularidades') AS sem_irregularidade
          FROM bfs WHERE data_fiscalizacao >= $1::date AND data_fiscalizacao < ($2::date + interval '1 day')
-           AND tipo_servico = ANY($3::text[])`,
-        [inicio, fim, BFS_NAO_DEMANDANTES]
+           AND ${ifExcludeSql}
+         GROUP BY regional`,
+        [inicio, fim, ...BFS_IF_EXCLUSAO_SQL]
       );
-      const ifRow = ifCount.rows[0];
-      const ifSemIrregularidade = Number(ifRow?.sem_irregularidade ?? 0);
-      const ifTotal = Number(ifRow?.total ?? 0);
-      const ifInd = pontuacaoIF(ifSemIrregularidade, ifTotal);
+      const bySigla: Record<string, { total: number; sem_irregularidade: number }> = {};
+      for (const sigla of SUB_SIGLAS) bySigla[sigla] = { total: 0, sem_irregularidade: 0 };
+      for (const row of ifByRegional.rows as Array<{ regional: string; total: string; sem_irregularidade: string }>) {
+        const sigla = regionalToSigla(row.regional);
+        if (sigla && bySigla[sigla]) {
+          bySigla[sigla].total += Number(row.total ?? 0);
+          bySigla[sigla].sem_irregularidade += Number(row.sem_irregularidade ?? 0);
+        }
+      }
+      let somaPct = 0;
+      for (const sigla of SUB_SIGLAS) {
+        const { total, sem_irregularidade } = bySigla[sigla];
+        somaPct += total > 0 ? (sem_irregularidade / total) * 100 : 0;
+      }
+      const mediaPercentual = somaPct / 4;
+      const ifInd = pontuacaoIFFromPercentual(mediaPercentual);
+      const ifTotal = Object.values(bySigla).reduce((a, x) => a + x.total, 0);
+      const ifSemIrregularidade = Object.values(bySigla).reduce((a, x) => a + x.sem_irregularidade, 0);
 
       if (iptPercent == null || isNaN(iptPercent)) {
         const autoIpt = await getAutoIPTFromReport(client, inicio, fim);
         const saved = await getSavedIPT(client, inicio, fim);
-        iptPercent = autoIpt ?? saved ?? null;
+        iptPercent = autoIpt ?? saved ?? undefined;
       }
 
       const ipt: IndicadorResult = iptPercent != null && !isNaN(iptPercent)
@@ -608,7 +648,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
       const totalCalculoIA = noPrazo + foraPrazo;
       const iaResult = pontuacaoIA(noPrazo, totalCalculoIA);
 
-      // IRD: reclamações procedentes
+      // IRD: reclamações procedentes (total e por regional para tabela)
       let irdSql = `SELECT COUNT(*) AS total FROM sacs
          WHERE data_registro >= $1::date AND data_registro < ($2::date + interval '1 day')
            AND (finalizado_fora_de_escopo IS NULL OR UPPER(TRIM(finalizado_fora_de_escopo)) = 'NÃO')
@@ -623,19 +663,62 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
       const totalProcedentes = Number(irdCount.rows[0]?.total ?? 0);
       const irdResult = pontuacaoIRD(totalProcedentes);
 
-      // IF: BFS Não Demandantes
-      const ifCount = await client.query(
-        `SELECT COUNT(*) AS total,
+      // IRD por regional (para tabela de visualização)
+      const irdByRegional = await client.query(
+        `SELECT regional, COUNT(*) AS total FROM sacs
+         WHERE data_registro >= $1::date AND data_registro < ($2::date + interval '1 day')
+           AND (finalizado_fora_de_escopo IS NULL OR UPPER(TRIM(finalizado_fora_de_escopo)) = 'NÃO')
+           AND TRIM(classificacao_do_servico) = 'Reclamação'
+           AND (procedente_por_status IS NOT NULL AND UPPER(TRIM(procedente_por_status)) = 'PROCEDE')
+         GROUP BY regional`,
+        [inicio, fim]
+      );
+      const irdPorRegional: Record<string, number> = {};
+      for (const sigla of SUB_SIGLAS) irdPorRegional[sigla] = 0;
+      for (const row of irdByRegional.rows as Array<{ regional: string; total: string }>) {
+        const sigla = regionalToSigla(row.regional);
+        if (sigla && irdPorRegional[sigla] !== undefined) {
+          irdPorRegional[sigla] += Number(row.total ?? 0);
+        }
+      }
+      const irdPorSub = SUB_SIGLAS.map((sigla) => ({
+        subprefeitura: sigla,
+        label: sigla === "CV" ? "Casa Verde / Limão / Cachoeirinha" : sigla === "JT" ? "Jaçanã / Tremembé" : sigla === "MG" ? "Vila Maria / Vila Guilherme" : "Santana / Tucuruvi",
+        reclamacoes: irdPorRegional[sigla] ?? 0,
+        domicilios: DOMICILIOS_POR_REGIONAL[sigla] ?? 0,
+        ird_valor: (DOMICILIOS_POR_REGIONAL[sigla] ?? 0) > 0 ? ((irdPorRegional[sigla] ?? 0) / (DOMICILIOS_POR_REGIONAL[sigla] ?? 1)) * 1000 : 0,
+      }));
+
+      // IF: todos BFS no período EXCETO os 3 serviços excluídos
+      const ifExcludeSql = BFS_IF_EXCLUSAO_SQL.map((_, i) => `tipo_servico NOT ILIKE $${3 + i}`).join(" AND ");
+      const ifByRegional = await client.query(
+        `SELECT regional,
+                COUNT(*) AS total,
                 COUNT(*) FILTER (WHERE TRIM(status) = 'Sem Irregularidades') AS sem_irregularidade
          FROM bfs
          WHERE data_fiscalizacao >= $1::date AND data_fiscalizacao < ($2::date + interval '1 day')
-           AND tipo_servico = ANY($3::text[])`,
-        [inicio, fim, BFS_NAO_DEMANDANTES]
+           AND ${ifExcludeSql}
+         GROUP BY regional`,
+        [inicio, fim, ...BFS_IF_EXCLUSAO_SQL]
       );
-      const ifRow = ifCount.rows[0];
-      const totalBfs = Number(ifRow?.total ?? 0);
-      const semIrreg = Number(ifRow?.sem_irregularidade ?? 0);
-      const ifResult = pontuacaoIF(semIrreg, totalBfs);
+      const ifBySigla: Record<string, { total: number; sem_irregularidade: number }> = {};
+      for (const sigla of SUB_SIGLAS) ifBySigla[sigla] = { total: 0, sem_irregularidade: 0 };
+      for (const row of ifByRegional.rows as Array<{ regional: string; total: string; sem_irregularidade: string }>) {
+        const sigla = regionalToSigla(row.regional);
+        if (sigla && ifBySigla[sigla]) {
+          ifBySigla[sigla].total += Number(row.total ?? 0);
+          ifBySigla[sigla].sem_irregularidade += Number(row.sem_irregularidade ?? 0);
+        }
+      }
+      let somaPctIf = 0;
+      for (const sigla of SUB_SIGLAS) {
+        const { total, sem_irregularidade } = ifBySigla[sigla];
+        somaPctIf += total > 0 ? (sem_irregularidade / total) * 100 : 0;
+      }
+      const mediaPercentualIf = somaPctIf / 4;
+      const ifResult = pontuacaoIFFromPercentual(mediaPercentualIf);
+      const totalBfs = Object.values(ifBySigla).reduce((a, x) => a + x.total, 0);
+      const semIrreg = Object.values(ifBySigla).reduce((a, x) => a + x.sem_irregularidade, 0);
 
       const periodo = { inicial: inicio, final: fim };
 
@@ -649,6 +732,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         total_reclamacoes: totalProcedentes,
         total_procedentes: totalProcedentes,
         domicilios,
+        ird_por_regional: irdPorSub,
         tipos_considerados: ["Reclamação escalonada procedente"],
         filtros_aplicados: [
           "Data_Registro no período",
@@ -684,6 +768,21 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
             : "IA = (no prazo / (no prazo + fora do prazo)) × 1000 — Sem linhas SIM/NÃO para o período filtrado.",
       };
 
+      const ifPorSub = SUB_SIGLAS.map((sigla) => {
+        const { total, sem_irregularidade } = ifBySigla[sigla];
+        const pct = total > 0 ? (sem_irregularidade / total) * 100 : 0;
+        const subResult = pontuacaoIFFromPercentual(pct);
+        return {
+          subprefeitura: sigla,
+          sem_irregularidades: sem_irregularidade,
+          vistorias_total: total,
+          if_percentual: pct,
+          media_mesclada: mediaPercentualIf,
+          pontuacao_mesclada: ifResult.pontuacao,
+          pontuacao_sub: subResult.pontuacao,
+        };
+      });
+
       const ifDetalhe = {
         valor: ifResult.valor,
         percentual: ifResult.percentual ?? 0,
@@ -692,16 +791,22 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         total_sem_irregularidade: semIrreg,
         total_com_irregularidade: totalBfs - semIrreg,
         status_referencia: "Sem Irregularidades",
-        servicos_nao_demandantes: BFS_NAO_DEMANDANTES,
+        servicos_excluidos: [
+          "Coleta e transporte de entulho e grandes objetos depositados irregularmente nas vias, logradouros e áreas públicas",
+          "Fornecimento, instalação e reposição de papeleiras e outros equipamentos de recepção de resíduos",
+          "Remoção de animais mortos de proprietários não identificados em vias e logradouros públicos",
+        ],
+        if_por_sub: ifPorSub,
         filtros_aplicados: [
           "Data_Fiscalizacao no período",
-          "Apenas BFS Não Demandantes (lista SELIMP)",
+          "Todos os BFS exceto 3 serviços: Coleta e transporte de entulho e grandes objetos...; Fornecimento, instalação e reposição de papeleiras...; Remoção de animais mortos de proprietários não identificados...",
           "Sem irregularidade = Status = 'Sem Irregularidades'",
+          "Cálculo: IF por sub (JT, CV, ST, MG) = (sem irregularidades / total) × 100, média dos 4 = IF final",
         ],
         memoria_calculo:
           totalBfs > 0
-            ? `IF = (BFS sem irregularidade / total BFS não demandantes) × 1000 = (${fmt(semIrreg)} / ${fmt(totalBfs)}) × 1000 = ${(ifResult.valor ?? 0).toFixed(2)} (equivale a ${(ifResult.percentual ?? 0).toFixed(2)}%)`
-            : "IF = (sem irregularidade / total BFS) × 1000 — Nenhum BFS não demandante no período.",
+            ? `IF = média das 4 subs: (JT: ${ifPorSub.find((s) => s.subprefeitura === "JT")?.if_percentual?.toFixed(1) ?? 0}% + CV: ${ifPorSub.find((s) => s.subprefeitura === "CV")?.if_percentual?.toFixed(1) ?? 0}% + ST: ${ifPorSub.find((s) => s.subprefeitura === "ST")?.if_percentual?.toFixed(1) ?? 0}% + MG: ${ifPorSub.find((s) => s.subprefeitura === "MG")?.if_percentual?.toFixed(1) ?? 0}%) / 4 = ${(ifResult.percentual ?? 0).toFixed(2)}%`
+            : "IF = (média dos % por sub) — Nenhum BFS escalonado no período.",
       };
 
       const autoIptPercent = await getAutoIPTFromReport(client, inicio, fim);

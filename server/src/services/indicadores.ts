@@ -49,6 +49,12 @@ export function pontuacaoIF(semIrregularidade: number, total: number): Indicador
   return { valor, percentual, pontuacao };
 }
 
+/** IF a partir do percentual médio (ex: 67 para 67%). Usado quando IF é média das subs. */
+export function pontuacaoIFFromPercentual(percentual: number): IndicadorResult {
+  const p = Math.min(100, Math.max(0, percentual));
+  return pontuacaoIF(p, 100); // 67% -> (67, 100) -> valor 670, percentual 67
+}
+
 /** IPT: entrada manual por enquanto. percentual 0–100. */
 export function pontuacaoIPT(percentual: number): IndicadorResult {
   let pontuacao = 0;
