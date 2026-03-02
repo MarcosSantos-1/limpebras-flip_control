@@ -248,6 +248,15 @@ export const apiService = {
     return data;
   },
 
+  uploadIptHistoricoOsCompactadoresXlsx: async (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const { data } = await api.post('/upload/ipt-historico-os-compactadores', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return data;
+  },
+
   uploadIptReportXlsx: async (file: File) => {
     const formData = new FormData();
     formData.append('file', file);
@@ -261,6 +270,15 @@ export const apiService = {
     const formData = new FormData();
     formData.append('file', file);
     const { data } = await api.post('/upload/ipt-status-bateria', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return data;
+  },
+
+  uploadIptCronogramaXlsx: async (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const { data } = await api.post('/upload/ipt-cronograma', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
     return data;
