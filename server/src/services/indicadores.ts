@@ -8,17 +8,16 @@ export interface IndicadorResult {
   detalhe?: string;
 }
 
-/** IA: (solicitações atendidas no prazo / total solicitações demandantes) × 1000 */
+/** IA: (solicitações atendidas no prazo / total solicitações demandantes) × 100 */
 export function pontuacaoIA(solicitacoesNoPrazo: number, totalSolicitacoes: number): IndicadorResult {
-  const valor = totalSolicitacoes > 0 ? (solicitacoesNoPrazo / totalSolicitacoes) * 1000 : 0;
-  const percentual = valor / 10;
+  const valor = totalSolicitacoes > 0 ? (solicitacoesNoPrazo / totalSolicitacoes) * 100 : 0;
   let pontuacao = 0;
-  if (valor >= 900) pontuacao = 20;
-  else if (valor >= 800) pontuacao = 16;
-  else if (valor >= 700) pontuacao = 12;
-  else if (valor >= 600) pontuacao = 8;
-  else if (valor >= 500) pontuacao = 4;
-  return { valor, percentual, pontuacao };
+  if (valor >= 90) pontuacao = 20;
+  else if (valor >= 80) pontuacao = 16;
+  else if (valor >= 70) pontuacao = 12;
+  else if (valor >= 60) pontuacao = 8;
+  else if (valor >= 50) pontuacao = 4;
+  return { valor, percentual: valor, pontuacao };
 }
 
 /** IRD = (reclamações procedentes / domicílios) × 1000. Quanto menor, melhor. */

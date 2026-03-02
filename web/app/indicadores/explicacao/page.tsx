@@ -1,12 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { apiService } from "@/lib/api";
 import { endOfMonth, format, isValid, startOfMonth } from "date-fns";
-import { ADCRingChart } from "@/components/adc-ring-chart";
-import { IndicatorsChart } from "@/components/indicators-chart";
+import { AdcDonutChart } from "@/components/adc-donut-chart";
 import { Download, Printer, CalendarRange } from "lucide-react";
 import { Input } from "@/components/ui/input";
 
@@ -51,6 +50,14 @@ interface IndicadorDetalhe {
   filtros_aplicados?: string[];
 }
 
+interface ResumoADC {
+  pontuacao_total: number;
+  percentual_contrato: number;
+  desconto: number;
+  valor_mensal_contrato: number;
+  glosa_real: number;
+}
+
 interface IndicadoresDetalhesResponse {
   periodo: {
     inicial: string;
@@ -61,6 +68,7 @@ interface IndicadoresDetalhesResponse {
   ia?: IndicadorDetalhe;
   if?: IndicadorDetalhe;
   ipt?: IndicadorDetalhe;
+  resumo_adc?: ResumoADC;
 }
 
 const formatarValor = (valor?: number, casas = 2) =>
@@ -122,23 +130,16 @@ export default function ExplicacaoIndicadoresPage() {
   const [periodoInicial, setPeriodoInicial] = useState(format(startOfMonth(new Date()), "yyyy-MM-dd"));
   const [periodoFinal, setPeriodoFinal] = useState(format(endOfMonth(new Date()), "yyyy-MM-dd"));
   const [detalhes, setDetalhes] = useState<IndicadoresDetalhesResponse | null>(null);
-  const [indicadoresHistory, setIndicadoresHistory] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [pdfLoading, setPdfLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const carregarDetalhes = async () => {
     try {
       setLoading(true);
       setError(null);
-      const [data, history] = await Promise.all([
-        apiService.getIndicadoresDetalhes(periodoInicial, periodoFinal),
-        apiService.getIndicadoresHistorico(periodoInicial, periodoFinal).catch(() => ({ data: [] })),
-      ]);
-      console.log("Detalhes recebidos:", data);
-      console.log("IPT recebido:", data?.ipt);
-      console.log("Período solicitado:", periodoInicial, "->", periodoFinal);
+      const data = await apiService.getIndicadoresDetalhes(periodoInicial, periodoFinal);
       setDetalhes(data);
-      setIndicadoresHistory(history?.data || []);
     } catch (err) {
       console.error(err);
       setError("Nao foi possivel carregar os indicadores. Verifique as datas e tente novamente.");
@@ -179,29 +180,80 @@ export default function ExplicacaoIndicadoresPage() {
   const percentualADC = Math.max(0, Math.min(100, pontuacaoTotal));
   const resumoIndicadores = useMemo(
     () => [
-      { nome: "IRD", valor: formatarValor(detalhes?.ird?.valor, 3), pontos: formatarValor(detalhes?.ird?.pontuacao, 2), cor: "text-emerald-500" },
+      { nome: "IRD", valor: formatarValor(detalhes?.ird?.valor, 3), pontos: formatarValor(detalhes?.ird?.pontuacao, 2), cor: "text-emerald-700 dark:text-emerald-400" },
       {
         nome: "IA",
-        valor: `${formatarValor(detalhes?.ia?.percentual ?? ((detalhes?.ia?.valor ?? 0) / 10), 2)}%`,
+        valor: `${formatarValor(detalhes?.ia?.percentual ?? detalhes?.ia?.valor ?? 0, 2)}%`,
         pontos: formatarValor(detalhes?.ia?.pontuacao, 2),
-        cor: "text-blue-500",
+        cor: "text-blue-700 dark:text-blue-400",
       },
       {
         nome: "IF",
         valor: `${formatarValor(detalhes?.if?.percentual ?? ((detalhes?.if?.valor ?? 0) / 10), 2)}%`,
         pontos: formatarValor(detalhes?.if?.pontuacao, 2),
-        cor: "text-amber-500",
+        cor: "text-amber-700 dark:text-amber-400",
       },
       {
         nome: "IPT",
         valor: detalhes?.ipt ? `${formatarValor(detalhes?.ipt?.valor, 2)}%` : "Não informado",
         pontos: formatarValor(detalhes?.ipt?.pontuacao, 2),
-        cor: "text-fuchsia-500",
+        cor: "text-fuchsia-700 dark:text-fuchsia-400",
       },
     ],
     [detalhes]
   );
+  const reportRef = useRef<HTMLDivElement>(null);
   const handlePrint = () => window.print();
+
+  const handleDownloadPDF = async () => {
+    const el = reportRef.current;
+    if (!el) return;
+    setPdfLoading(true);
+    const { default: html2canvas } = await import("html2canvas-pro");
+    const { jsPDF } = await import("jspdf");
+    document.body.classList.add("pdf-exporting");
+    await new Promise((r) => setTimeout(r, 150));
+    try {
+      const canvas = await html2canvas(el, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: "#ffffff",
+      });
+      document.body.classList.remove("pdf-exporting");
+      const pdf = new jsPDF({ unit: "mm", format: "a4" });
+      const pageW = 210;
+      const pageH = 297;
+      const margin = 15;
+      const contentW = pageW - 2 * margin;
+      const contentH = pageH - 2 * margin;
+      const imgRatio = canvas.height / canvas.width;
+      const imgW = contentW;
+      const imgH = imgW * imgRatio;
+      const totalPages = Math.ceil(imgH / contentH);
+      for (let p = 0; p < totalPages; p++) {
+        if (p > 0) pdf.addPage();
+        const srcY = (p * contentH / imgH) * canvas.height;
+        const srcH = (contentH / imgH) * canvas.height;
+        const sliceCanvas = document.createElement("canvas");
+        sliceCanvas.width = canvas.width;
+        sliceCanvas.height = Math.ceil(srcH);
+        const ctx = sliceCanvas.getContext("2d")!;
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, sliceCanvas.width, sliceCanvas.height);
+        ctx.drawImage(canvas, 0, srcY, canvas.width, srcH, 0, 0, canvas.width, srcH);
+        const sliceData = sliceCanvas.toDataURL("image/png");
+        const sliceH = Math.min(contentH, imgH - p * contentH);
+        pdf.addImage(sliceData, "PNG", margin, margin, imgW, sliceH);
+      }
+      pdf.save(`relatorio-indicadores-${format(new Date(), "yyyy-MM-dd")}.pdf`);
+    } catch (err) {
+      document.body.classList.remove("pdf-exporting");
+      console.error(err);
+    } finally {
+      setPdfLoading(false);
+    }
+  };
 
   // Calcular desconto baseado na pontuação total
   const calcularDesconto = (pontuacao: number): { percentual: number; desconto: number; explicacao: string } => {
@@ -261,12 +313,12 @@ export default function ExplicacaoIndicadoresPage() {
 
   return (
     <MainLayout>
-      <div className="space-y-6 w-full max-w-7xl mx-auto report-print-area">
+      <div ref={reportRef} className="space-y-6 w-full max-w-7xl mx-auto report-print-area">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 report-screen-only">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight">Explicacao dos Calculos dos Indicadores</h1>
+            <h1 className="text-3xl font-bold tracking-tight">Explicação dos Cálculos dos Indicadores</h1>
             <p className="text-zinc-600 dark:text-zinc-400 mt-2">
-              Combine a teoria com os numeros reais vindos do backend para auditar qualquer mes ou subprefeitura.
+              Combine a teoria com os números reais vindos do backend para auditar qualquer mês ou subprefeitura.
             </p>
           </div>
           <div className="flex gap-2">
@@ -278,21 +330,23 @@ export default function ExplicacaoIndicadoresPage() {
               Imprimir relatório
             </button>
             <button
-              onClick={handlePrint}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-violet-400/50 bg-violet-500/10 text-violet-700 dark:text-violet-300 hover:bg-violet-500/20 transition"
+              onClick={handleDownloadPDF}
+              disabled={pdfLoading}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-violet-400/50 bg-violet-500/10 text-violet-700 dark:text-violet-300 hover:bg-violet-500/20 transition disabled:opacity-50"
             >
               <Download className="h-4 w-4" />
-              Baixar PDF
+              {pdfLoading ? "Gerando PDF…" : "Baixar PDF"}
             </button>
           </div>
         </div>
 
-        <div className="hidden print:block">
-          <h1 className="text-2xl font-bold text-white dark:text-white">Relatório de Indicadores ADC</h1>
-          <p className="text-sm text-white dark:text-white mt-1">Gerado em {format(new Date(), "dd/MM/yyyy HH:mm")}</p>
+        <div className="hidden print:flex report-print-cover">
+          <h1 className="text-3xl font-bold text-black">Explicação dos Cálculos dos Indicadores</h1>
+          <p className="text-lg text-black mt-4">Período: {periodoLabel}</p>
+          <p className="text-sm text-black mt-2">Gerado em {format(new Date(), "dd/MM/yyyy HH:mm")}</p>
         </div>
 
-        <Card className="border-violet-400/40 shadow-sm">
+        <Card className="border-0 shadow-lg hover:shadow-xl transition-shadow report-screen-only">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <CalendarRange className="h-5 w-5 text-violet-500" />
@@ -303,7 +357,7 @@ export default function ExplicacaoIndicadoresPage() {
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 report-screen-only">
               <div>
-                <label className="block text-sm font-medium mb-2">Periodo inicial</label>
+                <label className="block text-sm font-medium mb-2">Período inicial</label>
                 <Input
                   type="date"
                   value={periodoInicial}
@@ -311,7 +365,7 @@ export default function ExplicacaoIndicadoresPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium mb-2">Periodo final</label>
+                <label className="block text-sm font-medium mb-2">Período final</label>
                 <Input
                   type="date"
                   value={periodoFinal}
@@ -324,55 +378,42 @@ export default function ExplicacaoIndicadoresPage() {
                   disabled={loading}
                   className="w-full px-4 py-2 bg-violet-600 text-white rounded-md hover:bg-violet-700 disabled:opacity-50"
                 >
-                  {loading ? "Atualizando..." : "Atualizar explicacao"}
+                  {loading ? "Atualizando..." : "Atualizar explicação"}
                 </button>
               </div>
             </div>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-4 report-screen-only">
-              Sugestao: trabalhe com o mes corrente inteiro para replicar os calculos de IA e IRD do dashboard.
+              Sugestão: trabalhe com o mês corrente inteiro para replicar os cálculos de IA e IRD do dashboard.
             </p>
           </CardContent>
         </Card>
 
-        <Card className="overflow-hidden border-2 border-violet-500/40 shadow-lg">
-          <CardHeader>
-            <CardTitle>Resumo executivo do relatório</CardTitle>
-            <CardDescription>Visão consolidada dos indicadores do período selecionado</CardDescription>
+        <Card className="overflow-hidden border-0 shadow-lg shadow-violet-500/15 dark:shadow-violet-500/10 report-print-break-before">
+          <CardHeader className="py-3">
+            <CardTitle className="text-2xl">Resumo executivo do relatório</CardTitle>
+            <CardDescription className="text-sm">Visão consolidada dos indicadores do período selecionado</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 items-stretch">
-              <div className="xl:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {resumoIndicadores.map((item) => (
-                  <div key={item.nome} className="rounded-xl border border-border bg-card/60 px-4 py-3">
-                    <div className={`text-xs font-bold uppercase tracking-wider ${item.cor}`}>{item.nome}</div>
-                    <div className="text-2xl font-bold">{item.valor}</div>
-                    <div className="text-xs text-muted-foreground">{item.pontos} pts</div>
-                  </div>
-                ))}
-              </div>
-              <div className="rounded-xl border border-border bg-card/40 p-3 min-h-[330px] flex items-center">
-                <IndicatorsChart data={indicadoresHistory} />
-              </div>
-            </div>
+          <CardContent className="space-y-4 pt-0">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+              {resumoIndicadores.map((item) => (
+                <div
+                  key={item.nome}
+                  className="rounded-xl  bg-card px-4 py-3 flex flex-col items-center justify-center data-cell"
+                >
+                  <div className={`text-2xl font-bold uppercase tracking-wider flex items-center justify-center ${item.cor}`}>{item.nome}</div>
+                  <div className="text-3xl font-bold flex items-center justify-center">{item.valor}</div>
+                  <div className="text-lg text-muted-foreground flex items-center justify-center">{item.pontos} pts</div>
+                </div>
+              ))}
+            <div className="flex flex-wrap items-center gap-6 rounded-xl shadow-md  dark:bg-violet-950/30 px-5 py-4">
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-center">
-              <div className="rounded-xl border-2 border-violet-500/60 bg-linear-to-br from-violet-500/15 to-fuchsia-500/10 px-4 py-4">
-                <div className="text-xs font-bold uppercase tracking-wider text-violet-600 dark:text-violet-300">ADC</div>
-                <div className="text-3xl font-extrabold text-violet-700 dark:text-violet-300">{formatarValor(pontuacaoTotal, 2)} pts</div>
-                <div className="text-sm text-violet-700/80 dark:text-violet-300/80">{formatarValor(percentualADC, 1)}% do total</div>
-              </div>
-              <div className="flex justify-center">
-                <ADCRingChart total={pontuacaoTotal} percentual={percentualADC} />
-              </div>
+              <AdcDonutChart total={pontuacaoTotal} percentual={percentualADC} />
+            </div>
             </div>
           </CardContent>
         </Card>
 
-        <div className="report-screen-only">
-          <p className="text-zinc-600 dark:text-zinc-400 mt-2">
-            Combine a teoria com os numeros reais vindos do backend para auditar qualquer mes ou subprefeitura.
-          </p>
-        </div>
+
 
         {error && (
           <div className="rounded border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-900/20 px-4 py-3 text-sm text-red-700 dark:text-red-200">
@@ -380,16 +421,16 @@ export default function ExplicacaoIndicadoresPage() {
           </div>
         )}
 
-        <Card>
+        <Card className="border-0 shadow-lg hover:shadow-xl transition-shadow report-print-indicator">
           <CardHeader>
-            <CardTitle>IRD - Indicador de Reclamacoes por Domicilio</CardTitle>
-            <CardDescription>Pontuacao maxima: 20 pontos</CardDescription>
+            <CardTitle>IRD - Indicador de Reclamações por Domicílio</CardTitle>
+            <CardDescription>Pontuação máxima: 20 pontos</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
-              <h3 className="font-semibold mb-2">Formula</h3>
+              <h3 className="font-semibold mb-2">Fórmula</h3>
               <div className="bg-zinc-50 dark:bg-zinc-900 p-4 rounded-lg font-mono text-sm">
-                IRD = (Reclamacoes Escalonadas Procedentes / Numero de Domicilios) x 1000
+                IRD = (Reclamações Escalonadas Procedentes / Número de Domicílios) x 1000
               </div>
             </div>
 
@@ -397,13 +438,13 @@ export default function ExplicacaoIndicadoresPage() {
               <h3 className="font-semibold mb-2">Componentes</h3>
               <ul className="list-disc list-inside space-y-1 text-sm text-zinc-600 dark:text-zinc-400">
                 <li>
-                  <strong>Procedentes escalonados:</strong> {detalhes?.ird?.tipos_considerados?.join(", ") ?? "varricao, mutirao, bueiro e cata-bagulho"} finalizados ou confirmados.
+                  <strong>Procedentes escalonados:</strong> {detalhes?.ird?.tipos_considerados?.join(", ") ?? "varrição, mutirão, bueiro e cata-bagulho"} finalizados ou confirmados.
                 </li>
                 <li>
-                  <strong>Domicilios:</strong> {detalhes?.ird?.domicilios?.toLocaleString("pt-BR") ?? "511.093"} (base IBGE 2024).
+                  <strong>Domicílios:</strong> {detalhes?.ird?.domicilios?.toLocaleString("pt-BR") ?? "511.093"} (base IBGE 2024).
                 </li>
                 <li>
-                  <strong>Fator 1000:</strong> expressa o indicador por mil domicilios.
+                  <strong>Fator 1000:</strong> expressa o indicador por mil domicílios.
                 </li>
               </ul>
             </div>
@@ -434,7 +475,7 @@ export default function ExplicacaoIndicadoresPage() {
                       detalhes.ird.valor,
                       3
                     )}`
-                  : "Nenhum SAC escalonado procedente encontrado no periodo."}
+                  : "Nenhum SAC escalonado procedente encontrado no período."}
               </p>
               <p className="text-sm">
                 Pontuação: <strong className="text-violet-600 dark:text-violet-300">{formatarValor(detalhes?.ird?.pontuacao, 2)} pts</strong>
@@ -481,14 +522,14 @@ export default function ExplicacaoIndicadoresPage() {
             )}
 
             <div>
-              <h3 className="font-semibold mb-2">Tabela de pontuacao</h3>
+              <h3 className="font-semibold mb-2">Tabela de pontuação</h3>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm border-collapse">
                   <thead>
                     <tr className="bg-zinc-100 dark:bg-zinc-800">
                       <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-left">Faixa</th>
-                      <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">Pontuacao</th>
-                      <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-left">Interpretacao</th>
+                      <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">Pontuação</th>
+                      <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-left">Interpretação</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -524,16 +565,16 @@ export default function ExplicacaoIndicadoresPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="border-0 shadow-lg hover:shadow-xl transition-shadow report-print-indicator">
           <CardHeader>
             <CardTitle>IA - Indicador de Atendimento</CardTitle>
-            <CardDescription>Pontuacao maxima: 20 pontos</CardDescription>
+            <CardDescription>Pontuação máxima: 20 pontos</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
-              <h3 className="font-semibold mb-2">Formula</h3>
+              <h3 className="font-semibold mb-2">Fórmula</h3>
               <div className="bg-zinc-50 dark:bg-zinc-900 p-4 rounded-lg font-mono text-sm">
-                IA = (No prazo / (No prazo + Fora do prazo)) x 1000
+                IA = (No prazo / (No prazo + Fora do prazo)) x 100
               </div>
             </div>
 
@@ -541,7 +582,7 @@ export default function ExplicacaoIndicadoresPage() {
               <h3 className="font-semibold mb-2">Componentes (Filtros)</h3>
               <ul className="list-disc list-inside space-y-1 text-sm text-zinc-600 dark:text-zinc-400">
                 <li>
-                  <strong>Data de Registro:</strong> periodo selecionado (inicial e final).
+                  <strong>Data de Registro:</strong> período selecionado (inicial e final).
                 </li>
                 <li>
                   <strong>Classificação_do_Serviço:</strong> &quot;Solicitação&quot; (demandantes).
@@ -584,26 +625,26 @@ export default function ExplicacaoIndicadoresPage() {
                     Fora do prazo: <strong>{detalhes.ia.total_fora_prazo}</strong>
                   </p>
                   <p className="text-sm">
-                    IA = ({detalhes.ia.total_no_prazo} / {(detalhes.ia.total_no_prazo ?? 0) + (detalhes.ia.total_fora_prazo ?? 0)}) x 1000 = {formatarValor(detalhes.ia.valor, 2)} (equiv. {formatarValor(detalhes.ia.percentual ?? ((detalhes.ia.valor ?? 0) / 10), 2)}%)
+                    IA = ({detalhes.ia.total_no_prazo} / {(detalhes.ia.total_no_prazo ?? 0) + (detalhes.ia.total_fora_prazo ?? 0)}) × 100 = {formatarValor(detalhes.ia.percentual ?? detalhes.ia.valor ?? 0, 2)}%
                   </p>
                   <p className="text-sm">
                     Pontuação: <strong className="text-violet-600 dark:text-violet-300">{formatarValor(detalhes.ia.pontuacao, 2)} pts</strong>
                   </p>
                 </>
               ) : (
-                <p className="text-sm text-zinc-600 dark:text-zinc-300">Nenhum SAC demandante no periodo.</p>
+                <p className="text-sm text-zinc-600 dark:text-zinc-300">Nenhum SAC demandante no período.</p>
               )}
             </div>
 
             <div>
-              <h3 className="font-semibold mb-2">Tabela de pontuacao</h3>
+              <h3 className="font-semibold mb-2">Tabela de pontuação</h3>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm border-collapse">
                   <thead>
                     <tr className="bg-zinc-100 dark:bg-zinc-800">
                       <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-left">Faixa</th>
-                      <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">Pontuacao</th>
-                      <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-left">Interpretacao</th>
+                      <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">Pontuação</th>
+                      <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-left">Interpretação</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -644,14 +685,14 @@ export default function ExplicacaoIndicadoresPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="border-0 shadow-lg hover:shadow-xl transition-shadow report-print-indicator">
           <CardHeader>
-            <CardTitle>IF - Indicador de Fiscalizacao</CardTitle>
-            <CardDescription>Pontuacao maxima: 20 pontos</CardDescription>
+            <CardTitle>IF - Indicador de Fiscalização</CardTitle>
+            <CardDescription>Pontuação máxima: 20 pontos</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
-              <h3 className="font-semibold mb-2">Formula</h3>
+              <h3 className="font-semibold mb-2">Fórmula</h3>
               <div className="bg-zinc-50 dark:bg-zinc-900 p-4 rounded-lg font-mono text-sm">
                 IF por sub = (sem irregularidades / total BFS escalonados) × 100
               </div>
@@ -711,8 +752,8 @@ export default function ExplicacaoIndicadoresPage() {
                         <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">Sem Irregularidades</th>
                         <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">Vistorias Total</th>
                         <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">IF (%)</th>
-                        <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">Média (mesclado)</th>
-                        <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">Pontuação (mesclado)</th>
+                        <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">Média</th>
+                        <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">Pontuação</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -779,14 +820,14 @@ export default function ExplicacaoIndicadoresPage() {
             </div>
 
             <div>
-              <h3 className="font-semibold mb-2">Tabela de pontuacao</h3>
+              <h3 className="font-semibold mb-2">Tabela de pontuação</h3>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm border-collapse">
                   <thead>
                     <tr className="bg-zinc-100 dark:bg-zinc-800">
                       <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-left">Faixa</th>
-                      <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">Pontuacao</th>
-                      <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-left">Interpretacao</th>
+                      <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">Pontuação</th>
+                      <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-left">Interpretação</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -847,14 +888,14 @@ export default function ExplicacaoIndicadoresPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="border-0 shadow-lg hover:shadow-xl transition-shadow report-print-indicator">
           <CardHeader>
             <CardTitle>IPT - Indicador de Execução dos Planos de Trabalho</CardTitle>
-            <CardDescription>Pontuacao maxima: 40 pontos</CardDescription>
+            <CardDescription>Pontuação máxima: 40 pontos</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
-              <h3 className="font-semibold mb-2">Formula</h3>
+              <h3 className="font-semibold mb-2">Fórmula</h3>
               <div className="bg-zinc-50 dark:bg-zinc-900 p-4 rounded-lg font-mono text-sm">
                 IPT = Media ponderada (Mao de obra 50% + Equipamentos 50%)
               </div>
@@ -892,14 +933,14 @@ export default function ExplicacaoIndicadoresPage() {
             </div>
 
             <div>
-              <h3 className="font-semibold mb-2">Tabela de pontuacao</h3>
+              <h3 className="font-semibold mb-2">Tabela de pontuação</h3>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm border-collapse">
                   <thead>
                     <tr className="bg-zinc-100 dark:bg-zinc-800">
                       <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-left">Faixa</th>
-                      <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">Pontuacao</th>
-                      <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-left">Interpretacao</th>
+                      <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">Pontuação</th>
+                      <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-left">Interpretação</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -960,7 +1001,7 @@ export default function ExplicacaoIndicadoresPage() {
           </CardContent>
         </Card>
 
-        <Card className="border-2 border-violet-500">
+        <Card className="border-0 shadow-lg shadow-violet-500/20 report-print-indicator">
           <CardHeader>
             <CardTitle>Resumo dos indicadores</CardTitle>
           </CardHeader>
@@ -976,7 +1017,7 @@ export default function ExplicacaoIndicadoresPage() {
               </div>
               <div className={`flex justify-between items-center p-3 rounded border ${getPontosStyle(detalhes?.ia?.pontuacao ?? 0, 20)}`}>
                 <span className="font-medium">
-                  IA = {formatarValor(detalhes?.ia?.valor, 2)} (x1000) | {formatarValor(detalhes?.ia?.percentual ?? ((detalhes?.ia?.valor ?? 0) / 10), 2)}% | {detalhes?.ia?.total_no_prazo ?? 0} no prazo, {detalhes?.ia?.total_fora_prazo ?? 0} fora
+                  IA = {formatarValor(detalhes?.ia?.percentual ?? detalhes?.ia?.valor ?? 0, 2)}% | {detalhes?.ia?.total_no_prazo ?? 0} no prazo, {detalhes?.ia?.total_fora_prazo ?? 0} fora
                 </span>
                 <span className="font-bold">
                   {formatarValor(detalhes?.ia?.pontuacao, 2)} pts
@@ -1003,7 +1044,7 @@ export default function ExplicacaoIndicadoresPage() {
                 <span className="font-bold text-lg text-violet-600 dark:text-violet-400">{formatarValor(pontuacaoTotal, 2)} pts</span>
               </div>
               
-              {/* Informações de Desconto */}
+              {/* Informações de Desconto e Glosa */}
               <div className={`p-4 rounded-lg border-2 ${infoDesconto.desconto > 0 ? 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-300 dark:border-yellow-700' : 'bg-green-50 dark:bg-green-900/20 border-green-300 dark:border-green-700'}`}>
                 <div className="space-y-2">
                   <div className="flex justify-between items-center">
@@ -1019,10 +1060,32 @@ export default function ExplicacaoIndicadoresPage() {
                   <div className="text-sm space-y-1">
                     <p className={`font-medium ${infoDesconto.desconto > 0 ? 'text-yellow-700 dark:text-yellow-300' : 'text-green-700 dark:text-green-300'}`}>
                       Percentual do valor contratual a receber: <strong>{formatarValor(infoDesconto.percentual, 2)}%</strong>
+                      {detalhes?.resumo_adc && typeof detalhes.resumo_adc.valor_mensal_contrato === "number" && (
+                        <> — <strong>R$ {((detalhes.resumo_adc.valor_mensal_contrato ?? 0) - (detalhes.resumo_adc.glosa_real ?? 0)).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></>
+                      )}
                     </p>
                     <p className={`text-xs ${infoDesconto.desconto > 0 ? 'text-yellow-600 dark:text-yellow-400' : 'text-green-600 dark:text-green-400'}`}>
                       {infoDesconto.explicacao}
                     </p>
+                    {detalhes?.resumo_adc && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4 pt-3 border-t border-current/20">
+                        <div>
+                          <div className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-0.5">Desconto real</div>
+                          <div className="text-lg font-bold">{formatarValor(detalhes.resumo_adc.desconto, 2)}%</div>
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-0.5">Valor da glosa (R$)</div>
+                          <div className="text-lg font-bold">
+                            {typeof detalhes.resumo_adc.glosa_real === "number"
+                              ? detalhes.resumo_adc.glosa_real.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                              : "0,00"}
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            Base: R$ {(detalhes.resumo_adc.valor_mensal_contrato ?? 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                          </p>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

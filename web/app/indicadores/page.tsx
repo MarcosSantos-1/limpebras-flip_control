@@ -158,7 +158,7 @@ export default function IndicadoresPage() {
                   <div className="bg-card p-5 rounded-xl border border-border hover:border-blue-500/30 transition-colors shadow-sm group">
                     <div className="text-xs font-bold text-blue-600 dark:text-blue-400 uppercase tracking-wider mb-2">IA</div>
                     <div className="text-3xl font-bold text-foreground group-hover:scale-105 transition-transform origin-left">
-                      {(resultado.ia?.percentual ?? ((resultado.ia?.valor ?? 0) / 10)).toFixed(1)}%
+                      {(resultado.ia?.percentual ?? resultado.ia?.valor ?? 0).toFixed(1)}%
                     </div>
                     <div className="text-sm text-muted-foreground mt-1 font-medium">{resultado.ia?.pontuacao} pontos</div>
                   </div>
@@ -193,6 +193,23 @@ export default function IndicadoresPage() {
                 </div>
                 
                 <div className="grid gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="p-4 rounded-xl border border-border bg-card">
+                      <div className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-1">Desconto real</div>
+                      <div className="text-2xl font-bold text-foreground">{resultado.desconto?.toFixed(2) ?? 0}%</div>
+                      <div className="text-sm text-muted-foreground mt-1">Percentual descontado do valor mensal</div>
+                    </div>
+                    <div className="p-4 rounded-xl border border-border bg-card">
+                      <div className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-1">Valor da glosa (R$)</div>
+                      <div className="text-2xl font-bold text-foreground">
+                        {typeof resultado.glosa_real === "number"
+                          ? resultado.glosa_real.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                          : "0,00"}
+                      </div>
+                      <div className="text-sm text-muted-foreground mt-1">Valor retido conforme ADC</div>
+                    </div>
+                  </div>
+
                   {resultado.desconto > 0 && (
                     <div className="p-4 bg-yellow-50/50 dark:bg-yellow-900/10 border border-yellow-200/50 dark:border-yellow-800/30 rounded-lg flex items-start gap-3">
                       <span className="text-2xl">⚠️</span>
@@ -203,6 +220,11 @@ export default function IndicadoresPage() {
                         <p className="text-sm text-yellow-700 dark:text-yellow-300">
                           Percentual do valor contratual a receber: <strong>{resultado.percentual_contrato?.toFixed(2)}%</strong>
                         </p>
+                        {typeof resultado.glosa_real === "number" && resultado.glosa_real > 0 && (
+                          <p className="text-sm text-yellow-700 dark:text-yellow-300 mt-1">
+                            Valor da glosa: <strong>R$ {resultado.glosa_real.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+                          </p>
+                        )}
                       </div>
                     </div>
                   )}
@@ -215,7 +237,7 @@ export default function IndicadoresPage() {
                           Excelente Desempenho!
                         </p>
                         <p className="text-sm text-green-700 dark:text-green-300">
-                          Sem desconto - 100% do valor mensal previsto será pago.
+                          Sem desconto - 100% do valor mensal previsto será pago. Glosa: R$ 0,00.
                         </p>
                       </div>
                     </div>

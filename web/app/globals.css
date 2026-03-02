@@ -101,6 +101,15 @@ html {
   overflow-x: hidden;
 }
 
+/* PDF export: mostra capa e esconde controles */
+.pdf-exporting .report-screen-only {
+  display: none !important;
+}
+.pdf-exporting .report-print-cover {
+  display: flex !important;
+  min-height: auto;
+}
+
 .grid-pattern {
   background-size: 40px 40px;
   background-image: linear-gradient(to right, rgba(128, 128, 128, 0.05) 1px, transparent 1px),
@@ -113,6 +122,11 @@ html {
 }
 
 @media print {
+  @page {
+    size: A4;
+    margin: 20mm;
+  }
+
   .app-sidebar,
   .sidebar-toggle,
   .report-screen-only {
@@ -124,7 +138,26 @@ html {
   }
 
   .report-print-area {
-    max-width: 100% !important;
+    max-width: none !important;
+    width: 100% !important;
+    padding: 0 !important;
+  }
+
+  .report-print-cover {
+    display: flex !important;
+    flex-direction: column;
+    justify-content: center;
+    min-height: 250mm;
+    padding: 20mm;
+    page-break-after: always;
+  }
+
+  .report-print-break-before {
+    page-break-before: always;
+  }
+
+  .report-print-indicator {
+    page-break-before: always;
   }
 
   .grid-pattern {
@@ -134,5 +167,14 @@ html {
   body {
     background: #fff !important;
     color: #000 !important;
+  }
+
+  .report-print-area * {
+    box-shadow: none !important;
+  }
+
+  .report-print-area .data-cell,
+  .report-print-area [class*="shadow"] {
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08) !important;
   }
 }

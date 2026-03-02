@@ -18,6 +18,7 @@ import {
   parseSetor,
   getSubFromPlano,
 } from "../constants/ipt.js";
+import { config } from "../config.js";
 
 async function getSavedIPT(client: any, inicio: string, fim: string): Promise<number | null> {
   const r = await client.query(
@@ -582,7 +583,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
 
       const iaPayload = {
         ...ia,
-        valor: ia.valor, // IA em x1000
+        valor: ia.valor, // IA em x100 (percentual)
         total_base: iaTotalBase,
         total_calculo: iaTotalCalculo,
         total_no_prazo: iaNoPrazo,
@@ -595,6 +596,8 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         total_sem_irregularidade: ifSemIrregularidade,
       };
       const descontoPercent = Math.max(0, 100 - descontoInfo.percentualRecebimento);
+      const valorMensal = config.valorMensalContrato;
+      const glosaReal = valorMensal * (descontoPercent / 100);
 
       return {
         ird,
@@ -602,12 +605,12 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         if: ifPayload,
         ipt,
         total,
-        // Campos legados usados pela tela /indicadores
         pontuacao_total: total,
         percentual_contrato: descontoInfo.percentualRecebimento,
         desconto: descontoPercent,
-        // Campo detalhado novo
         desconto_detalhe: descontoInfo,
+        valor_mensal_contrato: valorMensal,
+        glosa_real: glosaReal,
       };
     } finally {
       client.release();
@@ -764,8 +767,8 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         ],
         memoria_calculo:
           totalCalculoIA > 0
-            ? `IA = (no prazo / (no prazo + fora do prazo)) × 1000 = (${fmt(noPrazo)} / ${fmt(totalCalculoIA)}) × 1000 = ${(iaResult.valor ?? 0).toFixed(2)} (equivale a ${(iaResult.percentual ?? 0).toFixed(2)}%)\nNo prazo (SIM): ${fmt(noPrazo)} | Fora do prazo (NÃO): ${fmt(foraPrazo)} | Base total filtro: ${fmt(totalSolic)}`
-            : "IA = (no prazo / (no prazo + fora do prazo)) × 1000 — Sem linhas SIM/NÃO para o período filtrado.",
+            ? `IA = (no prazo / (no prazo + fora do prazo)) × 100 = (${fmt(noPrazo)} / ${fmt(totalCalculoIA)}) × 100 = ${(iaResult.percentual ?? iaResult.valor ?? 0).toFixed(2)}%\nNo prazo (SIM): ${fmt(noPrazo)} | Fora do prazo (NÃO): ${fmt(foraPrazo)} | Base total filtro: ${fmt(totalSolic)}`
+            : "IA = (no prazo / (no prazo + fora do prazo)) × 100 — Sem linhas SIM/NÃO para o período filtrado.",
       };
 
       const ifPorSub = SUB_SIGLAS.map((sigla) => {
@@ -820,6 +823,12 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
             }
           : undefined;
 
+      const pontuacaoTotal = (irdResult.pontuacao ?? 0) + (iaResult.pontuacao ?? 0) + (ifResult.pontuacao ?? 0) + (ipt?.pontuacao ?? 0);
+      const descontoInfo = descontoADC(pontuacaoTotal);
+      const descontoPercent = Math.max(0, 100 - descontoInfo.percentualRecebimento);
+      const valorMensalDetalhe = config.valorMensalContrato;
+      const glosaReal = valorMensalDetalhe * (descontoPercent / 100);
+
       return {
         periodo,
         subprefeitura: subprefeitura ?? null,
@@ -827,6 +836,13 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         ia,
         if: ifDetalhe,
         ipt,
+        resumo_adc: {
+          pontuacao_total: pontuacaoTotal,
+          percentual_contrato: descontoInfo.percentualRecebimento,
+          desconto: descontoPercent,
+          valor_mensal_contrato: valorMensalDetalhe,
+          glosa_real: glosaReal,
+        },
       };
     } finally {
       client.release();
