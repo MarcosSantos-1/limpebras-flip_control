@@ -13,6 +13,7 @@ export default function IndicadoresPage() {
   const [resultado, setResultado] = useState<any>(null);
   const [periodoInicial, setPeriodoInicial] = useState(format(startOfMonth(new Date()), "yyyy-MM-dd"));
   const [periodoFinal, setPeriodoFinal] = useState(format(endOfMonth(new Date()), "yyyy-MM-dd"));
+  const [mesFiltro, setMesFiltro] = useState(format(new Date(), "yyyy-MM"));
 
   const calcularADC = async () => {
     try {
@@ -63,13 +64,41 @@ export default function IndicadoresPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
+            <div className="space-y-4 mb-4">
+              <div className="flex flex-wrap items-center gap-3 p-3 rounded-lg bg-muted/30 border border-border">
+                <label className="text-sm font-medium text-muted-foreground">Filtrar por mês</label>
+                <Input
+                  type="month"
+                  value={mesFiltro}
+                  max={format(new Date(), "yyyy-MM")}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (!val) return;
+                    setMesFiltro(val);
+                    const [y, m] = val.split("-").map(Number);
+                    const inicio = startOfMonth(new Date(y, m - 1, 1));
+                    const fim = endOfMonth(inicio);
+                    setPeriodoInicial(format(inicio, "yyyy-MM-dd"));
+                    setPeriodoFinal(format(fim, "yyyy-MM-dd"));
+                  }}
+                  className="w-40"
+                />
+                <span className="text-xs text-muted-foreground">
+                  Define período inicial e final do mês selecionado
+                </span>
+              </div>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-4 items-end">
               <div className="space-y-2">
                 <label className="text-sm font-medium text-muted-foreground">Período Inicial</label>
                 <Input
                   type="date"
                   value={periodoInicial}
-                  onChange={(e) => setPeriodoInicial(e.target.value)}
+                  onChange={(e) => {
+                    setPeriodoInicial(e.target.value);
+                    const d = e.target.value ? new Date(e.target.value) : null;
+                    if (d) setMesFiltro(format(d, "yyyy-MM"));
+                  }}
                 />
               </div>
               <div className="space-y-2">
@@ -77,7 +106,11 @@ export default function IndicadoresPage() {
                 <Input
                   type="date"
                   value={periodoFinal}
-                  onChange={(e) => setPeriodoFinal(e.target.value)}
+                  onChange={(e) => {
+                    setPeriodoFinal(e.target.value);
+                    const d = e.target.value ? new Date(e.target.value) : null;
+                    if (d) setMesFiltro(format(d, "yyyy-MM"));
+                  }}
                 />
               </div>
               <div>

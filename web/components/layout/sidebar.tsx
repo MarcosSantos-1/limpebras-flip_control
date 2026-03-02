@@ -44,7 +44,7 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
       <div className="flex h-full flex-col">
         <div className="flex h-20 pt-12 items-center justify-between border-b border-border/70 px-6">
           <h1 className="text-2xl font-extrabold bg-linear-to-r from-zinc-800 via-indigo-700 to-blue-700 dark:from-zinc-300 dark:via-indigo-300 dark:to-blue-300 bg-clip-text text-transparent tracking-tight">
-            FLIP Control
+            ADC Control
           </h1>
           <Settings className="h-4 w-4 text-indigo-500/70" />
         </div>

@@ -32,22 +32,63 @@ async function getSavedIPT(client: any, inicio: string, fim: string): Promise<nu
   return Number.isFinite(v) ? v : null;
 }
 
+/** Extrai data (yyyy-MM-dd) do raw. Checa chaves conhecidas e qualquer chave que contenha "data". */
+function extractRawDateForIpt(raw: IptRaw): string | null {
+  const preferidos = ["data", "data_planejado", "data_execucao", "data_criacao", "data_liberacao", "data_referencia"];
+  for (const k of preferidos) {
+    const v = raw[k];
+    if (v != null && String(v).trim()) {
+      const key = parseDateToKey(String(v).trim());
+      if (key) return key;
+    }
+  }
+  for (const k of Object.keys(raw)) {
+    if (/data|data_|_data/.test(k.toLowerCase()) && !/estimada|metodo/.test(k.toLowerCase())) {
+      const v = raw[k];
+      if (v != null && String(v).trim()) {
+        const key = parseDateToKey(String(v).trim());
+        if (key) return key;
+      }
+    }
+  }
+  return null;
+}
+
+function parseDateToKey(value: string): string | null {
+  if (!value) return null;
+  const match = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+  if (match) {
+    const year = match[3].length === 2 ? `20${match[3]}` : match[3];
+    return `${year}-${match[2].padStart(2, "0")}-${match[1].padStart(2, "0")}`;
+  }
+  if (/^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10);
+  const parsed = new Date(value);
+  if (!Number.isNaN(parsed.getTime())) {
+    const y = parsed.getFullYear();
+    const m = String(parsed.getMonth() + 1).padStart(2, "0");
+    const day = String(parsed.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  }
+  return null;
+}
+
 /**
- * IPT: soma dos percentuais dos equipamentos com Status "Encerrado" (SELIMP report).
- * Não despachados ficam em observações. Média dos planos Encerrado.
+ * IPT = soma de todos os percentuais de módulos com status "Encerrado" (SELIMP report)
+ * dividido pela quantidade de despachos = média em %. Depois extrai pontuação.
+ * Usa data_referencia ou extrai data do raw (data, data_planejado, data_execucao) para filtrar por período.
  */
 async function getAutoIPTFromReport(client: any, inicio: string, fim: string): Promise<number | null> {
   const rows = await client.query(
-    `SELECT raw
+    `SELECT raw, data_referencia, updated_at
      FROM ipt_imports
-     WHERE file_type = 'ipt_report_selimp'
-       AND (data_referencia IS NULL OR data_referencia >= $1::date)
-       AND (data_referencia IS NULL OR data_referencia < ($2::date + interval '1 day'))`,
-    [inicio, fim]
+     WHERE file_type = 'ipt_report_selimp'`,
+    []
   );
 
-  const byPlano = new Map<string, { sum: number; count: number }>();
-  for (const row of rows.rows as Array<{ raw: IptRaw }>) {
+  let somaPercentuais = 0;
+  let qtdDespachos = 0;
+
+  for (const row of rows.rows as Array<{ raw: IptRaw; data_referencia: string | Date | null; updated_at: string | Date | null }>) {
     const raw = (row.raw ?? {}) as IptRaw;
     const status = normalizeText(String(raw.status ?? "").trim());
     if (!status.includes("encerrado")) continue;
@@ -55,17 +96,35 @@ async function getAutoIPTFromReport(client: any, inicio: string, fim: string): P
     if (!plano) continue;
     const percentual = toExecPercent(String(raw.de_execucao ?? raw.percentual_execucao ?? "").trim());
     if (percentual == null) continue;
-    const current = byPlano.get(plano) ?? { sum: 0, count: 0 };
-    current.sum += percentual;
-    current.count += 1;
-    byPlano.set(plano, current);
+
+    let dateKey: string | null = null;
+    const dataRef = row.data_referencia;
+    if (dataRef) {
+      if (typeof dataRef === "string" && /^\d{4}-\d{2}-\d{2}/.test(dataRef)) dateKey = dataRef.slice(0, 10);
+      else {
+        const d = dataRef instanceof Date ? dataRef : new Date(dataRef);
+        if (!Number.isNaN(d.getTime())) {
+          dateKey = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+        }
+      }
+    }
+    if (!dateKey) dateKey = extractRawDateForIpt(raw);
+    if (!dateKey) {
+      const upd = row.updated_at;
+      if (upd) {
+        const d = upd instanceof Date ? upd : new Date(upd);
+        if (!Number.isNaN(d.getTime()))
+          dateKey = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+      }
+    }
+    if (!dateKey || dateKey < inicio || dateKey > fim) continue;
+
+    somaPercentuais += percentual;
+    qtdDespachos += 1;
   }
 
-  const mediasPlanos = Array.from(byPlano.values())
-    .map((item) => (item.count > 0 ? item.sum / item.count : null))
-    .filter((item): item is number => item != null);
-  if (!mediasPlanos.length) return null;
-  const ipt = mediasPlanos.reduce((acc, value) => acc + value, 0) / mediasPlanos.length;
+  if (qtdDespachos === 0) return null;
+  const ipt = somaPercentuais / qtdDespachos;
   return Number(ipt.toFixed(2));
 }
 
@@ -389,9 +448,13 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         total_sem_irregularidade: semIrreg,
       };
       const autoIptPercent = await getAutoIPTFromReport(client, inicio, fim);
-      const iptPercent = autoIptPercent;
+      const savedIptPercent = await getSavedIPT(client, inicio, fim);
+      const iptPercent = autoIptPercent ?? savedIptPercent;
       const iptDashboard =
-        iptPercent != null ? pontuacaoIPT(iptPercent) : { valor: 0, percentual: 0, pontuacao: 0 };
+        iptPercent != null
+          ? { ...pontuacaoIPT(iptPercent), valor: iptPercent }
+          : { valor: 0, percentual: 0, pontuacao: 0 };
+      const iptSemDados = autoIptPercent == null && savedIptPercent == null;
 
       // SACs hoje (opcional: período = hoje)
       const hoje = new Date().toISOString().slice(0, 10);
@@ -402,6 +465,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
 
       return {
         indicadores: { ird, ia: iaDashboard, if: ifDashboard, ipt: iptDashboard },
+        ipt_sem_dados: iptSemDados,
         sacs_hoje: Number(sacsHoje.rows[0]?.total ?? 0),
         cncs_urgentes: 0,
       };
@@ -464,8 +528,9 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
       const ifInd = pontuacaoIF(ifSemIrregularidade, ifTotal);
 
       if (iptPercent == null || isNaN(iptPercent)) {
+        const autoIpt = await getAutoIPTFromReport(client, inicio, fim);
         const saved = await getSavedIPT(client, inicio, fim);
-        if (saved != null) iptPercent = saved;
+        iptPercent = autoIpt ?? saved ?? null;
       }
 
       const ipt: IndicadorResult = iptPercent != null && !isNaN(iptPercent)
@@ -639,12 +704,14 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
             : "IF = (sem irregularidade / total BFS) × 1000 — Nenhum BFS não demandante no período.",
       };
 
+      const autoIptPercent = await getAutoIPTFromReport(client, inicio, fim);
       const savedIptPercent = await getSavedIPT(client, inicio, fim);
+      const iptPercent = autoIptPercent ?? savedIptPercent;
       const ipt =
-        savedIptPercent != null
+        iptPercent != null
           ? {
-              ...pontuacaoIPT(savedIptPercent),
-              valor: savedIptPercent,
+              ...pontuacaoIPT(iptPercent),
+              valor: iptPercent,
             }
           : undefined;
 
@@ -666,17 +733,17 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   fastify.get<{
-    Querystring: { periodo_inicial?: string; periodo_final?: string; mostrar_todos?: string };
+    Querystring: { periodo_inicial?: string; periodo_final?: string; mostrar_todos?: string; subprefeitura?: string };
   }>("/dashboard/ipt-preview", async (request, reply) => {
-    const { periodo_inicial: inicio, periodo_final: fim, mostrar_todos } = request.query;
+    const { periodo_inicial: inicio, periodo_final: fim, mostrar_todos, subprefeitura: subFilter } = request.query;
     const showAll = mostrar_todos === "1";
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
     const yesterdayKey = toDateKey(yesterday)!;
 
-    let escopo: "dia_anterior" | "periodo" | "todos" = "dia_anterior";
-    let scopeStart: string | null = yesterdayKey;
-    let scopeEnd: string | null = yesterdayKey;
+    let escopo: "dia_anterior" | "periodo" | "todos" = "periodo";
+    let scopeStart: string | null = inicio ?? yesterdayKey;
+    let scopeEnd: string | null = fim ?? yesterdayKey;
     if (showAll) {
       escopo = "todos";
       scopeStart = null;
@@ -685,6 +752,10 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
       escopo = "periodo";
       scopeStart = inicio;
       scopeEnd = fim;
+    } else {
+      scopeStart = yesterdayKey;
+      scopeEnd = yesterdayKey;
+      escopo = "dia_anterior";
     }
 
     const client = await pool.connect();
@@ -1024,12 +1095,42 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         .filter((r): r is NonNullable<typeof r> => r != null)
         .sort((a, b) => compareSetores(a.plano, b.plano, "asc"));
 
-      const totalDespachosSelimp = rows.reduce((acc, r) => acc + r.despachos_selimp, 0);
-      const iptSomaSelimp = rows.reduce((acc, r) => acc + (r.percentual_selimp ?? 0), 0);
-      const iptMedioSelimp = rows.length > 0 ? Number((iptSomaSelimp / rows.length).toFixed(2)) : null;
+      let rowsFiltered = rows;
+      if (subFilter && subFilter.trim() !== "" && subFilter.toLowerCase() !== "all") {
+        const subFilterNorm = normalizeText(subFilter).replace(/[^a-z]/g, "");
+        rowsFiltered = rows.filter((r) => {
+          const subNorm = normalizeText(r.subprefeitura || "").replace(/[^a-z]/g, "");
+          const sigla = getSubFromPlano(r.plano);
+          return (
+            subNorm === subFilterNorm ||
+            subNorm.includes(subFilterNorm) ||
+            subFilterNorm.includes(subNorm) ||
+            sigla.toUpperCase() === subFilter.toUpperCase() ||
+            r.subprefeitura === subFilter
+          );
+        });
+      }
+
+      const totalDespachosSelimp = rowsFiltered.reduce((acc, r) => acc + r.despachos_selimp, 0);
+      const totalDespachosNosso = rowsFiltered.reduce((acc, r) => acc + r.despachos_nosso, 0);
+      const iptSomaSelimp = rowsFiltered.reduce((acc, r) => acc + (r.percentual_selimp ?? 0), 0);
+      const iptMedioSelimp = rowsFiltered.length > 0 ? Number((iptSomaSelimp / rowsFiltered.length).toFixed(2)) : null;
+      const planosDespachadosSelimp = rowsFiltered.filter((r) => r.despachos_selimp > 0).length;
+      const ddmxSumPond = rowsFiltered.reduce((acc, r) => {
+        if (r.percentual_nosso != null && r.despachos_nosso > 0)
+          return acc + r.percentual_nosso * r.despachos_nosso;
+        return acc;
+      }, 0);
+      const ddmxCountPond = rowsFiltered.reduce(
+        (acc, r) => (r.percentual_nosso != null && r.despachos_nosso > 0 ? acc + r.despachos_nosso : acc),
+        0
+      );
+      const percentualMedioDdmx =
+        ddmxCountPond > 0 ? Number((ddmxSumPond / ddmxCountPond).toFixed(2)) : null;
+
       const legacySubMap = new Map<string, { quantidade: number; sum: number; count: number }>();
       const legacyServMap = new Map<string, { quantidade: number; sum: number; count: number }>();
-      for (const r of rows) {
+      for (const r of rowsFiltered) {
         const subKey = r.subprefeitura || "Não informado";
         const subAgg = legacySubMap.get(subKey) ?? { quantidade: 0, sum: 0, count: 0 };
         subAgg.quantidade += 1;
@@ -1058,7 +1159,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         quantidade_planos: v.quantidade,
         media_execucao: v.count > 0 ? Number((v.sum / v.count).toFixed(2)) : null,
       }));
-      const mesclados = rows.map((r) => ({
+      const mesclados = rowsFiltered.map((r) => ({
         plano: r.plano,
         subprefeitura: r.subprefeitura,
         tipo_servico: r.tipo_servico,
@@ -1078,7 +1179,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         sem_status_bateria: false,
         atualizado_em: new Date().toISOString(),
       }));
-      const comparativoItens = rows.map((r) => ({
+      const comparativoItens = rowsFiltered.map((r) => ({
         plano: r.plano,
         subprefeitura: r.subprefeitura,
         tipo_servico: r.tipo_servico,
@@ -1104,18 +1205,21 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
           data_referencia_padrao: yesterdayKey,
         },
         resumo: {
-          total_planos: rows.length,
-          total_planos_ativos: rows.filter((r) => r.despachos_selimp > 0 || r.despachos_nosso > 0).length,
+          total_planos: rowsFiltered.length,
+          total_planos_despachados: planosDespachadosSelimp,
+          total_planos_ativos: rowsFiltered.filter((r) => r.despachos_selimp > 0 || r.despachos_nosso > 0).length,
           media_execucao_planos_ativos: iptMedioSelimp,
-          total_modulos_relacionados: rows.reduce((acc, r) => acc + r.equipamentos.length, 0),
-          total_modulos_ativos: rows.reduce((acc, r) => acc + r.equipamentos.length, 0),
+          percentual_medio_ddmx: percentualMedioDdmx,
+          total_modulos_relacionados: rowsFiltered.reduce((acc, r) => acc + r.equipamentos.length, 0),
+          total_modulos_ativos: rowsFiltered.reduce((acc, r) => acc + r.equipamentos.length, 0),
           total_modulos_inativos: 0,
-          sem_status_bateria: rows.filter((r) => r.equipamentos.length === 0).length,
+          sem_status_bateria: rowsFiltered.filter((r) => r.equipamentos.length === 0).length,
           comunicacao_off: 0,
           bateria_critica: 0,
           bateria_alerta: 0,
-          total_setores: rows.length,
+          total_setores: rowsFiltered.length,
           total_despachos_selimp: totalDespachosSelimp,
+          total_despachos_nosso: totalDespachosNosso,
           ipt_soma_percentuais: Number(iptSomaSelimp.toFixed(2)),
           ipt_media_percentual: iptMedioSelimp,
         },
@@ -1129,7 +1233,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
           somente_nosso: somenteNosso,
           itens: comparativoItens,
         },
-        itens: rows,
+        itens: rowsFiltered,
       };
     } finally {
       client.release();

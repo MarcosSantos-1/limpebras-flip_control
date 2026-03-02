@@ -2,9 +2,17 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { format, endOfMonth, startOfMonth, subDays } from "date-fns";
-import { Activity, BarChart2, Calendar, Check, ChevronDown, ChevronRight, Cpu, Info, Package, Truck, X } from "lucide-react";
+import { ptBR } from "date-fns/locale";
+import { Activity, BarChart2, Battery, Calendar, Check, ChevronDown, ChevronRight, Cpu, Info, Package, Sparkles, Truck, X } from "lucide-react";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { apiService, type IptPreviewResponse } from "@/lib/api";
 import { getSortKey, getSubFromPlano } from "@/lib/ipt-utils";
 import {
@@ -109,7 +117,8 @@ const PercentualBar = ({ value, compact }: { value?: number | null; compact?: bo
   );
 };
 
-const getOrigemBadgeClass = (origem: "ambos" | "somente_selimp" | "somente_nosso") => {
+const getOrigemBadgeClass = (origem: "ambos" | "somente_selimp" | "somente_nosso" | "sem_despacho") => {
+  if (origem === "sem_despacho") return "border-muted-foreground/40 bg-muted/40 text-muted-foreground";
   if (origem === "somente_selimp") return "border-blue-500/60 bg-blue-500/10 text-blue-700 dark:text-blue-300";
   if (origem === "somente_nosso") return "border-red-500/60 bg-red-500/10 text-red-700 dark:text-red-300";
   return "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
@@ -152,26 +161,24 @@ function compareByPlanoStructure(
 
 type TableColumnKey = "plano" | "sub" | "servico" | "selimp" | "nossa" | "origem";
 const SUB_SIGLAS = ["CV", "JT", "MG", "ST"] as const;
-const ORIGEM_VALUES = ["ambos", "somente_selimp", "somente_nosso"] as const;
+const ORIGEM_VALUES = ["ambos", "somente_selimp", "somente_nosso", "sem_despacho"] as const;
 type OrigemValue = (typeof ORIGEM_VALUES)[number];
 const MIN_COL_WIDTH = 72;
 const MAX_COL_WIDTH = 520;
-
 type TableScope = "dia_anterior" | "periodo" | "todos";
 
 export default function IPTPage() {
+  const [selectedMonth, setSelectedMonth] = useState(() => startOfMonth(new Date()));
   const [tableScope, setTableScope] = useState<TableScope>("dia_anterior");
-  const [tablePeriodRange, setTablePeriodRange] = useState<{ inicio: Date; fim: Date } | null>(() => ({
-    inicio: startOfMonth(new Date()),
-    fim: endOfMonth(new Date()),
-  }));
+  const [tablePeriodRange, setTablePeriodRange] = useState<{ inicio: Date; fim: Date } | null>(null);
   const [loading, setLoading] = useState(true);
-  const [iptPreview, setIptPreview] = useState<IptPreviewResponse | null>(null);
+  const [iptPreviewCards, setIptPreviewCards] = useState<IptPreviewResponse | null>(null);
+  const [iptPreviewTable, setIptPreviewTable] = useState<IptPreviewResponse | null>(null);
   const [iptCard, setIptCard] = useState<{ valor?: number; pontuacao?: number }>({});
   const [subprefeituraFilter, setSubprefeituraFilter] = useState("all");
   const [divergenciaFilter, setDivergenciaFilter] = useState<"all" | "somente" | "sem">("all");
   const [highlightDivergencias, setHighlightDivergencias] = useState(false);
-  const [origemFilter, setOrigemFilter] = useState<"all" | "ambos" | "somente_selimp" | "somente_nosso">("all");
+  const [origemFilter, setOrigemFilter] = useState<"all" | "ambos" | "somente_selimp" | "somente_nosso" | "sem_despacho">("all");
   const [zeroFilter, setZeroFilter] = useState<"all" | "zerados" | "nao_zerados">("all");
   const [tableExpanded, setTableExpanded] = useState(true);
   const [headerMenuOpen, setHeaderMenuOpen] = useState<TableColumnKey | null>(null);
@@ -189,6 +196,8 @@ export default function IPTPage() {
     direction: "asc",
   });
   const [expandedPlano, setExpandedPlano] = useState<string | null>(null);
+  const [modalBateriaOpen, setModalBateriaOpen] = useState(false);
+  const [modalCruzamentoOpen, setModalCruzamentoOpen] = useState(false);
   const [columnWidths, setColumnWidths] = useState<Record<TableColumnKey, number>>({
     plano: 170,
     sub: 90,
@@ -201,30 +210,36 @@ export default function IPTPage() {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      let periodoInicial: string | undefined;
-      let periodoFinal: string | undefined;
+      const periodoKpisInicio = format(startOfMonth(selectedMonth), "yyyy-MM-dd");
+      const periodoKpisFim = format(endOfMonth(selectedMonth), "yyyy-MM-dd");
+
+      let tablePeriodoInicial: string | undefined;
+      let tablePeriodoFinal: string | undefined;
       let mostrarTodos = false;
 
       if (tableScope === "todos") {
         mostrarTodos = true;
-        periodoInicial = format(startOfMonth(new Date()), "yyyy-MM-dd");
-        periodoFinal = format(new Date(), "yyyy-MM-dd");
+        tablePeriodoInicial = format(startOfMonth(new Date()), "yyyy-MM-dd");
+        tablePeriodoFinal = format(new Date(), "yyyy-MM-dd");
       } else if (tableScope === "periodo" && tablePeriodRange) {
-        periodoInicial = format(tablePeriodRange.inicio, "yyyy-MM-dd");
-        periodoFinal = format(tablePeriodRange.fim, "yyyy-MM-dd");
+        tablePeriodoInicial = format(tablePeriodRange.inicio, "yyyy-MM-dd");
+        tablePeriodoFinal = format(tablePeriodRange.fim, "yyyy-MM-dd");
       } else {
         const ontem = subDays(new Date(), 1);
-        periodoInicial = format(ontem, "yyyy-MM-dd");
-        periodoFinal = format(ontem, "yyyy-MM-dd");
+        tablePeriodoInicial = format(ontem, "yyyy-MM-dd");
+        tablePeriodoFinal = format(ontem, "yyyy-MM-dd");
       }
 
-      const [preview, kpis] = await Promise.all([
+      const [previewCards, previewTable, kpis] = await Promise.all([
+        apiService.getIptPreview(periodoKpisInicio, periodoKpisFim, false, subprefeituraFilter).catch(() => null),
         tableScope === "dia_anterior"
-          ? apiService.getIptPreview(undefined, undefined, false).catch(() => null)
-          : apiService.getIptPreview(periodoInicial, periodoFinal, mostrarTodos).catch(() => null),
-        apiService.getKPIs(periodoInicial, periodoFinal).catch(() => null),
+          ? apiService.getIptPreview(undefined, undefined, false, subprefeituraFilter).catch(() => null)
+          : apiService.getIptPreview(tablePeriodoInicial, tablePeriodoFinal, mostrarTodos, subprefeituraFilter).catch(() => null),
+        apiService.getKPIs(periodoKpisInicio, periodoKpisFim).catch(() => null),
       ]);
-      setIptPreview(preview);
+
+      setIptPreviewCards(previewCards);
+      setIptPreviewTable(previewTable ?? previewCards);
       setIptCard({
         valor: kpis?.indicadores?.ipt?.valor,
         pontuacao: kpis?.indicadores?.ipt?.pontuacao,
@@ -232,7 +247,7 @@ export default function IPTPage() {
     } finally {
       setLoading(false);
     }
-  }, [tableScope, tablePeriodRange]);
+  }, [selectedMonth, subprefeituraFilter, tableScope, tablePeriodRange]);
 
   useEffect(() => {
     loadData();
@@ -257,13 +272,16 @@ export default function IPTPage() {
   }, []);
 
   const subprefeituraOptions = useMemo(() => {
-    const values = (iptPreview?.subprefeituras ?? []).map((item) => item.subprefeitura).filter(Boolean);
+    const values = [
+      ...(iptPreviewCards?.subprefeituras ?? []),
+      ...(iptPreviewTable?.subprefeituras ?? []),
+    ].map((item) => item.subprefeitura).filter(Boolean);
     return Array.from(new Set(values)).sort((a, b) => a.localeCompare(b, "pt-BR"));
-  }, [iptPreview]);
+  }, [iptPreviewTable]);
 
   const sourceRows = useMemo(
     () =>
-      (iptPreview?.itens ?? iptPreview?.comparativo?.itens ?? []) as Array<{
+      (iptPreviewTable?.itens ?? iptPreviewTable?.comparativo?.itens ?? []) as Array<{
         plano: string;
         subprefeitura: string;
         tipo_servico: string;
@@ -284,7 +302,7 @@ export default function IPTPage() {
           data_estimada?: boolean;
         }>;
       }>,
-    [iptPreview]
+    [iptPreviewTable]
   );
 
   const serviceOptions = useMemo(() => {
@@ -301,7 +319,7 @@ export default function IPTPage() {
 
   const planoAtivoMap = useMemo(() => {
     const map = new Map<string, boolean>();
-    for (const row of iptPreview?.mesclados ?? []) {
+    for (const row of iptPreviewTable?.mesclados ?? []) {
       const key = row.plano?.trim();
       if (!key) continue;
       const previous = map.get(key);
@@ -309,14 +327,15 @@ export default function IPTPage() {
       map.set(key, Boolean(previous) || Boolean(row.plano_ativo));
     }
     return map;
-  }, [iptPreview]);
+  }, [iptPreviewTable]);
 
   const filteredComparativo = useMemo(() => {
     const rows = sourceRows;
     const filtered = rows.filter((row) => {
       if (subprefeituraFilter !== "all" && row.subprefeitura !== subprefeituraFilter) return false;
-      if (origemFilter !== "all" && row.origem !== origemFilter) return false;
-      if (origemFilterValues.length > 0 && !origemFilterValues.includes(row.origem)) return false;
+      const origemEfetiva = row.percentual_selimp == null && row.percentual_nosso == null ? "sem_despacho" : row.origem;
+      if (origemFilter !== "all" && origemEfetiva !== origemFilter) return false;
+      if (origemFilterValues.length > 0 && !origemFilterValues.includes(origemEfetiva as OrigemValue)) return false;
       if (serviceFilterValues.length > 0 && !serviceFilterValues.includes(row.tipo_servico)) return false;
       const subSigla = getSubTag(row.subprefeitura, row.plano).sigla;
       if (
@@ -346,7 +365,9 @@ export default function IPTPage() {
       } else if (tableSort.column === "nossa") {
         sortBase = (toNum(a.percentual_nosso) ?? -1) - (toNum(b.percentual_nosso) ?? -1);
       } else {
-        sortBase = a.origem.localeCompare(b.origem, "pt-BR");
+        const aOrig = (a.percentual_selimp == null && a.percentual_nosso == null ? "sem_despacho" : a.origem) as string;
+        const bOrig = (b.percentual_selimp == null && b.percentual_nosso == null ? "sem_despacho" : b.origem) as string;
+        sortBase = aOrig.localeCompare(bOrig, "pt-BR");
       }
       if (sortBase !== 0) return sortBase;
 
@@ -368,7 +389,7 @@ export default function IPTPage() {
   ]);
 
   const comparativoInsights = useMemo(() => {
-    const rows = iptPreview?.comparativo?.itens ?? [];
+    const rows = iptPreviewTable?.comparativo?.itens ?? [];
     let selimpSemNossoCom = 0;
     let selimpComNossoSem = 0;
     let ambosZerados = 0;
@@ -396,29 +417,29 @@ export default function IPTPage() {
       ambosZeradosAtivos,
       ambosZeradosInativos,
     };
-  }, [iptPreview, planoAtivoMap]);
+  }, [iptPreviewTable, planoAtivoMap]);
 
   const origemDistribution = useMemo(() => {
-    const total = iptPreview?.comparativo?.total_linhas ?? 0;
+    const total = iptPreviewTable?.comparativo?.total_linhas ?? 0;
     if (!total) return { ambos: 0, somenteSelimp: 0, somenteNosso: 0 };
     return {
-      ambos: ((total - (iptPreview?.comparativo?.somente_selimp ?? 0) - (iptPreview?.comparativo?.somente_nosso ?? 0)) / total) * 100,
-      somenteSelimp: ((iptPreview?.comparativo?.somente_selimp ?? 0) / total) * 100,
-      somenteNosso: ((iptPreview?.comparativo?.somente_nosso ?? 0) / total) * 100,
+      ambos: ((total - (iptPreviewTable?.comparativo?.somente_selimp ?? 0) - (iptPreviewTable?.comparativo?.somente_nosso ?? 0)) / total) * 100,
+      somenteSelimp: ((iptPreviewTable?.comparativo?.somente_selimp ?? 0) / total) * 100,
+      somenteNosso: ((iptPreviewTable?.comparativo?.somente_nosso ?? 0) / total) * 100,
     };
-  }, [iptPreview]);
+  }, [iptPreviewTable]);
 
   const topSubprefeituras = useMemo(() => {
-    const list = [...(iptPreview?.subprefeituras ?? [])];
+    const list = [...(iptPreviewCards?.subprefeituras ?? [])];
     list.sort((a, b) => (b.media_execucao ?? -1) - (a.media_execucao ?? -1));
-    return list.slice(0, 10);
-  }, [iptPreview]);
+    return list;
+  }, [iptPreviewCards]);
 
   const topServicos = useMemo(() => {
-    const list = [...(iptPreview?.servicos ?? [])];
+    const list = [...(iptPreviewCards?.servicos ?? [])];
     list.sort((a, b) => (b.media_execucao ?? -1) - (a.media_execucao ?? -1));
-    return list.slice(0, 10);
-  }, [iptPreview]);
+    return list;
+  }, [iptPreviewCards]);
 
   const adjustColumnWidth = (column: TableColumnKey, delta: number) => {
     setColumnWidths((prev) => ({
@@ -460,7 +481,7 @@ export default function IPTPage() {
 
   const clearAllTableFilters = () => {
     setDivergenciaFilter("all");
-    setHighlightDivergencias(true);
+    setHighlightDivergencias(false);
     setOrigemFilter("all");
     setZeroFilter("all");
     setSubprefeituraFilter("all");
@@ -481,13 +502,27 @@ export default function IPTPage() {
               IPT
             </h1>
             <p className="text-muted-foreground mt-2 text-lg max-w-3xl">
-              Análise macro e conferência SELIMP x base interna, com exclusão de módulos/planos inativos.
+              Análise macro e conferência SELIMP x base interna.
             </p>
           </div>
         </div>
 
         <div className="rounded-2xl bg-card/70 backdrop-blur p-4 shadow-lg">
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3 items-end">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-3 items-end">
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">Mês de referência</p>
+              <input
+                type="month"
+                value={format(selectedMonth, "yyyy-MM")}
+                max={format(new Date(), "yyyy-MM")}
+                onChange={(e) => {
+                  if (!e.target.value) return;
+                  const [year, month] = e.target.value.split("-");
+                  setSelectedMonth(startOfMonth(new Date(Number(year), Number(month) - 1, 1)));
+                }}
+                className="h-10 rounded-xl bg-background/90 px-3 text-sm w-full shadow-inner ring-1 ring-white/10 focus:ring-2 focus:ring-emerald-500/60 outline-none"
+              />
+            </div>
             <div>
               <p className="text-xs text-muted-foreground mb-1">Subprefeitura</p>
               <select
@@ -506,7 +541,7 @@ export default function IPTPage() {
             <button
               type="button"
               onClick={loadData}
-              className="h-10 rounded-xl px-4 text-sm font-medium text-white bg-linear-to-r from-emerald-500 to-teal-500 hover:opacity-90 transition-all shadow-[0_8px_20px_-10px_rgba(16,185,129,0.9)] inline-flex items-center justify-center gap-2"
+              className="h-10 rounded-xl px-4 text-sm font-medium text-white bg-gradient-to-r from-emerald-500 to-teal-500 hover:opacity-90 transition-all shadow-[0_8px_20px_-10px_rgba(16,185,129,0.9)] inline-flex items-center justify-center gap-2"
             >
               <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M21 12a9 9 0 1 1-2.64-6.36" />
@@ -520,8 +555,8 @@ export default function IPTPage() {
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
           <Card className="xl:col-span-1 border-0 shadow-[0_20px_50px_-30px_rgba(16,185,129,0.7)] bg-linear-to-br from-emerald-500/15 via-card to-card">
             <CardHeader>
-              <CardTitle className="text-base">IPT (calculo automatico)</CardTitle>
-              <CardDescription>Percentual medio mensal por plano (report SELIMP) e pontuacao do ADC.</CardDescription>
+              <CardTitle className="text-base">IPT (Cálculo Automático)</CardTitle>
+              <CardDescription>Percentual Médio e Pontuação do ADC.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="rounded-xl bg-background/70 p-4 shadow-sm transition-all hover:shadow-md">
@@ -529,110 +564,184 @@ export default function IPTPage() {
                 <p className="text-3xl font-bold text-emerald-600">{iptCard.valor != null ? `${iptCard.valor.toFixed(1)}%` : "--"}</p>
                 <div className="mt-3 h-2 rounded-full bg-emerald-200/40 dark:bg-emerald-900/20">
                   <div
-                    className="h-2 rounded-full bg-linear-to-r from-emerald-500 to-teal-500 transition-all"
+                    className="h-2 rounded-full bg-gradient-to-r from-emerald-500 to-teal-500 transition-all"
                     style={{ width: `${clamp(iptCard.valor ?? 0)}%` }}
                   />
                 </div>
               </div>
               <div className="rounded-xl bg-background/70 p-4 shadow-sm transition-all hover:shadow-md">
-                <p className="text-xs text-muted-foreground">Pontuacao IPT</p>
+                <p className="text-xs text-muted-foreground">Pontuação IPT</p>
                 <p className="text-3xl font-bold text-teal-600">{iptCard.pontuacao ?? 0}</p>
-                <p className="text-xs text-muted-foreground mt-2">Faixa de pontuacao conforme parametros do ADC.</p>
+                <p className="text-xs text-muted-foreground mt-2">Faixa de pontuação conforme parâmetros do ADC.</p>
               </div>
             </CardContent>
           </Card>
 
           <Card className="xl:col-span-2 border-0 shadow-[0_20px_50px_-30px_rgba(16,185,129,0.6)]">
             <CardHeader>
-              <CardTitle className="text-base">Medicoes Automaticas (importacoes)</CardTitle>
+              <CardTitle className="text-base">Medições Automáticas</CardTitle>
               <CardDescription>Indicadores operacionais gerados automaticamente da base consolidada.</CardDescription>
             </CardHeader>
-            <CardContent className="grid grid-cols-2 md:grid-cols-3 gap-3">
-              <div className="rounded-xl bg-card/70 p-3 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg">
-                <p className="text-xs text-muted-foreground">Planos (SELIMP)</p>
-                <p className="text-xl font-bold">{iptPreview?.resumo.total_planos ?? 0}</p>
-              </div>
-              <div className="rounded-xl bg-emerald-500/10 p-3 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg">
-                <p className="text-xs text-muted-foreground">Planos Ativos</p>
-                <p className="text-xl font-bold text-emerald-600">{iptPreview?.resumo.total_planos_ativos ?? 0}</p>
-              </div>
-              <div className="rounded-xl bg-cyan-500/10 p-3 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg">
-                <p className="text-xs text-muted-foreground">Execucao Media Ativa</p>
-                <p className="text-xl font-bold">{pct(iptPreview?.resumo.media_execucao_planos_ativos)}</p>
-                <div className="mt-2 h-1.5 rounded-full bg-cyan-200/40 dark:bg-cyan-900/20">
-                  <div
-                    className="h-1.5 rounded-full bg-cyan-500"
-                    style={{ width: `${clamp(iptPreview?.resumo.media_execucao_planos_ativos ?? 0)}%` }}
-                  />
+            <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="flex flex-col gap-3">
+                <div className="rounded-xl bg-indigo-500/10 p-3 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg">
+                  <p className="text-xs text-muted-foreground">Planos Despachados (SELIMP)</p>
+                  <p className="text-xl pt-2 font-bold">{iptPreviewCards?.resumo.total_planos_despachados ?? iptPreviewCards?.resumo.total_planos ?? 0}</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">Planos encerrados na planilha</p>
+                </div>
+                <div className="rounded-xl bg-cyan-500/10 p-3 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg">
+                  <p className="text-xs text-muted-foreground">Percentual Médio (DDMX)</p>
+                  <p className="text-xl font-bold text-cyan-600">{pct(iptPreviewCards?.resumo.percentual_medio_ddmx)}</p>
+                  <div className="mt-2 h-1.5 rounded-full bg-cyan-200/40 dark:bg-cyan-900/20">
+                    <div
+                      className="h-1.5 rounded-full bg-cyan-500 transition-all"
+                      style={{ width: `${clamp(iptPreviewCards?.resumo.percentual_medio_ddmx ?? 0)}%` }}
+                    />
+                  </div>
                 </div>
               </div>
-              <div className="rounded-xl bg-emerald-500/10 p-3 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg">
-                <p className="text-xs text-muted-foreground">Modulos Ativos</p>
-                <p className="text-xl font-bold text-emerald-600">{iptPreview?.resumo.total_modulos_ativos ?? 0}</p>
-              </div>
-              <div className="rounded-xl bg-rose-500/10 p-3 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg">
-                <p className="text-xs text-muted-foreground">Modulos Inativos</p>
-                <p className="text-xl font-bold text-rose-600">{iptPreview?.resumo.total_modulos_inativos ?? 0}</p>
-              </div>
-              <div className="rounded-xl bg-amber-500/10 p-3 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg">
-                <p className="text-xs text-muted-foreground">Sem Status</p>
-                <p className="text-xl font-bold text-amber-600">{iptPreview?.resumo.sem_status_bateria ?? 0}</p>
-              </div>
+              <button
+                type="button"
+                onClick={() => setModalBateriaOpen(true)}
+                className="min-h-[140px] rounded-xl bg-violet-500/10 p-4 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg hover:bg-violet-500/20 border border-violet-500/20 hover:border-violet-500/40 text-left group flex flex-col justify-center"
+              >
+                <div className="flex items-center gap-2">
+                  <Battery className="h-6 w-6 text-violet-600 dark:text-violet-400 group-hover:scale-110 transition-transform" />
+                  <span className="text-base font-semibold text-violet-700 dark:text-violet-300">Análise de Bateria</span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-2">Clique para abrir. Espaço para mais cards e informações do modal.</p>
+              </button>
+              <button
+                type="button"
+                onClick={() => setModalCruzamentoOpen(true)}
+                className="min-h-[140px] rounded-xl bg-indigo-500/10 p-4 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg hover:bg-indigo-500/20 border border-indigo-500/20 hover:border-indigo-500/40 text-left group flex flex-col justify-center"
+              >
+                <div className="flex items-center gap-2">
+                  <Sparkles className="h-6 w-6 text-indigo-600 dark:text-indigo-400 group-hover:scale-110 transition-transform" />
+                  <span className="text-base font-semibold text-indigo-700 dark:text-indigo-300">Cruzamento Inteligente</span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-2">Clique para abrir. Espaço para mais cards e informações do modal.</p>
+              </button>
             </CardContent>
           </Card>
+
+          <Dialog open={modalBateriaOpen} onOpenChange={setModalBateriaOpen}>
+            <DialogContent className="sm:max-w-lg">
+              <DialogHeader>
+                <DialogTitle>Análise de Bateria</DialogTitle>
+                <DialogDescription>Módulo em desenvolvimento. Em breve terá análises detalhadas de bateria.</DialogDescription>
+              </DialogHeader>
+              <div className="py-4 text-center text-muted-foreground text-sm">
+                Conteúdo será adicionado em breve.
+              </div>
+            </DialogContent>
+          </Dialog>
+          <Dialog open={modalCruzamentoOpen} onOpenChange={setModalCruzamentoOpen}>
+            <DialogContent className="sm:max-w-lg">
+              <DialogHeader>
+                <DialogTitle>Cruzamento Inteligente</DialogTitle>
+                <DialogDescription>Módulo em desenvolvimento. Em breve terá cruzamento de dados avançado.</DialogDescription>
+              </DialogHeader>
+              <div className="py-4 text-center text-muted-foreground text-sm">
+                Conteúdo será adicionado em breve.
+              </div>
+            </DialogContent>
+          </Dialog>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <Card className="border-0 shadow-lg">
             <CardHeader>
-              <CardTitle className="text-base">Top Subprefeituras (ativos)</CardTitle>
-              <CardDescription>Barras por volume e desempenho medio para leitura rapida.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {topSubprefeituras.map((item) => (
-                <div key={item.subprefeitura} className="rounded-xl bg-background/60 p-2.5 shadow-sm transition-all hover:shadow-md">
-                  <div className="mb-1 flex items-center justify-between gap-2 text-sm">
-                    <span className="truncate font-medium">{item.subprefeitura || "Nao informado"}</span>
-                    <span className="text-muted-foreground">{item.quantidade_planos} planos</span>
-                  </div>
-                  <div className="h-2 rounded-full bg-muted/50">
-                    <div
-                      className="h-2 rounded-full bg-linear-to-r from-emerald-500 to-teal-500"
-                      style={{ width: `${clamp(item.media_execucao ?? 0)}%` }}
-                    />
-                  </div>
-                  <p className="mt-1 text-xs text-muted-foreground">Execucao media: {pct(item.media_execucao)}</p>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-base">Subprefeituras (ativos)</CardTitle>
+                  <CardDescription>Execução média por subprefeitura no mês selecionado.</CardDescription>
                 </div>
-              ))}
+                <span className="text-xs font-medium text-muted-foreground bg-muted/50 px-2 py-1 rounded-full">
+                  {topSubprefeituras.length} subprefeituras
+                </span>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {topSubprefeituras.map((item) => (
+                  <div
+                    key={item.subprefeitura}
+                    className="group rounded-xl bg-background/60 p-3 shadow-sm transition-all hover:shadow-md hover:bg-emerald-500/5 hover:ring-1 hover:ring-emerald-500/20 cursor-default"
+                    title={`${item.subprefeitura || "Não informado"}: ${pct(item.media_execucao)} de execução média | ${item.quantidade_planos} planos`}
+                  >
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <span className="truncate font-semibold text-sm group-hover:text-emerald-700 dark:group-hover:text-emerald-300">
+                        {item.subprefeitura || "Não informado"}
+                      </span>
+                      <span className="text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400 shrink-0">
+                        {pct(item.media_execucao)}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 h-3 rounded-full bg-muted/50 overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-500 transition-all duration-500"
+                          style={{ width: `${clamp(item.media_execucao ?? 0)}%` }}
+                        />
+                      </div>
+                      <span className="text-xs text-muted-foreground shrink-0 w-16 text-right">
+                        {item.quantidade_planos} planos
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
               {!loading && topSubprefeituras.length === 0 && (
-                <p className="text-sm text-muted-foreground">Sem dados para o período.</p>
+                <p className="text-sm text-muted-foreground py-6 text-center">Sem dados para o período.</p>
               )}
             </CardContent>
           </Card>
 
           <Card className="border-0 shadow-lg">
             <CardHeader>
-              <CardTitle className="text-base">Top Serviços (ativos)</CardTitle>
-              <CardDescription>Distribuição por tipo de serviço com barras e realce visual.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {topServicos.map((item) => (
-                <div key={item.tipo_servico} className="rounded-xl bg-background/60 p-2.5 shadow-sm transition-all hover:shadow-md">
-                  <div className="mb-1 flex items-center justify-between gap-2 text-sm">
-                    <span className="truncate font-medium">{item.tipo_servico || "Não informado"}</span>
-                    <span className="text-muted-foreground">{item.quantidade_planos} planos</span>
-                  </div>
-                  <div className="h-2 rounded-full bg-muted/50">
-                    <div
-                      className="h-2 rounded-full bg-linear-to-r from-emerald-500 to-cyan-500"
-                      style={{ width: `${clamp(item.media_execucao ?? 0)}%` }}
-                    />
-                  </div>
-                  <p className="mt-1 text-xs text-muted-foreground">Execucao media: {pct(item.media_execucao)}</p>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-base">Serviços (ativos)</CardTitle>
+                  <CardDescription>Todos os serviços com execução média no mês selecionado.</CardDescription>
                 </div>
-              ))}
+                <span className="text-xs font-medium text-muted-foreground bg-muted/50 px-2 py-1 rounded-full">
+                  {topServicos.length} serviços
+                </span>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {topServicos.map((item) => (
+                  <div
+                    key={item.tipo_servico}
+                    className="group rounded-xl bg-background/60 p-3 shadow-sm transition-all hover:shadow-md hover:bg-cyan-500/5 hover:ring-1 hover:ring-cyan-500/20 cursor-default"
+                    title={`${item.tipo_servico || "Não informado"}: ${pct(item.media_execucao)} de execução média | ${item.quantidade_planos} planos`}
+                  >
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <span className="truncate font-semibold text-sm group-hover:text-cyan-700 dark:group-hover:text-cyan-300">
+                        {item.tipo_servico || "Não informado"}
+                      </span>
+                      <span className="text-lg font-bold tabular-nums text-cyan-600 dark:text-cyan-400 shrink-0">
+                        {pct(item.media_execucao)}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 h-3 rounded-full bg-muted/50 overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-cyan-500 transition-all duration-500"
+                          style={{ width: `${clamp(item.media_execucao ?? 0)}%` }}
+                        />
+                      </div>
+                      <span className="text-xs text-muted-foreground shrink-0 w-16 text-right">
+                        {item.quantidade_planos} planos
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
               {!loading && topServicos.length === 0 && (
-                <p className="text-sm text-muted-foreground">Sem dados para o período.</p>
+                <p className="text-sm text-muted-foreground py-6 text-center">Sem dados para o período.</p>
               )}
             </CardContent>
           </Card>
@@ -650,17 +759,17 @@ export default function IPTPage() {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <div className="rounded-xl p-3 bg-background/70 shadow-sm">
                 <p className="text-xs text-muted-foreground">Linhas comparativas</p>
-                <p className="text-xl font-bold">{iptPreview?.comparativo?.total_linhas ?? 0}</p>
+                <p className="text-xl font-bold">{iptPreviewTable?.comparativo?.total_linhas ?? 0}</p>
               </div>
               <div className="rounded-xl p-3 bg-amber-500/10 shadow-sm">
                 <p className="text-xs text-muted-foreground">Divergências (|Δ| &gt;= 5 p.p.)</p>
-                <p className="text-xl font-bold text-amber-600">{iptPreview?.comparativo?.divergencias ?? 0}</p>
+                <p className="text-xl font-bold text-amber-600">{iptPreviewTable?.comparativo?.divergencias ?? 0}</p>
                 <div className="mt-2 h-1.5 rounded-full bg-amber-200/50 dark:bg-amber-900/20">
                   <div
                     className="h-1.5 rounded-full bg-amber-500"
                     style={{
                       width: `${clamp(
-                        ((iptPreview?.comparativo?.divergencias ?? 0) / Math.max(1, iptPreview?.comparativo?.total_linhas ?? 1)) * 100
+                        ((iptPreviewTable?.comparativo?.divergencias ?? 0) / Math.max(1, iptPreviewTable?.comparativo?.total_linhas ?? 1)) * 100
                       )}%`,
                     }}
                   />
@@ -668,12 +777,12 @@ export default function IPTPage() {
               </div>
               <div className="rounded-xl p-3 bg-cyan-500/10 shadow-sm">
                 <p className="text-xs text-muted-foreground">Só SELIMP</p>
-                <p className="text-xl font-bold text-cyan-600">{iptPreview?.comparativo?.somente_selimp ?? 0}</p>
+                <p className="text-xl font-bold text-cyan-600">{iptPreviewTable?.comparativo?.somente_selimp ?? 0}</p>
                 <p className="text-xs text-muted-foreground mt-1">{origemDistribution.somenteSelimp.toFixed(1)}%</p>
               </div>
               <div className="rounded-xl p-3 bg-fuchsia-500/10 shadow-sm">
                 <p className="text-xs text-muted-foreground">Só DDMX</p>
-                <p className="text-xl font-bold text-fuchsia-600">{iptPreview?.comparativo?.somente_nosso ?? 0}</p>
+                <p className="text-xl font-bold text-fuchsia-600">{iptPreviewTable?.comparativo?.somente_nosso ?? 0}</p>
                 <p className="text-xs text-muted-foreground mt-1">{origemDistribution.somenteNosso.toFixed(1)}%</p>
               </div>
               <div className="rounded-xl p-3 bg-blue-500/10 shadow-sm">
@@ -732,7 +841,6 @@ export default function IPTPage() {
                 <option value="zerados">Apenas zerados</option>
                 <option value="nao_zerados">Sem zerados</option>
               </select>
-
               <div className="flex items-center gap-2 rounded-xl bg-emerald-500/20 px-3 py-2 ring-2 ring-emerald-500/40 shadow-md">
                 <Calendar className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
                 <div className="flex items-center gap-1.5 flex-wrap">
@@ -1053,7 +1161,7 @@ export default function IPTPage() {
                                     checked={origemFilterValues.includes(origem)}
                                     onChange={() => toggleOrigemFilterValue(origem)}
                                   />
-                                  {origem === "ambos" ? "Ambos" : origem === "somente_selimp" ? "Só SELIMP" : "Só Nossa"}
+                                  {origem === "ambos" ? "Ambos" : origem === "somente_selimp" ? "Só SELIMP" : origem === "somente_nosso" ? "Só DDMX" : "(--) sem despacho"}
                                 </label>
                               ))}
                               <div className="mt-1 flex gap-1">
@@ -1143,17 +1251,22 @@ export default function IPTPage() {
                             <PercentualBar value={row.percentual_nosso} compact />
                           </td>
                           <td className="px-3 py-2">
-                            <span
-                              className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${getOrigemBadgeClass(
-                                row.origem
-                              )}`}
-                            >
-                              {row.origem === "ambos"
-                                ? "Ambos"
-                                : row.origem === "somente_selimp"
-                                ? "Só SELIMP"
-                                : "Só DDMX"}
-                            </span>
+                            {(() => {
+                              const origemEfetiva = row.percentual_selimp == null && row.percentual_nosso == null ? "sem_despacho" : row.origem;
+                              return (
+                                <span
+                                  className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${getOrigemBadgeClass(origemEfetiva)}`}
+                                >
+                                  {origemEfetiva === "sem_despacho"
+                                    ? "--"
+                                    : origemEfetiva === "ambos"
+                                    ? "Ambos"
+                                    : origemEfetiva === "somente_selimp"
+                                    ? "Só SELIMP"
+                                    : "Só DDMX"}
+                                </span>
+                              );
+                            })()}
                           </td>
                         </tr>
                         {isExpanded && hasDetails && (
@@ -1228,7 +1341,7 @@ export default function IPTPage() {
                                         <p className="font-semibold text-muted-foreground mb-1.5">Prévia cronograma (5 datas)</p>
                                         <div className="flex flex-wrap gap-1">
                                           {row.cronograma_preview.map((d, i) => (
-                                            <span key={`${row.plano}-cron-${i}-${d}`} className="rounded bg-emerald-500/20 px-2 py-0.5 font-mono">
+                                            <span key={`${row.plano}-cron-emerald-${i}-${d}`} className="rounded bg-emerald-500/20 px-2 py-0.5 font-mono">
                                               {d.replace(/^(\d{4})-(\d{2})-(\d{2})$/, "$3/$2/$1")}
                                             </span>
                                           ))}

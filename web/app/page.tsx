@@ -20,6 +20,7 @@ import {
 import { ptBR } from "date-fns/locale";
 import { ADCRingChart } from "@/components/adc-ring-chart";
 import { IndicatorTooltip } from "@/components/indicator-tooltip";
+import { IPTModal } from "@/components/ipt-modal";
 import Lottie from "lottie-react";
 import loadingAnimation from "@/public/Loading.json";
 import { SACsChart } from "@/components/sacs-chart";
@@ -132,6 +133,8 @@ export default function DashboardPage() {
   const [topLogradourosDemandantes, setTopLogradourosDemandantes] = useState<SACLocationRankingDatum[]>([]);
   const [selectedMonth, setSelectedMonth] = useState(() => startOfMonth(new Date()));
   const [loading, setLoading] = useState(true);
+  const [iptModalOpen, setIptModalOpen] = useState(false);
+  const [iptSemDados, setIptSemDados] = useState(false);
   const router = useRouter();
 
   const today = new Date();
@@ -431,7 +434,8 @@ export default function DashboardPage() {
           const iaPontos = Math.min(kpisData.indicadores?.ia?.pontuacao || 0, 20);
           const ifPontos = Math.min(kpisData.indicadores?.if?.pontuacao || 0, 20);
           const iptPontos = kpisData.indicadores?.ipt?.pontuacao || 0;
-          const iptValor = kpisData.indicadores?.ipt?.valor || null;
+          const iptValor = kpisData.indicadores?.ipt?.valor ?? null;
+          setIptSemDados(Boolean(kpisData.ipt_sem_dados));
           
           const totalADC = irdPontos + iaPontos + ifPontos + iptPontos;
           const percentualADC = (totalADC / 100) * 100;
@@ -451,8 +455,8 @@ export default function DashboardPage() {
                 pontuacao: ifPontos,
               },
               IPT: {
-                valor: iptValor !== null ? iptValor : undefined,
-                pontuacao: iptPontos > 0 ? iptPontos : undefined,
+                valor: iptValor != null && !Number.isNaN(iptValor) ? iptValor : undefined,
+                pontuacao: iptPontos != null && !Number.isNaN(iptPontos) ? iptPontos : undefined,
               },
               ADC: {
                 total: totalADC,
@@ -517,6 +521,7 @@ export default function DashboardPage() {
         {loading ? (
           <div className="text-center py-8">Carregando KPIs...</div>
         ) : indicators ? (
+          <>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* Grid 2x2 dos indicadores */}
             <div className="grid grid-cols-2 gap-3 md:col-span-2">
@@ -581,27 +586,34 @@ export default function DashboardPage() {
               </Card>
 
               <Card 
-                className="p-4 cursor-pointer hover:scale-[1.02] transition-all duration-200 border-l-4 border-l-purple-500"
-                onClick={() => router.push("/ipt")}
+                className={`p-4 transition-all duration-200 border-l-4 border-l-purple-500 ${iptSemDados ? "cursor-pointer hover:scale-[1.02]" : "cursor-pointer hover:scale-[1.02]"}`}
+                onClick={() => (iptSemDados ? setIptModalOpen(true) : router.push("/ipt"))}
               >
                 <CardHeader className="p-0 pb-4">
                   <IndicatorTooltip 
                     tipo="IPT" 
-                    valor={indicators.data?.IPT?.valor || 87.5}
-                    pontuacao={indicators.data?.IPT?.pontuacao || 35}
+                    valor={indicators.data?.IPT?.valor ?? undefined}
+                    pontuacao={indicators.data?.IPT?.pontuacao ?? undefined}
                   >
                     <CardTitle className="text-sm font-medium text-purple-600 dark:text-purple-400">IPT</CardTitle>
                   </IndicatorTooltip>
                 </CardHeader>
                 <CardContent className="p-0">
                   <div className="text-lg font-semibold text-muted-foreground mb-1">
-                    {indicators.data?.IPT?.pontuacao ?? 0} Pontos
-                    {!indicators.data?.IPT?.valor && (
-                      <span className="text-xs text-muted-foreground/70"> (Clique para abrir a página IPT)</span>
+                    {(iptSemDados ? 0 : indicators.data?.IPT?.pontuacao) ?? 0} Pontos
+                    {iptSemDados && (
+                      <span className="text-xs text-muted-foreground/70"> (Clique para informar manualmente)</span>
+                    )}
+                    {!iptSemDados && indicators.data?.IPT?.valor != null && (
+                      <span className="text-xs text-muted-foreground/70"> (Clique para ver página IPT)</span>
                     )}
                   </div>
                   <div className="text-3xl font-bold bg-linear-to-r from-purple-600 to-purple-400 bg-clip-text text-transparent">
-                    {indicators.data?.IPT?.valor?.toFixed(1) ?? "--"}%
+                    {iptSemDados
+                      ? "0%"
+                      : indicators.data?.IPT?.valor != null && !Number.isNaN(indicators.data.IPT.valor)
+                        ? `${indicators.data.IPT.valor.toFixed(1)}%`
+                        : "--"}
                   </div>
                 </CardContent>
               </Card>
@@ -624,6 +636,16 @@ export default function DashboardPage() {
               </Link>
             </div>
           </div>
+
+          <IPTModal
+            open={iptModalOpen}
+            onOpenChange={setIptModalOpen}
+            onSuccess={loadData}
+            currentValue={indicators?.data?.IPT?.valor ?? undefined}
+            currentPontuacao={indicators?.data?.IPT?.pontuacao ?? undefined}
+            initialMes={format(selectedMonth, "yyyy-MM")}
+          />
+          </>
         ) : (
           <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4">
             <p className="text-yellow-800 dark:text-yellow-200">

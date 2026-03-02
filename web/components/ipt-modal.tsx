@@ -18,10 +18,11 @@ interface IPTModalProps {
   onSuccess?: () => void
   currentValue?: number
   currentPontuacao?: number
+  initialMes?: string
 }
 
-export function IPTModal({ open, onOpenChange, onSuccess, currentValue, currentPontuacao }: IPTModalProps) {
-  const [mes, setMes] = useState(format(new Date(), "yyyy-MM"))
+export function IPTModal({ open, onOpenChange, onSuccess, currentValue, currentPontuacao, initialMes }: IPTModalProps) {
+  const [mes, setMes] = useState(initialMes ?? format(new Date(), "yyyy-MM"))
   const [percentualTotal, setPercentualTotal] = useState<string>("")
   const [calculandoPontuacao, setCalculandoPontuacao] = useState(false)
   const [pontuacaoCalculada, setPontuacaoCalculada] = useState<number | null>(null)
@@ -30,13 +31,12 @@ export function IPTModal({ open, onOpenChange, onSuccess, currentValue, currentP
 
   useEffect(() => {
     if (open) {
-      // Resetar valores quando abrir o modal
-      setMes(format(new Date(), "yyyy-MM"))
+      setMes(initialMes ?? format(new Date(), "yyyy-MM"))
       setPercentualTotal(currentValue?.toFixed(2) || "")
       setPontuacaoCalculada(currentPontuacao || null)
       setErro(null)
     }
-  }, [open, currentValue, currentPontuacao])
+  }, [open, currentValue, currentPontuacao, initialMes])
 
   // Calcular pontuação baseado no percentual
   const calcularPontuacao = (percentual: number): number => {

@@ -89,8 +89,10 @@ export interface IptPreviewResponse {
   periodo: { inicial: string | null; final: string | null };
   resumo: {
     total_planos: number;
+    total_planos_despachados?: number;
     total_planos_ativos: number;
     media_execucao_planos_ativos: number | null;
+    percentual_medio_ddmx?: number | null;
     total_modulos_relacionados: number;
     total_modulos_ativos: number;
     total_modulos_inativos: number;
@@ -301,7 +303,8 @@ export const apiService = {
   getIptPreview: async (
     periodoInicial?: string,
     periodoFinal?: string,
-    mostrarTodos?: boolean
+    mostrarTodos?: boolean,
+    subprefeitura?: string
   ): Promise<IptPreviewResponse> => {
     const params: Record<string, string | undefined> = {};
     if (mostrarTodos) {
@@ -309,6 +312,9 @@ export const apiService = {
     } else if (periodoInicial && periodoFinal) {
       params.periodo_inicial = periodoInicial;
       params.periodo_final = periodoFinal;
+    }
+    if (subprefeitura && subprefeitura !== "all") {
+      params.subprefeitura = subprefeitura;
     }
     const { data } = await api.get('/dashboard/ipt-preview', { params });
     return data;

@@ -3,7 +3,7 @@ import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 
 export const metadata: Metadata = {
-  title: "FLIP Control - Sistema de Gestão ADC",
+  title: "ADC Control - Sistema de Gestão ADC",
   description: "Sistema de gestão e acompanhamento do ADC/FLIP - Limpebras Lote III",
   icons: {
     icon: [
