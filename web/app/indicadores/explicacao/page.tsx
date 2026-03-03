@@ -405,8 +405,7 @@ export default function ExplicacaoIndicadoresPage() {
                   <div className="text-lg text-muted-foreground flex items-center justify-center">{item.pontos} pts</div>
                 </div>
               ))}
-            <div className="flex flex-wrap items-center gap-6 rounded-xl shadow-md  dark:bg-violet-950/30 px-5 py-4">
-
+            <div className="flex flex-wrap items-center gap-6 rounded-xl shadow-md px-5 py-4">
               <AdcDonutChart total={pontuacaoTotal} percentual={percentualADC} />
             </div>
             </div>

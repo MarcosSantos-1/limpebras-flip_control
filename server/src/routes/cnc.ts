@@ -1,5 +1,6 @@
 import { FastifyPluginAsync } from "fastify";
 import { pool } from "../db.js";
+import { cacheKey, getOrSet } from "../cache.js";
 
 export const cncRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get<{
@@ -50,8 +51,17 @@ export const cncRoutes: FastifyPluginAsync = async (fastify) => {
         i++;
       }
       sql += " ORDER BY data_fiscalizacao DESC";
-      const r = await pool.query(sql, params);
-      const rows = r.rows.map((row) => ({
+
+      const key = cacheKey("cnc", {
+        periodo_inicial,
+        periodo_final,
+        subprefeitura,
+        status,
+        tipo_servico,
+      });
+      const result = await getOrSet(key, async () => {
+        const r = await pool.query(sql, params);
+        const rows = r.rows.map((row) => ({
         id: String(row.id),
         bfs: row.numero_bfs,
         subprefeitura: row.regional,
@@ -63,7 +73,9 @@ export const cncRoutes: FastifyPluginAsync = async (fastify) => {
         fiscal: row.raw?.Fiscal || row.raw?.fiscal || null,
         sem_irregularidade: (row.status || "").trim() === "Sem Irregularidades",
       }));
-      return { items: rows, total: rows.length };
+        return { items: rows, total: rows.length };
+      });
+      return result;
     }
   );
 };

@@ -1,5 +1,6 @@
 import { FastifyPluginAsync } from "fastify";
 import { pool } from "../db.js";
+import { cacheKey, getOrSet } from "../cache.js";
 
 export const sacsRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get<{
@@ -96,8 +97,18 @@ export const sacsRoutes: FastifyPluginAsync = async (fastify) => {
           : 10000;
       sql += ` ORDER BY data_registro DESC LIMIT $${i}`;
       params.push(effectiveLimit);
-      const r = await pool.query(sql, params);
-      const rows = r.rows.map((row) => ({
+
+      const key = cacheKey("sacs", {
+        periodo_inicial,
+        periodo_final,
+        subprefeitura,
+        limit: effectiveLimit,
+        tipo,
+        fora_do_prazo,
+      });
+      const result = await getOrSet(key, async () => {
+        const r = await pool.query(sql, params);
+        const rows = r.rows.map((row) => ({
         id: String(row.id),
         protocolo: row.numero_chamado,
         tipo_servico: row.servico,
@@ -112,7 +123,9 @@ export const sacsRoutes: FastifyPluginAsync = async (fastify) => {
         procedente_por_status: row.procedente_por_status,
         fora_do_prazo: (row.responsividade_execucao || "").trim().toUpperCase() === "NÃO",
       }));
-      return { items: rows, total: rows.length };
+        return { items: rows, total: rows.length };
+      });
+      return result;
     }
   );
 

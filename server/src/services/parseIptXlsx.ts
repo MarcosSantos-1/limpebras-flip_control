@@ -27,22 +27,22 @@ interface ParseConfig {
 const FILE_CONFIG: Record<IptFileType, ParseConfig> = {
   ipt_historico_os: {
     keyAliases: ["id", "rota", "veiculo"],
-    setorAliases: ["setor"],
-    dateAliases: ["data_planejado", "data_criacao", "data_liberacao", "data_inicio", "data_final"],
+    setorAliases: ["setor", "rota"],
+    dateAliases: ["data", "data_planejado", "data_criacao", "data_liberacao", "data_inicio", "data_final"],
     servicoAliases: ["tipo_de_servico", "tipo_servico"],
     signalAliases: ["rota", "setor", "percentual_execucao", "data_planejado", "id"],
   },
   ipt_historico_os_varricao: {
     keyAliases: ["id", "rota", "veiculo"],
-    setorAliases: ["setor"],
-    dateAliases: ["data_planejado", "data_criacao", "data_liberacao", "data_inicio", "data_final"],
+    setorAliases: ["setor", "rota"],
+    dateAliases: ["data", "data_planejado", "data_criacao", "data_liberacao", "data_inicio", "data_final"],
     servicoAliases: ["tipo_de_servico", "tipo_servico"],
     signalAliases: ["rota", "setor", "percentual_execucao", "data_planejado", "id"],
   },
   ipt_historico_os_compactadores: {
     keyAliases: ["id", "rota", "plano", "veiculo"],
-    setorAliases: ["setor"],
-    dateAliases: ["data_planejado", "data_criacao", "data_liberacao", "data_inicio", "data_final"],
+    setorAliases: ["setor", "rota", "plano"],
+    dateAliases: ["data", "data_planejado", "data_criacao", "data_liberacao", "data_inicio", "data_final"],
     servicoAliases: ["tipo_de_servico", "tipo_servico", "servico"],
     signalAliases: ["rota", "setor", "percentual_execucao", "percentual", "data_planejado", "id"],
   },
@@ -76,24 +76,29 @@ function normalizeCell(value: unknown): string {
   return String(value ?? "").trim();
 }
 
+/** Parse de data. Prioriza dd/mm/yyyy (BR) para evitar que "02/03/2026" vire 3/fev em vez de 2/mar. */
 function parseDate(value: string): Date | null {
   if (!value) return null;
-  const direct = new Date(value);
-  if (!Number.isNaN(direct.getTime())) return direct;
+  const trimmed = value.trim();
 
-  const match = value.match(
+  // dd/mm/yyyy ou dd/mm/yyyy HH:mm[:ss] — interpretar como dia/mês/ano (BR)
+  const brMatch = trimmed.match(
     /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/
   );
-  if (!match) return null;
+  if (brMatch) {
+    const day = Number(brMatch[1]);
+    const month = Number(brMatch[2]);
+    const year = Number(brMatch[3].length === 2 ? `20${brMatch[3]}` : brMatch[3]);
+    const hour = Number(brMatch[4] ?? 0);
+    const minute = Number(brMatch[5] ?? 0);
+    const second = Number(brMatch[6] ?? 0);
+    const parsed = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
 
-  const day = Number(match[1]);
-  const month = Number(match[2]);
-  const year = Number(match[3].length === 2 ? `20${match[3]}` : match[3]);
-  const hour = Number(match[4] ?? 0);
-  const minute = Number(match[5] ?? 0);
-  const second = Number(match[6] ?? 0);
-  const parsed = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
+  // ISO (yyyy-mm-dd) ou outros formatos
+  const direct = new Date(trimmed);
+  return Number.isNaN(direct.getTime()) ? null : direct;
 }
 
 function firstByAliases(row: Record<string, string>, aliases: string[]): string {
@@ -151,6 +156,21 @@ function buildRecordKey(
       row[canonicalHeader("equipamentos")] ?? "",
     ].join("|");
     return `hash_${createHash("sha1").update(fileType).update(composed).digest("hex")}`;
+  }
+
+  // DDMX: múltiplos despachos podem existir para mesma rota+data → usar hash por linha
+  // para evitar sobrescrever e perder registros no ON CONFLICT
+  const ddmxTypes: IptFileType[] = ["ipt_historico_os", "ipt_historico_os_varricao", "ipt_historico_os_compactadores"];
+  if (ddmxTypes.includes(fileType)) {
+    const rota = row[canonicalHeader("rota")] ?? row[canonicalHeader("plano")] ?? row[canonicalHeader("setor")] ?? "";
+    const setor = row[canonicalHeader("setor")] ?? rota;
+    const dataStr = dataReferencia ? dataReferencia.toISOString().slice(0, 10) : "";
+    const percentual = row[canonicalHeader("percentual_execucao")] ?? row[canonicalHeader("percentual")] ?? "";
+    const servico = row[canonicalHeader("tipo_de_servico")] ?? row[canonicalHeader("tipo_servico")] ?? "";
+    const id = row[canonicalHeader("id")] ?? "";
+    const veiculo = row[canonicalHeader("veiculo")] ?? "";
+    const composed = [fileType, rota, setor, dataStr, percentual, servico, id, veiculo].join("|");
+    return `hash_${createHash("sha1").update(composed).digest("hex")}`;
   }
 
   const rawKey = firstByAliases(row, aliases);

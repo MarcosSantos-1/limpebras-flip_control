@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { MainLayout } from "@/components/layout/main-layout";
@@ -30,6 +30,7 @@ import { SACsTopServicesChart, type SACsTopServiceDatum } from "@/components/sac
 import { CNCsTopServicesChart, type CNCsTopServiceDatum } from "@/components/cncs-top-services-chart";
 import { SACsOverdueBySubChart, type SACOverdueBySubDatum } from "@/components/sacs-overdue-by-sub-chart";
 import { SUBPREFEITURAS } from "@/constants/sacs";
+import { useDashboardData } from "@/lib/use-dashboard-data";
 
 const SUBPREF_LOOKUP = SUBPREFEITURAS.reduce<Record<string, string>>((acc, sub) => {
   acc[sub.code.toUpperCase()] = sub.code;
@@ -119,23 +120,284 @@ const extractBairro = (address?: string | null) => {
   return null;
 };
 
+function groupByDate(
+  items: any[],
+  dateField: string,
+  periodStart: Date,
+  periodEnd: Date
+): { date: string; count: number }[] {
+  const startBoundary = normalizeDateForComparison(startOfDay(periodStart));
+  const endBoundary = normalizeDateForComparison(endOfDay(periodEnd));
+
+  if (startBoundary > endBoundary) return [];
+
+  const dates = eachDayOfInterval({ start: periodStart, end: periodEnd });
+  const dateMap = new Map<string, number>();
+  dates.forEach((date) => {
+    const key = format(normalizeDateForComparison(startOfDay(date)), "yyyy-MM-dd");
+    dateMap.set(key, 0);
+  });
+
+  items.forEach((item) => {
+    try {
+      const rawDate = item[dateField];
+      if (!rawDate) return;
+      const itemDate = normalizeDateForComparison(new Date(rawDate));
+      if (isNaN(itemDate.getTime())) return;
+      if (itemDate < startBoundary || itemDate > endBoundary) return;
+      const dateKey = format(itemDate, "yyyy-MM-dd");
+      if (dateMap.has(dateKey)) dateMap.set(dateKey, (dateMap.get(dateKey) || 0) + 1);
+    } catch {
+      // ignorar datas inválidas
+    }
+  });
+
+  return Array.from(dateMap.entries())
+    .map(([date, count]) => ({ date, count }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function computeSacsBySub(items: SAC[]): SACsBySubDatum[] {
+  const baseMap = SUBPREFEITURAS.reduce<Record<string, SACsBySubDatum>>((acc, sub) => {
+    acc[sub.code] = {
+      subprefeitura: sub.code,
+      label: sub.label,
+      demandantes: 0,
+      escalonados: 0,
+    };
+    return acc;
+  }, {});
+
+  items.forEach((sac) => {
+    const normalized = normalizeSubprefeitura(sac.subprefeitura) || "";
+    const code = SUBPREF_LOOKUP[normalized] || SUBPREF_LOOKUP[sac.subprefeitura?.toUpperCase() || ""];
+    if (!code || !baseMap[code]) return;
+
+    const classificacao = (sac.classificacao_servico || "").trim();
+    const foraEscopo = (sac.finalizado_fora_de_escopo || "").trim().toUpperCase();
+    const procedente = (sac.procedente_por_status || "").trim().toUpperCase();
+
+    const isDemandanteIA = classificacao === "Solicitação" && foraEscopo === "NÃO";
+    const isEscalonadoIRD =
+      classificacao === "Reclamação" && foraEscopo === "NÃO" && procedente === "PROCEDE";
+
+    if (isDemandanteIA) baseMap[code].demandantes += 1;
+    if (isEscalonadoIRD) baseMap[code].escalonados += 1;
+  });
+
+  return SUBPREFEITURAS.map((sub) => baseMap[sub.code]);
+}
+
+function computeSacsOverdueBySub(items: SAC[]): SACOverdueBySubDatum[] {
+  const map = SUBPREFEITURAS.reduce<Record<string, SACOverdueBySubDatum>>((acc, sub) => {
+    acc[sub.code] = { label: sub.label, foraPrazo: 0, totalDemandantes: 0 };
+    return acc;
+  }, {});
+
+  items.forEach((sac) => {
+    const normalized = normalizeSubprefeitura(sac.subprefeitura) || "";
+    const code = SUBPREF_LOOKUP[normalized] || SUBPREF_LOOKUP[sac.subprefeitura?.toUpperCase() || ""];
+    if (!code || !map[code]) return;
+
+    const classificacao = (sac.classificacao_servico || "").trim();
+    const foraEscopo = (sac.finalizado_fora_de_escopo || "").trim().toUpperCase();
+    const responsividade = (sac.responsividade_execucao || "").trim().toUpperCase();
+    const isIA = classificacao === "Solicitação" && foraEscopo === "NÃO";
+    if (!isIA) return;
+
+    map[code].totalDemandantes += 1;
+    if (responsividade === "NÃO") map[code].foraPrazo += 1;
+  });
+
+  return SUBPREFEITURAS.map((sub) => map[sub.code]);
+}
+
+function computeTopServices(items: SAC[]): SACsTopServiceDatum[] {
+  const counter = new Map<string, number>();
+  items.forEach((sac) => {
+    const key = (sac.tipo_servico || "").trim();
+    if (!key) return;
+    counter.set(key, (counter.get(key) || 0) + 1);
+  });
+  return Array.from(counter.entries()).map(([tipoServico, quantidade]) => ({ tipoServico, quantidade }));
+}
+
+function computeTopSacLocations(items: SAC[]) {
+  type Bucket = { quantidade: number; tipos: Map<string, number> };
+
+  const bairrosEscalonados = new Map<string, Bucket>();
+  const bairrosDemandantes = new Map<string, Bucket>();
+  const logradourosEscalonados = new Map<string, Bucket>();
+  const logradourosDemandantes = new Map<string, Bucket>();
+
+  const upsertBucket = (map: Map<string, Bucket>, key: string, tipoServico?: string | null) => {
+    if (!key) return;
+    const bucket = map.get(key) || { quantidade: 0, tipos: new Map<string, number>() };
+    bucket.quantidade += 1;
+    const tipo = (tipoServico || "").trim();
+    if (tipo) bucket.tipos.set(tipo, (bucket.tipos.get(tipo) || 0) + 1);
+    map.set(key, bucket);
+  };
+
+  items.forEach((sac) => {
+    const classificacao = (sac.classificacao_servico || "").trim();
+    const foraEscopo = (sac.finalizado_fora_de_escopo || "").trim().toUpperCase();
+    const procedente = (sac.procedente_por_status || "").trim().toUpperCase();
+    const isDemandanteIA = classificacao === "Solicitação" && foraEscopo === "NÃO";
+    const isEscalonadoIRD = classificacao === "Reclamação" && foraEscopo === "NÃO" && procedente === "PROCEDE";
+    if (!isDemandanteIA && !isEscalonadoIRD) return;
+
+    const normalized = normalizeSubprefeitura(sac.subprefeitura) || "";
+    const subCode = SUBPREF_LOOKUP[normalized] || SUBPREF_LOOKUP[sac.subprefeitura?.toUpperCase() || ""];
+    const bairro = extractBairro(sac.endereco_text);
+    const logradouro = extractLogradouro(sac.endereco_text);
+    const tipoServico = sac.tipo_servico;
+
+    if (isEscalonadoIRD) {
+      if (bairro && subCode) upsertBucket(bairrosEscalonados, `${bairro} (${subCode})`, tipoServico);
+      if (logradouro) upsertBucket(logradourosEscalonados, logradouro, tipoServico);
+    }
+    if (isDemandanteIA) {
+      if (bairro && subCode) upsertBucket(bairrosDemandantes, `${bairro} (${subCode})`, tipoServico);
+      if (logradouro) upsertBucket(logradourosDemandantes, logradouro, tipoServico);
+    }
+  });
+
+  const toRanking = (map: Map<string, Bucket>, includeTipo: boolean): SACLocationRankingDatum[] => {
+    return Array.from(map.entries())
+      .map(([nome, bucket]) => {
+        const tipos = Array.from(bucket.tipos.entries())
+          .map(([tipoServico, quantidade]) => ({ tipoServico, quantidade }))
+          .sort((a, b) => b.quantidade - a.quantidade)
+          .slice(0, 8);
+        let tipoMaisFrequente: string | undefined;
+        if (includeTipo && tipos.length > 0) tipoMaisFrequente = tipos[0].tipoServico;
+        return { nome, quantidade: bucket.quantidade, tipoMaisFrequente, tipos };
+      })
+      .filter((item) => item.quantidade >= 3)
+      .sort((a, b) => b.quantidade - a.quantidade)
+      .slice(0, 50);
+  };
+
+  return {
+    bairrosEscalonados: toRanking(bairrosEscalonados, true),
+    bairrosDemandantes: toRanking(bairrosDemandantes, false),
+    logradourosEscalonados: toRanking(logradourosEscalonados, true),
+    logradourosDemandantes: toRanking(logradourosDemandantes, false),
+  };
+}
+
+function computeCncsBySub(items: CNC[], periodStart: Date, periodEnd: Date): CNCsBySubDatum[] {
+  const baseMap = SUBPREFEITURAS.reduce<Record<string, CNCsBySubDatum>>((acc, sub) => {
+    acc[sub.code] = {
+      subprefeitura: sub.code,
+      label: sub.label,
+      quantidade: 0,
+      semIrregularidade: 0,
+      comIrregularidade: 0,
+    };
+    return acc;
+  }, {});
+
+  const startBoundary = normalizeDateForComparison(startOfDay(periodStart));
+  const endBoundary = normalizeDateForComparison(endOfDay(periodEnd));
+
+  items.forEach((cnc) => {
+    try {
+      const abertura = normalizeDateForComparison(new Date(cnc.data_abertura));
+      if (isNaN(abertura.getTime()) || abertura < startBoundary || abertura > endBoundary) return;
+      const normalized = normalizeSubprefeitura(cnc.subprefeitura) || "";
+      const code = SUBPREF_LOOKUP[normalized] || SUBPREF_LOOKUP[cnc.subprefeitura?.toUpperCase() || ""];
+      if (!code || !baseMap[code]) return;
+      baseMap[code].quantidade += 1;
+      if (cnc.sem_irregularidade === true) baseMap[code].semIrregularidade += 1;
+      else baseMap[code].comIrregularidade += 1;
+    } catch {
+      // ignorar
+    }
+  });
+
+  return SUBPREFEITURAS.map((sub) => baseMap[sub.code]);
+}
+
+function computeTopBfsServices(items: CNC[], periodStart: Date, periodEnd: Date): CNCsTopServiceDatum[] {
+  const startBoundary = normalizeDateForComparison(startOfDay(periodStart));
+  const endBoundary = normalizeDateForComparison(endOfDay(periodEnd));
+  const counter = new Map<string, number>();
+
+  items.forEach((cnc) => {
+    try {
+      const abertura = normalizeDateForComparison(new Date(cnc.data_abertura));
+      if (isNaN(abertura.getTime()) || abertura < startBoundary || abertura > endBoundary) return;
+      const key = (cnc.tipo_servico || "").trim();
+      if (!key) return;
+      counter.set(key, (counter.get(key) || 0) + 1);
+    } catch {
+      // ignorar
+    }
+  });
+
+  return Array.from(counter.entries()).map(([tipoServico, quantidade]) => ({ tipoServico, quantidade }));
+}
+
 export default function DashboardPage() {
-  const [indicators, setIndicators] = useState<any>(null);
-  const [sacsHistory, setSacsHistory] = useState<{ date: string; count: number }[]>([]);
-  const [sacsBySub, setSacsBySub] = useState<SACsBySubDatum[]>([]);
-  const [sacsOverdueBySub, setSacsOverdueBySub] = useState<SACOverdueBySubDatum[]>([]);
-  const [cncsBySub, setCncsBySub] = useState<CNCsBySubDatum[]>([]);
-  const [sacsTopServices, setSacsTopServices] = useState<SACsTopServiceDatum[]>([]);
-  const [cncsTopServices, setCncsTopServices] = useState<CNCsTopServiceDatum[]>([]);
-  const [topBairrosEscalonados, setTopBairrosEscalonados] = useState<SACLocationRankingDatum[]>([]);
-  const [topBairrosDemandantes, setTopBairrosDemandantes] = useState<SACLocationRankingDatum[]>([]);
-  const [topLogradourosEscalonados, setTopLogradourosEscalonados] = useState<SACLocationRankingDatum[]>([]);
-  const [topLogradourosDemandantes, setTopLogradourosDemandantes] = useState<SACLocationRankingDatum[]>([]);
   const [selectedMonth, setSelectedMonth] = useState(() => startOfMonth(new Date()));
-  const [loading, setLoading] = useState(true);
   const [iptModalOpen, setIptModalOpen] = useState(false);
-  const [iptSemDados, setIptSemDados] = useState(false);
   const router = useRouter();
+
+  const periodStart = startOfMonth(selectedMonth);
+  const periodEnd = endOfMonth(selectedMonth);
+  const dataInicio = format(periodStart, "yyyy-MM-dd");
+  const dataFim = format(periodEnd, "yyyy-MM-dd");
+
+  const { kpisData, sacsData, cncsData, isLoading, mutate } = useDashboardData(dataInicio, dataFim);
+
+  const indicators = useMemo(() => {
+    if (!kpisData) return null;
+    const irdPontos = Math.min(kpisData.indicadores?.ird?.pontuacao || 0, 20);
+    const iaPontos = Math.min(kpisData.indicadores?.ia?.pontuacao || 0, 20);
+    const ifPontos = Math.min(kpisData.indicadores?.if?.pontuacao || 0, 20);
+    const iptPontos = kpisData.indicadores?.ipt?.pontuacao || 0;
+    const iptValor = kpisData.indicadores?.ipt?.valor ?? null;
+    const totalADC = irdPontos + iaPontos + ifPontos + iptPontos;
+    const percentualADC = (totalADC / 100) * 100;
+    return {
+      data: {
+        IRD: { valor: kpisData.indicadores?.ird?.valor || 0, pontuacao: irdPontos },
+        IA: { valor: kpisData.indicadores?.ia?.valor || 0, pontuacao: iaPontos },
+        IF: { valor: kpisData.indicadores?.if?.valor || 0, pontuacao: ifPontos },
+        IPT: {
+          valor: iptValor != null && !Number.isNaN(iptValor) ? iptValor : undefined,
+          pontuacao: iptPontos != null && !Number.isNaN(iptPontos) ? iptPontos : undefined,
+        },
+        ADC: { total: totalADC, percentual: percentualADC },
+      },
+      sacs_hoje: kpisData.sacs_hoje || 0,
+      cncs_urgentes: kpisData.cncs_urgentes || 0,
+    };
+  }, [kpisData]);
+
+  const iptSemDados = Boolean(kpisData?.ipt_sem_dados);
+
+  const sacItems = (sacsData?.items || []) as SAC[];
+  const cncItems = (cncsData?.items || []) as CNC[];
+
+  const sacsHistory = useMemo(
+    () => groupByDate(sacItems, "data_criacao", periodStart, periodEnd),
+    [sacItems, periodStart, periodEnd]
+  );
+  const sacsBySub = useMemo(() => computeSacsBySub(sacItems), [sacItems]);
+  const sacsOverdueBySub = useMemo(() => computeSacsOverdueBySub(sacItems), [sacItems]);
+  const sacsTopServices = useMemo(() => computeTopServices(sacItems), [sacItems]);
+  const topLocations = useMemo(() => computeTopSacLocations(sacItems), [sacItems]);
+  const cncsBySub = useMemo(
+    () => computeCncsBySub(cncItems, periodStart, periodEnd),
+    [cncItems, periodStart, periodEnd]
+  );
+  const cncsTopServices = useMemo(
+    () => computeTopBfsServices(cncItems, periodStart, periodEnd),
+    [cncItems, periodStart, periodEnd]
+  );
 
   const today = new Date();
   const disableNextMonth = isSameMonth(selectedMonth, startOfMonth(today));
@@ -160,343 +422,10 @@ export default function DashboardPage() {
     setSelectedMonth(startOfMonth(new Date(y, m - 1, 1)));
   };
 
-  // Função auxiliar para agrupar dados por data
-  const groupByDate = (
-    items: any[],
-    dateField: string,
-    periodStart: Date,
-    periodEnd: Date
-  ): { date: string; count: number }[] => {
-    const startBoundary = normalizeDateForComparison(startOfDay(periodStart));
-    const endBoundary = normalizeDateForComparison(endOfDay(periodEnd));
-
-    if (startBoundary > endBoundary) {
-      return [];
-    }
-
-    const dates = eachDayOfInterval({ start: periodStart, end: periodEnd });
-    const dateMap = new Map<string, number>();
-    dates.forEach((date) => {
-      const key = format(normalizeDateForComparison(startOfDay(date)), "yyyy-MM-dd");
-      dateMap.set(key, 0);
-    });
-
-    items.forEach((item) => {
-      try {
-        const rawDate = item[dateField];
-        if (!rawDate) return;
-        const itemDate = normalizeDateForComparison(new Date(rawDate));
-        if (isNaN(itemDate.getTime())) {
-          return;
-        }
-        if (itemDate < startBoundary || itemDate > endBoundary) {
-          return;
-        }
-        const dateKey = format(itemDate, "yyyy-MM-dd");
-        if (dateMap.has(dateKey)) {
-          dateMap.set(dateKey, (dateMap.get(dateKey) || 0) + 1);
-        }
-      } catch (e) {
-        // Ignorar datas inválidas
-      }
-    });
-
-    return Array.from(dateMap.entries())
-      .map(([date, count]) => ({ date, count }))
-      .sort((a, b) => a.date.localeCompare(b.date));
-  };
-
-  const computeSacsBySub = (items: SAC[]): SACsBySubDatum[] => {
-    const baseMap = SUBPREFEITURAS.reduce<Record<string, SACsBySubDatum>>((acc, sub) => {
-      acc[sub.code] = {
-        subprefeitura: sub.code,
-        label: sub.label,
-        demandantes: 0,
-        escalonados: 0,
-      };
-      return acc;
-    }, {});
-
-    items.forEach((sac) => {
-      const normalized = normalizeSubprefeitura(sac.subprefeitura) || "";
-      const code = SUBPREF_LOOKUP[normalized] || SUBPREF_LOOKUP[sac.subprefeitura?.toUpperCase() || ""];
-      if (!code || !baseMap[code]) return;
-
-      const classificacao = (sac.classificacao_servico || "").trim();
-      const foraEscopo = (sac.finalizado_fora_de_escopo || "").trim().toUpperCase();
-      const procedente = (sac.procedente_por_status || "").trim().toUpperCase();
-
-      const isDemandanteIA = classificacao === "Solicitação" && foraEscopo === "NÃO";
-      const isEscalonadoIRD =
-        classificacao === "Reclamação" && foraEscopo === "NÃO" && procedente === "PROCEDE";
-
-      if (isDemandanteIA) baseMap[code].demandantes += 1;
-      if (isEscalonadoIRD) baseMap[code].escalonados += 1;
-    });
-
-    return SUBPREFEITURAS.map((sub) => baseMap[sub.code]);
-  };
-
-  const computeSacsOverdueBySub = (items: SAC[]): SACOverdueBySubDatum[] => {
-    const map = SUBPREFEITURAS.reduce<Record<string, SACOverdueBySubDatum>>((acc, sub) => {
-      acc[sub.code] = { label: sub.label, foraPrazo: 0, totalDemandantes: 0 };
-      return acc;
-    }, {});
-
-    items.forEach((sac) => {
-      const normalized = normalizeSubprefeitura(sac.subprefeitura) || "";
-      const code = SUBPREF_LOOKUP[normalized] || SUBPREF_LOOKUP[sac.subprefeitura?.toUpperCase() || ""];
-      if (!code || !map[code]) return;
-
-      const classificacao = (sac.classificacao_servico || "").trim();
-      const foraEscopo = (sac.finalizado_fora_de_escopo || "").trim().toUpperCase();
-      const responsividade = (sac.responsividade_execucao || "").trim().toUpperCase();
-      const isIA = classificacao === "Solicitação" && foraEscopo === "NÃO";
-      if (!isIA) return;
-
-      map[code].totalDemandantes += 1;
-      if (responsividade === "NÃO") map[code].foraPrazo += 1;
-    });
-
-    return SUBPREFEITURAS.map((sub) => map[sub.code]);
-  };
-
-  const computeCncsBySub = (items: CNC[], periodStart: Date, periodEnd: Date): CNCsBySubDatum[] => {
-    const baseMap = SUBPREFEITURAS.reduce<Record<string, CNCsBySubDatum>>((acc, sub) => {
-      acc[sub.code] = {
-        subprefeitura: sub.code,
-        label: sub.label,
-        quantidade: 0,
-        semIrregularidade: 0,
-        comIrregularidade: 0,
-      };
-      return acc;
-    }, {});
-
-    const startBoundary = normalizeDateForComparison(startOfDay(periodStart));
-    const endBoundary = normalizeDateForComparison(endOfDay(periodEnd));
-
-    items.forEach((cnc) => {
-      try {
-        const abertura = normalizeDateForComparison(new Date(cnc.data_abertura));
-        if (isNaN(abertura.getTime()) || abertura < startBoundary || abertura > endBoundary) {
-          return;
-        }
-        const normalized = normalizeSubprefeitura(cnc.subprefeitura) || "";
-        const code = SUBPREF_LOOKUP[normalized] || SUBPREF_LOOKUP[cnc.subprefeitura?.toUpperCase() || ""];
-        if (!code || !baseMap[code]) {
-          return;
-        }
-        baseMap[code].quantidade += 1;
-        if (cnc.sem_irregularidade === true) {
-          baseMap[code].semIrregularidade += 1;
-        } else {
-          baseMap[code].comIrregularidade += 1;
-        }
-      } catch {
-        // Ignorar linhas inválidas
-      }
-    });
-
-    return SUBPREFEITURAS.map((sub) => baseMap[sub.code]);
-  };
-
-  const computeTopServices = (items: SAC[]): SACsTopServiceDatum[] => {
-    const counter = new Map<string, number>();
-    items.forEach((sac) => {
-      const key = (sac.tipo_servico || "").trim();
-      if (!key) return;
-      counter.set(key, (counter.get(key) || 0) + 1);
-    });
-    return Array.from(counter.entries()).map(([tipoServico, quantidade]) => ({ tipoServico, quantidade }));
-  };
-
-  const computeTopSacLocations = (items: SAC[]) => {
-    type Bucket = { quantidade: number; tipos: Map<string, number> };
-
-    const bairrosEscalonados = new Map<string, Bucket>();
-    const bairrosDemandantes = new Map<string, Bucket>();
-    const logradourosEscalonados = new Map<string, Bucket>();
-    const logradourosDemandantes = new Map<string, Bucket>();
-
-    const upsertBucket = (map: Map<string, Bucket>, key: string, tipoServico?: string | null) => {
-      if (!key) return;
-      const bucket = map.get(key) || { quantidade: 0, tipos: new Map<string, number>() };
-      bucket.quantidade += 1;
-      const tipo = (tipoServico || "").trim();
-      if (tipo) {
-        bucket.tipos.set(tipo, (bucket.tipos.get(tipo) || 0) + 1);
-      }
-      map.set(key, bucket);
-    };
-
-    items.forEach((sac) => {
-      const classificacao = (sac.classificacao_servico || "").trim();
-      const foraEscopo = (sac.finalizado_fora_de_escopo || "").trim().toUpperCase();
-      const procedente = (sac.procedente_por_status || "").trim().toUpperCase();
-      const isDemandanteIA = classificacao === "Solicitação" && foraEscopo === "NÃO";
-      const isEscalonadoIRD = classificacao === "Reclamação" && foraEscopo === "NÃO" && procedente === "PROCEDE";
-      if (!isDemandanteIA && !isEscalonadoIRD) return;
-
-      const normalized = normalizeSubprefeitura(sac.subprefeitura) || "";
-      const subCode = SUBPREF_LOOKUP[normalized] || SUBPREF_LOOKUP[sac.subprefeitura?.toUpperCase() || ""];
-      const bairro = extractBairro(sac.endereco_text);
-      const logradouro = extractLogradouro(sac.endereco_text);
-      const tipoServico = sac.tipo_servico;
-
-      if (isEscalonadoIRD) {
-        if (bairro && subCode) upsertBucket(bairrosEscalonados, `${bairro} (${subCode})`, tipoServico);
-        if (logradouro) upsertBucket(logradourosEscalonados, logradouro, tipoServico);
-      }
-
-      if (isDemandanteIA) {
-        if (bairro && subCode) upsertBucket(bairrosDemandantes, `${bairro} (${subCode})`, tipoServico);
-        if (logradouro) upsertBucket(logradourosDemandantes, logradouro, tipoServico);
-      }
-    });
-
-    const toRanking = (map: Map<string, Bucket>, includeTipo: boolean): SACLocationRankingDatum[] => {
-      return Array.from(map.entries())
-        .map(([nome, bucket]) => {
-          const tipos = Array.from(bucket.tipos.entries())
-            .map(([tipoServico, quantidade]) => ({ tipoServico, quantidade }))
-            .sort((a, b) => b.quantidade - a.quantidade)
-            .slice(0, 8);
-          let tipoMaisFrequente: string | undefined;
-          if (includeTipo && tipos.length > 0) {
-            tipoMaisFrequente = tipos[0].tipoServico;
-          }
-          return { nome, quantidade: bucket.quantidade, tipoMaisFrequente, tipos };
-        })
-        .filter((item) => item.quantidade >= 3)
-        .sort((a, b) => b.quantidade - a.quantidade)
-        .slice(0, 50);
-    };
-
-    return {
-      bairrosEscalonados: toRanking(bairrosEscalonados, true),
-      bairrosDemandantes: toRanking(bairrosDemandantes, false),
-      logradourosEscalonados: toRanking(logradourosEscalonados, true),
-      logradourosDemandantes: toRanking(logradourosDemandantes, false),
-    };
-  };
-
-  const computeTopBfsServices = (items: CNC[], periodStart: Date, periodEnd: Date): CNCsTopServiceDatum[] => {
-    const startBoundary = normalizeDateForComparison(startOfDay(periodStart));
-    const endBoundary = normalizeDateForComparison(endOfDay(periodEnd));
-    const counter = new Map<string, number>();
-
-    items.forEach((cnc) => {
-      try {
-        const abertura = normalizeDateForComparison(new Date(cnc.data_abertura));
-        if (isNaN(abertura.getTime()) || abertura < startBoundary || abertura > endBoundary) {
-          return;
-        }
-        const key = (cnc.tipo_servico || "").trim();
-        if (!key) return;
-        counter.set(key, (counter.get(key) || 0) + 1);
-      } catch {
-        // Ignorar linhas inválidas
-      }
-    });
-
-    return Array.from(counter.entries()).map(([tipoServico, quantidade]) => ({ tipoServico, quantidade }));
-  };
-
-  const loadData = useCallback(async () => {
-    try {
-      setLoading(true);
-      const periodStart = startOfMonth(selectedMonth);
-      const periodEnd = endOfMonth(selectedMonth);
-      const dataInicio = format(periodStart, "yyyy-MM-dd");
-      const dataFim = format(periodEnd, "yyyy-MM-dd");
-
-      const [kpisData, sacsData, cncsData] = await Promise.all([
-        apiService.getKPIs(dataInicio, dataFim).catch(() => null),
-        apiService
-          .getSACs({
-            periodo_inicial: dataInicio,
-            periodo_final: dataFim,
-            full: true,
-            limit: 10000,
-          })
-          .catch(() => ({ items: [] })),
-        apiService
-          .getCNCs({
-            page: 1,
-            page_size: 1000,
-          })
-          .catch(() => ({ items: [] })),
-        ]);
-
-        if (kpisData) {
-          const irdPontos = Math.min(kpisData.indicadores?.ird?.pontuacao || 0, 20);
-          const iaPontos = Math.min(kpisData.indicadores?.ia?.pontuacao || 0, 20);
-          const ifPontos = Math.min(kpisData.indicadores?.if?.pontuacao || 0, 20);
-          const iptPontos = kpisData.indicadores?.ipt?.pontuacao || 0;
-          const iptValor = kpisData.indicadores?.ipt?.valor ?? null;
-          setIptSemDados(Boolean(kpisData.ipt_sem_dados));
-          
-          const totalADC = irdPontos + iaPontos + ifPontos + iptPontos;
-          const percentualADC = (totalADC / 100) * 100;
-
-          setIndicators({
-            data: {
-              IRD: {
-                valor: kpisData.indicadores?.ird?.valor || 0,
-                pontuacao: irdPontos,
-              },
-              IA: {
-                valor: kpisData.indicadores?.ia?.valor || 0,
-                pontuacao: iaPontos,
-              },
-              IF: {
-                valor: kpisData.indicadores?.if?.valor || 0,
-                pontuacao: ifPontos,
-              },
-              IPT: {
-                valor: iptValor != null && !Number.isNaN(iptValor) ? iptValor : undefined,
-                pontuacao: iptPontos != null && !Number.isNaN(iptPontos) ? iptPontos : undefined,
-              },
-              ADC: {
-                total: totalADC,
-                percentual: percentualADC,
-              },
-            },
-            sacs_hoje: kpisData.sacs_hoje || 0,
-            cncs_urgentes: kpisData.cncs_urgentes || 0,
-          });
-        }
-
-      const sacItems = (sacsData?.items || []) as SAC[];
-      setSacsHistory(groupByDate(sacItems, "data_criacao", periodStart, periodEnd));
-      setSacsBySub(computeSacsBySub(sacItems));
-      setSacsOverdueBySub(computeSacsOverdueBySub(sacItems));
-      setSacsTopServices(computeTopServices(sacItems));
-      const topLocations = computeTopSacLocations(sacItems);
-      setTopBairrosEscalonados(topLocations.bairrosEscalonados);
-      setTopBairrosDemandantes(topLocations.bairrosDemandantes);
-      setTopLogradourosEscalonados(topLocations.logradourosEscalonados);
-      setTopLogradourosDemandantes(topLocations.logradourosDemandantes);
-
-      const cncItems = (cncsData?.items || []) as CNC[];
-      setCncsBySub(computeCncsBySub(cncItems, periodStart, periodEnd));
-      setCncsTopServices(computeTopBfsServices(cncItems, periodStart, periodEnd));
-      } catch (error) {
-        console.error("Error fetching dashboard data:", error);
-      } finally {
-        setLoading(false);
-      }
-  }, [selectedMonth]);
-
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
-
   return (
     <MainLayout>
       <div className="space-y-8">
-        {loading && (
+        {isLoading && (
           <div className="fixed inset-0 z-90 bg-background/90 backdrop-blur-sm flex items-center justify-center">
             <div className="flex flex-col items-center gap-3 rounded-2xl border border-border bg-card/90 px-8 py-6 shadow-xl">
               <div className="h-48 w-48">
@@ -518,7 +447,7 @@ export default function DashboardPage() {
         </div>
 
         {/* KPIs - Grid 2x2 + ADC à direita */}
-        {loading ? (
+        {isLoading ? (
           <div className="text-center py-8">Carregando KPIs...</div>
         ) : indicators ? (
           <>
@@ -640,7 +569,7 @@ export default function DashboardPage() {
           <IPTModal
             open={iptModalOpen}
             onOpenChange={setIptModalOpen}
-            onSuccess={loadData}
+            onSuccess={mutate}
             currentValue={indicators?.data?.IPT?.valor ?? undefined}
             currentPontuacao={indicators?.data?.IPT?.pontuacao ?? undefined}
             initialMes={format(selectedMonth, "yyyy-MM")}
@@ -737,22 +666,22 @@ export default function DashboardPage() {
                 {
                   title: "Bairros com mais SACs Escalonados",
                   subtitle: "Top 50 por bairro + subprefeitura (com detalhamento por tipo)",
-                  data: topBairrosEscalonados,
+                  data: topLocations.bairrosEscalonados,
                 },
                 {
                   title: "Bairros com mais SACs Demandantes",
                   subtitle: "Top 50 por bairro + subprefeitura",
-                  data: topBairrosDemandantes,
+                  data: topLocations.bairrosDemandantes,
                 },
                 {
                   title: "Logradouros com mais SACs Escalonados",
                   subtitle: "Top 50 de vias com maior volume e composição por tipo",
-                  data: topLogradourosEscalonados,
+                  data: topLocations.logradourosEscalonados,
                 },
                 {
                   title: "Logradouros com mais SACs Demandantes",
                   subtitle: "Top 50 de vias com maior volume",
-                  data: topLogradourosDemandantes,
+                  data: topLocations.logradourosDemandantes,
                 },
               ].map((group) => (
                 <details

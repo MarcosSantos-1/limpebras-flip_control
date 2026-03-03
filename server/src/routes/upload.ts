@@ -1,5 +1,6 @@
 import { FastifyPluginAsync, FastifyRequest } from "fastify";
 import { pool } from "../db.js";
+import { invalidatePrefix } from "../cache.js";
 import { parseSacCsv, parseBfsCsv, parseOuvidoriaCsv, parseAcicCsv } from "../services/parseCsv.js";
 import { parseIptWorkbook, type IptFileType } from "../services/parseIptXlsx.js";
 import { parseCronogramaWorkbook } from "../services/parseCronogramaIpt.js";
@@ -92,6 +93,8 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         else updated += 1;
       }
 
+      invalidatePrefix("ipt_preview");
+      invalidatePrefix("kpis");
       return {
         processados: inserted + updated,
         total: rows.length,
@@ -175,6 +178,8 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         );
         inserted += 1;
       }
+      invalidatePrefix("sacs");
+      invalidatePrefix("kpis");
       return {
         processados: inserted + updated,
         total: rows.length,
@@ -247,6 +252,8 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         );
         inserted += 1;
       }
+      invalidatePrefix("cnc");
+      invalidatePrefix("kpis");
       return {
         processados: inserted + updated,
         total: rows.length,
@@ -409,6 +416,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         );
         inserted += 1;
       }
+      invalidatePrefix("ipt_preview");
       return {
         processados: inserted,
         total: rows.length,
@@ -453,11 +461,15 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
 
   fastify.post("/upload/clear-sacs", async (_request, reply) => {
     const r = await pool.query("DELETE FROM sacs WHERE source_file IS NOT NULL RETURNING id");
+    invalidatePrefix("sacs");
+    invalidatePrefix("kpis");
     return { deleted: r.rowCount ?? 0 };
   });
 
   fastify.post("/upload/clear-cnc", async (_request, reply) => {
     const r = await pool.query("DELETE FROM bfs RETURNING id");
+    invalidatePrefix("cnc");
+    invalidatePrefix("kpis");
     return { deleted: r.rowCount ?? 0 };
   });
 

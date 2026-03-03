@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { format, endOfMonth, startOfMonth, subDays } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Activity, BarChart2, Battery, Calendar, Check, ChevronDown, ChevronRight, Cpu, Info, Package, Sparkles, Truck, X } from "lucide-react";
@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { apiService, type IptPreviewResponse } from "@/lib/api";
+import { useIptData } from "@/lib/use-ipt-data";
 import { getSortKey, getSubFromPlano } from "@/lib/ipt-utils";
 import {
   LineChart,
@@ -171,10 +172,6 @@ export default function IPTPage() {
   const [selectedMonth, setSelectedMonth] = useState(() => startOfMonth(new Date()));
   const [tableScope, setTableScope] = useState<TableScope>("dia_anterior");
   const [tablePeriodRange, setTablePeriodRange] = useState<{ inicio: Date; fim: Date } | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [iptPreviewCards, setIptPreviewCards] = useState<IptPreviewResponse | null>(null);
-  const [iptPreviewTable, setIptPreviewTable] = useState<IptPreviewResponse | null>(null);
-  const [iptCard, setIptCard] = useState<{ valor?: number; pontuacao?: number }>({});
   const [subprefeituraFilter, setSubprefeituraFilter] = useState("all");
   const [divergenciaFilter, setDivergenciaFilter] = useState<"all" | "somente" | "sem">("all");
   const [highlightDivergencias, setHighlightDivergencias] = useState(false);
@@ -198,6 +195,12 @@ export default function IPTPage() {
   const [expandedPlano, setExpandedPlano] = useState<string | null>(null);
   const [modalBateriaOpen, setModalBateriaOpen] = useState(false);
   const [modalCruzamentoOpen, setModalCruzamentoOpen] = useState(false);
+  const [diagnosticoOpen, setDiagnosticoOpen] = useState(false);
+  const [diagnosticoData, setDiagnosticoData] = useState<{
+    contagem_por_tipo?: Array<{ file_type: string; total: number; ultimo: string | null }>;
+    ddmx_amostra?: Array<Record<string, unknown>>;
+    selimp_amostra?: Array<Record<string, unknown>>;
+  } | null>(null);
   const [columnWidths, setColumnWidths] = useState<Record<TableColumnKey, number>>({
     plano: 170,
     sub: 90,
@@ -207,51 +210,20 @@ export default function IPTPage() {
     origem: 130,
   });
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const periodoKpisInicio = format(startOfMonth(selectedMonth), "yyyy-MM-dd");
-      const periodoKpisFim = format(endOfMonth(selectedMonth), "yyyy-MM-dd");
+  const { previewCards: iptPreviewCards, previewTable: iptPreviewTable, kpis: kpisData, isLoading: loading, mutate: loadData } = useIptData(
+    selectedMonth,
+    tableScope,
+    tablePeriodRange,
+    subprefeituraFilter
+  );
 
-      let tablePeriodoInicial: string | undefined;
-      let tablePeriodoFinal: string | undefined;
-      let mostrarTodos = false;
-
-      if (tableScope === "todos") {
-        mostrarTodos = true;
-        tablePeriodoInicial = format(startOfMonth(new Date()), "yyyy-MM-dd");
-        tablePeriodoFinal = format(new Date(), "yyyy-MM-dd");
-      } else if (tableScope === "periodo" && tablePeriodRange) {
-        tablePeriodoInicial = format(tablePeriodRange.inicio, "yyyy-MM-dd");
-        tablePeriodoFinal = format(tablePeriodRange.fim, "yyyy-MM-dd");
-      } else {
-        const ontem = subDays(new Date(), 1);
-        tablePeriodoInicial = format(ontem, "yyyy-MM-dd");
-        tablePeriodoFinal = format(ontem, "yyyy-MM-dd");
-      }
-
-      const [previewCards, previewTable, kpis] = await Promise.all([
-        apiService.getIptPreview(periodoKpisInicio, periodoKpisFim, false, subprefeituraFilter).catch(() => null),
-        tableScope === "dia_anterior"
-          ? apiService.getIptPreview(undefined, undefined, false, subprefeituraFilter).catch(() => null)
-          : apiService.getIptPreview(tablePeriodoInicial, tablePeriodoFinal, mostrarTodos, subprefeituraFilter).catch(() => null),
-        apiService.getKPIs(periodoKpisInicio, periodoKpisFim).catch(() => null),
-      ]);
-
-      setIptPreviewCards(previewCards);
-      setIptPreviewTable(previewTable ?? previewCards);
-      setIptCard({
-        valor: kpis?.indicadores?.ipt?.valor,
-        pontuacao: kpis?.indicadores?.ipt?.pontuacao,
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, [selectedMonth, subprefeituraFilter, tableScope, tablePeriodRange]);
-
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  const iptCard = useMemo(
+    () => ({
+      valor: kpisData?.indicadores?.ipt?.valor,
+      pontuacao: kpisData?.indicadores?.ipt?.pontuacao,
+    }),
+    [kpisData]
+  );
 
   useEffect(() => {
     const handlePointerDown = (event: MouseEvent) => {
@@ -549,6 +521,23 @@ export default function IPTPage() {
               </svg>
               Atualizar
             </button>
+            <button
+              type="button"
+              onClick={async () => {
+                setDiagnosticoOpen(true);
+                try {
+                  const data = await apiService.getIptDiagnostico();
+                  setDiagnosticoData(data);
+                } catch {
+                  setDiagnosticoData(null);
+                }
+              }}
+              className="h-10 rounded-xl px-3 text-sm font-medium text-muted-foreground hover:text-foreground border border-border hover:bg-muted/50 transition-all inline-flex items-center gap-2"
+              title="Diagnóstico das importações DDMX/SELIMP"
+            >
+              <Cpu className="h-4 w-4" />
+              Diagnóstico
+            </button>
           </div>
         </div>
 
@@ -626,24 +615,126 @@ export default function IPTPage() {
           </Card>
 
           <Dialog open={modalBateriaOpen} onOpenChange={setModalBateriaOpen}>
-            <DialogContent className="sm:max-w-lg">
-              <DialogHeader>
-                <DialogTitle>Análise de Bateria</DialogTitle>
-                <DialogDescription>Módulo em desenvolvimento. Em breve terá análises detalhadas de bateria.</DialogDescription>
+            <DialogContent className="max-w-[94vw] w-full max-h-[92vh] overflow-y-auto p-8 animate-in fade-in zoom-in-95 duration-300">
+              <DialogHeader className="pb-6">
+                <DialogTitle className="text-2xl flex items-center gap-2">
+                  <span className="inline-block w-3 h-3 rounded-full bg-violet-500" />
+                  Análise de Bateria
+                </DialogTitle>
+                <DialogDescription className="text-base">
+                  Guia para implementação — lembrete de especificação
+                </DialogDescription>
               </DialogHeader>
-              <div className="py-4 text-center text-muted-foreground text-sm">
-                Conteúdo será adicionado em breve.
+              <div className="space-y-6 text-sm">
+                <p className="text-muted-foreground italic">
+                  Problema real: &quot;Estamos perdendo IPT por causa de bateria? Quais baterias?&quot; — mensurar e melhorar gestão de carga, eficiência e estratégias em relação às baterias dos módulos.
+                </p>
+                <div className="rounded-xl border border-violet-500/30 bg-violet-500/5 p-5 space-y-4">
+                  <h4 className="font-semibold text-violet-700 dark:text-violet-300">Gráficos a implementar</h4>
+                  <ul className="space-y-2 text-muted-foreground">
+                    <li className="flex gap-2">
+                      <span className="text-violet-500">📈</span>
+                      <span><strong>Evolução de bateria média por módulo</strong> — linha temporal</span>
+                    </li>
+                    <li className="flex gap-2">
+                      <span className="text-violet-500">📊</span>
+                      <span><strong>Percentual de módulos com bateria crítica</strong> (&lt;20%)</span>
+                    </li>
+                    <li className="flex gap-2">
+                      <span className="text-violet-500">📋</span>
+                      <span><strong>Ranking de módulos</strong> com mais dias com bateria baixa</span>
+                    </li>
+                  </ul>
+                </div>
               </div>
             </DialogContent>
           </Dialog>
           <Dialog open={modalCruzamentoOpen} onOpenChange={setModalCruzamentoOpen}>
-            <DialogContent className="sm:max-w-lg">
-              <DialogHeader>
-                <DialogTitle>Cruzamento Inteligente</DialogTitle>
-                <DialogDescription>Módulo em desenvolvimento. Em breve terá cruzamento de dados avançado.</DialogDescription>
+            <DialogContent className="max-w-[94vw] w-full max-h-[92vh] overflow-y-auto p-8 animate-in fade-in zoom-in-95 duration-300">
+              <DialogHeader className="pb-6">
+                <DialogTitle className="text-2xl flex items-center gap-2">
+                  <span className="inline-block w-3 h-3 rounded-full bg-indigo-500" />
+                  Cruzamento Inteligente
+                </DialogTitle>
+                <DialogDescription className="text-base">
+                  Guia para implementação — lembrete de especificação
+                </DialogDescription>
               </DialogHeader>
-              <div className="py-4 text-center text-muted-foreground text-sm">
-                Conteúdo será adicionado em breve.
+              <div className="space-y-6 text-sm">
+                <p className="text-muted-foreground italic">
+                  Objetivo: provar de forma técnica se o problema é operacional ou se existe também uma falha na relação de dados da SELIMP/ DDMX — ex.: módulo com bateria &lt;30% tem IPT médio 70%, módulo &gt;80% bateria tem IPT médio 95%.
+                </p>
+                <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/5 p-5 space-y-4">
+                  <h4 className="font-semibold text-indigo-700 dark:text-indigo-300">Tabela a implementar</h4>
+                  <div className="font-mono text-xs bg-background/80 dark:bg-background/40 rounded-lg p-4 overflow-x-auto">
+                    <table className="w-full text-left">
+                      <thead>
+                        <tr className="border-b border-border">
+                          <th className="py-2 pr-4">Serviço</th>
+                          <th className="py-2 pr-4">% IPT</th>
+                          <th className="py-2 pr-4">% Bateria média</th>
+                          <th className="py-2">Correlação simples</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr className="border-b border-border/50">
+                          <td className="py-2 pr-4">Varrição</td>
+                          <td className="py-2 pr-4">70%</td>
+                          <td className="py-2 pr-4">&lt;30%</td>
+                          <td className="py-2">—</td>
+                        </tr>
+                        <tr className="border-b border-border/50">
+                          <td className="py-2 pr-4">Varrição</td>
+                          <td className="py-2 pr-4">95%</td>
+                          <td className="py-2 pr-4">&gt;80%</td>
+                          <td className="py-2">—</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog open={diagnosticoOpen} onOpenChange={setDiagnosticoOpen}>
+            <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle>Diagnóstico das importações IPT</DialogTitle>
+                <DialogDescription>
+                  Contagens e amostra dos dados DDMX e SELIMP no banco. Use para verificar se as importações estão refletindo.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-2">
+                {diagnosticoData?.contagem_por_tipo && (
+                  <div>
+                    <p className="text-sm font-medium mb-2">Contagem por tipo</p>
+                    <div className="grid grid-cols-2 gap-2 text-sm">
+                      {diagnosticoData.contagem_por_tipo.map((r) => (
+                        <div key={r.file_type} className="flex justify-between rounded bg-muted/50 px-3 py-2">
+                          <span className="font-mono">{r.file_type}</span>
+                          <span className="tabular-nums">{r.total} reg.</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {diagnosticoData?.ddmx_amostra && diagnosticoData.ddmx_amostra.length > 0 && (
+                  <div>
+                    <p className="text-sm font-medium mb-2">DDMX (amostra) — rota, data_referencia, pct</p>
+                    <pre className="text-xs bg-muted/30 p-3 rounded overflow-x-auto max-h-40">{JSON.stringify(diagnosticoData.ddmx_amostra, null, 2)}</pre>
+                  </div>
+                )}
+                {diagnosticoData?.selimp_amostra && diagnosticoData.selimp_amostra.length > 0 && (
+                  <div>
+                    <p className="text-sm font-medium mb-2">SELIMP (amostra) — plano, data_referencia, pct, status</p>
+                    <pre className="text-xs bg-muted/30 p-3 rounded overflow-x-auto max-h-40">{JSON.stringify(diagnosticoData.selimp_amostra, null, 2)}</pre>
+                  </div>
+                )}
+                {diagnosticoData && (!diagnosticoData.ddmx_amostra?.length && !diagnosticoData.selimp_amostra?.length) && (
+                  <p className="text-sm text-amber-600">Sem dados DDMX ou SELIMP no banco. Verifique as importações na página de Upload.</p>
+                )}
+                {!diagnosticoData && diagnosticoOpen && <p className="text-sm text-muted-foreground">Carregando…</p>}
               </div>
             </DialogContent>
           </Dialog>
@@ -749,10 +840,9 @@ export default function IPTPage() {
 
         <Card className="border-0 shadow-lg">
           <CardHeader>
-            <CardTitle>Comparativo SELIMP x DDMX</CardTitle>
+            <CardTitle>Base de dados</CardTitle>
             <CardDescription>
               Conferência por plano para validar divergência percentual e cobertura entre planilhas.
-              Delta (Δ) representa a diferença em pontos percentuais: SELIMP - DDMX.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">

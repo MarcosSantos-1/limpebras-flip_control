@@ -1,5 +1,6 @@
 import { FastifyPluginAsync } from "fastify";
 import { pool } from "../db.js";
+import { cacheKey, getOrSet, invalidatePrefix } from "../cache.js";
 import {
   pontuacaoIA,
   pontuacaoIRD,
@@ -80,6 +81,11 @@ function parseDateToKey(value: string): string | null {
  * dividido pela quantidade de despachos = média em %. Depois extrai pontuação.
  * Usa data_referencia ou extrai data do raw (data, data_planejado, data_execucao) para filtrar por período.
  */
+/**
+ * IPT = média dos percentuais de execução das linhas com status "Encerrado".
+ * Processo manual: filtrar Encerrado, coluna % (=F*100 se decimal), média de todos os valores.
+ * A coluna de origem pode vir em decimal (0,5944) ou percentual (59,44) — normalizamos para 0-100.
+ */
 async function getAutoIPTFromReport(client: any, inicio: string, fim: string): Promise<number | null> {
   const rows = await client.query(
     `SELECT raw, data_referencia, updated_at
@@ -97,8 +103,10 @@ async function getAutoIPTFromReport(client: any, inicio: string, fim: string): P
     if (!status.includes("encerrado")) continue;
     const plano = normalizarSetor(String(raw.plano ?? "").trim());
     if (!plano) continue;
-    const percentual = toExecPercent(String(raw.de_execucao ?? raw.percentual_execucao ?? "").trim());
+    let percentual = toExecPercent(String(raw.de_execucao ?? raw.percentual_execucao ?? "").trim());
     if (percentual == null) continue;
+    /** Planilha SELIMP pode ter decimal (0,5944); Excel manual usa =F*100. Normalizar. */
+    if (percentual > 0 && percentual <= 1) percentual *= 100;
 
     let dateKey: string | null = null;
     const dataRef = row.data_referencia;
@@ -387,8 +395,10 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.code(400).send({ detail: "periodo_inicial e periodo_final obrigatórios (YYYY-MM-DD)" });
     }
 
-    const client = await pool.connect();
-    try {
+    const key = cacheKey("kpis", { periodo_inicial: inicio, periodo_final: fim });
+    const payload = await getOrSet(key, async () => {
+      const client = await pool.connect();
+      try {
       // IA: Base = Data_Registro, Finalizado_fora_de_escopo = NÃO, Classificação = Solicitação.
       // Fora do prazo = Responsividade_Execução = NÃO; No prazo = SIM.
       const iaTotal = await client.query(
@@ -493,9 +503,11 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         sacs_hoje: Number(sacsHoje.rows[0]?.total ?? 0),
         cncs_urgentes: 0,
       };
-    } finally {
-      client.release();
-    }
+      } finally {
+        client.release();
+      }
+    });
+    return payload;
   });
 
   /** Calcular ADC completo (IRD + IA + IF + IPT opcional) */
@@ -879,8 +891,15 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
       escopo = "dia_anterior";
     }
 
-    const client = await pool.connect();
-    try {
+    const key = cacheKey("ipt_preview", {
+      periodo_inicial: inicio,
+      periodo_final: fim,
+      mostrar_todos: mostrar_todos ?? "",
+      subprefeitura: subFilter ?? "",
+    });
+    const payload = await getOrSet(key, async () => {
+      const client = await pool.connect();
+      try {
       const [reportRows, nossoRows, cronogramaRows] = await Promise.all([
         client.query(
           `SELECT raw, data_referencia, updated_at
@@ -923,7 +942,9 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
           String(raw.data_planejado ?? "").trim() ||
           String(raw.data_execucao ?? "").trim() ||
           String(raw.data_criacao ?? "").trim() ||
-          String(raw.data_liberacao ?? "").trim();
+          String(raw.data_liberacao ?? "").trim() ||
+          String(raw.data_inicio ?? "").trim() ||
+          String(raw.data_final ?? "").trim();
         if (!d) return null;
         const parsed = new Date(d);
         if (!Number.isNaN(parsed.getTime())) return toDateKey(parsed);
@@ -1174,7 +1195,10 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
 
           let mostrar = true;
           if (escopo === "dia_anterior") {
-            mostrar = isExpectedOnDate(item.plano, scopeStart as string);
+            // Mostrar planos esperados no dia E planos com despacho (SELIMP ou DDMX) no período
+            const temDespachoNoPeriodo = despachosSelimp > 0 || despachosNosso > 0;
+            const esperadoNoDia = isExpectedOnDate(item.plano, scopeStart as string);
+            mostrar = esperadoNoDia || temDespachoNoPeriodo;
           } else if (escopo === "periodo") {
             const hasDispatch = despachosSelimp > 0 || despachosNosso > 0;
             const hasExpected = (() => {
@@ -1356,6 +1380,45 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         },
         itens: rowsFiltered,
       };
+      } finally {
+        client.release();
+      }
+    });
+    return payload;
+  });
+
+  /** Diagnóstico: contagens e amostra de ipt_imports para debugar DDMX/SELIMP */
+  fastify.get("/dashboard/ipt-diagnostico", async (_request, reply) => {
+    const client = await pool.connect();
+    try {
+      const counts = await client.query(
+        `SELECT file_type, COUNT(*)::int AS total, MAX(updated_at) AS ultimo
+         FROM ipt_imports
+         GROUP BY file_type
+         ORDER BY file_type`
+      );
+      const ddmxAmostra = await client.query(
+        `SELECT id, file_type, setor, data_referencia,
+          raw->>'rota' AS rota, raw->>'plano' AS plano, raw->>'percentual_execucao' AS pct,
+          raw->>'data_planejado' AS data_planejado, updated_at
+         FROM ipt_imports
+         WHERE file_type IN ('ipt_historico_os', 'ipt_historico_os_varricao', 'ipt_historico_os_compactadores')
+         ORDER BY updated_at DESC
+         LIMIT 15`
+      );
+      const selimpAmostra = await client.query(
+        `SELECT id, file_type, setor, data_referencia,
+          raw->>'plano' AS plano, raw->>'de_execucao' AS pct, raw->>'status' AS status, updated_at
+         FROM ipt_imports
+         WHERE file_type = 'ipt_report_selimp'
+         ORDER BY updated_at DESC
+         LIMIT 15`
+      );
+      return {
+        contagem_por_tipo: counts.rows,
+        ddmx_amostra: ddmxAmostra.rows,
+        selimp_amostra: selimpAmostra.rows,
+      };
     } finally {
       client.release();
     }
@@ -1382,6 +1445,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
          DO UPDATE SET percentual_total = EXCLUDED.percentual_total, updated_at = NOW()`,
         [inicio, fim, percentual]
       );
+      invalidatePrefix("kpis");
       const ipt = pontuacaoIPT(percentual);
       return {
         ok: true,

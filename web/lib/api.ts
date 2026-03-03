@@ -337,6 +337,12 @@ export const apiService = {
     const { data } = await api.get('/dashboard/ipt-preview', { params });
     return data;
   },
+
+  /** Diagnóstico: contagens e amostra de ipt_imports (DDMX/SELIMP) para debug */
+  getIptDiagnostico: async () => {
+    const { data } = await api.get('/dashboard/ipt-diagnostico');
+    return data;
+  },
   
   calcularADC: async (periodoInicial: string, periodoFinal: string, valorIPT?: number) => {
     const { data } = await api.post('/indicadores/calcular/adc', null, {
