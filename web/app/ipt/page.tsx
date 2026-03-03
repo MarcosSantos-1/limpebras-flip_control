@@ -654,7 +654,7 @@ export default function IPTPage() {
               <DialogHeader className="pb-6">
                 <DialogTitle className="text-2xl flex items-center gap-2">
                   <span className="inline-block w-3 h-3 rounded-full bg-indigo-500" />
-                  Cruzamento Inteligente
+                  Cruzamento Inteligente 36769408
                 </DialogTitle>
                 <DialogDescription className="text-base">
                   Guia para implementação — lembrete de especificação

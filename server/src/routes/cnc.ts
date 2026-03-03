@@ -2,6 +2,7 @@ import { FastifyPluginAsync } from "fastify";
 import { pool } from "../db.js";
 import { cacheKey, getOrSet } from "../cache.js";
 import { BFS_DEFESA_EXCLUSAO_SQL } from "../constants/bfs.js";
+import { findSetorByCoords, parseCoordenada } from "../services/setorLookup.js";
 
 export const cncRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get<{
@@ -168,7 +169,27 @@ export const cncRoutes: FastifyPluginAsync = async (fastify) => {
             cncs: cncEntry ? [cncEntry] : [],
           });
         }
-        const rows = Array.from(byBfs.values()).map(({ item, cncs }) => ({ ...item, cnc_detalhes: cncs }));
+        const rows = Array.from(byBfs.values()).map(({ item, cncs }) => {
+          const primaryCnc = cncs[0] as { coordenada?: string } | undefined;
+          const coord = primaryCnc?.coordenada;
+          const parsed = parseCoordenada(coord);
+          let setorResolvido: { setor: string; frequencia: string; cronograma: string } | null = null;
+          if (parsed) {
+            setorResolvido = findSetorByCoords(
+              parsed.lat,
+              parsed.lng,
+              item.tipo_servico as string,
+              item.subprefeitura as string
+            );
+          }
+          return {
+            ...item,
+            cnc_detalhes: cncs,
+            setor_resolvido: setorResolvido?.setor ?? null,
+            frequencia_resolvida: setorResolvido?.frequencia ?? null,
+            cronograma_resolvido: setorResolvido?.cronograma ?? null,
+          };
+        });
         return { items: rows, total: rows.length };
       });
       return result;

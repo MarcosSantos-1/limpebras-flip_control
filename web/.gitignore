@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# dados geográficos pesados (usar setor-index no server/data)
+/lib/data.json

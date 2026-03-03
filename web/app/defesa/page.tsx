@@ -32,6 +32,9 @@ interface BFSDefesa {
   bfs: string;
   subprefeitura: string;
   setor?: string;
+  setor_resolvido?: string | null;
+  frequencia_resolvida?: string | null;
+  cronograma_resolvido?: string | null;
   status: string;
   data_abertura: string;
   endereco?: string;
@@ -140,7 +143,7 @@ export default function DefesaPage() {
 
   const primaryCnc = (bfs: BFSDefesa) => bfs.cnc_detalhes?.[0];
 
-  return (
+  return ( 
     <MainLayout>
       <div className="space-y-8">
         <div className="relative overflow-hidden rounded-xl bg-linear-to-r from-violet-600/10 via-violet-600/5 to-transparent p-8 border border-violet-200/50 dark:border-violet-800/50">
@@ -325,7 +328,7 @@ export default function DefesaPage() {
                               </button>
                             </td>
                             <td className="px-6 py-4 font-medium font-mono text-primary">{bfs.bfs}</td>
-                            <td className="px-6 py-4 text-muted-foreground">{cnc?.setor || bfs.setor || "—"}</td>
+                            <td className="px-6 py-4 font-medium">{bfs.setor_resolvido || cnc?.setor || bfs.setor || "—"}</td>
                             <td className="px-6 py-4">
                               {cnc?.situacao_cnc ? (
                                 <span
@@ -368,6 +371,13 @@ export default function DefesaPage() {
                                   <div><strong>Data Registro:</strong> {bfs.data_abertura ? format(new Date(bfs.data_abertura), "dd/MM/yyyy HH:mm") : "—"}</div>
                                   <div><strong>Data vistoria:</strong> {bfs.data_vistoria ? format(new Date(bfs.data_vistoria), "dd/MM/yyyy HH:mm") : "—"}</div>
                                   <div><strong>Subprefeitura:</strong> {bfs.subprefeitura || "—"}</div>
+                                  <div><strong>Setor:</strong> {bfs.setor_resolvido || cnc?.setor || bfs.setor || "—"}</div>
+                                  {(bfs.frequencia_resolvida || bfs.cronograma_resolvido) && (
+                                    <>
+                                      <div><strong>Frequência:</strong> {bfs.frequencia_resolvida || "—"}</div>
+                                      <div className="md:col-span-2"><strong>Cronograma:</strong> {bfs.cronograma_resolvido || "—"}</div>
+                                    </>
+                                  )}
                                   <div className="md:col-span-3"><strong>Endereço:</strong> {bfs.endereco || "—"}</div>
                                   {(bfs.cnc_detalhes?.length ?? 0) > 0 && (
                                     <div className="md:col-span-3 space-y-2">
@@ -424,6 +434,22 @@ export default function DefesaPage() {
                     <label className="text-sm font-medium text-muted-foreground">Subprefeitura</label>
                     <p className="text-sm">{selectedBFS.subprefeitura || "—"}</p>
                   </div>
+                  <div>
+                    <label className="text-sm font-medium text-muted-foreground">Setor (por coordenada)</label>
+                    <p className="text-sm font-mono">{selectedBFS.setor_resolvido || selectedBFS.cnc_detalhes?.[0]?.setor || selectedBFS.setor || "—"}</p>
+                  </div>
+                  {selectedBFS.frequencia_resolvida && (
+                    <div>
+                      <label className="text-sm font-medium text-muted-foreground">Frequência</label>
+                      <p className="text-sm">{selectedBFS.frequencia_resolvida}</p>
+                    </div>
+                  )}
+                  {selectedBFS.cronograma_resolvido && (
+                    <div className="col-span-2">
+                      <label className="text-sm font-medium text-muted-foreground">Cronograma (do setor)</label>
+                      <p className="text-sm">{selectedBFS.cronograma_resolvido}</p>
+                    </div>
+                  )}
                   <div>
                     <label className="text-sm font-medium text-muted-foreground">Data Registro</label>
                     <p className="text-sm">
