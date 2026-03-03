@@ -1,12 +1,12 @@
 import { FastifyPluginAsync, FastifyRequest } from "fastify";
 import { pool } from "../db.js";
 import { invalidatePrefix } from "../cache.js";
-import { parseSacCsv, parseBfsCsv, parseOuvidoriaCsv, parseAcicCsv } from "../services/parseCsv.js";
+import { parseSacCsv, parseBfsCsv, parseOuvidoriaCsv, parseAcicCsv, parseCncDetalhesCsv } from "../services/parseCsv.js";
 import { parseIptWorkbook, type IptFileType } from "../services/parseIptXlsx.js";
 import { parseCronogramaWorkbook } from "../services/parseCronogramaIpt.js";
 
 export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
-  const getLastUpdate = async (table: "sacs" | "bfs" | "acic" | "ouvidoria") => {
+  const getLastUpdate = async (table: "sacs" | "bfs" | "acic" | "ouvidoria" | "cncs") => {
     const last = await pool.query(
       `SELECT source_file, updated_at FROM ${table} ORDER BY updated_at DESC NULLS LAST, id DESC LIMIT 1`
     );
@@ -268,6 +268,85 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
+  /** Importa FLIP_CONSULTA_CNC - detalhes das CNCs (data execução, situacao, fiscal contratada, etc). Cruza com BFS via numero_bfs. */
+  fastify.post("/upload/cnc-detalhes-csv", async (request, reply) => {
+    const data = await request.file();
+    if (!data) return reply.code(400).send({ detail: "Arquivo CSV obrigatório (FLIP_CONSULTA_CNC)" });
+    let buffer: Buffer;
+    try {
+      buffer = await data.toBuffer();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return reply.code(500).send({ detail: `Erro ao ler arquivo: ${msg}` });
+    }
+    const sourceFile = data.filename;
+    let rows;
+    try {
+      rows = parseCncDetalhesCsv(buffer, sourceFile);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return reply.code(400).send({ detail: `Erro ao interpretar CSV (formato FLIP_CONSULTA_CNC esperado): ${msg}` });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("TRUNCATE TABLE cncs RESTART IDENTITY");
+      let inserted = 0;
+      for (const r of rows) {
+        if (!r.numero_bfs?.trim()) continue;
+        const raw = (r.raw && typeof r.raw === "object") ? { ...r.raw } : {};
+        const dataSync = r.data_sincronizacao instanceof Date ? r.data_sincronizacao : null;
+        const dataFisc = r.data_fiscalizacao instanceof Date ? r.data_fiscalizacao : null;
+        const dataExec = r.data_execucao instanceof Date ? r.data_execucao : null;
+        await client.query(
+          `INSERT INTO cncs (
+            numero_bfs, numero_cnc, situacao_cnc, data_sincronizacao, data_fiscalizacao, data_execucao,
+            fiscal, regional, area, setor, turno, servico, responsividade, endereco, coordenada,
+            fiscal_contratada, raw, source_file, updated_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18, NOW())`,
+          [
+            r.numero_bfs || null,
+            r.numero_cnc || null,
+            r.situacao_cnc || null,
+            dataSync,
+            dataFisc,
+            dataExec,
+            r.fiscal || null,
+            r.regional || null,
+            r.area || null,
+            r.setor || null,
+            r.turno || null,
+            r.servico || null,
+            r.responsividade || null,
+            r.endereco || null,
+            r.coordenada || null,
+            r.fiscal_contratada || null,
+            JSON.stringify(raw),
+            sourceFile,
+          ]
+        );
+        inserted += 1;
+      }
+      invalidatePrefix("cnc");
+      invalidatePrefix("cnc_defesa");
+      return {
+        processados: inserted,
+        total: rows.length,
+        inseridos: inserted,
+        atualizados: 0,
+        duplicados: 0,
+        erros: 0,
+        ultimo_import: new Date().toISOString(),
+      };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      fastify.log.error(err);
+      return reply.code(500).send({ detail: `Erro ao importar CNC: ${msg}` });
+    } finally {
+      client.release();
+    }
+  });
+
   fastify.post("/upload/ouvidoria-csv", async (request, reply) => {
     const data = await request.file();
     if (!data) return reply.code(400).send({ detail: "Arquivo CSV obrigatório" });
@@ -431,13 +510,22 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
+  const getLastCncsUpdate = async () => {
+    try {
+      return await getLastUpdate("cncs");
+    } catch {
+      return { ultimo_import: null, source_file: null, total_registros: 0 };
+    }
+  };
+
   fastify.get("/upload/last-updates", async () => {
-    const [sacs, cnc, acic, ouvidoria, iptHistoricoOs, iptHistoricoOsVarricao, iptHistoricoOsCompactadores, iptReport, iptStatusBateria, iptCronograma] =
+    const [sacs, cnc, acic, ouvidoria, cncsDetalhes, iptHistoricoOs, iptHistoricoOsVarricao, iptHistoricoOsCompactadores, iptReport, iptStatusBateria, iptCronograma] =
       await Promise.all([
       getLastUpdate("sacs"),
       getLastUpdate("bfs"),
       getLastUpdate("acic"),
       getLastUpdate("ouvidoria"),
+      getLastCncsUpdate(),
       getLastIptUpdate("ipt_historico_os"),
       getLastIptUpdate("ipt_historico_os_varricao"),
       getLastIptUpdate("ipt_historico_os_compactadores"),
@@ -450,6 +538,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       cnc,
       acic,
       ouvidoria,
+      cncsDetalhes,
       iptHistoricoOs,
       iptHistoricoOsVarricao,
       iptHistoricoOsCompactadores,

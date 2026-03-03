@@ -146,6 +146,73 @@ export function filterBfsNaoDemandantes(rows: BfsRow[]): BfsRow[] {
   return rows.filter((r) => isBfsNaoDemandante(r.tipo_servico));
 }
 
+/**
+ * Parser para FLIP_CONSULTA_CNC (CSV de CNCs com detalhes).
+ * Colunas: N_BFS;N_CNC;Situacao_CNC;Data_Sincronizacao;Data_Fiscalizacao;Data_Execução;Fiscal;Regional;Area;Setor;Turno;Servico;Responsividade;Endereco;Coordenada;Fiscal_Contratada
+ */
+export interface CncDetalhesRow {
+  numero_bfs: string;
+  numero_cnc: string;
+  situacao_cnc: string;
+  data_sincronizacao: Date | null;
+  data_fiscalizacao: Date | null;
+  data_execucao: Date | null;
+  fiscal: string;
+  regional: string;
+  area: string;
+  setor: string;
+  turno: string;
+  servico: string;
+  responsividade: string;
+  endereco: string;
+  coordenada: string;
+  fiscal_contratada: string;
+  raw: Record<string, string>;
+}
+
+function parseDelimitedRecordsCnc(buffer: Buffer): Record<string, string>[] {
+  const utf8 = buffer.toString("utf-8").replace(/^\uFEFF/, "");
+  const latin1 = buffer.toString("latin1").replace(/^\uFEFF/, "");
+  const firstLineUtf8 = utf8.split("\n")[0] ?? "";
+  const utf8Headers = firstLineUtf8.split(SEP).map(canonicalKey);
+  const text = utf8Headers.includes("n_bfs") || utf8Headers.includes("n_cnc") ? utf8 : latin1;
+  return parse(text, {
+    delimiter: SEP,
+    columns: (headers: string[]) => headers.map((h: string) => normalizeHeader(h)),
+    relax_column_count: true,
+    skip_empty_lines: true,
+    trim: true,
+  }) as Record<string, string>[];
+}
+
+export function parseCncDetalhesCsv(buffer: Buffer, _sourceFile: string): CncDetalhesRow[] {
+  const records = parseDelimitedRecordsCnc(buffer);
+  return records.map((row) => {
+    const dataSyncStr = getCanonical(row, ["data_sincronizacao"]);
+    const dataFiscStr = getCanonical(row, ["data_fiscalizacao"]);
+    const dataExecStr = getCanonical(row, ["data_execucao"]);
+    return {
+      numero_bfs: getCanonical(row, ["n_bfs", "numero_bfs"]),
+      numero_cnc: getCanonical(row, ["n_cnc", "numero_cnc"]),
+      situacao_cnc: getCanonical(row, ["situacao_cnc"]),
+      data_sincronizacao: parseFlipDate(dataSyncStr),
+      data_fiscalizacao: parseFlipDate(dataFiscStr),
+      data_execucao: parseFlipDate(dataExecStr),
+      fiscal: getCanonical(row, ["fiscal"]),
+      regional: getCanonical(row, ["regional"]),
+      area: getCanonical(row, ["area"]),
+      setor: getCanonical(row, ["setor"]),
+      turno: getCanonical(row, ["turno"]),
+      servico: getCanonical(row, ["servico"]),
+      responsividade: getCanonical(row, ["responsividade"]),
+      endereco: getCanonical(row, ["endereco"]),
+      coordenada: getCanonical(row, ["coordenada"]),
+      fiscal_contratada: getCanonical(row, ["fiscal_contratada"]),
+      raw: { ...row },
+    } as CncDetalhesRow;
+  });
+}
+
 export function parseOuvidoriaCsv(buffer: Buffer): Record<string, string>[] {
   return parseDelimitedRecords(buffer);
 }

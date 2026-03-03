@@ -24,6 +24,12 @@ const cardColors = {
     text: "text-orange-600 dark:text-orange-400",
     gradient: "from-orange-500 to-amber-500",
   },
+  cncsDetalhes: {
+    border: "border-amber-500",
+    bg: "bg-amber-50 dark:bg-amber-900/20",
+    text: "text-amber-600 dark:text-amber-400",
+    gradient: "from-amber-500 to-orange-500",
+  },
   acic: {
     border: "border-red-500",
     bg: "bg-red-50 dark:bg-red-900/20",
@@ -78,6 +84,7 @@ export default function UploadPage() {
   const [uploadStates, setUploadStates] = useState<Record<string, UploadState>>({
     sacs: { status: "idle" },
     cnc: { status: "idle" },
+    cncsDetalhes: { status: "idle" },
     acic: { status: "idle" },
     ouvidoria: { status: "idle" },
     iptHistoricoOs: { status: "idle" },
@@ -119,6 +126,9 @@ export default function UploadPage() {
           break;
         case "cnc":
           data = await apiService.uploadCNCsCSV(file);
+          break;
+        case "cncsDetalhes":
+          data = await apiService.uploadCncDetalhesCSV(file);
           break;
         case "acic":
           data = await apiService.uploadACICsCSV(file);
@@ -462,6 +472,11 @@ export default function UploadPage() {
             title="BFS"
             type="cnc"
             description="Upload do arquivo FLIP_CONSULTA_BFS_*.csv"
+          />
+          <UploadCard
+            title="CNC (Detalhes)"
+            type="cncsDetalhes"
+            description="Upload do arquivo FLIP_CONSULTA_CNC_*.csv - cruza com BFS para relatórios de Defesa/Contestação"
           />
           <UploadCard
             title="ACICs"

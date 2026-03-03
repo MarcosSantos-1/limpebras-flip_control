@@ -26,6 +26,17 @@ export const BFS_IF_EXCLUSAO_SQL: string[] = [
   "%Remoção de animais mortos de proprietários não identificados em vias e logradouros públicos%",
 ];
 
+/**
+ * Serviços excluídos da página Defesa/Contestação (BFS escalonados).
+ * BFS escalonados = Não Demandantes COM irregularidade, exceto estes 4.
+ */
+export const BFS_DEFESA_EXCLUSAO_SQL: string[] = [
+  "%Coleta e transporte de entulho e grandes objetos depositados irregularmente%",
+  "%Remoção de animais mortos de proprietários não identificados em vias e logradouros públicos%",
+  "%Fornecimento, instalação e reposição de papeleiras e outros equipamentos de recepção de resíduos%",
+  "%Equipe para Conscientização e Revitalização de Pontos Viciados%",
+];
+
 export function isBfsNaoDemandante(tipoServico: string | undefined): boolean {
   if (!tipoServico || !tipoServico.trim()) return false;
   const normalized = tipoServico.trim();

@@ -59,6 +59,34 @@ export async function runMigrations() {
     await client.query("CREATE INDEX IF NOT EXISTS idx_bfs_tipo_servico ON bfs(tipo_servico)").catch(() => {});
 
     await client.query(`
+      CREATE TABLE IF NOT EXISTS cncs (
+        id SERIAL PRIMARY KEY,
+        numero_bfs TEXT NOT NULL,
+        numero_cnc TEXT,
+        situacao_cnc TEXT,
+        data_sincronizacao TIMESTAMPTZ,
+        data_fiscalizacao TIMESTAMPTZ,
+        data_execucao TIMESTAMPTZ,
+        fiscal TEXT,
+        regional TEXT,
+        area TEXT,
+        setor TEXT,
+        turno TEXT,
+        servico TEXT,
+        responsividade TEXT,
+        endereco TEXT,
+        coordenada TEXT,
+        fiscal_contratada TEXT,
+        raw JSONB,
+        source_file TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client.query("CREATE INDEX IF NOT EXISTS idx_cncs_numero_bfs ON cncs(numero_bfs)").catch(() => {});
+    await client.query("DROP INDEX IF EXISTS ux_cncs_numero_bfs").catch(() => {});
+
+    await client.query(`
       CREATE TABLE IF NOT EXISTS ouvidoria (
         id SERIAL PRIMARY KEY,
         raw JSONB,

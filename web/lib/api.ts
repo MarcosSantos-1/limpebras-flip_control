@@ -181,6 +181,12 @@ export const apiService = {
     const { data } = await api.get('/cnc', { params });
     return data;
   },
+
+  /** BFSs escalonados para Defesa/Contestação (Com irregularidade, exclui 4 serviços, cruza com CNCs) */
+  getCNCsDefesa: async (params?: any) => {
+    const { data } = await api.get('/cnc/defesa', { params });
+    return data;
+  },
   
   // ACICs
   getACICs: async (params?: any) => {
@@ -207,6 +213,16 @@ export const apiService = {
     const formData = new FormData();
     formData.append('file', file);
     const { data } = await api.post('/upload/cnc-csv', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return data;
+  },
+
+  /** FLIP_CONSULTA_CNC - detalhes das CNCs (data execução, situacao_CNC, fiscal_contratada). Cruza com BFS via numero_bfs. */
+  uploadCncDetalhesCSV: async (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const { data } = await api.post('/upload/cnc-detalhes-csv', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
     return data;

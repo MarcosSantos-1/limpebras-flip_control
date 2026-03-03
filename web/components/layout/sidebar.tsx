@@ -11,6 +11,7 @@ import {
   FileWarning,
   ChartPie,
   Activity,
+  ShieldCheck,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { ThemeToggle } from "@/components/theme-toggle"
@@ -21,6 +22,7 @@ const navItems = [
   { href: "/ipt", label: "IPT", icon: Activity },
   { href: "/sacs", label: "SACs", icon: FileText },
   { href: "/bfs", label: "BFSs", icon: AlertTriangle },
+  { href: "/defesa", label: "Defesa / Contestação", icon: ShieldCheck },
   { href: "/acic", label: "ACICs", icon: FileWarning },
   { href: "/upload", label: "Upload", icon: Upload },
 ]
