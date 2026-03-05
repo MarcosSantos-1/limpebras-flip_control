@@ -5,6 +5,7 @@ import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { apiService } from "@/lib/api";
+import { uploadFotosToStorage, deleteFotosFromStorage } from "@/lib/firebase-defesa-fotos";
 import { format, startOfMonth, endOfMonth } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
@@ -309,6 +310,7 @@ export default function DefesaPage() {
   const [confirmExcluirFotosOpen, setConfirmExcluirFotosOpen] = useState(false);
   const [pendingStatusChange, setPendingStatusChange] = useState<StatusDefesa | null>(null);
   const [pendingBfsId, setPendingBfsId] = useState<string | null>(null);
+  const [contestarSalvando, setContestarSalvando] = useState(false);
 
   const parseDateInputLocal = (value?: string) => {
     if (!value) return null;
@@ -423,9 +425,14 @@ export default function DefesaPage() {
     setStatusDefesa(bfsId, newStatus);
   }, [getStatusDefesa, getFotosForBfs]);
 
-  const confirmStatusChangeAndDeleteFotos = useCallback(() => {
+  const confirmStatusChangeAndDeleteFotos = useCallback(async () => {
     const bfsId = pendingBfsId ?? selectedBFS?.id;
     if (!bfsId || !pendingStatusChange) return;
+    try {
+      await deleteFotosFromStorage(bfsId);
+    } catch (e) {
+      console.warn("Erro ao excluir fotos do Firebase:", e);
+    }
     removeFotosStorage(bfsId);
     setStatusDefesa(bfsId, pendingStatusChange);
     setPendingStatusChange(null);
@@ -433,14 +440,22 @@ export default function DefesaPage() {
     setConfirmExcluirFotosOpen(false);
   }, [selectedBFS, pendingBfsId, pendingStatusChange, setStatusDefesa]);
 
-  const handleContestarSalvar = useCallback(() => {
+  const handleContestarSalvar = useCallback(async () => {
     const bfsId = contestarBfsId ?? selectedBFS?.id;
     if (!bfsId) return;
-    setFotosStorage(bfsId, fotosContestarDraft);
-    setStatusDefesa(bfsId, "Contestar");
-    setModalContestarOpen(false);
-    setContestarBfsId(null);
-    setFotosContestarDraft({ agente_sub: [], rastreamento: [], nosso_agente: [] });
+    setContestarSalvando(true);
+    try {
+      const fotosComUrls = await uploadFotosToStorage(bfsId, fotosContestarDraft);
+      setFotosStorage(bfsId, fotosComUrls);
+      setStatusDefesa(bfsId, "Contestar");
+      setModalContestarOpen(false);
+      setContestarBfsId(null);
+      setFotosContestarDraft({ agente_sub: [], rastreamento: [], nosso_agente: [] });
+    } catch (err) {
+      console.error("Erro ao enviar fotos para o Firebase:", err);
+    } finally {
+      setContestarSalvando(false);
+    }
   }, [selectedBFS, contestarBfsId, fotosContestarDraft, setStatusDefesa]);
 
   const loadBFSs = async () => {
@@ -1076,11 +1091,12 @@ export default function DefesaPage() {
               </button>
               <button
                 type="button"
-                onClick={handleContestarSalvar}
-                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white transition-colors"
+                onClick={() => handleContestarSalvar()}
+                disabled={contestarSalvando}
+                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white transition-colors disabled:opacity-70 disabled:cursor-not-allowed"
               >
-                <FileCheck className="h-4 w-4" />
-                Salvar contestação
+                {contestarSalvando ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCheck className="h-4 w-4" />}
+                {contestarSalvando ? "Enviando fotos..." : "Salvar contestação"}
               </button>
             </div>
           </DialogContent>
