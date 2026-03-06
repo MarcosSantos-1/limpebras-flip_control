@@ -18,6 +18,7 @@ import {
   getFrequenciaDescricao,
   parseSetor,
   getSubFromPlano,
+  getTipoServicoFromPlano,
 } from "../constants/ipt.js";
 import { config } from "../config.js";
 
@@ -210,13 +211,17 @@ const parseDias = (value: string): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
-const CRONOGRAMA_SERVICOS = new Set(["BL", "MT", "NH", "LM", "GO"]);
+const CRONOGRAMA_SERVICOS = new Set(["BL", "MT", "NH", "LM", "GO", "LE"]);
 
 const toDateKey = (value: Date | string | null | undefined): string | null => {
   if (!value) return null;
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10);
   const d = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(d.getTime())) return null;
-  return d.toISOString().slice(0, 10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 };
 
 const parseDateKeyLocal = (dateKey: string): Date => new Date(`${dateKey}T00:00:00`);
@@ -304,6 +309,18 @@ const findNextExpectedByFrequency = (frequencia: string, referenceDateKey: strin
   return null;
 };
 
+/** Anterior estrito: exclui a data de referência (evita duplicatas em frequência diária). */
+const findPreviousExpectedByFrequencyStrict = (frequencia: string, referenceDateKey: string): string | null => {
+  for (let i = 1; i <= 120; i += 1) {
+    const d = parseDateKeyLocal(referenceDateKey);
+    d.setDate(d.getDate() - i);
+    const key = toDateKey(d);
+    if (!key) continue;
+    if (isFrequencyDate(frequencia, key)) return key;
+  }
+  return null;
+};
+
 const pickNearestDate = (referenceDateKey: string, dates: string[], maxDistanceDays: number): string | null => {
   let best: { date: string; diff: number } | null = null;
   for (const date of dates) {
@@ -320,6 +337,10 @@ const normalizeServiceName = (service: string, plano: string): string => {
   const compact = normalized.replace(/[^a-z]/g, "");
   const planoCode = String(plano ?? "").toUpperCase();
 
+  // Prioridade: codinome do setor (MT, BL, NH, etc.) — nunca "Não informado"
+  const fromPlano = getTipoServicoFromPlano(plano);
+  if (fromPlano) return fromPlano;
+
   if (
     compact.includes("varricaodepraca") ||
     compact.includes("equipeparavarricaodepracas") ||
@@ -334,6 +355,14 @@ const normalizeServiceName = (service: string, plano: string): string => {
     (compact.includes("zeladoria") && compact.includes("vias"))
   ) {
     return "Equipe de mutirão de zeladoria de vias e logradouros públicos";
+  }
+
+  if (
+    compact.includes("asseio") ||
+    (compact.includes("populacao") && compact.includes("rua")) ||
+    (compact.includes("comercio") && compact.includes("desordenado"))
+  ) {
+    return "Equipe de asseio a locais com população em situação de rua e comércio desordenado";
   }
 
   if (
@@ -368,7 +397,7 @@ const normalizeServiceName = (service: string, plano: string): string => {
     return "Coleta manual de resíduos de varrição com compactador";
   }
 
-  return raw;
+  return getTipoServicoFromPlano(plano) || raw || "";
 };
 
 const isModuleInactive = (statusBateria: string, statusComunicacao: string, diasSemComunicacao: number | null): boolean => {
@@ -900,7 +929,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
     const payload = await getOrSet(key, async () => {
       const client = await pool.connect();
       try {
-      const [reportRows, nossoRows, cronogramaRows] = await Promise.all([
+      const [reportRows, nossoRows, cronogramaRows, bateriaRows] = await Promise.all([
         client.query(
           `SELECT raw, data_referencia, updated_at
            FROM ipt_imports
@@ -916,6 +945,12 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         client.query(
           `SELECT servico, setor, data_esperada
            FROM ipt_cronograma`
+        ),
+        client.query(
+          `SELECT raw, updated_at
+           FROM ipt_imports
+           WHERE file_type = 'ipt_status_bateria'
+           ORDER BY updated_at DESC`
         ),
       ]);
 
@@ -968,6 +1003,53 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
       }
       for (const [plano, dates] of nossoDatesByPlano.entries()) {
         nossoDatesByPlano.set(plano, Array.from(new Set(dates)).sort((a, b) => a.localeCompare(b)));
+      }
+
+      /** Mapa codigo_normalizado -> { status_bateria, bateria, data_ultima_comunicacao, dias } da planilha Baterias (PORTATEIS/LUTOCAR) */
+      const bateriaMap = new Map<
+        string,
+        { status_bateria: string; bateria?: string; data_ultima_comunicacao?: string; dias?: string }
+      >();
+      const bateriaResumoModulos: Array<{
+        codigo: string;
+        status_bateria: string;
+        bateria?: string;
+        data_ultima_comunicacao?: string;
+        dias?: string;
+        nivel: "critico" | "alerta" | "ok" | "desconhecido";
+      }> = [];
+      for (const row of (bateriaRows.rows ?? []) as Array<{ raw: Record<string, string> }>) {
+        const raw = row.raw ?? {};
+        const codigoOriginal = String(raw.placa ?? raw.nome ?? "").trim();
+        const codigo = normalizeModuleCode(codigoOriginal);
+        if (!codigo) continue;
+        const statusBateria = String(raw.status_de_bateria ?? raw.status_bateria ?? raw.bateria ?? "").trim();
+        const bateriaPct = String(raw.bateria ?? raw.percentual ?? raw.percentual_bateria ?? "").trim();
+        const dataUltima = String(raw.data_de_ultima_comunicacao ?? raw.data_ultima_recarga ?? "").trim();
+        const dias = String(raw.dias ?? "").trim();
+        const info = {
+          status_bateria: statusBateria || "—",
+          bateria: bateriaPct || undefined,
+          data_ultima_comunicacao: dataUltima || undefined,
+          dias: dias || undefined,
+        };
+        bateriaMap.set(codigo, info);
+        const pctNum = parseFloat(bateriaPct.replace(",", ".").replace("%", ""));
+        let nivel: "critico" | "alerta" | "ok" | "desconhecido" = "desconhecido";
+        if (!Number.isNaN(pctNum)) {
+          if (pctNum < 20) nivel = "critico";
+          else if (pctNum < 60) nivel = "alerta";
+          else nivel = "ok";
+        } else if (/critico|baixo|descarregad/i.test(statusBateria)) nivel = "critico";
+        else if (/alerta|medio|aten/i.test(statusBateria)) nivel = "alerta";
+        bateriaResumoModulos.push({
+          codigo: codigoOriginal || codigo,
+          status_bateria: info.status_bateria,
+          bateria: info.bateria,
+          data_ultima_comunicacao: info.data_ultima_comunicacao,
+          dias: info.dias,
+          nivel,
+        });
       }
 
       const byPlano = new Map<
@@ -1088,11 +1170,14 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
 
       for (const setor of cronogramaBySetor.keys()) getOrCreatePlano(setor);
 
+      const getCronogramaDates = (plano: string): string[] =>
+        cronogramaBySetor.get(plano) ?? cronogramaBySetor.get(normalizarSetor(plano)) ?? [];
+
       const isExpectedOnDate = (plano: string, dateKey: string): boolean => {
         const parsed = parseSetor(plano);
         if (!parsed) return false;
         if (CRONOGRAMA_SERVICOS.has(parsed.servico)) {
-          const dates = cronogramaBySetor.get(plano) ?? [];
+          const dates = getCronogramaDates(plano);
           if (dates.length > 0) return dates.includes(dateKey);
         }
         return isFrequencyDate(parsed.frequencia, dateKey);
@@ -1102,40 +1187,53 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         const parsed = parseSetor(plano);
         if (!parsed) return null;
         if (CRONOGRAMA_SERVICOS.has(parsed.servico)) {
-          const dates = cronogramaBySetor.get(plano) ?? [];
+          const dates = getCronogramaDates(plano);
           const next = dates.find((d) => d > baseDateKey);
           if (next) return next;
         }
         return findNextExpectedByFrequency(parsed.frequencia, baseDateKey);
       };
 
-      /** Retorna ~5 datas do cronograma: 2 anteriores, referência, 2 posteriores */
+      /** Retorna 5 datas: 2 anteriores, atual (mais próxima/do dia), 2 posteriores. Evita duplicatas. */
       const getCronogramaPreview = (plano: string, referenciaKey: string): string[] => {
         const parsed = parseSetor(plano);
         if (!parsed) return [];
         const out: string[] = [];
         if (CRONOGRAMA_SERVICOS.has(parsed.servico)) {
-          const dates = cronogramaBySetor.get(plano) ?? [];
+          const dates = getCronogramaDates(plano);
           if (dates.length === 0) return [];
-          const idx = dates.findIndex((d) => d >= referenciaKey);
-          const centerIdx = idx >= 0 ? idx : dates.length - 1;
+          // Centro = data mais próxima de referenciaKey (passada ou futura) para ter 2 anteriores + atual + 2 futuras
+          let centerIdx = 0;
+          let bestDiff = diffInDaysAbs(dates[0], referenciaKey);
+          for (let i = 1; i < dates.length; i += 1) {
+            const diff = diffInDaysAbs(dates[i], referenciaKey);
+            if (diff < bestDiff) {
+              bestDiff = diff;
+              centerIdx = i;
+            }
+          }
           for (let i = -2; i <= 2; i += 1) {
             const j = centerIdx + i;
             if (j >= 0 && j < dates.length) out.push(dates[j]);
           }
           return out;
         }
-        let curr = referenciaKey;
+        const centerDate =
+          (isFrequencyDate(parsed.frequencia, referenciaKey) ? referenciaKey : null) ??
+          findNextExpectedByFrequency(parsed.frequencia, referenciaKey) ??
+          findPreviousExpectedByFrequency(parsed.frequencia, referenciaKey) ??
+          referenciaKey;
+        let curr = centerDate;
         const prevs: string[] = [];
         for (let i = 0; i < 2; i += 1) {
-          const p = findPreviousExpectedByFrequency(parsed.frequencia, curr);
+          const p = findPreviousExpectedByFrequencyStrict(parsed.frequencia, curr);
           if (!p) break;
           prevs.unshift(p);
           curr = p;
         }
         out.push(...prevs);
-        out.push(referenciaKey);
-        curr = referenciaKey;
+        if (isFrequencyDate(parsed.frequencia, centerDate)) out.push(centerDate);
+        curr = centerDate;
         for (let i = 0; i < 2; i += 1) {
           const n = findNextExpectedByFrequency(parsed.frequencia, curr);
           if (!n) break;
@@ -1195,11 +1293,12 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
 
           let mostrar = true;
           if (escopo === "dia_anterior") {
-            // Mostrar planos esperados no dia E planos com despacho (SELIMP ou DDMX) no período
+            // Mostrar APENAS: esperados no dia (cronograma) OU com despacho no período
             const temDespachoNoPeriodo = despachosSelimp > 0 || despachosNosso > 0;
             const esperadoNoDia = isExpectedOnDate(item.plano, scopeStart as string);
             mostrar = esperadoNoDia || temDespachoNoPeriodo;
           } else if (escopo === "periodo") {
+            // Mostrar APENAS: com despacho no período OU esperados em algum dia do período
             const hasDispatch = despachosSelimp > 0 || despachosNosso > 0;
             const hasExpected = (() => {
               for (let d = parseDateKeyLocal(scopeStart as string); toDateKey(d)! <= (scopeEnd as string); d.setDate(d.getDate() + 1)) {
@@ -1216,10 +1315,14 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
           const nextDate = nextProgramacao(item.plano, baseProxima);
           const refCronograma = nextDate ?? baseProxima;
           const cronogramaPreview = getCronogramaPreview(item.plano, refCronograma);
+          const tipoServicoFinal =
+            item.tipo_servico && !/n[aã]o\s*informado/i.test(item.tipo_servico)
+              ? item.tipo_servico
+              : getTipoServicoFromPlano(item.plano) || "—";
           return {
             plano: item.plano,
-            subprefeitura: item.subprefeitura || "Não informado",
-            tipo_servico: item.tipo_servico || "Não informado",
+            subprefeitura: item.subprefeitura || "—",
+            tipo_servico: tipoServicoFinal,
             servico_sigla: item.servico_sigla,
             turno: item.turno,
             frequencia_codigo: item.frequencia_codigo,
@@ -1231,6 +1334,14 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
             despachos_nosso: despachosNosso,
             origem,
             equipamentos: Array.from(item.equipamentos),
+            bateria_por_equipamento: Object.fromEntries(
+              Array.from(item.equipamentos)
+                .map((codigo) => {
+                  const info = bateriaMap.get(normalizeModuleCode(codigo));
+                  return info ? [codigo, info] : null;
+                })
+                .filter((x): x is [string, { status_bateria: string; bateria?: string }] => x != null)
+            ),
             proxima_programacao: nextDate,
             cronograma_preview: cronogramaPreview,
             data_estimativa_count: estimados,
@@ -1379,6 +1490,13 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
           itens: comparativoItens,
         },
         itens: rowsFiltered,
+        bateria_resumo: {
+          total: bateriaResumoModulos.length,
+          criticos: bateriaResumoModulos.filter((m) => m.nivel === "critico").length,
+          alerta: bateriaResumoModulos.filter((m) => m.nivel === "alerta").length,
+          ok: bateriaResumoModulos.filter((m) => m.nivel === "ok").length,
+          modulos: bateriaResumoModulos,
+        },
       };
       } finally {
         client.release();

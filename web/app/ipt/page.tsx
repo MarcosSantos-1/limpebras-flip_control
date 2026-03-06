@@ -261,6 +261,7 @@ export default function IPTPage() {
         percentual_nosso: number | null;
         origem: "ambos" | "somente_selimp" | "somente_nosso";
         equipamentos?: string[];
+        bateria_por_equipamento?: Record<string, { status_bateria: string; bateria?: string }>;
         frequencia?: string | null;
         proxima_programacao?: string | null;
         cronograma_preview?: string[];
@@ -598,7 +599,7 @@ export default function IPTPage() {
                   <Battery className="h-6 w-6 text-violet-600 dark:text-violet-400 group-hover:scale-110 transition-transform" />
                   <span className="text-base font-semibold text-violet-700 dark:text-violet-300">Análise de Bateria</span>
                 </div>
-                <p className="text-xs text-muted-foreground mt-2">Clique para abrir. Espaço para mais cards e informações do modal.</p>
+                <p className="text-xs text-muted-foreground mt-2">Clique para abrir. Status da bateria por setor nos detalhes expandidos.</p>
               </button>
               <button
                 type="button"
@@ -654,7 +655,7 @@ export default function IPTPage() {
               <DialogHeader className="pb-6">
                 <DialogTitle className="text-2xl flex items-center gap-2">
                   <span className="inline-block w-3 h-3 rounded-full bg-indigo-500" />
-                  Cruzamento Inteligente 36769408
+                  Cruzamento Inteligente
                 </DialogTitle>
                 <DialogDescription className="text-base">
                   Guia para implementação — lembrete de especificação
@@ -947,11 +948,12 @@ export default function IPTPage() {
                     onChange={(e) => {
                       const v = e.target.value;
                       if (!v) return;
-                      const d = new Date(v);
+                      const [y, m, day] = v.split("-").map(Number);
+                      const date = new Date(y, m - 1, day);
                       setTableScope("periodo");
                       setTablePeriodRange((prev) => ({
-                        inicio: d,
-                        fim: prev?.fim && prev.fim >= d ? prev.fim : d,
+                        inicio: date,
+                        fim: prev?.fim && prev.fim >= date ? prev.fim : date,
                       }));
                     }}
                     className="h-8 rounded-lg bg-background/90 px-2 text-sm font-medium ring-1 ring-emerald-500/50 focus:ring-2 focus:ring-emerald-500 outline-none"
@@ -970,11 +972,12 @@ export default function IPTPage() {
                     onChange={(e) => {
                       const v = e.target.value;
                       if (!v) return;
-                      const d = new Date(v);
+                      const [y, m, day] = v.split("-").map(Number);
+                      const date = new Date(y, m - 1, day);
                       setTableScope("periodo");
                       setTablePeriodRange((prev) => ({
-                        inicio: prev?.inicio && prev.inicio <= d ? prev.inicio : d,
-                        fim: d,
+                        inicio: prev?.inicio && prev.inicio <= date ? prev.inicio : date,
+                        fim: date,
                       }));
                     }}
                     className="h-8 rounded-lg bg-background/90 px-2 text-sm font-medium ring-1 ring-emerald-500/50 focus:ring-2 focus:ring-emerald-500 outline-none"
@@ -1375,14 +1378,35 @@ export default function IPTPage() {
                                       Equipamentos (Placa/Lutocar)
                                     </p>
                                     <div className="flex flex-wrap gap-1.5">
-                                      {row.equipamentos.map((eq) => (
-                                        <span
-                                          key={eq}
-                                          className="rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-2.5 py-1 font-mono text-xs font-medium text-cyan-800 dark:text-cyan-200"
-                                        >
-                                          {eq}
-                                        </span>
-                                      ))}
+                                      {row.equipamentos.map((eq) => {
+                                        const bat = row.bateria_por_equipamento?.[eq];
+                                        return (
+                                          <span
+                                            key={eq}
+                                            className="rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-2.5 py-1 font-mono text-xs font-medium text-cyan-800 dark:text-cyan-200 inline-flex items-center gap-1.5"
+                                            title={
+                                              bat
+                                                ? [
+                                                    `Bateria: ${bat.status_bateria}${bat.bateria ? ` (${bat.bateria})` : ""}`,
+                                                    (bat as { data_ultima_comunicacao?: string }).data_ultima_comunicacao &&
+                                                      `Última comunicação: ${(bat as { data_ultima_comunicacao: string }).data_ultima_comunicacao.replace(/^(\d{4})-(\d{2})-(\d{2}).*/, "$3/$2/$1")}`,
+                                                    (bat as { dias?: string }).dias && `Dias: ${(bat as { dias: string }).dias}`,
+                                                  ]
+                                                      .filter(Boolean)
+                                                      .join(" · ")
+                                                : undefined
+                                            }
+                                          >
+                                            {eq}
+                                            {bat && (
+                                              <span className="inline-flex items-center gap-0.5 text-[10px] opacity-90">
+                                                <Battery className="h-3 w-3" />
+                                                {bat.bateria || bat.status_bateria}
+                                              </span>
+                                            )}
+                                          </span>
+                                        );
+                                      })}
                                     </div>
                                   </div>
                                 )}
@@ -1410,6 +1434,36 @@ export default function IPTPage() {
                                         </div>
                                       </div>
                                     )}
+                                  </div>
+                                )}
+                                {(row.bateria_por_equipamento && Object.keys(row.bateria_por_equipamento).length > 0) && (
+                                  <div className="rounded-xl bg-violet-500/10 border border-violet-500/30 p-3 shadow-sm">
+                                    <p className="text-xs font-semibold text-violet-700 dark:text-violet-300 mb-2 flex items-center gap-1.5">
+                                      <Battery className="h-4 w-4" />
+                                      Status da bateria
+                                    </p>
+                                    <div className="space-y-1.5">
+                                      {Object.entries(row.bateria_por_equipamento).map(([codigo, info]) => (
+                                        <div
+                                          key={codigo}
+                                          className="flex justify-between items-center gap-2 text-xs py-1 px-2 rounded-lg bg-violet-500/10"
+                                          title={
+                                            (info as { data_ultima_comunicacao?: string }).data_ultima_comunicacao
+                                              ? `Última comunicação: ${(info as { data_ultima_comunicacao: string }).data_ultima_comunicacao.replace(/^(\d{4})-(\d{2})-(\d{2}).*/, "$3/$2/$1")}`
+                                              : undefined
+                                          }
+                                        >
+                                          <span className="font-mono font-medium text-violet-800 dark:text-violet-200">{codigo}</span>
+                                          <span className={`font-semibold ${
+                                            /critico|baixo|descarregad/i.test(info.status_bateria) ? "text-red-600 dark:text-red-400" :
+                                            /alerta|medio|aten/i.test(info.status_bateria) ? "text-amber-600 dark:text-amber-400" :
+                                            "text-emerald-600 dark:text-emerald-400"
+                                          }`}>
+                                            {info.bateria ?? info.status_bateria}
+                                          </span>
+                                        </div>
+                                      ))}
+                                    </div>
                                   </div>
                                 )}
                                 {row.proxima_programacao && (

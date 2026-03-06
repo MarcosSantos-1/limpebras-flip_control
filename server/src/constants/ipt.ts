@@ -57,6 +57,8 @@ export function normalizarSetor(setor: string): string {
     .replace(/\s*-\s*NOVO\s*$/i, "")
     .replace(/\s*-\s*OBS[ERVAÇÃO]*\s*$/i, "");
   s = s.replace(SUFIXOS_DIA_SEMANA, "").trim();
+  /** Remove espaços internos para unificar "CV 1 0500 MT 0015" com "CV10500MT0015" */
+  s = s.replace(/\s+/g, "");
   return s;
 }
 
@@ -65,7 +67,10 @@ export function normalizarSetor(setor: string): string {
  * Ex: CV10500GO0015 -> { sub: CV, turno: 1, frequencia: 0500, servico: GO, mapa: 0015 }
  */
 export function parseSetor(setor: string): ParsedSetor | null {
-  const raw = String(setor ?? "").trim().toUpperCase();
+  const raw = String(setor ?? "")
+    .trim()
+    .replace(/\s+/g, "")
+    .toUpperCase();
   if (!raw || raw.length < 13) return null;
 
   // Padrão: 2 sub + 1 turno + 4 freq + 2 servico + 4 mapa = 13
@@ -81,6 +86,33 @@ export function parseSetor(setor: string): ParsedSetor | null {
     };
   }
   return null;
+}
+
+/**
+ * Mapeamento codinome do setor (2 letras) -> nome completo do serviço.
+ * Nunca exibir "Não informado" — sempre usar este mapeamento quando disponível.
+ */
+export const SERVICO_POR_CODIGO: Record<string, string> = {
+  MT: "Equipe de mutirão de zeladoria de vias e logradouros públicos",
+  BL: "Limpeza e desobstrução de bueiros, bocas de lobo e bocas de leão",
+  NH: "Limpeza de áreas externas e internas de núcleos habitacionais de difícil acesso",
+  LE: "Lavagem especial de equipamentos públicos",
+  GO: "Coleta de grandes objetos (cata-bagulho)",
+  VP: "Equipe para varrição de praças",
+  VJ: "Varrição manual de vias e logradouros públicos - sarjetas",
+  VL: "Varrição manual de vias e logradouros públicos - sarjetas e calçadas",
+  LM: "Equipe de asseio a locais com população em situação de rua e comércio desordenado",
+  CV: "Coleta manual de resíduos de varrição com compactador",
+};
+
+/**
+ * Retorna o tipo de serviço conforme o codinome do setor (MT, BL, NH, etc.).
+ * Nunca retorna "Não informado".
+ */
+export function getTipoServicoFromPlano(plano: string): string {
+  const parsed = parseSetor(plano);
+  const codigo = parsed?.servico ?? "";
+  return SERVICO_POR_CODIGO[codigo] ?? "";
 }
 
 /**

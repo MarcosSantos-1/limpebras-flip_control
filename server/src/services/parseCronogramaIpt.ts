@@ -17,20 +17,37 @@ function normalizeCell(value: unknown): string {
 function parseDateBR(value: string): Date | null {
   const raw = value.trim();
   if (!raw) return null;
-  const match = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
-  if (!match) return null;
-  const day = Number(match[1]);
-  const month = Number(match[2]);
-  const year = Number(match[3].length === 2 ? `20${match[3]}` : match[3]);
-  const parsed = new Date(year, month - 1, day);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
+  // Formato BR: dd/mm/yyyy ou dd/mm/yy
+  const matchBR = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (matchBR) {
+    const day = Number(matchBR[1]);
+    const month = Number(matchBR[2]);
+    const year = Number(matchBR[3].length === 2 ? `20${matchBR[3]}` : matchBR[3]);
+    const parsed = new Date(year, month - 1, day);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+  // Formato ISO: yyyy-mm-dd
+  const matchISO = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (matchISO) {
+    const parsed = new Date(Number(matchISO[1]), Number(matchISO[2]) - 1, Number(matchISO[3]));
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+  return null;
 }
 
 function parseDatasFromCell(value: string): Date[] {
-  return value
-    .split(/[;\s,]+/)
-    .map((s) => parseDateBR(s))
-    .filter((d): d is Date => d != null);
+  if (!value || !String(value).trim()) return [];
+  // Split por separadores comuns: ; , espaço, quebra de linha, tab
+  const parts = String(value)
+    .split(/[;\s,\t\n\r]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const dates: Date[] = [];
+  for (const p of parts) {
+    const d = parseDateBR(p);
+    if (d) dates.push(d);
+  }
+  return dates;
 }
 
 function looksLikeSetor(value: string): boolean {
@@ -70,15 +87,20 @@ export function parseCronogramaWorkbook(buffer: Buffer, filename: string): Crono
 
   if (servico === "LM") {
     const setorIdx = headerRow.findIndex((h) => /^setor$/i.test(h.replace(/\s/g, "")));
-    const cronoIdx = headerRow.findIndex((h) => /^cronograma$/i.test(h.replace(/\s/g, "")));
-    if (setorIdx < 0 || cronoIdx < 0) return [];
+    const cronoColIndices = headerRow
+      .map((h, idx) => ({ h: h.replace(/\s/g, ""), idx }))
+      .filter(({ h }) => /^cronograma\d*$/i.test(h) || /^cronograma$/i.test(h))
+      .map(({ idx }) => idx);
+    if (setorIdx < 0 || cronoColIndices.length === 0) return [];
     for (let i = 1; i < rawRows.length; i++) {
       const row = rawRows[i] ?? [];
       const setor = normalizeCell(row[setorIdx]).replace(/\s/g, "").toUpperCase();
-      const crono = normalizeCell(row[cronoIdx]);
+      const allDateStrs = cronoColIndices.map((idx) => normalizeCell(row[idx])).filter(Boolean);
+      const crono = allDateStrs.join("; ");
       if (!setor || !looksLikeSetor(setor)) continue;
       const datas = parseDatasFromCell(crono);
-      for (const d of datas) {
+      const uniqueDates = Array.from(new Set(datas.map((d) => d.getTime()))).map((t) => new Date(t));
+      for (const d of uniqueDates) {
         out.push({
           servico,
           setor,
@@ -93,15 +115,16 @@ export function parseCronogramaWorkbook(buffer: Buffer, filename: string): Crono
 
   if (servico === "NH") {
     const setorIdx = headerRow.findIndex((h) => /^setor$/i.test(h.replace(/\s/g, "")));
-    const crono2Idx = headerRow.findIndex((h) => /^cronograma2$/i.test(h.replace(/\s/g, "")));
-    const cronoIdx = headerRow.findIndex((h) => /^cronograma$/i.test(h.replace(/\s/g, "")));
-    if (setorIdx < 0 || (crono2Idx < 0 && cronoIdx < 0)) return [];
+    const cronoColIndices = headerRow
+      .map((h, idx) => ({ h: h.replace(/\s/g, ""), idx }))
+      .filter(({ h }) => /^cronograma(\d)*$/i.test(h) || /^cronograma$/i.test(h))
+      .map(({ idx }) => idx);
+    if (setorIdx < 0 || cronoColIndices.length === 0) return [];
     for (let i = 1; i < rawRows.length; i++) {
       const row = rawRows[i] ?? [];
       const setor = normalizeCell(row[setorIdx]).replace(/\s/g, "").toUpperCase();
-      const cronoAtual = crono2Idx >= 0 ? normalizeCell(row[crono2Idx]) : "";
-      const cronoAntigo = cronoIdx >= 0 ? normalizeCell(row[cronoIdx]) : "";
-      const crono = cronoAtual || cronoAntigo;
+      const allDateStrs = cronoColIndices.map((idx) => normalizeCell(row[idx])).filter(Boolean);
+      const crono = allDateStrs.join("; ");
       if (!setor || !looksLikeSetor(setor)) continue;
       const datas = parseDatasFromCell(crono);
       for (const d of datas) {
@@ -117,25 +140,41 @@ export function parseCronogramaWorkbook(buffer: Buffer, filename: string): Crono
     return out;
   }
 
-  // BL, MT, GO: colunas CV, ST, JT, MG + CRONOGRAMA2 (fallback CRONOGRAMA)
+  // BL, MT, GO: colunas CV, ST, JT, MG + CRONOGRAMA1, CRONOGRAMA2, CRONOGRAMA
+  // Mescla datas de todas as colunas de cronograma para ter 5+ datas (2 ant, atual, 2 fut)
   const subCols = ["CV", "ST", "JT", "MG"].map((sub) =>
     headerRow.findIndex((h) => h.trim().toUpperCase() === sub)
   );
-  const crono2Idx = headerRow.findIndex((h) => /^cronograma2$/i.test(h.replace(/\s/g, "")));
-  const cronoIdx = headerRow.findIndex((h) => /^cronograma$/i.test(h.replace(/\s/g, "")));
-  if ((crono2Idx < 0 && cronoIdx < 0) || subCols.every((c) => c < 0)) return [];
+  const cronoColIndices = headerRow
+    .map((h, idx) => ({ h: h.replace(/\s/g, ""), idx }))
+    .filter(({ h }) => /^cronograma(\d)*$/i.test(h) || /^cronograma$/i.test(h))
+    .map(({ idx }) => idx)
+    .sort((a, b) => {
+      const na = (headerRow[a] ?? "").replace(/\s/g, "").toUpperCase();
+      const nb = (headerRow[b] ?? "").replace(/\s/g, "").toUpperCase();
+      const numA = na.match(/\d+$/)?.[0] ?? "0";
+      const numB = nb.match(/\d+$/)?.[0] ?? "0";
+      return Number(numB) - Number(numA); // CRONOGRAMA2 antes de CRONOGRAMA1
+    });
+  if (cronoColIndices.length === 0 || subCols.every((c) => c < 0)) return [];
 
   for (let i = 1; i < rawRows.length; i++) {
     const row = rawRows[i] ?? [];
-    const cronoAtual = crono2Idx >= 0 ? normalizeCell(row[crono2Idx]) : "";
-    const cronoAntigo = cronoIdx >= 0 ? normalizeCell(row[cronoIdx]) : "";
-    const crono = cronoAtual || cronoAntigo;
+    const allDateStrs: string[] = [];
+    for (const colIdx of cronoColIndices) {
+      const cell = normalizeCell(row[colIdx]);
+      if (cell) allDateStrs.push(cell);
+    }
+    const crono = allDateStrs.join("; ");
     const datas = parseDatasFromCell(crono);
+    const uniqueDates = Array.from(new Set(datas.map((d) => d.getTime())))
+      .map((t) => new Date(t))
+      .sort((a, b) => a.getTime() - b.getTime());
     for (const colIdx of subCols) {
       if (colIdx < 0) continue;
       const setor = normalizeCell(row[colIdx]).replace(/\s/g, "").toUpperCase();
       if (!setor || !looksLikeSetor(setor)) continue;
-      for (const d of datas) {
+      for (const d of uniqueDates) {
         out.push({
           servico,
           setor,
