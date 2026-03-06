@@ -1388,9 +1388,16 @@ export default function IPTPage() {
                                               bat
                                                 ? [
                                                     `Bateria: ${bat.status_bateria}${bat.bateria ? ` (${bat.bateria})` : ""}`,
-                                                    (bat as { data_ultima_comunicacao?: string }).data_ultima_comunicacao &&
-                                                      `Última comunicação: ${(bat as { data_ultima_comunicacao: string }).data_ultima_comunicacao.replace(/^(\d{4})-(\d{2})-(\d{2}).*/, "$3/$2/$1")}`,
-                                                    (bat as { dias?: string }).dias && `Dias: ${(bat as { dias: string }).dias}`,
+                                                    (() => {
+                                                      const ext = bat as Record<string, unknown>;
+                                                      const d = ext.data_ultima_comunicacao;
+                                                      return d && `Última comunicação: ${String(d).replace(/^(\d{4})-(\d{2})-(\d{2}).*/, "$3/$2/$1")}`;
+                                                    })(),
+                                                    (() => {
+                                                      const ext = bat as Record<string, unknown>;
+                                                      const d = ext.dias;
+                                                      return d && `Dias: ${d}`;
+                                                    })(),
                                                   ]
                                                       .filter(Boolean)
                                                       .join(" · ")
@@ -1448,9 +1455,11 @@ export default function IPTPage() {
                                           key={codigo}
                                           className="flex justify-between items-center gap-2 text-xs py-1 px-2 rounded-lg bg-violet-500/10"
                                           title={
-                                            (info as { data_ultima_comunicacao?: string }).data_ultima_comunicacao
-                                              ? `Última comunicação: ${(info as { data_ultima_comunicacao: string }).data_ultima_comunicacao.replace(/^(\d{4})-(\d{2})-(\d{2}).*/, "$3/$2/$1")}`
-                                              : undefined
+                                            (() => {
+                                              const ext = info as Record<string, unknown>;
+                                              const d = ext.data_ultima_comunicacao;
+                                              return d ? `Última comunicação: ${String(d).replace(/^(\d{4})-(\d{2})-(\d{2}).*/, "$3/$2/$1")}` : undefined;
+                                            })()
                                           }
                                         >
                                           <span className="font-mono font-medium text-violet-800 dark:text-violet-200">{codigo}</span>
