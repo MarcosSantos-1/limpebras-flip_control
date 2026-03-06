@@ -43,6 +43,7 @@ export interface FotosContestar {
   agente_sub: string[];
   rastreamento: string[];
   nosso_agente: string[];
+  justificativa?: string;
 }
 
 function getFotosStorage(): Record<string, FotosContestar> {
@@ -303,10 +304,11 @@ export default function DefesaPage() {
       periodo_final: format(endOfMonth(now), "yyyy-MM-dd"),
     };
   });
+  const [relatorioContratoNumero, setRelatorioContratoNumero] = useState("");
   const [downloadLoading, setDownloadLoading] = useState(false);
   const [modalContestarOpen, setModalContestarOpen] = useState(false);
   const [contestarBfsId, setContestarBfsId] = useState<string | null>(null);
-  const [fotosContestarDraft, setFotosContestarDraft] = useState<FotosContestar>({ agente_sub: [], rastreamento: [], nosso_agente: [] });
+  const [fotosContestarDraft, setFotosContestarDraft] = useState<FotosContestar>({ agente_sub: [], rastreamento: [], nosso_agente: [], justificativa: "" });
   const [confirmExcluirFotosOpen, setConfirmExcluirFotosOpen] = useState(false);
   const [pendingStatusChange, setPendingStatusChange] = useState<StatusDefesa | null>(null);
   const [pendingBfsId, setPendingBfsId] = useState<string | null>(null);
@@ -412,7 +414,7 @@ export default function DefesaPage() {
     if (newStatus === "Contestar") {
       setContestarBfsId(bfsId);
       const existing = getFotosForBfs(bfsId);
-      setFotosContestarDraft(existing ?? { agente_sub: [], rastreamento: [], nosso_agente: [] });
+      setFotosContestarDraft(existing ?? { agente_sub: [], rastreamento: [], nosso_agente: [], justificativa: "" });
       setModalContestarOpen(true);
       return;
     }
@@ -446,11 +448,11 @@ export default function DefesaPage() {
     setContestarSalvando(true);
     try {
       const fotosComUrls = await uploadFotosToStorage(bfsId, fotosContestarDraft);
-      setFotosStorage(bfsId, fotosComUrls);
+      setFotosStorage(bfsId, { ...fotosComUrls, justificativa: fotosContestarDraft.justificativa });
       setStatusDefesa(bfsId, "Contestar");
       setModalContestarOpen(false);
       setContestarBfsId(null);
-      setFotosContestarDraft({ agente_sub: [], rastreamento: [], nosso_agente: [] });
+      setFotosContestarDraft({ agente_sub: [], rastreamento: [], nosso_agente: [], justificativa: "" });
     } catch (err) {
       console.error("Erro ao enviar fotos para o Firebase:", err);
     } finally {
@@ -499,7 +501,49 @@ export default function DefesaPage() {
 
   const primaryCnc = (bfs: BFSDefesa) => bfs.cnc_detalhes?.[0];
 
-  const handleDownloadRelatorio = async () => {
+  const handleDownloadRelatorioPDF = async () => {
+    setDownloadLoading(true);
+    try {
+      const params: Record<string, string> = {
+        periodo_inicial: relatorioPeriodo.periodo_inicial,
+        periodo_final: relatorioPeriodo.periodo_final,
+      };
+      const [dataDefesa, dataIndicadores] = await Promise.all([
+        apiService.getCNCsDefesa(params),
+        apiService.getIndicadoresDetalhes(relatorioPeriodo.periodo_inicial, relatorioPeriodo.periodo_final),
+      ]);
+      const items = (dataDefesa.items || []) as BFSDefesa[];
+      const storage = getStatusDefesaStorage();
+      const fotosMap = getFotosStorage();
+
+      const bfssContestar = items.filter((b) => (storage[b.id] ?? "Analisar") === "Contestar");
+      if (bfssContestar.length === 0) {
+        alert("Nenhum BFS marcado como 'Contestar' no período selecionado. Marque os BFSs que deseja contestar antes de gerar o PDF.");
+        return;
+      }
+
+      const { gerarRelatorioContestacaoPDF } = await import("@/lib/pdf-relatorio-contestacao");
+      await gerarRelatorioContestacaoPDF({
+        periodoInicial: relatorioPeriodo.periodo_inicial,
+        periodoFinal: relatorioPeriodo.periodo_final,
+        contratada: "Limpebras Engenharia Ambiental",
+        contratoNumero: relatorioContratoNumero || undefined,
+        bfssContestar,
+        fotosMap: fotosMap as Record<string, import("@/lib/pdf-relatorio-contestacao").FotosContestarBfs>,
+        ifPorSub: dataIndicadores?.if?.if_por_sub,
+        baseUrl: typeof window !== "undefined" ? window.location.origin : undefined,
+      });
+      setModalRelatorioOpen(false);
+    } catch (err) {
+      console.error("Erro ao gerar relatório PDF:", err);
+      const msg = err instanceof Error ? err.message : String(err);
+      alert(`Erro ao gerar PDF: ${msg}\n\nVerifique se os arquivos (logotipo.png, design_capa.png, design_rodape_capafinal.png) estão em public/ e se há BFSs contestados com fotos válidas.`);
+    } finally {
+      setDownloadLoading(false);
+    }
+  };
+
+  const handleDownloadRelatorioCSV = async () => {
     setDownloadLoading(true);
     try {
       const params: Record<string, string> = {
@@ -552,7 +596,7 @@ export default function DefesaPage() {
       URL.revokeObjectURL(url);
       setModalRelatorioOpen(false);
     } catch (err) {
-      console.error("Erro ao gerar relatório:", err);
+      console.error("Erro ao gerar relatório CSV:", err);
     } finally {
       setDownloadLoading(false);
     }
@@ -1048,7 +1092,7 @@ export default function DefesaPage() {
         </Dialog>
 
         {/* Modal Contestar - Fotos */}
-        <Dialog open={modalContestarOpen} onOpenChange={(open) => { setModalContestarOpen(open); if (!open) { setFotosContestarDraft({ agente_sub: [], rastreamento: [], nosso_agente: [] }); setContestarBfsId(null); } }}>
+        <Dialog open={modalContestarOpen} onOpenChange={(open) => { setModalContestarOpen(open); if (!open) { setFotosContestarDraft({ agente_sub: [], rastreamento: [], nosso_agente: [], justificativa: "" }); setContestarBfsId(null); } }}>
           <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto gap-6 p-8">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
@@ -1080,6 +1124,16 @@ export default function DefesaPage() {
                 onChange={(imgs) => setFotosContestarDraft((p) => ({ ...p, nosso_agente: imgs }))}
                 maxCount={2}
               />
+              <div className="space-y-2">
+                <label className="text-sm font-semibold">Justificativa Técnica</label>
+                <textarea
+                  value={fotosContestarDraft.justificativa ?? ""}
+                  onChange={(e) => setFotosContestarDraft((p) => ({ ...p, justificativa: e.target.value }))}
+                  placeholder="Descreva a justificativa técnica para contestação desta BFS..."
+                  className="w-full min-h-[100px] px-3 py-2 rounded-lg border border-input bg-background text-sm resize-y"
+                  rows={4}
+                />
+              </div>
             </div>
             <div className="flex justify-end gap-3 pt-2">
               <button
@@ -1139,28 +1193,39 @@ export default function DefesaPage() {
                 Gerar relatório de Defesa
               </DialogTitle>
               <DialogDescription>
-                Selecione o período e baixe o relatório em CSV com os BFSs e status de defesa.
+                Selecione o período e baixe o relatório em PDF (com capas, tabelas e BFSs contestados) ou em CSV.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-muted-foreground">Período Inicial</label>
-                <Input
-                  type="date"
-                  value={relatorioPeriodo.periodo_inicial}
-                  onChange={(e) => setRelatorioPeriodo((p) => ({ ...p, periodo_inicial: e.target.value }))}
-                />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-muted-foreground">Período Inicial</label>
+                  <Input
+                    type="date"
+                    value={relatorioPeriodo.periodo_inicial}
+                    onChange={(e) => setRelatorioPeriodo((p) => ({ ...p, periodo_inicial: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-muted-foreground">Período Final</label>
+                  <Input
+                    type="date"
+                    value={relatorioPeriodo.periodo_final}
+                    onChange={(e) => setRelatorioPeriodo((p) => ({ ...p, periodo_final: e.target.value }))}
+                  />
+                </div>
               </div>
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-muted-foreground">Período Final</label>
+                <label className="text-sm font-medium text-muted-foreground">Nº do Contrato (opcional)</label>
                 <Input
-                  type="date"
-                  value={relatorioPeriodo.periodo_final}
-                  onChange={(e) => setRelatorioPeriodo((p) => ({ ...p, periodo_final: e.target.value }))}
+                  type="text"
+                  placeholder="Ex: 123456"
+                  value={relatorioContratoNumero}
+                  onChange={(e) => setRelatorioContratoNumero(e.target.value)}
                 />
               </div>
             </div>
-            <div className="flex justify-end gap-3 pt-2">
+            <div className="flex flex-wrap justify-end gap-3 pt-2">
               <button
                 type="button"
                 onClick={() => setModalRelatorioOpen(false)}
@@ -1170,19 +1235,27 @@ export default function DefesaPage() {
               </button>
               <button
                 type="button"
-                onClick={handleDownloadRelatorio}
+                onClick={handleDownloadRelatorioCSV}
+                disabled={downloadLoading}
+                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border border-violet-400/50 bg-violet-500/10 text-violet-700 dark:text-violet-300 hover:bg-violet-500/20 disabled:opacity-70"
+              >
+                Baixar CSV
+              </button>
+              <button
+                type="button"
+                onClick={handleDownloadRelatorioPDF}
                 disabled={downloadLoading}
                 className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-70 disabled:cursor-not-allowed transition-all"
               >
                 {downloadLoading ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Gerando...
+                    Gerando PDF...
                   </>
                 ) : (
                   <>
                     <Download className="h-4 w-4" />
-                    Baixar
+                    Baixar PDF
                   </>
                 )}
               </button>
