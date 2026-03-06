@@ -64,16 +64,52 @@ function hexToRgb(hex: string): [number, number, number] {
   return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)];
 }
 
+/** Pontuação do IF conforme faixas oficiais (0-20 pts) */
+function pontuacaoFromIF(percentual: number): number {
+  if (percentual >= 90) return 20;
+  if (percentual >= 80) return 18;
+  if (percentual >= 70) return 16;
+  if (percentual >= 60) return 14;
+  if (percentual >= 50) return 12;
+  if (percentual >= 40) return 10;
+  if (percentual >= 30) return 8;
+  if (percentual >= 20) return 6;
+  if (percentual >= 10) return 4;
+  return 0;
+}
+
+/** Parse yyyy-MM-dd como data local (evita shift UTC) */
+function parseLocalDate(str: string): Date | null {
+  const m = str.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+}
+
 function safeFormatDate(d: string | Date | undefined): string {
   if (!d) return "--";
-  const date = typeof d === "string" ? new Date(d) : d;
-  return isValid(date) ? format(date, "dd/MM/yyyy", { locale: ptBR }) : "--";
+  let date: Date | null = null;
+  if (typeof d === "string") {
+    date = parseLocalDate(d) ?? new Date(d);
+  } else {
+    date = d;
+  }
+  return date && isValid(date) ? format(date, "dd/MM/yyyy", { locale: ptBR }) : "--";
 }
 
 function safeFormatDateTime(d: string | Date | undefined): string {
   if (!d) return "--";
-  const date = typeof d === "string" ? new Date(d) : d;
-  if (!isValid(date)) return "--";
+  let date: Date | null = null;
+  if (typeof d === "string") {
+    const m = d.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2})(?::(\d{2}))?)?/);
+    if (m) {
+      date = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4] ?? 0), Number(m[5] ?? 0), Number(m[6] ?? 0));
+    } else {
+      date = new Date(d);
+    }
+  } else {
+    date = d;
+  }
+  if (!date || !isValid(date)) return "--";
   const dStr = format(date, "dd/MM/yyyy - HH:mm", { locale: ptBR });
   const weekday = format(date, "EEEE", { locale: ptBR });
   return `${dStr} (${weekday.charAt(0).toUpperCase() + weekday.slice(1)})`;
@@ -196,10 +232,10 @@ export async function gerarRelatorioContestacaoPDF(
   const baseUrl = input.baseUrl ?? (typeof window !== "undefined" ? window.location.origin : "");
   const periodoLabel = `${safeFormatDate(input.periodoInicial)} - ${safeFormatDate(input.periodoFinal)}`;
   const mesAnoLabel = (() => {
-    const d = new Date(input.periodoFinal);
+    const d = parseLocalDate(input.periodoFinal) ?? new Date();
     return format(d, "MMMM 'de' yyyy", { locale: ptBR });
   })();
-  const dataEmissao = safeFormatDate(new Date());
+  const dataEmissao = format(new Date(), "dd/MM/yyyy", { locale: ptBR });
 
   let logoBase64: string;
   let designCapaBase64: string;
@@ -311,7 +347,7 @@ export async function gerarRelatorioContestacaoPDF(
     const larguraTexto = PAGE_W - MARGIN - MARGIN_DIREITA_MINIMA;
 
     const paragrafo =
-      `O presente relatório tem como objetivo contestar as BFS classificadas como irregulares no cálculo do IF referente ao período ${periodoLabel}, apresentando justificativas técnicas individualizadas e demonstrando o impacto percentual na Subprefeitura.`;
+      `O presente relatório tem como objetivo contestar as BFS classificadas como irregulares no cálculo do IF referente ao período de ${periodoLabel}, apresentando justificativas técnicas individualizadas e demonstrando o impacto percentual na Subprefeitura.`;
     const lines = doc.splitTextToSize(paragrafo, larguraTexto);
 
     doc.text(lines, MARGIN, 115, { align: "justify", maxWidth: larguraTexto, lineHeightFactor: 1.4 });
@@ -327,7 +363,7 @@ export async function gerarRelatorioContestacaoPDF(
     doc.setTextColor(r1, g1, b1);
     doc.setFontSize(18);
     doc.setFont("helvetica", "bold");
-    doc.text("Comparativo do IF pós ajustes", MARGIN, 50);
+    doc.text("Comparativo do IF antes x após os ajustes", MARGIN, 50);
 
     // Espaço de aproximadamente 15mm (equivalente a ~15 pontos na vertical)
     let tabelaTituloY = 65; // 50 + 15 = 65
@@ -437,6 +473,128 @@ export async function gerarRelatorioContestacaoPDF(
         doc.line(accW, tabelaY-4, accW, tabelaY-4 + tabelaH);
       }
       doc.line(MARGIN, tabelaY+4, MARGIN+tabelaW, tabelaY+4);
+
+      // --- Tabela IF Ajustado (desconsiderando BFS contestados) ---
+      // ifPorSub usa siglas (ST, CV, JT, MG); bfssContestar usa nomes completos (Santana/Tucuruvi, etc)
+      const normalizeSub = (s: string) =>
+        (s ?? "")
+          .trim()
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .replace(/[\s\/\-_]+/g, "");
+      const FULL_TO_SIGLA: Record<string, string> = {
+        santanatucuruvi: "ST",
+        casaverdecachoeirinha: "CV",
+        casaverdelimaocachoeirinha: "CV", // variante com Limão
+        jacanatremembe: "JT",
+        vilamariavilaguilherme: "MG",
+      };
+      const contestedPorSigla = new Map<string, number>();
+      for (const b of input.bfssContestar) {
+        const key = normalizeSub(b.subprefeitura ?? "");
+        const sigla = FULL_TO_SIGLA[key] ?? key.slice(0, 2).toUpperCase();
+        contestedPorSigla.set(sigla, (contestedPorSigla.get(sigla) ?? 0) + 1);
+      }
+      const getContested = (sub: string) => {
+        const k = (sub ?? "").trim();
+        return contestedPorSigla.get(k) ?? contestedPorSigla.get(k.toUpperCase()) ?? 0;
+      };
+      const rowsAjustado = rows.map((row) => {
+        const contested = getContested(row.subprefeitura ?? "");
+        const vistAjustado = Math.max(0, (row.vistorias_total ?? 0) - contested);
+        const ifAjustado = vistAjustado > 0
+          ? ((row.sem_irregularidades ?? 0) / vistAjustado) * 100
+          : 0;
+        return {
+          subprefeitura: row.subprefeitura ?? "--",
+          sem_irregularidades: row.sem_irregularidades ?? 0,
+          vistorias_total: vistAjustado,
+          if_percentual: ifAjustado,
+        };
+      });
+      const mediaAjustada = rowsAjustado.length > 0
+        ? rowsAjustado.reduce((s, r) => s + r.if_percentual, 0) / rowsAjustado.length
+        : 0;
+      const pontuacaoAjustada = pontuacaoFromIF(mediaAjustada);
+
+      let yAjust = y + 15; // espaço entre tabelas
+      doc.setFontSize(12);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(0, 0, 0);
+      doc.text("IF ajustado (desconsiderando BFS em contestação)", PAGE_W / 2, yAjust, { align: "center" });
+      yAjust += 10;
+
+      let tabelaYAjust = yAjust;
+      let yRow = tabelaYAjust;
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(255, 255, 255);
+      doc.setFillColor(0, 92, 46); // verde escuro #005c2e
+      doc.rect(MARGIN, yRow - 4, tabelaW, ROW_H + 2, "F");
+      let xA = MARGIN;
+      headers.forEach((h, i) => {
+        doc.text(h, xA + adjColW[i] / 2, yRow + 2, { align: "center", baseline: "middle" });
+        xA += adjColW[i];
+      });
+      yRow += ROW_H + 2;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+
+      const mediaPontuacaoAjustVal = `${mediaAjustada.toFixed(1)}%  (${pontuacaoAjustada} pts)`;
+
+      for (let idx = 0; idx < rowsAjustado.length; idx++) {
+        const row = rowsAjustado[idx];
+        xA = MARGIN;
+        const corFundo = idx % 2 === 0 ? [240, 245, 252] : [255, 255, 255];
+        doc.setFillColor(corFundo[0], corFundo[1], corFundo[2]);
+        doc.rect(xA, yRow - 2, tabelaW - adjColW[4], ROW_H, "F");
+        doc.setTextColor(0, 0, 0);
+
+        const cellsA = [
+          row.subprefeitura,
+          String(row.sem_irregularidades),
+          String(row.vistorias_total),
+          `${row.if_percentual.toFixed(1)}%`,
+        ];
+        let currXA = MARGIN;
+        for (let i = 0; i < 4; i++) {
+          const isBold = i === 0 || i === 3;
+          if (isBold) doc.setFont("helvetica", "bold");
+          if (i === 3) doc.setTextColor(200, 0, 0); // vermelho para IF
+          doc.text(
+            cellsA[i],
+            currXA + adjColW[i] / 2,
+            yRow + ROW_H / 2,
+            { align: "center" as const, baseline: "middle" }
+          );
+          if (i === 3) doc.setTextColor(0, 0, 0);
+          if (isBold) doc.setFont("helvetica", "normal");
+          currXA += adjColW[i];
+        }
+        if (idx === 0) {
+          doc.setFillColor(245, 248, 252);
+          const mediaCellYA = tabelaYAjust + 4;
+          doc.rect(currXA, mediaCellYA, adjColW[4], rowsAjustado.length * ROW_H, "F");
+          doc.setTextColor(200, 0, 0); // vermelho para Média
+          doc.setFont("helvetica", "bold");
+          doc.text(mediaPontuacaoAjustVal, currXA + adjColW[4] / 2, mediaCellYA + (rowsAjustado.length * ROW_H) / 2, { align: "center", baseline: "middle" });
+          doc.setFont("helvetica", "normal");
+          doc.setTextColor(0, 0, 0);
+        }
+        yRow += ROW_H;
+      }
+
+      const tabelaHAjust = ROW_H + 2 + rowsAjustado.length * ROW_H + 6;
+      doc.setDrawColor(0, 92, 46);
+      doc.setLineWidth(0.4);
+      doc.rect(MARGIN, tabelaYAjust - 4, tabelaW, tabelaHAjust);
+      let accWA = MARGIN;
+      for (let i = 1; i < adjColW.length; i++) {
+        accWA += adjColW[i - 1];
+        doc.line(accWA, tabelaYAjust - 4, accWA, tabelaYAjust - 4 + tabelaHAjust);
+      }
+      doc.line(MARGIN, tabelaYAjust + 4, MARGIN + tabelaW, tabelaYAjust + 4);
 
     } else {
       doc.setFontSize(12);
@@ -668,6 +826,9 @@ export async function gerarRelatorioContestacaoPDF(
 
   addCapaFinal(pdf);
 
-  const nomeArquivo = `relatorio-contestacao-IF-${format(new Date(), "yyyy-MM-dd")}.pdf`;
+  const dataIni = parseLocalDate(input.periodoInicial) ?? new Date();
+  const dataFim = parseLocalDate(input.periodoFinal) ?? new Date();
+  const rangeStr = `${format(dataIni, "dd.MM.yyyy")} a ${format(dataFim, "dd.MM.yyyy")}`;
+  const nomeArquivo = `Relatório de Contestação Limpebras - ${rangeStr}.pdf`;
   pdf.save(nomeArquivo);
 }

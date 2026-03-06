@@ -207,28 +207,28 @@ function FotoInputZone({
   };
 
   return (
-    <div className="space-y-2">
-      <label className="text-sm font-semibold">{label}</label>
-      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
-      <div className="flex flex-wrap gap-3">
+    <div className="space-y-3">
+      <label className="text-base font-semibold text-foreground">{label}</label>
+      {hint && <p className="text-sm text-muted-foreground/90">{hint}</p>}
+      <div className="flex flex-wrap gap-4">
         {images.map((img, i) => (
           <div key={i} className="relative group">
-            <img src={img} alt="" className="w-24 h-24 object-cover rounded-lg border-2 border-border" />
+            <img src={img} alt="" className="w-28 h-28 object-cover rounded-xl border-2 border-emerald-200 dark:border-emerald-800 shadow-sm" />
             <button
               type="button"
               onClick={() => removeImage(i)}
-              className="absolute -top-1 -right-1 w-6 h-6 rounded-full bg-red-500 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+              className="absolute -top-1.5 -right-1.5 w-7 h-7 rounded-full bg-red-500 hover:bg-red-600 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-md"
             >
-              <X className="h-3 w-3" />
+              <X className="h-3.5 w-3.5" />
             </button>
           </div>
         ))}
         {images.length < maxCount && (
           <div
-            className={`w-28 h-28 rounded-xl border-2 border-dashed flex flex-col items-center justify-center cursor-pointer transition-all ${
+            className={`w-32 h-32 rounded-xl border-2 border-dashed flex flex-col items-center justify-center cursor-pointer transition-all ${
               isDragging
-                ? "border-violet-500 bg-violet-100 dark:bg-violet-900/40 scale-105"
-                : "border-muted-foreground/40 hover:border-violet-400 hover:bg-violet-50/50 dark:hover:bg-violet-950/30"
+                ? "border-emerald-500 bg-emerald-100 dark:bg-emerald-900/40 scale-105 shadow-md"
+                : "border-muted-foreground/40 hover:border-emerald-400 hover:bg-emerald-50/70 dark:hover:bg-emerald-950/40 hover:shadow-md"
             }`}
             onClick={() => inputRef.current?.click()}
             onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; setIsDragging(true); }}
@@ -241,11 +241,11 @@ function FotoInputZone({
             }}
           >
             {isDragging ? (
-              <span className="text-xs font-medium text-violet-600 dark:text-violet-400">Solte aqui</span>
+              <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">Solte aqui</span>
             ) : (
               <>
-                <ImagePlus className="h-7 w-7 text-muted-foreground mb-1" />
-                <span className="text-[10px] text-muted-foreground">Clique ou arraste</span>
+                <ImagePlus className="h-8 w-8 text-emerald-500/70 dark:text-emerald-400/70 mb-1" />
+                <span className="text-xs text-muted-foreground">Clique ou arraste</span>
               </>
             )}
             <input
@@ -261,9 +261,9 @@ function FotoInputZone({
       <button
         type="button"
         onClick={handlePaste}
-        className="inline-flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded border border-dashed border-muted-foreground/50 hover:border-violet-400 hover:bg-muted/30 transition-colors"
+        className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg border-2 border-dashed border-emerald-300 dark:border-emerald-700 hover:border-emerald-500 hover:bg-emerald-50/50 dark:hover:bg-emerald-950/50 transition-all"
       >
-        <ClipboardPaste className="h-3.5 w-3.5" />
+        <ClipboardPaste className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
         Colar foto {pasteStatus === "success" && "✓"} {pasteStatus === "error" && "✗"}
       </button>
     </div>
@@ -279,6 +279,41 @@ const getCncSituacaoColor = (situacao?: string) => {
   if (s.includes("autuado")) return "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300";
   return "bg-muted text-muted-foreground";
 };
+
+function StatusDefesaButton({
+  opt,
+  isActive,
+  onSelect,
+}: {
+  opt: (typeof STATUS_DEFESA_OPTIONS)[0];
+  isActive: boolean;
+  onSelect: () => void;
+}) {
+  const [isHovered, setIsHovered] = useState(false);
+  const baseClass = "inline-flex items-center justify-center gap-3 px-6 py-4 text-base font-bold rounded-xl transition-all duration-200 min-w-36 cursor-pointer";
+  const activeClass = isActive ? opt.btnSelected : opt.btnOutline;
+  const hoverClass = !isActive && isHovered
+    ? opt.value === "Analisar"
+      ? "!bg-amber-100 !border-amber-500 !scale-[1.03] !shadow-lg dark:!bg-amber-900/50"
+      : opt.value === "Irregular"
+        ? "!bg-red-100 !border-red-500 !scale-[1.03] !shadow-lg dark:!bg-red-900/50"
+        : "!bg-emerald-100 !border-emerald-500 !scale-[1.03] !shadow-lg dark:!bg-emerald-900/50"
+    : "";
+  return (
+    <button
+      type="button"
+      className={`${baseClass} ${activeClass} ${hoverClass}`}
+      onClick={onSelect}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
+      {opt.value === "Analisar" && <Search className="h-6 w-6" />}
+      {opt.value === "Irregular" && <AlertTriangle className="h-6 w-6" />}
+      {opt.value === "Contestar" && <FileCheck className="h-6 w-6" />}
+      {opt.label}
+    </button>
+  );
+}
 
 export default function DefesaPage() {
   const [bfss, setBfss] = useState<BFSDefesa[]>([]);
@@ -777,6 +812,7 @@ export default function DefesaPage() {
                       <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider">BFS</th>
                       <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider">Setor</th>
                       <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider">Status Defesa</th>
+                      <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider">Situação CNC</th>
                       <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider">Tipo Serviço</th>
                       <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider">SUB</th>
                       <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider">Data Registro</th>
@@ -813,6 +849,17 @@ export default function DefesaPage() {
                                 {statusDefesa}
                               </span>
                             </td>
+                            <td className="px-6 py-4">
+                              {cnc?.situacao_cnc ? (
+                                <span
+                                  className={`inline-flex items-center justify-center min-w-20 h-7 px-2.5 text-xs font-semibold rounded-full ${getCncSituacaoColor(cnc.situacao_cnc)}`}
+                                >
+                                  {cnc.situacao_cnc}
+                                </span>
+                              ) : (
+                                "—"
+                              )}
+                            </td>
                             <td className="px-6 py-4 max-w-xs truncate text-muted-foreground" title={bfs.tipo_servico}>
                               {bfs.tipo_servico || "—"}
                             </td>
@@ -837,7 +884,7 @@ export default function DefesaPage() {
                           </tr>
                           {expandedIds[bfs.id] && (
                             <tr className="bg-muted/20">
-                              <td colSpan={8} className="px-6 py-3 text-xs">
+                              <td colSpan={9} className="px-6 py-3 text-xs">
                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                                   <div><strong>BFS:</strong> {bfs.bfs}</div>
                                   <div><strong>Fiscal:</strong> {bfs.fiscal || "—"}</div>
@@ -909,19 +956,12 @@ export default function DefesaPage() {
                     {STATUS_DEFESA_OPTIONS.map((opt) => {
                       const isActive = getStatusDefesa(selectedBFS.id) === opt.value;
                       return (
-                        <button
+                        <StatusDefesaButton
                           key={opt.value}
-                          type="button"
-                          className={`inline-flex items-center justify-center gap-3 px-6 py-4 text-base font-bold rounded-xl transition-all duration-200 min-w-36 ${
-                            isActive ? opt.btnSelected : opt.btnOutline
-                          }`}
-                          onClick={() => handleStatusClick(selectedBFS.id, opt.value)}
-                        >
-                          {opt.value === "Analisar" && <Search className="h-6 w-6" />}
-                          {opt.value === "Irregular" && <AlertTriangle className="h-6 w-6" />}
-                          {opt.value === "Contestar" && <FileCheck className="h-6 w-6" />}
-                          {opt.label}
-                        </button>
+                          opt={opt}
+                          isActive={isActive}
+                          onSelect={() => handleStatusClick(selectedBFS.id, opt.value)}
+                        />
                       );
                     })}
                   </div>
