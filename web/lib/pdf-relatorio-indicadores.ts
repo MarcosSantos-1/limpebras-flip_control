@@ -12,9 +12,10 @@ const PAGE_H = 297;
 const MARGIN = 18;
 const MARGIN_TOP = 10; // margem superior (logo e conteúdo)
 const MARGIN_LEFT = 15;
-const MARGIN_RIGHT = 20;
+const MARGIN_RIGHT = 15;
 const MARGIN_BOTTOM = 20;
-const CONTENT_W = PAGE_W - MARGIN_LEFT - MARGIN_RIGHT;
+const CONTENT_W = PAGE_W - MARGIN_LEFT - MARGIN_RIGHT; // 180mm - garante 15mm de margem direita
+const TEXT_MAX_W = CONTENT_W - 2; // pequena folga para evitar overflow de texto
 const COLOR_TITLE = "#00215a";
 const COLOR_HEADER_BG = [0, 48, 107] as const;
 const COLOR_BAND_TEXT = "#edf4e3";
@@ -36,6 +37,30 @@ function parseLocalDate(str: string): Date | null {
 
 function formatarValor(valor?: number, casas = 2): string {
   return typeof valor === "number" ? valor.toFixed(casas) : "--";
+}
+
+/** Sanitiza texto para PDF: decodifica HTML entities e substitui Unicode problemático por ASCII */
+function sanitizarTexto(str: unknown): string {
+  if (str == null) return "";
+  let s = String(str);
+  try {
+    const doc = new DOMParser().parseFromString("<!doctype html><body>" + s + "</body>", "text/html");
+    s = doc.body?.textContent ?? s;
+  } catch {
+    s = s
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&nbsp;/g, " ");
+  }
+  return s
+    .replace(/×/g, "x")
+    .replace(/≤/g, "<=")
+    .replace(/≥/g, ">=")
+    .replace(/–/g, "-")
+    .replace(/—/g, "-");
 }
 
 async function loadAsset(baseUrl: string, path: string): Promise<string> {
@@ -261,13 +286,13 @@ export async function gerarRelatorioIndicadoresPDF(input: RelatorioIndicadoresIn
     doc.setTextColor(r2, g2, b2);
     doc.setFontSize(14);
     doc.setFont("helvetica", "bold");
-    doc.text(texto, 15, y + 5.2);
+    doc.text(sanitizarTexto(texto), 15, y + 5.2);
   }
 
   function tituloSecao(ctx: DocContext, texto: string): void {
-    checkPage(ctx, BAND_H + 8);
+    checkPage(ctx, BAND_H + 18);
     addFaixaAzul(ctx.doc, ctx.y, texto);
-    ctx.y += BAND_H + 4;
+    ctx.y += BAND_H + 10; // Espaço de pelo menos 10mm após a faixa azul
   }
 
   function paragrafo(ctx: DocContext, texto: string): void {
@@ -275,8 +300,8 @@ export async function gerarRelatorioIndicadoresPDF(input: RelatorioIndicadoresIn
     ctx.doc.setFontSize(10);
     ctx.doc.setFont("helvetica", "normal");
     ctx.doc.setTextColor(0, 0, 0);
-    const lines = ctx.doc.splitTextToSize(texto, CONTENT_W);
-    ctx.doc.text(lines, MARGIN_LEFT, ctx.y, { align: "justify", lineHeightFactor: 1.3 });
+    const lines = ctx.doc.splitTextToSize(sanitizarTexto(texto), TEXT_MAX_W);
+    ctx.doc.text(lines, MARGIN_LEFT, ctx.y, { align: "left", lineHeightFactor: 1.3 });
     ctx.y += lines.length * LINE_H + 4;
   }
 
@@ -285,7 +310,7 @@ export async function gerarRelatorioIndicadoresPDF(input: RelatorioIndicadoresIn
     ctx.doc.setFontSize(11);
     ctx.doc.setFont("helvetica", "bold");
     ctx.doc.setTextColor(0, 0, 0);
-    ctx.doc.text(texto, MARGIN_LEFT, ctx.y);
+    ctx.doc.text(sanitizarTexto(texto), MARGIN_LEFT, ctx.y);
     ctx.y += 7;
   }
 
@@ -294,7 +319,7 @@ export async function gerarRelatorioIndicadoresPDF(input: RelatorioIndicadoresIn
     ctx.doc.setFontSize(10);
     ctx.doc.setFont("helvetica", "normal");
     ctx.doc.setTextColor(0, 0, 0);
-    const lines = ctx.doc.splitTextToSize(texto, CONTENT_W);
+    const lines = ctx.doc.splitTextToSize(sanitizarTexto(texto), TEXT_MAX_W);
     ctx.doc.text(lines, MARGIN_LEFT, ctx.y, { lineHeightFactor: 1.2 });
     ctx.y += lines.length * LINE_H + 3;
   }
@@ -316,6 +341,7 @@ export async function gerarRelatorioIndicadoresPDF(input: RelatorioIndicadoresIn
     ctx.y = MARGIN_TOP + 18;
 
     tituloSecao(ctx, "Resumo executivo do relatório");
+    ctx.y += 5; // Espaço de pelo menos 5mm (~5.2px/mm para 72 dpi, mas abaixo usamos empiricamente)
     paragrafo(ctx, `Visão consolidada dos indicadores do período de ${periodoLabel}.`);
     ctx.y += 4;
 
@@ -341,9 +367,9 @@ export async function gerarRelatorioIndicadoresPDF(input: RelatorioIndicadoresIn
       const bg = i % 2 === 0 ? [245, 248, 252] : [255, 255, 255];
       doc.setFillColor(bg[0], bg[1], bg[2]);
       doc.rect(MARGIN_LEFT, ctx.y - 2, CONTENT_W, ROW_H, "F");
-      doc.text(r.nome, MARGIN_LEFT + colW / 2, ctx.y + 3, { align: "center" });
-      doc.text(r.valor, MARGIN_LEFT + colW + colW / 2, ctx.y + 3, { align: "center" });
-      doc.text(`${r.pontos} pts`, MARGIN_LEFT + colW * 2 + colW / 2, ctx.y + 3, { align: "center" });
+      doc.text(sanitizarTexto(r.nome), MARGIN_LEFT + colW / 2, ctx.y + 3, { align: "center" });
+      doc.text(sanitizarTexto(r.valor), MARGIN_LEFT + colW + colW / 2, ctx.y + 3, { align: "center" });
+      doc.text(sanitizarTexto(`${r.pontos} pts`), MARGIN_LEFT + colW * 2 + colW / 2, ctx.y + 3, { align: "center" });
       ctx.y += ROW_H;
     }
 
@@ -361,7 +387,7 @@ export async function gerarRelatorioIndicadoresPDF(input: RelatorioIndicadoresIn
     tituloSecao(ctx, "IRD - Indicador de Reclamações por Domicílio");
     paragrafo(ctx, "Pontuação máxima: 20 pontos.");
     subTitulo(ctx, "Fórmula");
-    paragrafo(ctx, "IRD = (Reclamações Escalonadas Procedentes / Número de Domicílios) × 1000");
+    paragrafo(ctx, "IRD = (Reclamacoes Escalonadas Procedentes / Numero de Domicilios) x 1000");
     subTitulo(ctx, "Componentes");
     paragrafo(ctx, "Procedentes escalonados: varrição, mutirão, bueiro e cata-bagulho finalizados ou confirmados.");
     paragrafo(ctx, `Domicílios: ${(detalhes?.ird?.domicilios ?? 511093).toLocaleString("pt-BR")} (base IBGE 2024). O fator 1000 expressa o indicador por mil domicílios.`);
@@ -374,7 +400,7 @@ export async function gerarRelatorioIndicadoresPDF(input: RelatorioIndicadoresIn
     subTitulo(ctx, "Resultado");
     const ird = detalhes?.ird;
     const formula = ird
-      ? `IRD = (${ird.total_reclamacoes ?? 0} / ${(ird.domicilios ?? 0).toLocaleString("pt-BR")}) × 1000 = ${formatarValor(ird.valor, 3)}`
+      ? `IRD = (${ird.total_reclamacoes ?? 0} / ${(ird.domicilios ?? 0).toLocaleString("pt-BR")}) x 1000 = ${formatarValor(ird.valor, 3)}`
       : "Nenhum SAC escalonado procedente encontrado no período.";
     paragrafo(ctx, formula);
     paragrafo(ctx, `Pontuação: ${formatarValor(ird?.pontuacao, 2)} pts`);
@@ -403,7 +429,7 @@ export async function gerarRelatorioIndicadoresPDF(input: RelatorioIndicadoresIn
         doc.setFillColor(bg[0], bg[1], bg[2]);
         doc.rect(MARGIN_LEFT, ctx.y - 2, colW.reduce((a, b) => a + b, 0), ROW_H - 1, "F");
         x = MARGIN_LEFT;
-        doc.text(row.label || row.subprefeitura, x + 3, ctx.y + 2);
+        doc.text(sanitizarTexto(row.label || row.subprefeitura), x + 3, ctx.y + 2);
         doc.text(String(row.reclamacoes), x + colW[0] + colW[1] / 2, ctx.y + 2, { align: "center" });
         doc.text(row.domicilios.toLocaleString("pt-BR"), x + colW[0] + colW[1] + colW[2] / 2, ctx.y + 2, { align: "center" });
         doc.text(row.ird_valor.toFixed(3), x + colW[0] + colW[1] + colW[2] + colW[3] / 2, ctx.y + 2, { align: "center" });
@@ -414,10 +440,10 @@ export async function gerarRelatorioIndicadoresPDF(input: RelatorioIndicadoresIn
 
     subTitulo(ctx, "Tabela de pontuação IRD");
     const faixasIRD = [
-      ["IRD ≤ 1,0", "20 pts", "Excelente"],
-      ["1,0 < IRD ≤ 2,0", "15 pts", "Bom"],
-      ["2,0 < IRD ≤ 5,0", "10 pts", "Regular"],
-      ["5,0 < IRD ≤ 10,0", "5 pts", "Insatisfatório"],
+      ["IRD <= 1,0", "20 pts", "Excelente"],
+      ["1,0 < IRD <= 2,0", "15 pts", "Bom"],
+      ["2,0 < IRD <= 5,0", "10 pts", "Regular"],
+      ["5,0 < IRD <= 10,0", "5 pts", "Insatisfatório"],
       ["IRD > 10,0", "0 pts", "Crítico"],
     ];
     const colWird = [55, 35, 85];
@@ -451,7 +477,7 @@ export async function gerarRelatorioIndicadoresPDF(input: RelatorioIndicadoresIn
     tituloSecao(ctx, "IA - Indicador de Atendimento");
     paragrafo(ctx, "Pontuação máxima: 20 pontos.");
     subTitulo(ctx, "Fórmula");
-    paragrafo(ctx, "IA = (No prazo / (No prazo + Fora do prazo)) × 100");
+    paragrafo(ctx, "IA = (No prazo / (No prazo + Fora do prazo)) x 100");
     subTitulo(ctx, "Componentes");
     paragrafo(ctx, "Data de Registro: período selecionado. Classificação: Solicitação (demandantes). Finalizado fora de escopo: NÃO. No prazo = Responsividade_Execução SIM; Fora do prazo = NÃO.");
 
@@ -467,18 +493,18 @@ export async function gerarRelatorioIndicadoresPDF(input: RelatorioIndicadoresIn
     const total = noPrazo + foraPrazo;
     const pct = ia ? formatarValor(ia.percentual ?? ia.valor ?? 0, 2) : "--";
     paragrafo(ctx, total > 0
-      ? `No prazo: ${noPrazo} | Fora do prazo: ${foraPrazo} | IA = (${noPrazo} / ${total}) × 100 = ${pct}%`
+      ? `No prazo: ${noPrazo} | Fora do prazo: ${foraPrazo} | IA = (${noPrazo} / ${total}) x 100 = ${pct}%`
       : "Nenhum SAC demandante no período.");
     paragrafo(ctx, `Pontuação: ${formatarValor(ia?.pontuacao, 2)} pts`);
 
     subTitulo(ctx, "Tabela de pontuação IA");
     const faixasIA = [
-      ["IA ≥ 90%", "20 pts", "Quase tudo no prazo"],
-      ["80% ≤ IA < 90%", "16 pts", "Maioria no prazo"],
-      ["70% ≤ IA < 80%", "12 pts", "Parte atrasada"],
-      ["60% ≤ IA < 70%", "8 pts", "Muitos atrasos"],
-      ["50% ≤ IA < 60%", "4 pts", "Crítico"],
-      ["IA < 50%", "0 pts", "Inaceitável"],
+      ["IA >= 90%", "20 pts", "Quase tudo no prazo"],
+      ["80% <= IA < 90%", "16 pts", "Maioria no prazo"],
+      ["70% <= IA < 80%", "12 pts", "Parte atrasada"],
+      ["60% <= IA < 70%", "8 pts", "Muitos atrasos"],
+      ["50% <= IA < 60%", "4 pts", "Critico"],
+      ["IA < 50%", "0 pts", "Inaceitavel"],
     ];
     const colWia = [45, 35, 95];
     doc.setFontSize(9);
@@ -511,7 +537,7 @@ export async function gerarRelatorioIndicadoresPDF(input: RelatorioIndicadoresIn
     tituloSecao(ctx, "IF - Indicador de Fiscalização");
     paragrafo(ctx, "Pontuação máxima: 20 pontos.");
     subTitulo(ctx, "Fórmula");
-    paragrafo(ctx, "IF por sub = (sem irregularidades / total BFS escalonados) × 100. Média dos 4 percentuais (JT, CV, ST, MG) = IF final.");
+    paragrafo(ctx, "IF por sub = (sem irregularidades / total BFS escalonados) x 100. \nMedia dos 4 percentuais (JT, CV, ST, MG) = IF final.");
     subTitulo(ctx, "Excluídos do cálculo");
     paragrafo(ctx, "Coleta e transporte de entulho; Fornecimento de papeleiras; Remoção de animais mortos não identificados.");
 
@@ -553,7 +579,7 @@ export async function gerarRelatorioIndicadoresPDF(input: RelatorioIndicadoresIn
         doc.setFillColor(bg[0], bg[1], bg[2]);
         doc.rect(MARGIN_LEFT, ctx.y - 2, colW[0] + colW[1] + colW[2] + colW[3], ROW_H - 1, "F");
         x = MARGIN_LEFT;
-        doc.text(row.subprefeitura, x + 3, ctx.y + 2);
+        doc.text(sanitizarTexto(row.subprefeitura), x + 3, ctx.y + 2);
         doc.text(String(row.sem_irregularidades), x + colW[0] + colW[1] / 2, ctx.y + 2, { align: "center" });
         doc.text(String(row.vistorias_total), x + colW[0] + colW[1] + colW[2] / 2, ctx.y + 2, { align: "center" });
         doc.text(`${row.if_percentual.toFixed(1)}%`, x + colW[0] + colW[1] + colW[2] + colW[3] / 2, ctx.y + 2, { align: "center" });
@@ -570,9 +596,9 @@ export async function gerarRelatorioIndicadoresPDF(input: RelatorioIndicadoresIn
 
     subTitulo(ctx, "Tabela de pontuação IF");
     const faixasIF = [
-      ["IF ≥ 90%", "20 pts"], ["80% ≤ IF < 90%", "18 pts"], ["70% ≤ IF < 80%", "16 pts"],
-      ["60% ≤ IF < 70%", "14 pts"], ["50% ≤ IF < 60%", "12 pts"], ["40% ≤ IF < 50%", "10 pts"],
-      ["30% ≤ IF < 40%", "8 pts"], ["20% ≤ IF < 30%", "6 pts"], ["10% ≤ IF < 20%", "4 pts"], ["IF < 10%", "0 pts"],
+      ["IF >= 90%", "20 pts"], ["80% <= IF < 90%", "18 pts"], ["70% <= IF < 80%", "16 pts"],
+      ["60% <= IF < 70%", "14 pts"], ["50% <= IF < 60%", "12 pts"], ["40% <= IF < 50%", "10 pts"],
+      ["30% <= IF < 40%", "8 pts"], ["20% <= IF < 30%", "6 pts"], ["10% <= IF < 20%", "4 pts"], ["IF < 10%", "0 pts"],
     ];
     const colWif = [60, 40];
     doc.setFontSize(9);
@@ -603,7 +629,7 @@ export async function gerarRelatorioIndicadoresPDF(input: RelatorioIndicadoresIn
     tituloSecao(ctx, "IPT - Indicador de Execução dos Planos de Trabalho");
     paragrafo(ctx, "Pontuação máxima: 40 pontos. Algoritmo oficial SELIMP.");
     subTitulo(ctx, "Fórmula (SELIMP)");
-    paragrafo(ctx, "PF = 0,7 × min(Q̄ + min(σ, 0,08), 1) + 0,3 × min(A/C, 1)  |  C = P×R/F, Q̄ = (1/N)×ΣQᵢ, N = A - Z");
+    paragrafo(ctx, "PF = 0,7 x min(Q + min(sigma, 0,08), 1) + 0,3 x min(A/C, 1) | C = PxR/F, Q = (1/N)x soma Qi, N = A - Z");
 
     const iptDet = detalhes?.ipt?.ipt_detalhes;
     if (iptDet) {
@@ -615,8 +641,8 @@ export async function gerarRelatorioIndicadoresPDF(input: RelatorioIndicadoresIn
         ["A", String(iptDet.A), "ordens atribuídas"],
         ["Z", String(iptDet.Z), "zeradas"],
         ["N", String(iptDet.N), "com conclusão >0%"],
-        ["Q̄", `${(iptDet.Qb * 100).toFixed(2)}%`, "qualidade bruta"],
-        ["σ", `${(iptDet.sigma * 100).toFixed(2)}%`, "desvio padrão"],
+        ["Q", `${(iptDet.Qb * 100).toFixed(2)}%`, "qualidade bruta"],
+        ["sigma", `${(iptDet.sigma * 100).toFixed(2)}%`, "desvio padrao"],
         ["Cobertura", `${(iptDet.cobertura * 100).toFixed(2)}%`, "min(A/C, 1)"],
         ["PF", `${(iptDet.PF * 100).toFixed(2)}%`, "Percentual Final"],
       ];
@@ -653,9 +679,9 @@ export async function gerarRelatorioIndicadoresPDF(input: RelatorioIndicadoresIn
 
     subTitulo(ctx, "Tabela de pontuação IPT");
     const faixasIPT = [
-      ["IPT ≥ 90%", "40 pts"], ["80% ≤ IPT < 90%", "38 pts"], ["70% ≤ IPT < 80%", "36 pts"],
-      ["60% ≤ IPT < 70%", "32 pts"], ["50% ≤ IPT < 60%", "28 pts"], ["40% ≤ IPT < 50%", "24 pts"],
-      ["30% ≤ IPT < 40%", "20 pts"], ["20% ≤ IPT < 30%", "16 pts"], ["10% ≤ IPT < 20%", "12 pts"], ["IPT < 10%", "0 pts"],
+      ["IPT >= 90%", "40 pts"], ["80% <= IPT < 90%", "38 pts"], ["70% <= IPT < 80%", "36 pts"],
+      ["60% <= IPT < 70%", "32 pts"], ["50% <= IPT < 60%", "28 pts"], ["40% <= IPT < 50%", "24 pts"],
+      ["30% <= IPT < 40%", "20 pts"], ["20% <= IPT < 30%", "16 pts"], ["10% <= IPT < 20%", "12 pts"], ["IPT < 10%", "0 pts"],
     ];
     const colWiptFaixa = [60, 40];
     doc.setFontSize(9);
@@ -692,7 +718,9 @@ export async function gerarRelatorioIndicadoresPDF(input: RelatorioIndicadoresIn
   function addResumoIndicadores(doc: typeof pdf, ctx: DocContext): void {
     addNovaPaginaComCabecalho(ctx);
     tituloSecao(ctx, "Resumo dos indicadores");
+    doc.setFont("helvetica", "bold");
     paragrafo(ctx, `Período analisado: ${periodoLabel}.`);
+    doc.setFont("helvetica", "normal");
 
     const coresPorIndicador = [COR_EMERALD, COR_BLUE, COR_AMBER, COR_FUCHSIA];
     const colWRes = [50, 55, 50];
@@ -712,15 +740,15 @@ export async function gerarRelatorioIndicadoresPDF(input: RelatorioIndicadoresIn
       doc.setFillColor(cr, cg, cb);
       doc.rect(MARGIN_LEFT, ctx.y - 2, colWRes[0], ROW_H + 2, "F");
       doc.setTextColor(255, 255, 255);
-      doc.text(r.nome, MARGIN_LEFT + colWRes[0] / 2, ctx.y + 4, { align: "center" });
+      doc.text(sanitizarTexto(r.nome), MARGIN_LEFT + colWRes[0] / 2, ctx.y + 4, { align: "center" });
       doc.setFillColor(255, 255, 255);
       doc.setDrawColor(cr, cg, cb);
       doc.setLineWidth(0.3);
       doc.rect(MARGIN_LEFT + colWRes[0], ctx.y - 2, colWRes[1] + colWRes[2], ROW_H + 2, "FD");
       doc.setTextColor(0, 0, 0);
       doc.setFont("helvetica", "normal");
-      doc.text(r.valor, MARGIN_LEFT + colWRes[0] + colWRes[1] / 2, ctx.y + 4, { align: "center" });
-      doc.text(`${r.pontos} pts`, MARGIN_LEFT + colWRes[0] + colWRes[1] + colWRes[2] / 2, ctx.y + 4, { align: "center" });
+      doc.text(sanitizarTexto(r.valor), MARGIN_LEFT + colWRes[0] + colWRes[1] / 2, ctx.y + 4, { align: "center" });
+      doc.text(sanitizarTexto(`${r.pontos} pts`), MARGIN_LEFT + colWRes[0] + colWRes[1] + colWRes[2] / 2, ctx.y + 4, { align: "center" });
       doc.setFont("helvetica", "bold");
       ctx.y += ROW_H + 4;
     });
@@ -732,24 +760,28 @@ export async function gerarRelatorioIndicadoresPDF(input: RelatorioIndicadoresIn
     doc.setTextColor(0, 0, 0);
     doc.text("Total ADC (IRD + IA + IF + IPT):", MARGIN_LEFT, ctx.y);
     doc.text(`${formatarValor(input.pontuacaoTotal, 2)} pts`, MARGIN_LEFT + 95, ctx.y);
-    ctx.y += 10;
+    ctx.y += 15; // espaçamento antes do status/desconto
 
-    const boxTotalW = CONTENT_W;
+    const tableW = colWRes.reduce((a, b) => a + b, 0);
+    const boxTotalW = tableW;
     const temDesconto = input.infoDesconto.desconto > 0;
     const corDesconto = temDesconto ? COR_AMARELO : COR_VERDE;
     doc.setFillColor(corDesconto[0], corDesconto[1], corDesconto[2]);
     doc.roundedRect(MARGIN_LEFT, ctx.y - 2, boxTotalW, 18, 2, 2, "F");
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(12);
-    doc.text(temDesconto ? "Desconto aplicado" : "Sem desconto", MARGIN_LEFT + 10, ctx.y + 5);
+    doc.text(temDesconto ? "Desconto aplicado" : "Sem desconto", MARGIN_LEFT + 13, ctx.y + 5);
     if (temDesconto) {
       doc.text(`-${formatarValor(input.infoDesconto.desconto, 2)}%`, MARGIN_LEFT + boxTotalW - 15, ctx.y + 5, { align: "right" });
     }
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
-    const linesDesc = doc.splitTextToSize(input.infoDesconto.explicacao, boxTotalW - 20);
+    const linesDesc = doc.splitTextToSize(sanitizarTexto(input.infoDesconto.explicacao), boxTotalW - 20);
     doc.text(linesDesc, MARGIN_LEFT + 10, ctx.y + 11);
     ctx.y += 20;
+
+    // Adiciona espaçamento extra entre o card de status "Sem desconto" e o texto "Percentual contratual"
+    ctx.y += 8;
 
     subTitulo(ctx, "Percentual contratual");
     doc.setFontSize(11);
