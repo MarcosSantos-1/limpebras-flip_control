@@ -1218,18 +1218,18 @@ export default function IPTPage() {
                             <span className="inline-flex items-center gap-1">📌 Plano {getSortLabel("plano")}</span>
                           </button>
                           {headerMenuOpen === "plano" && (
-                            <div className="absolute left-0 top-[calc(100%+8px)] z-30 w-44 rounded-xl bg-popover/95 p-2 shadow-[0_16px_45px_-20px_rgba(0,0,0,0.6)] backdrop-blur transition-all">
-                              <p className="text-[10px] font-semibold text-muted-foreground mb-1">Ordenação</p>
-                              <button onClick={() => setSort("plano", "asc")} className="w-full rounded px-2 py-1 text-left text-xs hover:bg-muted/60">
+                            <div className="absolute left-0 top-[calc(100%+8px)] z-30 w-44 rounded-xl bg-slate-800 text-white p-2 shadow-[0_16px_45px_-20px_rgba(0,0,0,0.6)] backdrop-blur transition-all">
+                              <p className="text-[10px] font-semibold text-slate-400 mb-1">Ordenação</p>
+                              <button onClick={() => setSort("plano", "asc")} className="w-full rounded px-2 py-1 text-left text-xs text-white hover:bg-slate-600">
                                 Crescente
                               </button>
-                              <button onClick={() => setSort("plano", "desc")} className="w-full rounded px-2 py-1 text-left text-xs hover:bg-muted/60">
+                              <button onClick={() => setSort("plano", "desc")} className="w-full rounded px-2 py-1 text-left text-xs text-white hover:bg-slate-600">
                                 Decrescente
                               </button>
-                              <p className="text-[10px] font-semibold text-muted-foreground mt-2 mb-1">Largura</p>
+                              <p className="text-[10px] font-semibold text-slate-400 mt-2 mb-1">Largura</p>
                               <div className="flex items-center gap-1">
-                                <button onClick={() => adjustColumnWidth("plano", -16)} className="rounded px-2 py-1 text-xs bg-muted/60 hover:bg-muted">-</button>
-                                <button onClick={() => adjustColumnWidth("plano", 16)} className="rounded px-2 py-1 text-xs bg-muted/60 hover:bg-muted">+</button>
+                                <button onClick={() => adjustColumnWidth("plano", -16)} className="rounded px-2 py-1 text-xs text-white bg-slate-600 hover:bg-slate-500">-</button>
+                                <button onClick={() => adjustColumnWidth("plano", 16)} className="rounded px-2 py-1 text-xs text-white bg-slate-600 hover:bg-slate-500">+</button>
                               </div>
                             </div>
                           )}
@@ -1245,17 +1245,17 @@ export default function IPTPage() {
                             <span className="inline-flex items-center gap-1">🏙 Sub. {getSortLabel("sub")}</span>
                           </button>
                           {headerMenuOpen === "sub" && (
-                            <div className="absolute left-0 top-[calc(100%+8px)] z-30 w-52 rounded-xl bg-popover/95 p-2 shadow-[0_16px_45px_-20px_rgba(0,0,0,0.6)] backdrop-blur transition-all">
-                              <p className="text-[10px] font-semibold text-muted-foreground mb-1">Ordenação</p>
-                              <button onClick={() => setSort("sub", "asc")} className="w-full rounded px-2 py-1 text-left text-xs hover:bg-muted/60">
+                            <div className="absolute left-0 top-[calc(100%+8px)] z-30 w-52 rounded-xl bg-slate-800 text-white p-2 shadow-[0_16px_45px_-20px_rgba(0,0,0,0.6)] backdrop-blur transition-all">
+                              <p className="text-[10px] font-semibold text-slate-400 mb-1">Ordenação</p>
+                              <button onClick={() => setSort("sub", "asc")} className="w-full rounded px-2 py-1 text-left text-xs text-white hover:bg-slate-600">
                                 Crescente
                               </button>
-                              <button onClick={() => setSort("sub", "desc")} className="w-full rounded px-2 py-1 text-left text-xs hover:bg-muted/60">
+                              <button onClick={() => setSort("sub", "desc")} className="w-full rounded px-2 py-1 text-left text-xs text-white hover:bg-slate-600">
                                 Decrescente
                               </button>
-                              <p className="text-[10px] font-semibold text-muted-foreground mt-2 mb-1">Filtrar siglas</p>
+                              <p className="text-[10px] font-semibold text-slate-400 mt-2 mb-1">Filtrar siglas</p>
                               {SUB_SIGLAS.map((sigla) => (
-                                <label key={sigla} className="flex items-center gap-2 rounded px-1 py-1 text-xs hover:bg-muted/50">
+                                <label key={sigla} className="flex items-center gap-2 rounded px-1 py-1 text-xs text-white hover:bg-slate-600 cursor-pointer">
                                   <input
                                     type="checkbox"
                                     checked={subSiglaFilter.includes(sigla)}
@@ -1267,21 +1267,21 @@ export default function IPTPage() {
                               <div className="mt-1 flex gap-1">
                                 <button
                                   onClick={() => setSubSiglaFilter([...SUB_SIGLAS])}
-                                  className="rounded px-2 py-1 text-[11px] bg-muted/60 hover:bg-muted"
+                                  className="rounded px-2 py-1 text-[11px] text-white bg-slate-600 hover:bg-slate-500"
                                 >
                                   Todas
                                 </button>
                                 <button
                                   onClick={() => setSubSiglaFilter([])}
-                                  className="rounded px-2 py-1 text-[11px] bg-muted/60 hover:bg-muted"
+                                  className="rounded px-2 py-1 text-[11px] text-white bg-slate-600 hover:bg-slate-500"
                                 >
                                   Limpar
                                 </button>
                               </div>
-                              <p className="text-[10px] font-semibold text-muted-foreground mt-2 mb-1">Largura</p>
+                              <p className="text-[10px] font-semibold text-slate-400 mt-2 mb-1">Largura</p>
                               <div className="flex items-center gap-1">
-                                <button onClick={() => adjustColumnWidth("sub", -12)} className="rounded px-2 py-1 text-xs bg-muted/60 hover:bg-muted">-</button>
-                                <button onClick={() => adjustColumnWidth("sub", 12)} className="rounded px-2 py-1 text-xs bg-muted/60 hover:bg-muted">+</button>
+                                <button onClick={() => adjustColumnWidth("sub", -12)} className="rounded px-2 py-1 text-xs text-white bg-slate-600 hover:bg-slate-500">-</button>
+                                <button onClick={() => adjustColumnWidth("sub", 12)} className="rounded px-2 py-1 text-xs text-white bg-slate-600 hover:bg-slate-500">+</button>
                               </div>
                             </div>
                           )}
@@ -1297,18 +1297,18 @@ export default function IPTPage() {
                             <span className="inline-flex items-center gap-1">🛠 Serviço {getSortLabel("servico")}</span>
                           </button>
                           {headerMenuOpen === "servico" && (
-                            <div className="absolute left-0 top-[calc(100%+8px)] z-30 w-72 rounded-xl bg-popover/95 p-2 shadow-[0_16px_45px_-20px_rgba(0,0,0,0.6)] backdrop-blur transition-all">
-                              <p className="text-[10px] font-semibold text-muted-foreground mb-1">Ordenação</p>
-                              <button onClick={() => setSort("servico", "asc")} className="w-full rounded px-2 py-1 text-left text-xs hover:bg-muted/60">
+                            <div className="absolute left-0 top-[calc(100%+8px)] z-30 w-72 rounded-xl bg-slate-800 text-white p-2 shadow-[0_16px_45px_-20px_rgba(0,0,0,0.6)] backdrop-blur transition-all">
+                              <p className="text-[10px] font-semibold text-slate-400 mb-1">Ordenação</p>
+                              <button onClick={() => setSort("servico", "asc")} className="w-full rounded px-2 py-1 text-left text-xs text-white hover:bg-slate-600">
                                 Crescente
                               </button>
-                              <button onClick={() => setSort("servico", "desc")} className="w-full rounded px-2 py-1 text-left text-xs hover:bg-muted/60">
+                              <button onClick={() => setSort("servico", "desc")} className="w-full rounded px-2 py-1 text-left text-xs text-white hover:bg-slate-600">
                                 Decrescente
                               </button>
-                              <p className="text-[10px] font-semibold text-muted-foreground mt-2 mb-1">Filtrar serviços</p>
+                              <p className="text-[10px] font-semibold text-slate-400 mt-2 mb-1">Filtrar serviços</p>
                               <div className="max-h-40 overflow-y-auto space-y-0.5 pr-1">
                                 {serviceOptions.map((servico) => (
-                                  <label key={servico} className="flex items-center gap-2 rounded px-1 py-1 text-xs hover:bg-muted/50 transition-colors">
+                                  <label key={servico} className="flex items-center gap-2 rounded px-1 py-1 text-xs text-white hover:bg-slate-600 transition-colors cursor-pointer">
                                     <input
                                       type="checkbox"
                                       checked={serviceFilterValues.includes(servico)}
@@ -1321,21 +1321,21 @@ export default function IPTPage() {
                               <div className="mt-1 flex gap-1">
                                 <button
                                   onClick={() => setServiceFilterValues(serviceOptions)}
-                                  className="rounded px-2 py-1 text-[11px] bg-muted/60 hover:bg-muted transition-colors"
+                                  className="rounded px-2 py-1 text-[11px] text-white bg-slate-600 hover:bg-slate-500 transition-colors"
                                 >
                                   Todos
                                 </button>
                                 <button
                                   onClick={() => setServiceFilterValues([])}
-                                  className="rounded px-2 py-1 text-[11px] bg-muted/60 hover:bg-muted transition-colors"
+                                  className="rounded px-2 py-1 text-[11px] text-white bg-slate-600 hover:bg-slate-500 transition-colors"
                                 >
                                   Limpar
                                 </button>
                               </div>
-                              <p className="text-[10px] font-semibold text-muted-foreground mt-2 mb-1">Largura</p>
+                              <p className="text-[10px] font-semibold text-slate-400 mt-2 mb-1">Largura</p>
                               <div className="flex items-center gap-1">
-                                <button onClick={() => adjustColumnWidth("servico", -20)} className="rounded px-2 py-1 text-xs bg-muted/60 hover:bg-muted">-</button>
-                                <button onClick={() => adjustColumnWidth("servico", 20)} className="rounded px-2 py-1 text-xs bg-muted/60 hover:bg-muted">+</button>
+                                <button onClick={() => adjustColumnWidth("servico", -20)} className="rounded px-2 py-1 text-xs text-white bg-slate-600 hover:bg-slate-500">-</button>
+                                <button onClick={() => adjustColumnWidth("servico", 20)} className="rounded px-2 py-1 text-xs text-white bg-slate-600 hover:bg-slate-500">+</button>
                               </div>
                             </div>
                           )}
@@ -1351,18 +1351,18 @@ export default function IPTPage() {
                             <span className="inline-flex items-center gap-1">📈 SELIMP {getSortLabel("selimp")}</span>
                           </button>
                           {headerMenuOpen === "selimp" && (
-                            <div className="absolute left-0 top-[calc(100%+8px)] z-30 w-44 rounded-xl bg-popover/95 p-2 shadow-[0_16px_45px_-20px_rgba(0,0,0,0.6)] backdrop-blur transition-all">
-                              <p className="text-[10px] font-semibold text-muted-foreground mb-1">Ordenação</p>
-                              <button onClick={() => setSort("selimp", "asc")} className="w-full rounded px-2 py-1 text-left text-xs hover:bg-muted/60">
+                            <div className="absolute left-0 top-[calc(100%+8px)] z-30 w-44 rounded-xl bg-slate-800 text-white p-2 shadow-[0_16px_45px_-20px_rgba(0,0,0,0.6)] backdrop-blur transition-all">
+                              <p className="text-[10px] font-semibold text-slate-400 mb-1">Ordenação</p>
+                              <button onClick={() => setSort("selimp", "asc")} className="w-full rounded px-2 py-1 text-left text-xs text-white hover:bg-slate-600">
                                 Crescente
                               </button>
-                              <button onClick={() => setSort("selimp", "desc")} className="w-full rounded px-2 py-1 text-left text-xs hover:bg-muted/60">
+                              <button onClick={() => setSort("selimp", "desc")} className="w-full rounded px-2 py-1 text-left text-xs text-white hover:bg-slate-600">
                                 Decrescente
                               </button>
-                              <p className="text-[10px] font-semibold text-muted-foreground mt-2 mb-1">Largura</p>
+                              <p className="text-[10px] font-semibold text-slate-400 mt-2 mb-1">Largura</p>
                               <div className="flex items-center gap-1">
-                                <button onClick={() => adjustColumnWidth("selimp", -12)} className="rounded px-2 py-1 text-xs bg-muted/60 hover:bg-muted">-</button>
-                                <button onClick={() => adjustColumnWidth("selimp", 12)} className="rounded px-2 py-1 text-xs bg-muted/60 hover:bg-muted">+</button>
+                                <button onClick={() => adjustColumnWidth("selimp", -12)} className="rounded px-2 py-1 text-xs text-white bg-slate-600 hover:bg-slate-500">-</button>
+                                <button onClick={() => adjustColumnWidth("selimp", 12)} className="rounded px-2 py-1 text-xs text-white bg-slate-600 hover:bg-slate-500">+</button>
                               </div>
                             </div>
                           )}
@@ -1378,18 +1378,18 @@ export default function IPTPage() {
                             <span className="inline-flex items-center gap-1">📊 DDMX {getSortLabel("nossa")}</span>
                           </button>
                           {headerMenuOpen === "nossa" && (
-                            <div className="absolute left-0 top-[calc(100%+8px)] z-30 w-44 rounded-xl bg-popover/95 p-2 shadow-[0_16px_45px_-20px_rgba(0,0,0,0.6)] backdrop-blur transition-all">
-                              <p className="text-[10px] font-semibold text-muted-foreground mb-1">Ordenação</p>
-                              <button onClick={() => setSort("nossa", "asc")} className="w-full rounded px-2 py-1 text-left text-xs hover:bg-muted/60">
+                            <div className="absolute left-0 top-[calc(100%+8px)] z-30 w-44 rounded-xl bg-slate-800 text-white p-2 shadow-[0_16px_45px_-20px_rgba(0,0,0,0.6)] backdrop-blur transition-all">
+                              <p className="text-[10px] font-semibold text-slate-400 mb-1">Ordenação</p>
+                              <button onClick={() => setSort("nossa", "asc")} className="w-full rounded px-2 py-1 text-left text-xs text-white hover:bg-slate-600">
                                 Crescente
                               </button>
-                              <button onClick={() => setSort("nossa", "desc")} className="w-full rounded px-2 py-1 text-left text-xs hover:bg-muted/60">
+                              <button onClick={() => setSort("nossa", "desc")} className="w-full rounded px-2 py-1 text-left text-xs text-white hover:bg-slate-600">
                                 Decrescente
                               </button>
-                              <p className="text-[10px] font-semibold text-muted-foreground mt-2 mb-1">Largura</p>
+                              <p className="text-[10px] font-semibold text-slate-400 mt-2 mb-1">Largura</p>
                               <div className="flex items-center gap-1">
-                                <button onClick={() => adjustColumnWidth("nossa", -12)} className="rounded px-2 py-1 text-xs bg-muted/60 hover:bg-muted">-</button>
-                                <button onClick={() => adjustColumnWidth("nossa", 12)} className="rounded px-2 py-1 text-xs bg-muted/60 hover:bg-muted">+</button>
+                                <button onClick={() => adjustColumnWidth("nossa", -12)} className="rounded px-2 py-1 text-xs text-white bg-slate-600 hover:bg-slate-500">-</button>
+                                <button onClick={() => adjustColumnWidth("nossa", 12)} className="rounded px-2 py-1 text-xs text-white bg-slate-600 hover:bg-slate-500">+</button>
                               </div>
                             </div>
                           )}
@@ -1405,17 +1405,17 @@ export default function IPTPage() {
                             <span className="inline-flex items-center gap-1">🔎 Origem {getSortLabel("origem")}</span>
                           </button>
                           {headerMenuOpen === "origem" && (
-                            <div className="absolute right-0 top-[calc(100%+8px)] z-30 w-56 rounded-xl bg-popover/95 p-2 shadow-[0_16px_45px_-20px_rgba(0,0,0,0.6)] backdrop-blur transition-all">
-                              <p className="text-[10px] font-semibold text-muted-foreground mb-1">Ordenação</p>
-                              <button onClick={() => setSort("origem", "asc")} className="w-full rounded px-2 py-1 text-left text-xs hover:bg-muted/60">
+                            <div className="absolute right-0 top-[calc(100%+8px)] z-30 w-56 rounded-xl bg-slate-800 text-white p-2 shadow-[0_16px_45px_-20px_rgba(0,0,0,0.6)] backdrop-blur transition-all">
+                              <p className="text-[10px] font-semibold text-slate-400 mb-1">Ordenação</p>
+                              <button onClick={() => setSort("origem", "asc")} className="w-full rounded px-2 py-1 text-left text-xs text-white hover:bg-slate-600">
                                 Crescente
                               </button>
-                              <button onClick={() => setSort("origem", "desc")} className="w-full rounded px-2 py-1 text-left text-xs hover:bg-muted/60">
+                              <button onClick={() => setSort("origem", "desc")} className="w-full rounded px-2 py-1 text-left text-xs text-white hover:bg-slate-600">
                                 Decrescente
                               </button>
-                              <p className="text-[10px] font-semibold text-muted-foreground mt-2 mb-1">Filtrar origens</p>
+                              <p className="text-[10px] font-semibold text-slate-400 mt-2 mb-1">Filtrar origens</p>
                               {ORIGEM_VALUES.map((origem) => (
-                                <label key={origem} className="flex items-center gap-2 rounded px-1 py-1 text-xs hover:bg-muted/50 transition-colors">
+                                <label key={origem} className="flex items-center gap-2 rounded px-1 py-1 text-xs text-white hover:bg-slate-600 transition-colors cursor-pointer">
                                   <input
                                     type="checkbox"
                                     checked={origemFilterValues.includes(origem)}
@@ -1427,21 +1427,21 @@ export default function IPTPage() {
                               <div className="mt-1 flex gap-1">
                                 <button
                                   onClick={() => setOrigemFilterValues([...ORIGEM_VALUES])}
-                                  className="rounded px-2 py-1 text-[11px] bg-muted/60 hover:bg-muted transition-colors"
+                                  className="rounded px-2 py-1 text-[11px] text-white bg-slate-600 hover:bg-slate-500 transition-colors"
                                 >
                                   Todas
                                 </button>
                                 <button
                                   onClick={() => setOrigemFilterValues([])}
-                                  className="rounded px-2 py-1 text-[11px] bg-muted/60 hover:bg-muted transition-colors"
+                                  className="rounded px-2 py-1 text-[11px] text-white bg-slate-600 hover:bg-slate-500 transition-colors"
                                 >
                                   Limpar
                                 </button>
                               </div>
-                              <p className="text-[10px] font-semibold text-muted-foreground mt-2 mb-1">Largura</p>
+                              <p className="text-[10px] font-semibold text-slate-400 mt-2 mb-1">Largura</p>
                               <div className="flex items-center gap-1">
-                                <button onClick={() => adjustColumnWidth("origem", -12)} className="rounded px-2 py-1 text-xs bg-muted/60 hover:bg-muted">-</button>
-                                <button onClick={() => adjustColumnWidth("origem", 12)} className="rounded px-2 py-1 text-xs bg-muted/60 hover:bg-muted">+</button>
+                                <button onClick={() => adjustColumnWidth("origem", -12)} className="rounded px-2 py-1 text-xs text-white bg-slate-600 hover:bg-slate-500">-</button>
+                                <button onClick={() => adjustColumnWidth("origem", 12)} className="rounded px-2 py-1 text-xs text-white bg-slate-600 hover:bg-slate-500">+</button>
                               </div>
                             </div>
                           )}
@@ -1632,8 +1632,8 @@ export default function IPTPage() {
                                     </p>
                                     <p className="font-medium text-blue-900 dark:text-blue-100">{row.frequencia}</p>
                                     {row.cronograma_preview && row.cronograma_preview.length > 0 && (
-                                      <div className="absolute left-0 top-full mt-2 z-50 hidden group-hover:block w-64 rounded-xl bg-popover border shadow-xl p-3 text-xs">
-                                        <p className="font-semibold text-muted-foreground mb-1.5">Prévia cronograma (5 datas)</p>
+                                      <div className="absolute left-0 top-full mt-2 z-50 hidden group-hover:block w-64 rounded-xl bg-slate-800 text-white border border-slate-600 shadow-xl p-3 text-xs">
+                                        <p className="font-semibold text-slate-400 mb-1.5">Prévia cronograma (5 datas)</p>
                                         <div className="flex flex-wrap gap-1">
                                           {row.cronograma_preview.map((d, i) => (
                                             <span key={`${row.plano}-cron-${i}-${d}`} className="rounded bg-blue-500/20 px-2 py-0.5 font-mono">
@@ -1692,8 +1692,8 @@ export default function IPTPage() {
                                       {row.proxima_programacao.replace(/^(\d{4})-(\d{2})-(\d{2})$/, "$3/$2/$1")}
                                     </p>
                                     {row.cronograma_preview && row.cronograma_preview.length > 0 && (
-                                      <div className="absolute left-0 top-full mt-2 z-50 hidden group-hover:block w-64 rounded-xl bg-popover border shadow-xl p-3 text-xs">
-                                        <p className="font-semibold text-muted-foreground mb-1.5">Prévia cronograma (5 datas)</p>
+                                      <div className="absolute left-0 top-full mt-2 z-50 hidden group-hover:block w-64 rounded-xl bg-slate-800 text-white border border-slate-600 shadow-xl p-3 text-xs">
+                                        <p className="font-semibold text-slate-400 mb-1.5">Prévia cronograma (5 datas)</p>
                                         <div className="flex flex-wrap gap-1">
                                           {row.cronograma_preview.map((d, i) => (
                                             <span key={`${row.plano}-cron-emerald-${i}-${d}`} className="rounded bg-emerald-500/20 px-2 py-0.5 font-mono">
