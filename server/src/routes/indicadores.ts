@@ -10,6 +10,7 @@ import {
   descontoADC,
   type IndicadorResult,
 } from "../services/indicadores.js";
+import { calcularPF, calcularPFComDetalhes, type PfDetalhes } from "../services/ipt-pf-algoritmo.js";
 import { BFS_IF_EXCLUSAO_SQL } from "../constants/bfs.js";
 import { SUB_SIGLAS, DOMICILIOS_POR_REGIONAL, regionalToSigla } from "../constants/regionais.js";
 import {
@@ -78,16 +79,14 @@ function parseDateToKey(value: string): string | null {
 }
 
 /**
- * IPT = soma de todos os percentuais de módulos com status "Encerrado" (SELIMP report)
- * dividido pela quantidade de despachos = média em %. Depois extrai pontuação.
- * Usa data_referencia ou extrai data do raw (data, data_planejado, data_execucao) para filtrar por período.
+ * Extrai ordens da planilha SELIMP no período.
+ * Filtro: Status = "Encerrado", coluna plano, coluna de_execucao (ou percentual_execucao).
  */
-/**
- * IPT = média dos percentuais de execução das linhas com status "Encerrado".
- * Processo manual: filtrar Encerrado, coluna % (=F*100 se decimal), média de todos os valores.
- * A coluna de origem pode vir em decimal (0,5944) ou percentual (59,44) — normalizamos para 0-100.
- */
-async function getAutoIPTFromReport(client: any, inicio: string, fim: string): Promise<number | null> {
+async function fetchOrdensSelimpNoPeriodo(
+  client: any,
+  inicio: string,
+  fim: string
+): Promise<{ ordens: Array<{ percentual: number }>; P: number; R: number; F: number }> {
   const rows = await client.query(
     `SELECT raw, data_referencia, updated_at
      FROM ipt_imports
@@ -95,8 +94,7 @@ async function getAutoIPTFromReport(client: any, inicio: string, fim: string): P
     []
   );
 
-  let somaPercentuais = 0;
-  let qtdDespachos = 0;
+  const ordens: Array<{ percentual: number }> = [];
 
   for (const row of rows.rows as Array<{ raw: IptRaw; data_referencia: string | Date | null; updated_at: string | Date | null }>) {
     const raw = (row.raw ?? {}) as IptRaw;
@@ -104,10 +102,11 @@ async function getAutoIPTFromReport(client: any, inicio: string, fim: string): P
     if (!status.includes("encerrado")) continue;
     const plano = normalizarSetor(String(raw.plano ?? "").trim());
     if (!plano) continue;
+
     let percentual = toExecPercent(String(raw.de_execucao ?? raw.percentual_execucao ?? "").trim());
-    if (percentual == null) continue;
-    /** Planilha SELIMP pode ter decimal (0,5944); Excel manual usa =F*100. Normalizar. */
+    if (percentual == null) percentual = 0;
     if (percentual > 0 && percentual <= 1) percentual *= 100;
+    const percentualDecimal = Math.min(1, Math.max(0, percentual / 100));
 
     let dateKey: string | null = null;
     const dataRef = row.data_referencia;
@@ -131,13 +130,37 @@ async function getAutoIPTFromReport(client: any, inicio: string, fim: string): P
     }
     if (!dateKey || dateKey < inicio || dateKey > fim) continue;
 
-    somaPercentuais += percentual;
-    qtdDespachos += 1;
+    ordens.push({ percentual: percentualDecimal });
   }
 
-  if (qtdDespachos === 0) return null;
-  const ipt = somaPercentuais / qtdDespachos;
-  return Number(ipt.toFixed(2));
+  const A = ordens.length;
+  return { ordens, P: A, R: 1, F: 1 };
+}
+
+/**
+ * IPT via algoritmo oficial SELIMP: PF = 0.7 × qualidade + 0.3 × cobertura.
+ */
+async function getAutoIPTFromReport(client: any, inicio: string, fim: string): Promise<number | null> {
+  const { ordens, P, R, F } = await fetchOrdensSelimpNoPeriodo(client, inicio, fim);
+  if (ordens.length === 0) return null;
+  const pf = calcularPF({ P, R, F, ordens });
+  if (pf == null) return null;
+  return Number((pf * 100).toFixed(2));
+}
+
+/**
+ * IPT com detalhes do algoritmo para a página de explicação.
+ */
+async function getAutoIPTDetalhesFromReport(
+  client: any,
+  inicio: string,
+  fim: string
+): Promise<{ percent: number; detalhes: PfDetalhes } | null> {
+  const { ordens, P, R, F } = await fetchOrdensSelimpNoPeriodo(client, inicio, fim);
+  if (ordens.length === 0) return null;
+  const result = calcularPFComDetalhes({ P, R, F, ordens });
+  if (!result) return null;
+  return { percent: Number((result.pf * 100).toFixed(2)), detalhes: result.detalhes };
 }
 
 type IptRaw = Record<string, string>;
@@ -853,14 +876,24 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
             : "IF = (média dos % por sub) — Nenhum BFS escalonado no período.",
       };
 
-      const autoIptPercent = await getAutoIPTFromReport(client, inicio, fim);
+      const autoIptDetalhes = await getAutoIPTDetalhesFromReport(client, inicio, fim);
       const savedIptPercent = await getSavedIPT(client, inicio, fim);
-      const iptPercent = autoIptPercent ?? savedIptPercent;
+      const iptPercent = autoIptDetalhes?.percent ?? savedIptPercent;
       const ipt =
         iptPercent != null
           ? {
               ...pontuacaoIPT(iptPercent),
               valor: iptPercent,
+              ipt_detalhes: autoIptDetalhes?.detalhes,
+              filtros_aplicados: autoIptDetalhes
+                ? [
+                    "Planilha: ipt_report_selimp (Report SELIMP)",
+                    "Filtro Status: Encerrado (coluna status)",
+                    "Período: data_referencia ou data/data_planejado/data_execucao no intervalo",
+                    "Coluna plano: identificador do setor",
+                    "Coluna de_execucao (ou percentual_execucao): percentual 0–100 ou decimal 0–1",
+                  ]
+                : ["Valor informado manualmente no dashboard (não calculado da planilha SELIMP)"],
             }
           : undefined;
 

@@ -26,6 +26,21 @@ interface IrdPorRegional {
   ird_valor: number;
 }
 
+interface IptDetalhes {
+  P: number;
+  R: number;
+  F: number;
+  A: number;
+  Z: number;
+  N: number;
+  Qb: number;
+  sigma: number;
+  C: number;
+  cobertura: number;
+  qualidade_ajustada: number;
+  PF: number;
+}
+
 interface IndicadorDetalhe {
   valor?: number;
   percentual?: number;
@@ -48,6 +63,8 @@ interface IndicadorDetalhe {
   memoria_calculo?: string;
   /** Filtros usados na base para o indicador */
   filtros_aplicados?: string[];
+  /** Detalhes do algoritmo SELIMP (P, R, F, A, Z, N, Q̄, σ, C, etc.) */
+  ipt_detalhes?: IptDetalhes;
 }
 
 interface ResumoADC {
@@ -890,44 +907,83 @@ export default function ExplicacaoIndicadoresPage() {
         <Card className="border-0 shadow-lg hover:shadow-xl transition-shadow report-print-indicator">
           <CardHeader>
             <CardTitle>IPT - Indicador de Execução dos Planos de Trabalho</CardTitle>
-            <CardDescription>Pontuação máxima: 40 pontos</CardDescription>
+            <CardDescription>Pontuação máxima: 40 pontos. Algoritmo oficial SELIMP.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
-              <h3 className="font-semibold mb-2">Fórmula</h3>
-              <div className="bg-zinc-50 dark:bg-zinc-900 p-4 rounded-lg font-mono text-sm">
-                IPT = Media ponderada (Mao de obra 50% + Equipamentos 50%)
+              <h3 className="font-semibold mb-2">Fórmula (Algoritmo SELIMP)</h3>
+              <div className="bg-zinc-50 dark:bg-zinc-900 p-4 rounded-lg font-mono text-sm overflow-x-auto">
+                PF = 0.7 × min(Q̄ + min(σ, 0.08), 1) + 0.3 × min(A/C, 1)
+                <br />
+                <span className="text-xs text-zinc-500 dark:text-zinc-400 mt-2 block">
+                  onde C = P × R/F , Q̄ = (1/N) × Σ Qᵢ , N = A - Z
+                </span>
               </div>
             </div>
 
             <div>
-              <h3 className="font-semibold mb-2">Componentes</h3>
+              <h3 className="font-semibold mb-2">Variáveis e colunas na planilha</h3>
               <ul className="list-disc list-inside space-y-1 text-sm text-zinc-600 dark:text-zinc-400">
-                <li>
-                  <strong>Mao de obra:</strong> Rastreamento dos portateis (50%).
-                </li>
-                <li>
-                  <strong>Equipamentos:</strong> Rastreamento dos equipamentos intermediarios (50%).
-                </li>
-                <li>
-                  <strong>Fonte:</strong> Sistema de monitoramento da SELIMP.
-                </li>
+                <li><strong>P</strong> – Ordens planejadas (fallback: A quando ausente)</li>
+                <li><strong>R</strong> – Rastreadores ativos (fallback: 1)</li>
+                <li><strong>F</strong> – Frota total (fallback: 1)</li>
+                <li><strong>A</strong> – Ordens atribuídas únicas (contagem de linhas com Status = Encerrado no período)</li>
+                <li><strong>Z</strong> – Ordens zeradas (de_execucao = 0 ou nulo)</li>
+                <li><strong>N</strong> – Ordens com conclusão &gt;0% (N = A - Z)</li>
+                <li><strong>Qᵢ</strong> – Percentual da i-ésima ordem (coluna <strong>de_execucao</strong> ou <strong>percentual_execucao</strong>)</li>
+                <li><strong>Q̄</strong> – Qualidade bruta = (1/N) × Σ Qᵢ</li>
+                <li><strong>σ</strong> – Desvio padrão das conclusões &gt;0%</li>
               </ul>
             </div>
+
+            {detalhes?.ipt?.ipt_detalhes && (
+              <div>
+                <h3 className="font-semibold mb-2">Valores usados no cálculo</h3>
+                <div className="bg-zinc-50 dark:bg-zinc-900 p-4 rounded-lg text-sm overflow-x-auto">
+                  <table className="w-full text-left">
+                    <tbody>
+                      <tr><td className="py-1 pr-4">P</td><td className="font-mono">{detalhes.ipt.ipt_detalhes.P}</td><td className="text-zinc-500 pl-4">ordens planejadas</td></tr>
+                      <tr><td className="py-1 pr-4">R</td><td className="font-mono">{detalhes.ipt.ipt_detalhes.R}</td><td className="text-zinc-500 pl-4">rastreadores ativos</td></tr>
+                      <tr><td className="py-1 pr-4">F</td><td className="font-mono">{detalhes.ipt.ipt_detalhes.F}</td><td className="text-zinc-500 pl-4">frota total</td></tr>
+                      <tr><td className="py-1 pr-4">A</td><td className="font-mono">{detalhes.ipt.ipt_detalhes.A}</td><td className="text-zinc-500 pl-4">ordens atribuídas</td></tr>
+                      <tr><td className="py-1 pr-4">Z</td><td className="font-mono">{detalhes.ipt.ipt_detalhes.Z}</td><td className="text-zinc-500 pl-4">ordens zeradas</td></tr>
+                      <tr><td className="py-1 pr-4">N</td><td className="font-mono">{detalhes.ipt.ipt_detalhes.N}</td><td className="text-zinc-500 pl-4">ordens com conclusão &gt;0%</td></tr>
+                      <tr><td className="py-1 pr-4">Q̄</td><td className="font-mono">{(detalhes.ipt.ipt_detalhes.Qb * 100).toFixed(2)}%</td><td className="text-zinc-500 pl-4">qualidade bruta</td></tr>
+                      <tr><td className="py-1 pr-4">σ</td><td className="font-mono">{(detalhes.ipt.ipt_detalhes.sigma * 100).toFixed(2)}%</td><td className="text-zinc-500 pl-4">desvio padrão</td></tr>
+                      <tr><td className="py-1 pr-4">C</td><td className="font-mono">{detalhes.ipt.ipt_detalhes.C.toFixed(2)}</td><td className="text-zinc-500 pl-4">capacidade esperada (P×R/F)</td></tr>
+                      <tr><td className="py-1 pr-4">Cobertura</td><td className="font-mono">{(detalhes.ipt.ipt_detalhes.cobertura * 100).toFixed(2)}%</td><td className="text-zinc-500 pl-4">min(A/C, 1)</td></tr>
+                      <tr><td className="py-1 pr-4">Qual. ajustada</td><td className="font-mono">{(detalhes.ipt.ipt_detalhes.qualidade_ajustada * 100).toFixed(2)}%</td><td className="text-zinc-500 pl-4">min(Q̄ + min(σ, 0.08), 1)</td></tr>
+                      <tr><td className="py-1 pr-4 font-semibold">PF</td><td className="font-mono font-semibold">{(detalhes.ipt.ipt_detalhes.PF * 100).toFixed(2)}%</td><td className="text-zinc-500 pl-4">Percentual Final</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {detalhes?.ipt?.filtros_aplicados && detalhes.ipt.filtros_aplicados.length > 0 && (
+              <div>
+                <h3 className="font-semibold mb-2">Filtros e colunas na planilha</h3>
+                <ul className="list-disc list-inside space-y-1 text-sm text-zinc-600 dark:text-zinc-400">
+                  {detalhes.ipt.filtros_aplicados.map((f, i) => (
+                    <li key={i}>{f}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg space-y-2">
               <h3 className="font-semibold text-sm">Resultado ({periodoLabel})</h3>
               {detalhes?.ipt ? (
                 <>
                   <p className="text-sm">
-                    IPT = {formatarValor(detalhes.ipt.valor, 2)}%
+                    PF (IPT) = {formatarValor(detalhes.ipt.valor, 2)}%
                   </p>
                   <p className="text-sm">
-                    Pontuacao: <strong className="text-violet-600 dark:text-violet-300">{formatarValor(detalhes.ipt.pontuacao, 2)} pts</strong>
+                    Pontuação: <strong className="text-violet-600 dark:text-violet-300">{formatarValor(detalhes.ipt.pontuacao, 2)} pts</strong>
                   </p>
                 </>
               ) : (
-                <p className="text-sm text-zinc-600 dark:text-zinc-300">IPT nao informado para este periodo. Atualize na tela principal do dashboard.</p>
+                <p className="text-sm text-zinc-600 dark:text-zinc-300">IPT não informado para este período. Importe a planilha SELIMP ou informe manualmente no dashboard.</p>
               )}
             </div>
 

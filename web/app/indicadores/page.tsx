@@ -5,7 +5,7 @@ import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { apiService } from "@/lib/api";
 import { endOfMonth, format, startOfMonth } from "date-fns";
-import { ArrowRight, Sparkles } from "lucide-react";
+import { ArrowRight, Calculator, Sparkles } from "lucide-react";
 import { Input } from "@/components/ui/input";
 
 export default function IndicadoresPage() {
@@ -44,15 +44,26 @@ export default function IndicadoresPage() {
                 Cálculo e visualização dos indicadores ADC (Avaliação de Desempenho da Contratada).
               </p>
             </div>
-            <a
-              href="/indicadores/explicacao"
-              className="group relative overflow-hidden px-5 py-3 rounded-xl border border-emerald-300/60 dark:border-emerald-700/60 bg-linear-to-r from-emerald-500 to-teal-500 text-white transition-all shadow-lg hover:shadow-emerald-500/30 hover:-translate-y-0.5 text-sm font-semibold flex items-center gap-2 whitespace-nowrap"
-            >
-              <span className="absolute inset-0 opacity-0 group-hover:opacity-100 transition bg-linear-to-r from-white/15 to-transparent" />
-              <Sparkles className="h-4 w-4 relative z-10" />
-              <span className="relative z-10">Ver Explicação Detalhada</span>
-              <ArrowRight className="h-4 w-4 relative z-10 transition-transform group-hover:translate-x-0.5" />
-            </a>
+            <div className="flex flex-col gap-2">
+              <a
+                href="/indicadores/explicacao"
+                className="group relative overflow-hidden px-5 py-3 rounded-xl border border-emerald-300/60 dark:border-emerald-700/60 bg-linear-to-r from-emerald-500 to-teal-500 text-white transition-all shadow-lg hover:shadow-emerald-500/30 hover:-translate-y-0.5 text-sm font-semibold flex items-center gap-2 whitespace-nowrap"
+              >
+                <span className="absolute inset-0 opacity-0 group-hover:opacity-100 transition bg-linear-to-r from-white/15 to-transparent" />
+                <Sparkles className="h-4 w-4 relative z-10" />
+                <span className="relative z-10">Ver Explicação Detalhada</span>
+                <ArrowRight className="h-4 w-4 relative z-10 transition-transform group-hover:translate-x-0.5" />
+              </a>
+              <a
+                href="/indicadores/simulador"
+                className="group relative overflow-hidden px-5 py-3 rounded-xl  dark:border-rose-600/60 bg-linear-to-r from-red-500 to-rose-400 text-white transition-all shadow-lg hover:shadow-rose-500/30 hover:-translate-y-0.5 text-sm font-semibold flex items-center gap-2 whitespace-nowrap"
+              >
+                <span className="absolute inset-0 opacity-0 group-hover:opacity-100 transition bg-linear-to-r from-white/15 to-transparent" />
+                <Calculator className="h-4 w-4 relative z-10" />
+                <span className="relative z-10">Simulador ADC</span>
+                <ArrowRight className="h-4 w-4 relative z-10 transition-transform group-hover:translate-x-0.5" />
+              </a>
+            </div>
           </div>
         </div>
 
