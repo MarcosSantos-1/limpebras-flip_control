@@ -160,6 +160,33 @@ export async function runMigrations() {
     await client.query("CREATE INDEX IF NOT EXISTS idx_ipt_cronograma_servico ON ipt_cronograma(servico)").catch(() => {});
     await client.query("CREATE INDEX IF NOT EXISTS idx_ipt_cronograma_setor ON ipt_cronograma(setor)").catch(() => {});
     await client.query("CREATE INDEX IF NOT EXISTS idx_ipt_cronograma_data ON ipt_cronograma(data_esperada)").catch(() => {});
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS ipt_observacoes_globais (
+        id SERIAL PRIMARY KEY,
+        setor TEXT NOT NULL,
+        titulo TEXT NOT NULL,
+        descricao TEXT,
+        data_cancelamento TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client.query("CREATE INDEX IF NOT EXISTS idx_ipt_obs_globais_setor ON ipt_observacoes_globais(setor)").catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_ipt_obs_globais_ativo ON ipt_observacoes_globais(setor) WHERE data_cancelamento IS NULL").catch(() => {});
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS ipt_observacoes_diarias (
+        id SERIAL PRIMARY KEY,
+        setor TEXT NOT NULL,
+        data DATE NOT NULL,
+        titulo TEXT NOT NULL,
+        descricao TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client.query("CREATE INDEX IF NOT EXISTS idx_ipt_obs_diarias_setor_data ON ipt_observacoes_diarias(setor, data)").catch(() => {});
   } finally {
     client.release();
   }

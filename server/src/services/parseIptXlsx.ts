@@ -143,19 +143,27 @@ function buildRecordKey(
   fileType: IptFileType,
   row: Record<string, string>,
   aliases: string[],
-  dataReferencia: Date | null
+  dataReferencia: Date | null,
+  rowIndex?: number
 ): string {
   if (fileType === "ipt_report_selimp") {
+    const dataStr =
+      row[canonicalHeader("data")] ??
+      row[canonicalHeader("data_planejado")] ??
+      row[canonicalHeader("data_execucao")] ??
+      "";
     const composed = [
       row[canonicalHeader("plano")] ?? "",
       row[canonicalHeader("subprefeitura")] ?? row[canonicalHeader("sub_prefeitura")] ?? "",
       row[canonicalHeader("tipo_de_servico")] ?? row[canonicalHeader("tipo_servico")] ?? "",
-      row[canonicalHeader("data")] ?? row[canonicalHeader("data_planejado")] ?? row[canonicalHeader("data_execucao")] ?? "",
+      dataStr,
       row[canonicalHeader("de_execucao")] ?? row[canonicalHeader("percentual_execucao")] ?? "",
       row[canonicalHeader("status")] ?? "",
       row[canonicalHeader("equipamentos")] ?? "",
     ].join("|");
-    return `hash_${createHash("sha1").update(fileType).update(composed).digest("hex")}`;
+    // Quando não há data, múltiplos despachos do mesmo plano colapsavam em 1. Incluímos rowIndex para manter um por linha.
+    const uniq = dataStr ? composed : `${composed}|${rowIndex ?? 0}`;
+    return `hash_${createHash("sha1").update(fileType).update(uniq).digest("hex")}`;
   }
 
   // DDMX: múltiplos despachos podem existir para mesma rota+data → usar hash por linha
@@ -215,7 +223,7 @@ export function parseIptWorkbook(buffer: Buffer, fileType: IptFileType): IptPars
     }
 
     const dataReferencia = parseDate(firstByAliases(raw, config.dateAliases));
-    const recordKey = buildRecordKey(fileType, raw, config.keyAliases, dataReferencia);
+    const recordKey = buildRecordKey(fileType, raw, config.keyAliases, dataReferencia, i);
     const setor = firstByAliases(raw, config.setorAliases);
     const servico = firstByAliases(raw, config.servicoAliases);
     out.push({

@@ -1114,6 +1114,10 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         return current;
       };
 
+      /** Agrupa SELIMP por (plano, dateKey): 1 despacho por dia por setor, percentual = max do dia.
+       * Linhas sem data: distribuir pelas datas do DDMX (nossoDatesByPlano) para não colapsar múltiplos despachos em 1. */
+      const selimpByPlanoDate = new Map<string, { percentual: number | null; estimado: boolean }>();
+      const selimpSemDataPorPlano = new Map<string, Array<{ raw: IptRaw; row: { raw: IptRaw; data_referencia: string | Date | null; updated_at: string | Date } }>>();
       for (const row of reportRows.rows as Array<{ raw: IptRaw; data_referencia: string | Date | null; updated_at: string | Date }>) {
         const raw = (row.raw ?? {}) as IptRaw;
         const plano = normalizarSetor(String(raw.plano ?? "").trim());
@@ -1132,15 +1136,62 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         let estimado = false;
         if (!dateKey || flagEstimado) {
           estimado = true;
-          const parsed = parseSetor(plano);
-          const refDate = toDateKey(row.updated_at) ?? scopeEnd ?? yesterdayKey;
-          let inferida: string | null = null;
-          if (parsed?.frequencia) inferida = findPreviousExpectedByFrequency(parsed.frequencia, refDate);
-          const nossoDates = nossoDatesByPlano.get(plano) ?? [];
-          const porCruzamento = pickNearestDate(refDate, nossoDates, 5);
-          dateKey = porCruzamento ?? inferida ?? yesterdayKey;
+          const arr = selimpSemDataPorPlano.get(plano) ?? [];
+          arr.push({ raw, row });
+          selimpSemDataPorPlano.set(plano, arr);
+          continue;
         }
         if (!dateKey) continue;
+        const key = `${plano}|${dateKey}`;
+        const existing = selimpByPlanoDate.get(key);
+        const pct = percentual ?? null;
+        if (!existing) {
+          selimpByPlanoDate.set(key, { percentual: pct, estimado: flagEstimado });
+        } else {
+          const maxPct = existing.percentual != null && pct != null ? Math.max(existing.percentual, pct) : existing.percentual ?? pct;
+          selimpByPlanoDate.set(key, { percentual: maxPct, estimado: existing.estimado || flagEstimado });
+        }
+      }
+      for (const [plano, rows] of selimpSemDataPorPlano) {
+        const nossoDates = (nossoDatesByPlano.get(plano) ?? []).slice().sort((a, b) => b.localeCompare(a));
+        const parsed = parseSetor(plano);
+        const refDate = scopeEnd ?? yesterdayKey;
+        const usedDates = new Set<string>();
+        let chainBase = refDate;
+        for (let i = 0; i < rows.length; i += 1) {
+          const { raw } = rows[i];
+          const pct = toExecPercent(String(raw.de_execucao ?? raw.percentual_execucao ?? "").trim()) ?? null;
+          let dateKey: string | null = null;
+          const candidatos = nossoDates.filter((d) => !usedDates.has(d));
+          if (candidatos.length > 0) {
+            const nearest = pickNearestDate(refDate, candidatos, 90);
+            if (nearest) {
+              dateKey = nearest;
+              usedDates.add(nearest);
+            }
+          }
+          if (!dateKey && parsed?.frequencia) {
+            dateKey = findPreviousExpectedByFrequency(parsed.frequencia, chainBase);
+            if (dateKey) {
+              usedDates.add(dateKey);
+              chainBase = dateKey;
+            }
+          }
+          if (!dateKey) dateKey = yesterdayKey;
+          const key = `${plano}|${dateKey}`;
+          const existing = selimpByPlanoDate.get(key);
+          if (!existing) {
+            selimpByPlanoDate.set(key, { percentual: pct, estimado: true });
+          } else {
+            const maxPct = existing.percentual != null && pct != null ? Math.max(existing.percentual, pct) : existing.percentual ?? pct;
+            selimpByPlanoDate.set(key, { percentual: maxPct, estimado: true });
+          }
+        }
+      }
+      for (const [key, { percentual, estimado }] of selimpByPlanoDate) {
+        const [plano, dateKey] = key.split("|");
+        const planoEntry = byPlano.get(plano);
+        if (!planoEntry) continue;
         const bucket = ensureBucket(planoEntry, dateKey);
         if (percentual != null) {
           bucket.selimp_sum += percentual;
@@ -1537,6 +1588,116 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         ddmx_amostra: ddmxAmostra.rows,
         selimp_amostra: selimpAmostra.rows,
       };
+    } finally {
+      client.release();
+    }
+  });
+
+  /** IPT: Observações globais e diárias - GET (lista por período) */
+  fastify.get<{
+    Querystring: { scope_start?: string; scope_end?: string };
+  }>("/ipt/observacoes", async (request, reply) => {
+    const { scope_start: scopeStart, scope_end: scopeEnd } = request.query;
+    const client = await pool.connect();
+    try {
+      const globaisRes = await client.query(
+        `SELECT id, setor, titulo, descricao, data_cancelamento, created_at
+         FROM ipt_observacoes_globais
+         WHERE data_cancelamento IS NULL
+         ORDER BY setor`
+      );
+      const globais = globaisRes.rows.reduce(
+        (acc: Record<string, { id: number; titulo: string; descricao: string | null }>, row: { setor: string; id: number; titulo: string; descricao: string | null }) => {
+          acc[row.setor] = { id: row.id, titulo: row.titulo, descricao: row.descricao };
+          return acc;
+        },
+        {}
+      );
+
+      let diarias: Record<string, Record<string, { id: number; titulo: string; descricao: string | null }>> = {};
+      if (scopeStart && scopeEnd) {
+        const diariasRes = await client.query(
+          `SELECT id, setor, data::text AS data, titulo, descricao
+           FROM ipt_observacoes_diarias
+           WHERE data >= $1::date AND data <= $2::date
+           ORDER BY setor, data`,
+          [scopeStart, scopeEnd]
+        );
+        for (const row of diariasRes.rows as Array<{ setor: string; data: string; id: number; titulo: string; descricao: string | null }>) {
+          const dataKey = row.data.replace(/T.*/, "");
+          if (!diarias[row.setor]) diarias[row.setor] = {};
+          diarias[row.setor][dataKey] = { id: row.id, titulo: row.titulo, descricao: row.descricao };
+        }
+      }
+      return { globais, diarias };
+    } finally {
+      client.release();
+    }
+  });
+
+  /** IPT: Criar observação global */
+  fastify.post<{
+    Body: { setor: string; titulo: string; descricao?: string };
+  }>("/ipt/observacoes/globais", async (request, reply) => {
+    const { setor, titulo, descricao } = request.body ?? {};
+    if (!setor?.trim() || !titulo?.trim()) {
+      return reply.code(400).send({ detail: "setor e titulo são obrigatórios" });
+    }
+    const client = await pool.connect();
+    try {
+      const r = await client.query(
+        `INSERT INTO ipt_observacoes_globais (setor, titulo, descricao, updated_at)
+         VALUES ($1, $2, $3, NOW())
+         RETURNING id, setor, titulo, descricao`,
+        [setor.trim(), titulo.trim(), descricao?.trim() || null]
+      );
+      invalidatePrefix("ipt_preview");
+      return r.rows[0];
+    } finally {
+      client.release();
+    }
+  });
+
+  /** IPT: Cancelar observação global (registra data_cancelamento) */
+  fastify.post<{
+    Params: { id: string };
+  }>("/ipt/observacoes/globais/:id/cancelar", async (request, reply) => {
+    const id = Number(request.params.id);
+    if (!Number.isFinite(id) || id < 1) {
+      return reply.code(400).send({ detail: "ID inválido" });
+    }
+    const client = await pool.connect();
+    try {
+      await client.query(
+        `UPDATE ipt_observacoes_globais SET data_cancelamento = NOW(), updated_at = NOW() WHERE id = $1`,
+        [id]
+      );
+      invalidatePrefix("ipt_preview");
+      return { ok: true };
+    } finally {
+      client.release();
+    }
+  });
+
+  /** IPT: Criar observação diária */
+  fastify.post<{
+    Body: { setor: string; data: string; titulo: string; descricao?: string };
+  }>("/ipt/observacoes/diarias", async (request, reply) => {
+    const { setor, data, titulo, descricao } = request.body ?? {};
+    if (!setor?.trim() || !data || !titulo?.trim()) {
+      return reply.code(400).send({ detail: "setor, data e titulo são obrigatórios" });
+    }
+    const dataNorm = data.replace(/T.*/, "");
+    const client = await pool.connect();
+    try {
+      const r = await client.query(
+        `INSERT INTO ipt_observacoes_diarias (setor, data, titulo, descricao, updated_at)
+         VALUES ($1, $2::date, $3, $4, NOW())
+         RETURNING id, setor, data::text AS data, titulo, descricao`,
+        [setor.trim(), dataNorm, titulo.trim(), descricao?.trim() || null]
+      );
+      invalidatePrefix("ipt_preview");
+      return r.rows[0];
     } finally {
       client.release();
     }

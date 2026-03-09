@@ -91,6 +91,7 @@ export interface IptPreviewResponse {
     total_planos: number;
     total_planos_despachados?: number;
     total_planos_ativos: number;
+    total_despachos_selimp?: number;
     media_execucao_planos_ativos: number | null;
     percentual_medio_ddmx?: number | null;
     total_modulos_relacionados: number;
@@ -351,6 +352,32 @@ export const apiService = {
       params.subprefeitura = subprefeitura;
     }
     const { data } = await api.get('/dashboard/ipt-preview', { params });
+    return data;
+  },
+
+  getIptObservacoes: async (scopeStart?: string, scopeEnd?: string) => {
+    const params: Record<string, string> = {};
+    if (scopeStart) params.scope_start = scopeStart;
+    if (scopeEnd) params.scope_end = scopeEnd;
+    const { data } = await api.get('/ipt/observacoes', { params });
+    return data as {
+      globais: Record<string, { id: number; titulo: string; descricao: string | null }>;
+      diarias: Record<string, Record<string, { id: number; titulo: string; descricao: string | null }>>;
+    };
+  },
+
+  createIptObservacaoGlobal: async (setor: string, titulo: string, descricao?: string) => {
+    const { data } = await api.post('/ipt/observacoes/globais', { setor, titulo, descricao });
+    return data;
+  },
+
+  cancelarIptObservacaoGlobal: async (id: number) => {
+    const { data } = await api.post(`/ipt/observacoes/globais/${id}/cancelar`);
+    return data;
+  },
+
+  createIptObservacaoDiaria: async (setor: string, dataRef: string, titulo: string, descricao?: string) => {
+    const { data } = await api.post('/ipt/observacoes/diarias', { setor, data: dataRef, titulo, descricao });
     return data;
   },
 

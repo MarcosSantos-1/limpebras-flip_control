@@ -26,6 +26,27 @@ export function useIptData(
   const cardsKey = `ipt:cards:${periodoKpisInicio}:${periodoKpisFim}:${subprefeituraFilter}`;
   const kpisKey = `kpis:${periodoKpisInicio}:${periodoKpisFim}`;
 
+  let obsScopeStart: string | undefined;
+  let obsScopeEnd: string | undefined;
+  if (tableScope === "todos") {
+    obsScopeStart = format(startOfMonth(new Date()), "yyyy-MM-dd");
+    obsScopeEnd = format(endOfMonth(new Date()), "yyyy-MM-dd");
+  } else if (tableScope === "periodo" && tablePeriodRange) {
+    obsScopeStart = format(tablePeriodRange.inicio, "yyyy-MM-dd");
+    obsScopeEnd = format(tablePeriodRange.fim, "yyyy-MM-dd");
+  } else {
+    const ontem = subDays(new Date(), 1);
+    const d = format(ontem, "yyyy-MM-dd");
+    obsScopeStart = obsScopeEnd = d;
+  }
+  const obsKey = `ipt:obs:${obsScopeStart}:${obsScopeEnd}`;
+
+  const observacoesSwr = useSWR(
+    obsKey,
+    () => apiService.getIptObservacoes(obsScopeStart, obsScopeEnd),
+    { revalidateOnFocus: false, dedupingInterval: DEDUP_INTERVAL_MS }
+  );
+
   const previewCardsSwr = useSWR(cardsKey, () =>
     apiService.getIptPreview(periodoKpisInicio, periodoKpisFim, false, subprefeituraFilter), {
     revalidateOnFocus: false,
@@ -68,15 +89,17 @@ export function useIptData(
       previewCardsSwr.mutate(),
       previewTableSwr.mutate(),
       kpisSwr.mutate(),
+      observacoesSwr.mutate(),
     ]);
   };
 
   return {
     previewCards: previewCardsSwr.data ?? null,
     previewTable: previewTableSwr.data ?? previewCardsSwr.data ?? null,
+    observacoes: observacoesSwr.data ?? { globais: {}, diarias: {} },
+    mutate,
     kpis: kpisSwr.data ?? null,
     isLoading: isLoading && !previewCardsSwr.data && !previewTableSwr.data,
     isValidating,
-    mutate,
   };
 }

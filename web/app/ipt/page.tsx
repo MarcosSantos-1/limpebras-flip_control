@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { format, endOfMonth, startOfMonth, subDays } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { Activity, BarChart2, Battery, Calendar, Check, ChevronDown, ChevronRight, Cpu, Info, Package, Sparkles, Truck, X } from "lucide-react";
+import { Activity, AlertTriangle, BarChart2, Battery, BatteryWarning, Calendar, Check, ChevronDown, ChevronRight, ChevronUp, Cpu, Info, Package, PanelBottomClose, PanelBottomOpen, Plus, RotateCcw, Sparkles, Truck, X } from "lucide-react";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -16,14 +16,6 @@ import {
 import { apiService, type IptPreviewResponse } from "@/lib/api";
 import { useIptData } from "@/lib/use-ipt-data";
 import { getSortKey, getSubFromPlano } from "@/lib/ipt-utils";
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  ResponsiveContainer,
-  Tooltip as RechartsTooltip,
-} from "recharts";
 
 const pct = (value?: number | null) => (value == null ? "--" : `${value.toFixed(1)}%`);
 const clamp = (value: number, min = 0, max = 100) => Math.min(max, Math.max(min, value));
@@ -173,8 +165,7 @@ export default function IPTPage() {
   const [tableScope, setTableScope] = useState<TableScope>("dia_anterior");
   const [tablePeriodRange, setTablePeriodRange] = useState<{ inicio: Date; fim: Date } | null>(null);
   const [subprefeituraFilter, setSubprefeituraFilter] = useState("all");
-  const [divergenciaFilter, setDivergenciaFilter] = useState<"all" | "somente" | "sem">("all");
-  const [highlightDivergencias, setHighlightDivergencias] = useState(false);
+  const [baseDadosCardFilter, setBaseDadosCardFilter] = useState<"inativos" | "obs_global" | "obs_diaria" | null>(null);
   const [origemFilter, setOrigemFilter] = useState<"all" | "ambos" | "somente_selimp" | "somente_nosso" | "sem_despacho">("all");
   const [zeroFilter, setZeroFilter] = useState<"all" | "zerados" | "nao_zerados">("all");
   const [tableExpanded, setTableExpanded] = useState(true);
@@ -209,8 +200,20 @@ export default function IPTPage() {
     nossa: 120,
     origem: 130,
   });
+  const [modalObsGlobalOpen, setModalObsGlobalOpen] = useState(false);
+  const [modalObsGlobalSetor, setModalObsGlobalSetor] = useState<string | null>(null);
+  const [modalObsGlobalTitulo, setModalObsGlobalTitulo] = useState("");
+  const [modalObsGlobalDescricao, setModalObsGlobalDescricao] = useState("");
+  const [modalObsDiariaOpen, setModalObsDiariaOpen] = useState(false);
+  const [modalObsDiariaSetor, setModalObsDiariaSetor] = useState<string | null>(null);
+  const [modalObsDiariaData, setModalObsDiariaData] = useState<string | null>(null);
+  const [modalObsDiariaTitulo, setModalObsDiariaTitulo] = useState("");
+  const [modalObsDiariaDescricao, setModalObsDiariaDescricao] = useState("");
+  const [obsGlobalFilter, setObsGlobalFilter] = useState<"all" | "com" | "sem">("all");
+  const [obsDiariaFilter, setObsDiariaFilter] = useState<"all" | "com" | "sem">("all");
+  const [bateriaAlertaFilter, setBateriaAlertaFilter] = useState<"all" | "com" | "sem">("all");
 
-  const { previewCards: iptPreviewCards, previewTable: iptPreviewTable, kpis: kpisData, isLoading: loading, mutate: loadData } = useIptData(
+  const { previewCards: iptPreviewCards, previewTable: iptPreviewTable, observacoes, kpis: kpisData, isLoading: loading, mutate: loadData } = useIptData(
     selectedMonth,
     tableScope,
     tablePeriodRange,
@@ -260,6 +263,7 @@ export default function IPTPage() {
         percentual_selimp: number | null;
         percentual_nosso: number | null;
         origem: "ambos" | "somente_selimp" | "somente_nosso";
+        despachos_selimp?: number;
         equipamentos?: string[];
         bateria_por_equipamento?: Record<string, { status_bateria: string; bateria?: string }>;
         frequencia?: string | null;
@@ -320,10 +324,28 @@ export default function IPTPage() {
       const zeradoAmbos = isZeroOrMissing(row.percentual_selimp) && isZeroOrMissing(row.percentual_nosso);
       if (zeroFilter === "zerados" && !zeradoAmbos) return false;
       if (zeroFilter === "nao_zerados" && zeradoAmbos) return false;
-      const divergence = getDivergenceMagnitude(row.percentual_selimp, row.percentual_nosso);
-      const diverge = divergence >= 5;
-      if (divergenciaFilter === "somente" && !diverge) return false;
-      if (divergenciaFilter === "sem" && diverge) return false;
+      if (baseDadosCardFilter === "inativos") {
+        const inativoSelimp = (row.percentual_selimp == null || row.percentual_selimp === 0) && (row.despachos_selimp ?? 0) === 0;
+        if (!inativoSelimp) return false;
+      }
+      if (baseDadosCardFilter === "obs_global") {
+        if (!observacoes.globais[row.plano]) return false;
+      }
+      if (baseDadosCardFilter === "obs_diaria") {
+        if (!observacoes.diarias[row.plano] || Object.keys(observacoes.diarias[row.plano]).length === 0) return false;
+      }
+      const temObsGlobal = Boolean(observacoes.globais[row.plano]);
+      if (obsGlobalFilter === "com" && !temObsGlobal) return false;
+      if (obsGlobalFilter === "sem" && temObsGlobal) return false;
+      const temObsDiaria = Boolean(observacoes.diarias[row.plano] && Object.keys(observacoes.diarias[row.plano]).length > 0);
+      if (obsDiariaFilter === "com" && !temObsDiaria) return false;
+      if (obsDiariaFilter === "sem" && temObsDiaria) return false;
+      const temBateriaAlerta = Boolean(
+        row.bateria_por_equipamento &&
+        Object.values(row.bateria_por_equipamento).some((b) => /critico|baixo|descarregad|alerta|medio|aten/i.test(b.status_bateria))
+      );
+      if (bateriaAlertaFilter === "com" && !temBateriaAlerta) return false;
+      if (bateriaAlertaFilter === "sem" && temBateriaAlerta) return false;
       return true;
     });
 
@@ -353,12 +375,17 @@ export default function IPTPage() {
     sourceRows,
     origemFilter,
     origemFilterValues,
-    divergenciaFilter,
+    baseDadosCardFilter,
     subprefeituraFilter,
     tableSort,
     zeroFilter,
     subSiglaFilter,
     serviceFilterValues,
+    observacoes.globais,
+    observacoes.diarias,
+    obsGlobalFilter,
+    obsDiariaFilter,
+    bateriaAlertaFilter,
   ]);
 
   const comparativoInsights = useMemo(() => {
@@ -453,14 +480,16 @@ export default function IPTPage() {
   };
 
   const clearAllTableFilters = () => {
-    setDivergenciaFilter("all");
-    setHighlightDivergencias(false);
+    setBaseDadosCardFilter(null);
     setOrigemFilter("all");
     setZeroFilter("all");
     setSubprefeituraFilter("all");
     setSubSiglaFilter([...SUB_SIGLAS]);
     setServiceFilterValues(serviceOptions);
     setOrigemFilterValues([...ORIGEM_VALUES]);
+    setObsGlobalFilter("all");
+    setObsDiariaFilter("all");
+    setBateriaAlertaFilter("all");
     setHeaderMenuOpen(null);
   };
 
@@ -739,6 +768,104 @@ export default function IPTPage() {
               </div>
             </DialogContent>
           </Dialog>
+
+          <Dialog open={modalObsGlobalOpen} onOpenChange={(open) => { setModalObsGlobalOpen(open); if (!open) setModalObsGlobalSetor(null); }}>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>Observação global</DialogTitle>
+                <DialogDescription>Marca o setor com um aviso que aparece em todos os despachos. Ex.: setores incorretos na SELIMP.</DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-2">
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground">Setor</label>
+                  <p className="font-mono text-sm py-1">{modalObsGlobalSetor ?? "—"}</p>
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground">Título</label>
+                  <input
+                    value={modalObsGlobalTitulo}
+                    onChange={(e) => setModalObsGlobalTitulo(e.target.value)}
+                    placeholder="Ex.: Setor incorreto na SELIMP"
+                    className="w-full mt-1 h-9 rounded-lg border bg-background px-3 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground">Descrição (opcional)</label>
+                  <textarea
+                    value={modalObsGlobalDescricao}
+                    onChange={(e) => setModalObsGlobalDescricao(e.target.value)}
+                    placeholder="Detalhes da observação..."
+                    rows={3}
+                    className="w-full mt-1 rounded-lg border bg-background px-3 py-2 text-sm resize-none"
+                  />
+                </div>
+                <div className="flex justify-end gap-2">
+                  <button onClick={() => setModalObsGlobalOpen(false)} className="px-3 py-1.5 rounded-lg border text-sm">Cancelar</button>
+                  <button
+                    onClick={async () => {
+                      if (!modalObsGlobalSetor || !modalObsGlobalTitulo.trim()) return;
+                      await apiService.createIptObservacaoGlobal(modalObsGlobalSetor, modalObsGlobalTitulo.trim(), modalObsGlobalDescricao.trim() || undefined);
+                      setModalObsGlobalOpen(false);
+                      loadData();
+                    }}
+                    disabled={!modalObsGlobalTitulo.trim()}
+                    className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-sm disabled:opacity-50"
+                  >
+                    OK
+                  </button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog open={modalObsDiariaOpen} onOpenChange={(open) => { setModalObsDiariaOpen(open); if (!open) { setModalObsDiariaSetor(null); setModalObsDiariaData(null); } }}>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>Observação diária</DialogTitle>
+                <DialogDescription>Justificativa para o dia específico. Ex.: falha na liberação, manutenção, acidente.</DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-2">
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground">Setor / Data</label>
+                  <p className="font-mono text-sm py-1">{modalObsDiariaSetor ?? "—"} · {modalObsDiariaData ? modalObsDiariaData.replace(/^(\d{4})-(\d{2})-(\d{2})$/, "$3/$2/$1") : "—"}</p>
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground">Título</label>
+                  <input
+                    value={modalObsDiariaTitulo}
+                    onChange={(e) => setModalObsDiariaTitulo(e.target.value)}
+                    placeholder="Ex.: Falha na liberação"
+                    className="w-full mt-1 h-9 rounded-lg border bg-background px-3 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground">Descrição (opcional)</label>
+                  <textarea
+                    value={modalObsDiariaDescricao}
+                    onChange={(e) => setModalObsDiariaDescricao(e.target.value)}
+                    placeholder="Detalhes..."
+                    rows={3}
+                    className="w-full mt-1 rounded-lg border bg-background px-3 py-2 text-sm resize-none"
+                  />
+                </div>
+                <div className="flex justify-end gap-2">
+                  <button onClick={() => setModalObsDiariaOpen(false)} className="px-3 py-1.5 rounded-lg border text-sm">Cancelar</button>
+                  <button
+                    onClick={async () => {
+                      if (!modalObsDiariaSetor || !modalObsDiariaData || !modalObsDiariaTitulo.trim()) return;
+                      await apiService.createIptObservacaoDiaria(modalObsDiariaSetor, modalObsDiariaData, modalObsDiariaTitulo.trim(), modalObsDiariaDescricao.trim() || undefined);
+                      setModalObsDiariaOpen(false);
+                      loadData();
+                    }}
+                    disabled={!modalObsDiariaTitulo.trim()}
+                    className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-sm disabled:opacity-50"
+                  >
+                    OK
+                  </button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -847,93 +974,131 @@ export default function IPTPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <div className="rounded-xl p-3 bg-background/70 shadow-sm">
-                <p className="text-xs text-muted-foreground">Linhas comparativas</p>
-                <p className="text-xl font-bold">{iptPreviewTable?.comparativo?.total_linhas ?? 0}</p>
-              </div>
-              <div className="rounded-xl p-3 bg-amber-500/10 shadow-sm">
-                <p className="text-xs text-muted-foreground">Divergências (|Δ| &gt;= 5 p.p.)</p>
-                <p className="text-xl font-bold text-amber-600">{iptPreviewTable?.comparativo?.divergencias ?? 0}</p>
-                <div className="mt-2 h-1.5 rounded-full bg-amber-200/50 dark:bg-amber-900/20">
-                  <div
-                    className="h-1.5 rounded-full bg-amber-500"
-                    style={{
-                      width: `${clamp(
-                        ((iptPreviewTable?.comparativo?.divergencias ?? 0) / Math.max(1, iptPreviewTable?.comparativo?.total_linhas ?? 1)) * 100
-                      )}%`,
-                    }}
-                  />
-                </div>
-              </div>
-              <div className="rounded-xl p-3 bg-cyan-500/10 shadow-sm">
-                <p className="text-xs text-muted-foreground">Só SELIMP</p>
-                <p className="text-xl font-bold text-cyan-600">{iptPreviewTable?.comparativo?.somente_selimp ?? 0}</p>
-                <p className="text-xs text-muted-foreground mt-1">{origemDistribution.somenteSelimp.toFixed(1)}%</p>
-              </div>
-              <div className="rounded-xl p-3 bg-fuchsia-500/10 shadow-sm">
-                <p className="text-xs text-muted-foreground">Só DDMX</p>
-                <p className="text-xl font-bold text-fuchsia-600">{iptPreviewTable?.comparativo?.somente_nosso ?? 0}</p>
-                <p className="text-xs text-muted-foreground mt-1">{origemDistribution.somenteNosso.toFixed(1)}%</p>
-              </div>
-              <div className="rounded-xl p-3 bg-blue-500/10 shadow-sm">
-                <p className="text-xs text-muted-foreground">Sem % SELIMP e com % DDMX</p>
-                <p className="text-xl font-bold text-blue-700 dark:text-blue-300">{comparativoInsights.selimpSemNossoCom}</p>
-              </div>
-              <div className="rounded-xl p-3 bg-rose-500/10 shadow-sm">
-                <p className="text-xs text-muted-foreground">Com % SELIMP e sem % DDMX</p>
-                <p className="text-xl font-bold text-rose-700 dark:text-rose-300">{comparativoInsights.selimpComNossoSem}</p>
-              </div>
-              <div className="rounded-xl p-3 bg-stone-500/10 shadow-sm">
-                <p className="text-xs text-muted-foreground">Zerados em ambas</p>
-                <p className="text-xl font-bold text-stone-700 dark:text-stone-300">{comparativoInsights.ambosZerados}</p>
-              </div>
-              <div className="rounded-xl p-3 bg-emerald-500/10 shadow-sm">
-                <p className="text-xs text-muted-foreground">Zerados e ativos</p>
-                <p className="text-xl font-bold text-emerald-700 dark:text-emerald-300">{comparativoInsights.ambosZeradosAtivos}</p>
-              </div>
-              <div className="rounded-xl p-3 bg-slate-500/10 shadow-sm">
-                <p className="text-xs text-muted-foreground">Zerados e inativos</p>
-                <p className="text-xl font-bold text-slate-700 dark:text-slate-300">{comparativoInsights.ambosZeradosInativos}</p>
-              </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <button
+                type="button"
+                onClick={() => setBaseDadosCardFilter(null)}
+                className={`rounded-xl p-4 shadow-lg transition-all text-left text-white ${
+                  !baseDadosCardFilter ? "bg-emerald-600 hover:bg-emerald-500" : "bg-emerald-500 hover:bg-emerald-400"
+                }`}
+              >
+                <p className="text-xs font-bold opacity-90 flex items-center gap-1.5">
+                  <Truck className="h-3.5 w-3.5" />
+                  Total despachos (SELIMP)
+                </p>
+                <p className="text-2xl font-bold mt-1">{iptPreviewTable?.resumo?.total_despachos_selimp ?? 0}</p>
+                <p className="text-xs font-medium opacity-80 mt-1">No período</p>
+              </button>
+              <button
+                type="button"
+                onClick={() => setBaseDadosCardFilter((prev) => (prev === "inativos" ? null : "inativos"))}
+                className={`rounded-xl p-4 shadow-lg transition-all text-left flex flex-col text-white ${
+                  baseDadosCardFilter === "inativos" ? "bg-slate-700" : "bg-slate-600 hover:bg-slate-500"
+                }`}
+              >
+                <p className="text-xs font-bold opacity-90 flex items-center gap-1.5">
+                  <Package className="h-3.5 w-3.5" />
+                  Inativos na SELIMP
+                </p>
+                <p className="text-2xl font-bold mt-1">
+                  {sourceRows.filter((r) => (r.percentual_selimp == null || r.percentual_selimp === 0) && (r.despachos_selimp ?? 0) === 0).length}
+                </p>
+                <p className="text-xs font-medium opacity-80 mt-1">Clique para filtrar</p>
+              </button>
+              <button
+                type="button"
+                onClick={() => setBaseDadosCardFilter((prev) => (prev === "obs_global" ? null : "obs_global"))}
+                className={`rounded-xl p-4 shadow-lg transition-all text-left flex flex-col text-white ${
+                  baseDadosCardFilter === "obs_global" ? "bg-red-600" : "bg-red-500 hover:bg-red-600"
+                }`}
+              >
+                <p className="text-xs font-bold opacity-90 flex items-center gap-1.5">
+                  <AlertTriangle className="h-3.5 w-3.5" />
+                  Com observação global
+                </p>
+                <p className="text-2xl font-bold mt-1">{Object.keys(observacoes.globais).length}</p>
+                <p className="text-xs font-medium opacity-80 mt-1">Clique para filtrar</p>
+              </button>
+              <button
+                type="button"
+                onClick={() => setBaseDadosCardFilter((prev) => (prev === "obs_diaria" ? null : "obs_diaria"))}
+                className={`rounded-xl p-4 shadow-lg transition-all text-left flex flex-col text-white ${
+                  baseDadosCardFilter === "obs_diaria" ? "bg-amber-600" : "bg-amber-500 hover:bg-amber-600"
+                }`}
+              >
+                <p className="text-xs font-bold opacity-90 flex items-center gap-1.5">
+                  <Calendar className="h-3.5 w-3.5" />
+                  Com observação diária
+                </p>
+                <p className="text-2xl font-bold mt-1">
+                  {Object.keys(observacoes.diarias).filter((s) => Object.keys(observacoes.diarias[s] || {}).length > 0).length}
+                </p>
+                <p className="text-xs font-medium opacity-80 mt-1">Clique para filtrar</p>
+              </button>
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
-              <select
-                value={divergenciaFilter}
-                onChange={(e) => setDivergenciaFilter(e.target.value as "all" | "somente" | "sem")}
-                className="h-9 rounded-xl bg-background/80 px-3 text-sm shadow-inner ring-1 ring-white/10 outline-none"
-              >
-                <option value="all">Divergência: todos</option>
-                <option value="somente">Divergência: só destacados (|Δ| &gt;= 5)</option>
-                <option value="sem">Divergência: sem destacados</option>
-              </select>
-              <label className="flex items-center gap-2 text-sm rounded-xl bg-background/70 px-3 py-2 shadow-sm">
-                <input
-                  type="checkbox"
-                  checked={highlightDivergencias}
-                  onChange={(e) => setHighlightDivergencias(e.target.checked)}
-                />
-                Destacar divergentes
-              </label>
               <button
                 type="button"
                 onClick={() => setTableExpanded((prev) => !prev)}
-                className="h-9 rounded-xl px-3 text-sm bg-background/70 shadow-sm hover:shadow-md transition-all"
+                className="h-10 px-4 rounded-lg text-sm font-bold bg-slate-600 text-white shadow-lg hover:bg-slate-500 transition-all inline-flex items-center gap-2"
               >
+                {tableExpanded ? <PanelBottomClose className="h-4 w-4" /> : <PanelBottomOpen className="h-4 w-4" />}
                 {tableExpanded ? "Encolher tabela" : "Mostrar tabela"}
               </button>
-              <select
-                value={zeroFilter}
-                onChange={(e) => setZeroFilter(e.target.value as "all" | "zerados" | "nao_zerados")}
-                className="h-9 rounded-xl bg-background/80 px-3 text-sm shadow-inner ring-1 ring-white/10 outline-none"
-              >
-                <option value="all">Todos percentuais</option>
-                <option value="zerados">Apenas zerados</option>
-                <option value="nao_zerados">Sem zerados</option>
-              </select>
-              <div className="flex items-center gap-2 rounded-xl bg-emerald-500/20 px-3 py-2 ring-2 ring-emerald-500/40 shadow-md">
-                <Calendar className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              <span className="inline-flex items-center gap-2 h-10 px-4 rounded-lg text-sm font-bold bg-blue-600 text-white shadow-lg">
+                <BarChart2 className="h-4 w-4 shrink-0" />
+                <select
+                  value={zeroFilter}
+                  onChange={(e) => setZeroFilter(e.target.value as "all" | "zerados" | "nao_zerados")}
+                  className="bg-transparent border-0 cursor-pointer font-bold focus:ring-0 focus:outline-none"
+                >
+                  <option value="all">Todos percentuais</option>
+                  <option value="zerados">Apenas zerados</option>
+                  <option value="nao_zerados">Sem zerados</option>
+                </select>
+              </span>
+              <span className="inline-flex items-center gap-2 h-10 px-4 rounded-lg text-sm font-bold bg-red-600 text-white shadow-lg">
+                <AlertTriangle className="h-4 w-4 shrink-0" />
+                <select
+                  value={obsGlobalFilter}
+                  onChange={(e) => setObsGlobalFilter(e.target.value as "all" | "com" | "sem")}
+                  className="bg-transparent border-0 cursor-pointer font-bold focus:ring-0 focus:outline-none"
+                  title="Observação global"
+                >
+                  <option value="all">Obs. global: todos</option>
+                  <option value="com">Com obs. global</option>
+                  <option value="sem">Sem obs. global</option>
+                </select>
+              </span>
+              <span className="inline-flex items-center gap-2 h-10 px-4 rounded-lg text-sm font-bold bg-amber-500 text-white shadow-lg">
+                <Calendar className="h-4 w-4 shrink-0" />
+                <select
+                  value={obsDiariaFilter}
+                  onChange={(e) => setObsDiariaFilter(e.target.value as "all" | "com" | "sem")}
+                  className="bg-transparent border-0 cursor-pointer font-bold focus:ring-0 focus:outline-none"
+                  title="Observação diária"
+                >
+                  <option value="all">Obs. diária: todos</option>
+                  <option value="com">Com obs. diária</option>
+                  <option value="sem">Sem obs. diária</option>
+                </select>
+              </span>
+              <span className="inline-flex items-center gap-2 h-10 px-4 rounded-lg text-sm font-bold bg-amber-600 text-white shadow-lg">
+                <Battery className="h-4 w-4 shrink-0" />
+                <select
+                  value={bateriaAlertaFilter}
+                  onChange={(e) => setBateriaAlertaFilter(e.target.value as "all" | "com" | "sem")}
+                  className="bg-transparent border-0 cursor-pointer font-bold focus:ring-0 focus:outline-none"
+                  title="Alerta bateria"
+                >
+                  <option value="all">Bateria: todos</option>
+                  <option value="com">Com alerta</option>
+                  <option value="sem">Sem alerta</option>
+                </select>
+              </span>
+              <div className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 shadow-lg text-white">
+                <Calendar className="h-4 w-4 shrink-0" />
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <input
                     type="date"
@@ -956,9 +1121,9 @@ export default function IPTPage() {
                         fim: prev?.fim && prev.fim >= date ? prev.fim : date,
                       }));
                     }}
-                    className="h-8 rounded-lg bg-background/90 px-2 text-sm font-medium ring-1 ring-emerald-500/50 focus:ring-2 focus:ring-emerald-500 outline-none"
+                    className="h-8 rounded-lg bg-white/95 px-2 text-sm font-bold text-slate-800 focus:ring-2 focus:ring-white outline-none"
                   />
-                  <span className="text-muted-foreground text-xs">até</span>
+                  <span className="text-emerald-100 text-xs font-bold">até</span>
                   <input
                     type="date"
                     value={
@@ -980,9 +1145,9 @@ export default function IPTPage() {
                         fim: date,
                       }));
                     }}
-                    className="h-8 rounded-lg bg-background/90 px-2 text-sm font-medium ring-1 ring-emerald-500/50 focus:ring-2 focus:ring-emerald-500 outline-none"
+                    className="h-8 rounded-lg bg-white/95 px-2 text-sm font-bold text-slate-800 focus:ring-2 focus:ring-white outline-none"
                   />
-                  <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-300">
+                  <span className="text-xs font-bold text-white">
                     {tableScope === "dia_anterior" && "Dia anterior"}
                     {tableScope === "periodo" && "Período"}
                     {tableScope === "todos" && "Todos"}
@@ -997,9 +1162,10 @@ export default function IPTPage() {
                     setTableScope("dia_anterior");
                     setTablePeriodRange(null);
                   }}
-                  className="h-9 rounded-xl px-3 text-sm bg-amber-500/15 text-amber-700 dark:text-amber-300 shadow-sm hover:shadow-md hover:bg-amber-500/20 transition-all"
+                  className="h-10 px-4 rounded-lg text-sm font-bold bg-amber-500 text-white shadow-lg hover:bg-amber-400 transition-all"
                   title="Voltar ao dia anterior"
                 >
+                  <Calendar className="h-4 w-4 inline mr-1.5 -mt-0.5" />
                   Dia anterior
                 </button>
               )}
@@ -1010,18 +1176,19 @@ export default function IPTPage() {
                   setTableScope("todos");
                   setTablePeriodRange(null);
                 }}
-                className="h-9 rounded-xl px-3 text-sm bg-slate-500/15 text-slate-700 dark:text-slate-300 shadow-sm hover:shadow-md hover:bg-slate-500/20 transition-all"
+                className="h-10 px-4 rounded-lg text-sm font-bold bg-slate-600 text-white shadow-lg hover:bg-slate-500 transition-all"
                 title="Mostrar todos os setores (visão abrangente)"
               >
-                <X className="h-4 w-4 inline mr-1 -mt-0.5" />
+                <X className="h-4 w-4 inline mr-1.5 -mt-0.5" />
                 Apagar período
               </button>
 
               <button
                 type="button"
                 onClick={clearAllTableFilters}
-                className="h-9 rounded-xl px-3 text-sm bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 shadow-sm hover:shadow-md hover:bg-emerald-500/20 transition-all"
+                className="h-10 px-4 rounded-lg text-sm font-bold bg-emerald-600 text-white shadow-lg hover:bg-emerald-500 transition-all inline-flex items-center gap-2"
               >
+                <RotateCcw className="h-4 w-4" />
                 Limpar todos os filtros
               </button>
             </div>
@@ -1284,10 +1451,18 @@ export default function IPTPage() {
                   </thead>
                 <tbody>
                   {filteredComparativo.map((row, index) => {
-                    const diverge = getDivergenceMagnitude(row.percentual_selimp, row.percentual_nosso) >= 5;
                     const subTag = getSubTag(row.subprefeitura, row.plano);
                     const rowKey = `${row.plano}-${row.origem}`;
                     const isExpanded = expandedPlano === row.plano;
+                    const temObsGlobal = Boolean(observacoes.globais[row.plano]);
+                    const temInatividadeLonga =
+                      row.bateria_por_equipamento &&
+                      Object.values(row.bateria_por_equipamento).some((b) => {
+                        const ext = b as Record<string, unknown>;
+                        const dias = ext.dias;
+                        const diasNum = typeof dias === "string" ? parseInt(dias.replace(/\D/g, ""), 10) : typeof dias === "number" ? dias : 0;
+                        return !Number.isNaN(diasNum) && diasNum >= 7;
+                      });
                     const hasDetails = true;
                     const hasAnyDetails =
                       (row.equipamentos && row.equipamentos.length > 0) ||
@@ -1310,8 +1485,6 @@ export default function IPTPage() {
                           className={`cursor-pointer border-y border-border/40 transition-colors hover:bg-emerald-500/10 ${
                             isExpanded
                               ? "bg-emerald-500/20 ring-1 ring-inset ring-emerald-500/40"
-                              : highlightDivergencias && diverge
-                              ? "bg-amber-500/10"
                               : index % 2 === 0
                               ? "bg-background/35"
                               : "bg-background/10"
@@ -1328,7 +1501,35 @@ export default function IPTPage() {
                               <span className="w-4 inline-block" />
                             )}
                           </td>
-                          <td className="px-3 py-2 font-medium">{row.plano || "-"}</td>
+                          <td className="px-3 py-2 font-medium">
+                            <span
+                              className={`inline-flex items-center gap-1.5 ${
+                                temObsGlobal
+                                  ? "text-red-600 dark:text-red-400 font-semibold"
+                                  : temInatividadeLonga
+                                  ? "text-amber-600 dark:text-amber-400"
+                                  : ""
+                              }`}
+                            >
+                              {row.plano || "-"}
+                              {temObsGlobal && (
+                                <span
+                                  title={observacoes.globais[row.plano].titulo}
+                                  className="inline-flex text-red-500 shrink-0"
+                                >
+                                  <AlertTriangle className="h-4 w-4" />
+                                </span>
+                              )}
+                              {!temObsGlobal && temInatividadeLonga && (
+                                <span
+                                  title="Módulo(s) com inatividade há muito tempo (7+ dias sem comunicação)"
+                                  className="inline-flex text-amber-500 shrink-0"
+                                >
+                                  <Battery className="h-4 w-4" />
+                                </span>
+                              )}
+                            </span>
+                          </td>
                           <td className="px-3 py-2">
                             <span className={`inline-flex items-center justify-center rounded-full border px-2 py-0.5 text-xs font-semibold ${subTag.className}`}>
                               {subTag.sigla}
@@ -1365,12 +1566,13 @@ export default function IPTPage() {
                         {isExpanded && hasDetails && (
                           <tr key={`${rowKey}-detail`}>
                             <td colSpan={7} className="bg-emerald-500/5 px-4 py-4 align-top border-b border-emerald-500/20">
-                              <div className="grid gap-4 sm:grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 text-sm">
+                              <div className="space-y-4 text-sm">
                                 {!hasAnyDetails && (
                                   <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 p-4 text-amber-800 dark:text-amber-200">
                                     Nenhum despacho registrado no período.
                                   </div>
                                 )}
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                                 {row.equipamentos && row.equipamentos.length > 0 && (
                                   <div className="rounded-xl bg-cyan-500/10 border border-cyan-500/30 p-3 shadow-sm">
                                     <p className="text-xs font-semibold text-cyan-700 dark:text-cyan-300 mb-2 flex items-center gap-1.5">
@@ -1501,33 +1703,52 @@ export default function IPTPage() {
                                         </div>
                                       </div>
                                     )}
-                                  </div>
+                                    </div>
                                 )}
+                                </div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  {observacoes.globais[row.plano] ? (
+                                    <div className="rounded-xl bg-red-500/10 border border-red-500/30 p-3 shadow-sm flex-1 min-w-0">
+                                      <p className="text-xs font-semibold text-red-700 dark:text-red-300 mb-1 flex items-center gap-1.5">
+                                        <AlertTriangle className="h-4 w-4" />
+                                        Observação global: {observacoes.globais[row.plano].titulo}
+                                      </p>
+                                      {observacoes.globais[row.plano].descricao && (
+                                        <p className="text-xs text-red-800/80 dark:text-red-200/80 mb-2">{observacoes.globais[row.plano].descricao}</p>
+                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={async (e) => {
+                                          e.stopPropagation();
+                                          if (!confirm("Cancelar esta observação global? A data será registrada.")) return;
+                                          await apiService.cancelarIptObservacaoGlobal(observacoes.globais[row.plano].id);
+                                          loadData();
+                                        }}
+                                        className="text-xs px-2 py-1 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-700 dark:text-red-300 font-medium"
+                                      >
+                                        Cancelar observação
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setModalObsGlobalSetor(row.plano);
+                                        setModalObsGlobalTitulo("");
+                                        setModalObsGlobalDescricao("");
+                                        setModalObsGlobalOpen(true);
+                                      }}
+                                      className="inline-flex items-center gap-1.5 rounded-xl bg-amber-500/15 border border-amber-500/40 px-3 py-2 text-xs font-medium text-amber-700 dark:text-amber-300 hover:bg-amber-500/25 transition-colors"
+                                    >
+                                      <Plus className="h-3.5 w-3.5" />
+                                      Adicionar observação global
+                                    </button>
+                                  )}
+                                </div>
                                 {row.detalhes_diarios && row.detalhes_diarios.length > 0 && (
                                   <>
-                                    <div className="rounded-xl bg-teal-500/10 border border-teal-500/30 p-3 shadow-sm lg:col-span-2 xl:col-span-3">
-                                      <p className="text-xs font-semibold text-teal-700 dark:text-teal-300 mb-2 flex items-center gap-1.5">
-                                        <Activity className="h-4 w-4" />
-                                        Percentual por dia (SELIMP)
-                                      </p>
-                                      <div className="h-24 w-full mb-3">
-                                        <ResponsiveContainer width="100%" height="100%">
-                                          <LineChart
-                                            data={[...row.detalhes_diarios].reverse().map((d) => ({
-                                              data: d.data.replace(/^(\d{4})-(\d{2})-(\d{2})$/, "$3/$2"),
-                                              pct: d.percentual_selimp ?? 0,
-                                            }))}
-                                            margin={{ top: 5, right: 5, left: 5, bottom: 5 }}
-                                          >
-                                            <XAxis dataKey="data" tick={{ fontSize: 10 }} />
-                                            <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} width={28} />
-                                            <RechartsTooltip formatter={(v: number) => [`${v.toFixed(1)}%`, "% SELIMP"]} />
-                                            <Line type="monotone" dataKey="pct" stroke="#14b8a6" strokeWidth={2} dot={{ r: 3 }} />
-                                          </LineChart>
-                                        </ResponsiveContainer>
-                                      </div>
-                                    </div>
-                                    <div className="rounded-xl bg-slate-500/10 border border-slate-500/30 p-3 shadow-sm lg:col-span-2 xl:col-span-3">
+                                    <div className="rounded-xl bg-slate-500/10 border border-slate-500/30 p-3 shadow-sm">
                                       <p className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2 flex items-center gap-1.5">
                                         <BarChart2 className="h-4 w-4" />
                                         Despachos e percentuais
@@ -1550,6 +1771,7 @@ export default function IPTPage() {
                                               <th className="text-left py-2 px-2">
                                                 <span className="flex items-center gap-1"><Package className="h-3.5 w-3.5" /> D. DDMX</span>
                                               </th>
+                                              <th className="text-left py-2 px-2 w-20">Obs</th>
                                             </tr>
                                           </thead>
                                           <tbody>
@@ -1596,6 +1818,54 @@ export default function IPTPage() {
                                                     <span className="inline-flex items-center gap-1 font-medium">
                                                       <Package className="h-3.5 w-3.5 text-violet-600" />
                                                       {d.despachos_nosso}
+                                                    </span>
+                                                  </td>
+                                                  <td className="py-2 px-2">
+                                                    <span className="inline-flex items-center gap-1 flex-wrap">
+                                                      {observacoes.globais[row.plano] && (
+                                                        <span
+                                                          title={observacoes.globais[row.plano].titulo}
+                                                          className="inline-flex text-red-500"
+                                                        >
+                                                          <AlertTriangle className="h-4 w-4" />
+                                                        </span>
+                                                      )}
+                                                      {observacoes.diarias[row.plano]?.[d.data.replace(/T.*/, "")] && (
+                                                        <span
+                                                          title={observacoes.diarias[row.plano][d.data.replace(/T.*/, "")].titulo}
+                                                          className="inline-flex text-amber-500"
+                                                        >
+                                                          <AlertTriangle className="h-4 w-4" />
+                                                        </span>
+                                                      )}
+                                                      {d.esperado &&
+                                                        (d.despachos_selimp === 0 && d.despachos_nosso === 0) &&
+                                                        row.bateria_por_equipamento &&
+                                                        Object.values(row.bateria_por_equipamento).some(
+                                                          (b) => /critico|baixo|descarregad|alerta|medio|aten/i.test(b.status_bateria)
+                                                        ) && (
+                                                          <span
+                                                            title="Bateria baixa e setor não realizado neste dia"
+                                                            className="inline-flex text-amber-400"
+                                                          >
+                                                            <BatteryWarning className="h-4 w-4" />
+                                                          </span>
+                                                        )}
+                                                      <button
+                                                        type="button"
+                                                        onClick={(e) => {
+                                                          e.stopPropagation();
+                                                          setModalObsDiariaSetor(row.plano);
+                                                          setModalObsDiariaData(d.data.replace(/T.*/, ""));
+                                                          setModalObsDiariaTitulo("");
+                                                          setModalObsDiariaDescricao("");
+                                                          setModalObsDiariaOpen(true);
+                                                        }}
+                                                        className="inline-flex p-0.5 rounded hover:bg-muted/60 text-muted-foreground hover:text-foreground"
+                                                        title="Adicionar observação diária"
+                                                      >
+                                                        <Plus className="h-3.5 w-3.5" />
+                                                      </button>
                                                     </span>
                                                   </td>
                                                 </tr>
