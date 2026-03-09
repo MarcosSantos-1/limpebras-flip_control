@@ -4,9 +4,10 @@ import { useEffect, useMemo, useState, useRef } from "react";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { apiService } from "@/lib/api";
+import { gerarRelatorioIndicadoresPDF } from "@/lib/pdf-relatorio-indicadores";
 import { endOfMonth, format, isValid, startOfMonth } from "date-fns";
 import { AdcDonutChart } from "@/components/adc-donut-chart";
-import { Download, Printer, CalendarRange } from "lucide-react";
+import { Download, CalendarRange } from "lucide-react";
 import { Input } from "@/components/ui/input";
 
 interface IfPorSub {
@@ -220,52 +221,19 @@ export default function ExplicacaoIndicadoresPage() {
     [detalhes]
   );
   const reportRef = useRef<HTMLDivElement>(null);
-  const handlePrint = () => window.print();
 
   const handleDownloadPDF = async () => {
-    const el = reportRef.current;
-    if (!el) return;
     setPdfLoading(true);
-    const { default: html2canvas } = await import("html2canvas-pro");
-    const { jsPDF } = await import("jspdf");
-    document.body.classList.add("pdf-exporting");
-    await new Promise((r) => setTimeout(r, 150));
     try {
-      const canvas = await html2canvas(el, {
-        scale: 2,
-        useCORS: true,
-        logging: false,
-        backgroundColor: "#ffffff",
+      await gerarRelatorioIndicadoresPDF({
+        periodoInicial,
+        periodoFinal,
+        detalhes,
+        pontuacaoTotal,
+        infoDesconto,
+        resumoIndicadores,
       });
-      document.body.classList.remove("pdf-exporting");
-      const pdf = new jsPDF({ unit: "mm", format: "a4" });
-      const pageW = 210;
-      const pageH = 297;
-      const margin = 15;
-      const contentW = pageW - 2 * margin;
-      const contentH = pageH - 2 * margin;
-      const imgRatio = canvas.height / canvas.width;
-      const imgW = contentW;
-      const imgH = imgW * imgRatio;
-      const totalPages = Math.ceil(imgH / contentH);
-      for (let p = 0; p < totalPages; p++) {
-        if (p > 0) pdf.addPage();
-        const srcY = (p * contentH / imgH) * canvas.height;
-        const srcH = (contentH / imgH) * canvas.height;
-        const sliceCanvas = document.createElement("canvas");
-        sliceCanvas.width = canvas.width;
-        sliceCanvas.height = Math.ceil(srcH);
-        const ctx = sliceCanvas.getContext("2d")!;
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(0, 0, sliceCanvas.width, sliceCanvas.height);
-        ctx.drawImage(canvas, 0, srcY, canvas.width, srcH, 0, 0, canvas.width, srcH);
-        const sliceData = sliceCanvas.toDataURL("image/png");
-        const sliceH = Math.min(contentH, imgH - p * contentH);
-        pdf.addImage(sliceData, "PNG", margin, margin, imgW, sliceH);
-      }
-      pdf.save(`relatorio-indicadores-${format(new Date(), "yyyy-MM-dd")}.pdf`);
     } catch (err) {
-      document.body.classList.remove("pdf-exporting");
       console.error(err);
     } finally {
       setPdfLoading(false);
@@ -314,7 +282,7 @@ export default function ExplicacaoIndicadoresPage() {
     }
   };
 
-  const infoDesconto = calcularDesconto(pontuacaoTotal);
+  const infoDesconto = useMemo(() => calcularDesconto(pontuacaoTotal), [pontuacaoTotal]);
   const getPontosStyle = (pontos: number, max: number) => {
     if (pontos >= max) {
       return "bg-green-50 dark:bg-green-900/25 border-green-300 dark:border-green-700 text-green-700 dark:text-green-300";
@@ -339,13 +307,6 @@ export default function ExplicacaoIndicadoresPage() {
             </p>
           </div>
           <div className="flex gap-2">
-            <button
-              onClick={handlePrint}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 text-white hover:bg-violet-700 transition shadow-sm"
-            >
-              <Printer className="h-4 w-4" />
-              Imprimir relatório
-            </button>
             <button
               onClick={handleDownloadPDF}
               disabled={pdfLoading}
@@ -428,8 +389,6 @@ export default function ExplicacaoIndicadoresPage() {
             </div>
           </CardContent>
         </Card>
-
-
 
         {error && (
           <div className="rounded border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-900/20 px-4 py-3 text-sm text-red-700 dark:text-red-200">
