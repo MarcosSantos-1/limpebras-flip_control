@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Calculator, Info } from "lucide-react";
 import Link from "next/link";
+import { VALOR_MENSAL_CONTRATO, descontoADC } from "@/lib/adc-utils";
 
 const DOMICILIOS_TOTAL = 511_093;
 const DOMICILIOS_POR_SUB: Record<string, number> = {
@@ -58,23 +59,6 @@ function pontuacaoIPT(pfPercentual: number): number {
   if (pfPercentual >= 20) return 16;
   if (pfPercentual >= 10) return 12;
   return 0;
-}
-
-function descontoADC(total: number): { percentual: number; texto: string } {
-  if (total >= 90) return { percentual: 100, texto: "100% do valor mensal" };
-  if (total >= 70) {
-    const pct = Math.max(95, 100 - (90 - total) * 0.2);
-    return { percentual: pct, texto: "Redução 0,20% por ponto abaixo de 90 (até 95%)" };
-  }
-  if (total >= 50) {
-    const pct = Math.max(90, 95 - (70 - total) * 0.25);
-    return { percentual: pct, texto: "Redução 0,25% por ponto abaixo de 70 (até 90%)" };
-  }
-  if (total >= 30) {
-    const pct = Math.max(80, 90 - (50 - total) * 0.5);
-    return { percentual: pct, texto: "Redução 0,5% por ponto abaixo de 50 (até 80%)" };
-  }
-  return { percentual: 70, texto: "70% do valor – possibilidade de abertura de processo de rescisão" };
 }
 
 export default function SimuladorADCPage() {
@@ -166,6 +150,10 @@ export default function SimuladorADCPage() {
   }, [irdResult.pontuacao, iaResult.pontuacao, ifResult.pontuacao, iptResult?.pontuacao]);
 
   const descontoInfo = useMemo(() => descontoADC(adcTotal), [adcTotal]);
+  const glosaSimulada = useMemo(
+    () => (VALOR_MENSAL_CONTRATO * (100 - descontoInfo.percentual)) / 100,
+    [descontoInfo.percentual]
+  );
 
   return (
     <MainLayout>
@@ -416,6 +404,13 @@ export default function SimuladorADCPage() {
                 <p className="font-semibold text-foreground">{descontoInfo.percentual.toFixed(1)}% do valor mensal</p>
                 <p className="text-sm text-muted-foreground">{descontoInfo.texto}</p>
               </div>
+            </div>
+            <div className="p-4 rounded-xl bg-rose-100/50 dark:bg-rose-900/20">
+              <div className="text-xs text-rose-600 dark:text-rose-400 font-semibold uppercase tracking-wider mb-1">Glosa simulada (R$)</div>
+              <div className="text-2xl font-bold text-rose-700 dark:text-rose-300">
+                {glosaSimulada.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">Base: valor mensal do contrato × desconto aplicado</p>
             </div>
           </CardContent>
         </Card>

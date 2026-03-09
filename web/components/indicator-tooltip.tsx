@@ -31,8 +31,8 @@ const tooltips = {
   },
   IPT: {
     nome: "IPT – INDICADOR PLANO DE TRABALHO",
-    descricao: "Avalia a execução dos planos de trabalho através de mão de obra e equipamentos.",
-    formula: "IPT = (Mão de Obra × 50%) + (Equipamentos × 50%)",
+    descricao: "Avalia a execução dos planos de trabalho. Algoritmo SELIMP: 70% Qualidade + 30% Cobertura.",
+    formula: "70% Qualidade + 30% Cobertura",
     pontuacaoMax: 40,
   },
 }

@@ -1,9 +1,10 @@
 "use client";
 
 import { Fragment, useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import { format, endOfMonth, startOfMonth, subDays } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { Activity, AlertTriangle, BarChart2, Battery, BatteryWarning, Calendar, Check, ChevronDown, ChevronRight, ChevronUp, Cpu, Info, Package, PanelBottomClose, PanelBottomOpen, Plus, RotateCcw, Sparkles, Truck, X } from "lucide-react";
+import { Activity, AlertTriangle, BarChart2, Battery, BatteryWarning, Calendar, Check, ChevronDown, ChevronRight, ChevronUp, Cpu, Info, Package, PanelBottomClose, PanelBottomOpen, Plus, RotateCcw, Sparkles, TrendingUp, Truck, X } from "lucide-react";
 import { MainLayout } from "@/components/layout/main-layout";
 import {
   Select,
@@ -23,6 +24,20 @@ import {
 import { apiService, type IptPreviewResponse } from "@/lib/api";
 import { useIptData } from "@/lib/use-ipt-data";
 import { getSortKey, getSubFromPlano } from "@/lib/ipt-utils";
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  Title,
+  Tooltip,
+  Legend,
+  ChartOptions,
+} from "chart.js";
+
+const IptBar = dynamic(() => import("react-chartjs-2").then((mod) => mod.Bar), { ssr: false });
+
+ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
 const pct = (value?: number | null) => (value == null ? "--" : `${value.toFixed(1)}%`);
 const clamp = (value: number, min = 0, max = 100) => Math.min(max, Math.max(min, value));
@@ -193,6 +208,7 @@ export default function IPTPage() {
   const [expandedPlano, setExpandedPlano] = useState<string | null>(null);
   const [modalBateriaOpen, setModalBateriaOpen] = useState(false);
   const [modalCruzamentoOpen, setModalCruzamentoOpen] = useState(false);
+  const [iptFormulaTooltip, setIptFormulaTooltip] = useState(false);
   const [diagnosticoOpen, setDiagnosticoOpen] = useState(false);
   const [diagnosticoData, setDiagnosticoData] = useState<{
     contagem_por_tipo?: Array<{ file_type: string; total: number; ultimo: string | null }>;
@@ -448,6 +464,90 @@ export default function IPTPage() {
     return list;
   }, [iptPreviewCards]);
 
+  /** Itens do comparativo no escopo do mês (cards) - para métricas do card Subprefeituras */
+  const cardsComparativoItens = useMemo(
+    () => (iptPreviewCards?.comparativo?.itens ?? []) as Array<{
+      subprefeitura: string;
+      percentual_selimp: number | null;
+      percentual_nosso: number | null;
+    }>,
+    [iptPreviewCards]
+  );
+
+  /** Percentual de execução por plano (nosso primeiro, selimp fallback) */
+  const getPercentualExecucao = (row: { percentual_nosso?: number | null; percentual_selimp?: number | null }) => {
+    const v = row.percentual_nosso ?? row.percentual_selimp ?? null;
+    return v != null && !Number.isNaN(v) ? v : null;
+  };
+
+  /** Média de execução sem zerados e com zerados (global e por sub) - para o card Subprefeituras */
+  const subprefeituraInsights = useMemo(() => {
+    const bySub = new Map<
+      string,
+      { comZerados: number[]; semZerados: number[]; totalPlanos: number; zerados: number }
+    >();
+    for (const row of cardsComparativoItens) {
+      const sub = row.subprefeitura || "Não informado";
+      if (!bySub.has(sub)) {
+        bySub.set(sub, { comZerados: [], semZerados: [], totalPlanos: 0, zerados: 0 });
+      }
+      const entry = bySub.get(sub)!;
+      const pct = getPercentualExecucao(row);
+      entry.totalPlanos += 1;
+      if (pct != null) {
+        entry.comZerados.push(pct);
+        if (pct > 0) entry.semZerados.push(pct);
+        else entry.zerados += 1;
+      }
+    }
+    const result: Array<{
+      subprefeitura: string;
+      mediaComZerados: number | null;
+      mediaSemZerados: number | null;
+      totalPlanos: number;
+      zerados: number;
+    }> = [];
+    bySub.forEach((val, sub) => {
+      const mediaCom =
+        val.comZerados.length > 0
+          ? val.comZerados.reduce((a, b) => a + b, 0) / val.comZerados.length
+          : null;
+      const mediaSem =
+        val.semZerados.length > 0
+          ? val.semZerados.reduce((a, b) => a + b, 0) / val.semZerados.length
+          : null;
+      result.push({
+        subprefeitura: sub,
+        mediaComZerados: mediaCom,
+        mediaSemZerados: mediaSem,
+        totalPlanos: val.totalPlanos,
+        zerados: val.zerados,
+      });
+    });
+    return result.sort((a, b) => (b.mediaSemZerados ?? -1) - (a.mediaSemZerados ?? -1));
+  }, [cardsComparativoItens]);
+
+  /** Médias globais (considerando filtro de subprefeitura já aplicado no backend) */
+  const globalInsights = useMemo(() => {
+    const comZerados: number[] = [];
+    const semZerados: number[] = [];
+    for (const row of cardsComparativoItens) {
+      const pct = getPercentualExecucao(row);
+      if (pct != null) {
+        comZerados.push(pct);
+        if (pct > 0) semZerados.push(pct);
+      }
+    }
+    return {
+      mediaComZerados:
+        comZerados.length > 0 ? comZerados.reduce((a, b) => a + b, 0) / comZerados.length : null,
+      mediaSemZerados:
+        semZerados.length > 0 ? semZerados.reduce((a, b) => a + b, 0) / semZerados.length : null,
+      totalPlanos: cardsComparativoItens.length,
+      zerados: comZerados.filter((x) => x <= 0).length,
+    };
+  }, [cardsComparativoItens]);
+
   const adjustColumnWidth = (column: TableColumnKey, delta: number) => {
     setColumnWidths((prev) => ({
       ...prev,
@@ -581,7 +681,30 @@ export default function IPTPage() {
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
           <Card className="xl:col-span-1 border-0 shadow-[0_20px_50px_-30px_rgba(16,185,129,0.7)] bg-linear-to-br from-emerald-500/15 via-card to-card">
             <CardHeader>
-              <CardTitle className="text-base">IPT (Cálculo Automático)</CardTitle>
+              <div className="flex items-center gap-2">
+                <CardTitle className="text-base">IPT (Cálculo Automático)</CardTitle>
+                <div
+                  className="relative"
+                  onMouseEnter={() => setIptFormulaTooltip(true)}
+                  onMouseLeave={() => setIptFormulaTooltip(false)}
+                >
+                  <Info className="h-4 w-4 text-zinc-400 hover:text-emerald-500 cursor-help transition-colors shrink-0" />
+                  {iptFormulaTooltip && (
+                    <div className="absolute left-0 top-6 z-50 w-[min(95vw,96rem)] max-w-[96rem] rounded-lg bg-zinc-900 dark:bg-zinc-800 p-4 text-xs text-white shadow-xl border border-zinc-700">
+                      <div className="font-bold mb-2 text-sm text-emerald-400">IPT – Algoritmo SELIMP</div>
+                      <div className="mb-3 p-2 bg-zinc-800 dark:bg-zinc-900 rounded border border-zinc-700">
+                        <div className="text-zinc-400 text-xs mb-1">Fórmula completa:</div>
+                        <div className="font-mono text-xs text-emerald-300 leading-relaxed">
+                          PF = 0.7 × min(Q̄ + min(σ, 0.08), 1) + 0.3 × min(A/C, 1)
+                          <br />
+                          <span className="text-zinc-400">onde C = P×R/F , Q̄ = (1/N)×ΣQᵢ , N = A−Z</span>
+                        </div>
+                      </div>
+                      <div className="text-zinc-400 text-xs">70% Qualidade + 30% Cobertura. Fonte: planilha SELIMP.</div>
+                    </div>
+                  )}
+                </div>
+              </div>
               <CardDescription>Percentual Médio e Pontuação do ADC.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -888,8 +1011,8 @@ export default function IPTPage() {
                 </span>
               </div>
             </CardHeader>
-            <CardContent>
-              <div className="space-y-2">
+            <CardContent className="space-y-4">
+              <div className="space-y-3">
                 {topSubprefeituras.map((item) => (
                   <div
                     key={item.subprefeitura}
@@ -920,6 +1043,187 @@ export default function IPTPage() {
               </div>
               {!loading && topSubprefeituras.length === 0 && (
                 <p className="text-sm text-muted-foreground py-6 text-center">Sem dados para o período.</p>
+              )}
+
+              {/* Insights e gráficos dinâmicos */}
+              {topSubprefeituras.length > 0 && (
+                <div className="mt-8 pt-8 border-t border-border space-y-8">
+                  {/* Métricas globais */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="rounded-xl bg-emerald-500/10 dark:bg-emerald-500/15 p-4 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg border border-emerald-500/20 hover:border-emerald-500/40">
+                      <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400 mb-2 uppercase tracking-wider">
+                        Média exec. (sem zerados)
+                      </p>
+                      <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-300 tabular-nums">
+                        {globalInsights.mediaSemZerados != null
+                          ? `${globalInsights.mediaSemZerados.toFixed(1)}%`
+                          : "--"}
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-teal-500/10 dark:bg-teal-500/15 p-4 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg border border-teal-500/20 hover:border-teal-500/40">
+                      <p className="text-xs font-medium text-teal-700 dark:text-teal-400 mb-2 uppercase tracking-wider">
+                        Média exec. (com zerados)
+                      </p>
+                      <p className="text-2xl font-bold text-teal-700 dark:text-teal-300 tabular-nums">
+                        {globalInsights.mediaComZerados != null
+                          ? `${globalInsights.mediaComZerados.toFixed(1)}%`
+                          : "--"}
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-amber-500/10 dark:bg-amber-500/15 p-4 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg border border-amber-500/20 hover:border-amber-500/40">
+                      <p className="text-xs font-medium text-amber-700 dark:text-amber-400 mb-2 uppercase tracking-wider">
+                        Planos zerados
+                      </p>
+                      <p className="text-2xl font-bold text-amber-700 dark:text-amber-300 tabular-nums">
+                        {globalInsights.zerados}
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-slate-500/10 dark:bg-slate-500/15 p-4 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg border border-slate-500/20 hover:border-slate-500/40">
+                      <p className="text-xs font-medium text-slate-700 dark:text-slate-400 mb-2 uppercase tracking-wider">
+                        Total planos
+                      </p>
+                      <p className="text-2xl font-bold text-slate-700 dark:text-slate-300 tabular-nums">
+                        {globalInsights.totalPlanos}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Gráfico barras: média sem zerados vs com zerados por sub */}
+                  {subprefeituraInsights.length > 0 && (
+                    <div className="rounded-xl bg-background/60 p-5 shadow-sm border border-border space-y-4">
+                      <p className="text-sm font-semibold text-foreground">Execução média por subprefeitura</p>
+                      <div className="h-64 min-h-[200px]">
+                        <IptBar
+                          data={{
+                            labels: subprefeituraInsights.map((s) =>
+                              s.subprefeitura.length > 12 ? s.subprefeitura.slice(0, 11) + "…" : s.subprefeitura
+                            ),
+                            datasets: [
+                              {
+                                label: "Média sem zerados (%)",
+                                data: subprefeituraInsights.map((s) => s.mediaSemZerados ?? 0),
+                                backgroundColor: "rgba(16, 185, 129, 0.6)",
+                                borderColor: "rgb(16, 185, 129)",
+                                borderWidth: 1,
+                                borderRadius: 4,
+                              },
+                              {
+                                label: "Média com zerados (%)",
+                                data: subprefeituraInsights.map((s) => s.mediaComZerados ?? 0),
+                                backgroundColor: "rgba(20, 184, 166, 0.6)",
+                                borderColor: "rgb(20, 184, 166)",
+                                borderWidth: 1,
+                                borderRadius: 4,
+                              },
+                            ],
+                          }}
+                          options={
+                            {
+                              responsive: true,
+                              maintainAspectRatio: false,
+                              plugins: {
+                                legend: { position: "top" as const },
+                                tooltip: {
+                                  callbacks: {
+                                    label: (ctx) => `${ctx.dataset.label}: ${(ctx.parsed.y as number).toFixed(1)}%`,
+                                  },
+                                },
+                              },
+                              scales: {
+                                x: {
+                                  grid: { display: false },
+                                  ticks: { maxRotation: 45, minRotation: 35, font: { size: 10 } },
+                                },
+                                y: {
+                                  min: 0,
+                                  max: 100,
+                                  ticks: { callback: (v) => `${v}%` },
+                                },
+                              },
+                            } as ChartOptions<"bar">
+                          }
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Gráfico de planos zerados por sub */}
+                  {subprefeituraInsights.some((s) => s.zerados > 0) && (
+                    <div className="rounded-xl bg-background/60 p-5 shadow-sm border border-border space-y-4">
+                      <p className="text-sm font-semibold text-foreground">Planos com execução zerada por sub</p>
+                      <div className="h-52 min-h-[160px]">
+                        <IptBar
+                          data={{
+                            labels: subprefeituraInsights.map((s) =>
+                              s.subprefeitura.length > 12 ? s.subprefeitura.slice(0, 11) + "…" : s.subprefeitura
+                            ),
+                            datasets: [
+                              {
+                                label: "Planos zerados",
+                                data: subprefeituraInsights.map((s) => s.zerados),
+                                backgroundColor: "rgba(245, 158, 11, 0.6)",
+                                borderColor: "rgb(245, 158, 11)",
+                                borderWidth: 1,
+                                borderRadius: 4,
+                              },
+                            ],
+                          }}
+                          options={
+                            {
+                              responsive: true,
+                              maintainAspectRatio: false,
+                              plugins: {
+                                legend: { display: false },
+                                tooltip: {
+                                  callbacks: {
+                                    label: (ctx) => `Zerados: ${ctx.parsed.y}`,
+                                  },
+                                },
+                              },
+                              scales: {
+                                x: {
+                                  grid: { display: false },
+                                  ticks: { maxRotation: 45, minRotation: 35, font: { size: 10 } },
+                                },
+                                y: { beginAtZero: true, ticks: { stepSize: 1 } },
+                              },
+                            } as ChartOptions<"bar">
+                          }
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Comparativo visual: diferença média sem vs com zerados */}
+                  {globalInsights.mediaSemZerados != null && globalInsights.mediaComZerados != null && (
+                    <div className="flex items-center gap-4 p-5 rounded-xl bg-emerald-500/5 dark:bg-emerald-500/10 shadow-sm border border-emerald-500/20 hover:border-emerald-500/30 transition-all">
+                      <div className="shrink-0 flex items-center justify-center w-12 h-12 rounded-xl bg-emerald-500/20">
+                        <TrendingUp className="h-6 w-6 text-emerald-600 dark:text-emerald-400" />
+                      </div>
+                      <div className="space-y-1 min-w-0">
+                        <p className="text-xs text-muted-foreground uppercase tracking-wider">
+                          Diferença entre média sem zerados e com zerados
+                        </p>
+                        <p className="text-xl font-bold text-foreground tabular-nums">
+                          {(globalInsights.mediaSemZerados - globalInsights.mediaComZerados).toFixed(1)} pts
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Zerados reduzem a média geral em{" "}
+                          <span className="font-semibold text-amber-600 dark:text-amber-400">
+                            {globalInsights.mediaSemZerados > 0
+                              ? (
+                                  ((globalInsights.mediaSemZerados - globalInsights.mediaComZerados) /
+                                    globalInsights.mediaSemZerados) *
+                                  100
+                                ).toFixed(1)
+                              : 0}
+                            %
+                          </span>
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
               )}
             </CardContent>
           </Card>
