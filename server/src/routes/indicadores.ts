@@ -23,20 +23,6 @@ import {
 } from "../constants/ipt.js";
 import { config } from "../config.js";
 
-async function getSavedIPT(client: any, inicio: string, fim: string): Promise<number | null> {
-  const r = await client.query(
-    `SELECT percentual_total
-     FROM ipt_registros
-     WHERE periodo_inicial = $1::date
-       AND periodo_final = $2::date
-     ORDER BY updated_at DESC
-     LIMIT 1`,
-    [inicio, fim]
-  );
-  if (!r.rows.length) return null;
-  const v = Number(r.rows[0]?.percentual_total);
-  return Number.isFinite(v) ? v : null;
-}
 
 /** Extrai data (yyyy-MM-dd) do raw. Checa chaves conhecidas e qualquer chave que contenha "data". */
 function extractRawDateForIpt(raw: IptRaw): string | null {
@@ -87,50 +73,50 @@ async function fetchOrdensSelimpNoPeriodo(
   inicio: string,
   fim: string
 ): Promise<{ ordens: Array<{ percentual: number }>; P: number; R: number; F: number }> {
-  const rows = await client.query(
-    `SELECT raw, data_referencia, updated_at
-     FROM ipt_imports
-     WHERE file_type = 'ipt_report_selimp'`,
-    []
-  );
+  // Extrai ano e mês do período (inicio = YYYY-MM-01, fim = YYYY-MM-DD)
+  const [y, m] = inicio.split("-").map(Number);
+  const ano = y;
+  const mes = m;
+  const fimParts = fim.split("-").map(Number);
+  const mesFim = fimParts[1];
+  const anoFim = fimParts[0];
 
   const ordens: Array<{ percentual: number }> = [];
 
-  for (const row of rows.rows as Array<{ raw: IptRaw; data_referencia: string | Date | null; updated_at: string | Date | null }>) {
-    const raw = (row.raw ?? {}) as IptRaw;
-    const status = normalizeText(String(raw.status ?? "").trim());
-    if (!status.includes("encerrado")) continue;
-    const plano = normalizarSetor(String(raw.plano ?? "").trim());
-    if (!plano) continue;
-
-    let percentual = toExecPercent(String(raw.de_execucao ?? raw.percentual_execucao ?? "").trim());
-    if (percentual == null) percentual = 0;
-    if (percentual > 0 && percentual <= 1) percentual *= 100;
-    const percentualDecimal = Math.min(1, Math.max(0, percentual / 100));
-
-    let dateKey: string | null = null;
-    const dataRef = row.data_referencia;
-    if (dataRef) {
-      if (typeof dataRef === "string" && /^\d{4}-\d{2}-\d{2}/.test(dataRef)) dateKey = dataRef.slice(0, 10);
-      else {
-        const d = dataRef instanceof Date ? dataRef : new Date(dataRef);
-        if (!Number.isNaN(d.getTime())) {
-          dateKey = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+  if (ano === anoFim && mes === mesFim) {
+    const r = await client.query(
+      `SELECT ordens FROM ipt_selimp_mensal WHERE ano = $1 AND mes = $2`,
+      [ano, mes]
+    );
+    if (r.rows[0]?.ordens) {
+      const arr = Array.isArray(r.rows[0].ordens) ? r.rows[0].ordens : (r.rows[0].ordens as any)?.items ?? [];
+      for (const o of arr) {
+        const pct = o?.percentual ?? o?.percentualDecimal;
+        if (typeof pct === "number" && !Number.isNaN(pct)) {
+          ordens.push({ percentual: Math.min(1, Math.max(0, pct)) });
         }
       }
     }
-    if (!dateKey) dateKey = extractRawDateForIpt(raw);
-    if (!dateKey) {
-      const upd = row.updated_at;
-      if (upd) {
-        const d = upd instanceof Date ? upd : new Date(upd);
-        if (!Number.isNaN(d.getTime()))
-          dateKey = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+  } else {
+    for (let a = ano; a <= anoFim; a++) {
+      const mesIni = a === ano ? mes : 1;
+      const mesEnd = a === anoFim ? mesFim : 12;
+      for (let m = mesIni; m <= mesEnd; m++) {
+        const rr = await client.query(
+          `SELECT ordens FROM ipt_selimp_mensal WHERE ano = $1 AND mes = $2`,
+          [a, m]
+        );
+        if (rr.rows[0]?.ordens) {
+          const arr = Array.isArray(rr.rows[0].ordens) ? rr.rows[0].ordens : [];
+          for (const o of arr) {
+            const pct = o?.percentual ?? o?.percentualDecimal;
+            if (typeof pct === "number" && !Number.isNaN(pct)) {
+              ordens.push({ percentual: Math.min(1, Math.max(0, pct)) });
+            }
+          }
+        }
       }
     }
-    if (!dateKey || dateKey < inicio || dateKey > fim) continue;
-
-    ordens.push({ percentual: percentualDecimal });
   }
 
   const A = ordens.length;
@@ -534,13 +520,12 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         }),
       };
       const autoIptPercent = await getAutoIPTFromReport(client, inicio, fim);
-      const savedIptPercent = await getSavedIPT(client, inicio, fim);
-      const iptPercent = autoIptPercent ?? savedIptPercent;
+      const iptPercent = autoIptPercent;
       const iptDashboard =
         iptPercent != null
           ? { ...pontuacaoIPT(iptPercent), valor: iptPercent }
           : { valor: 0, percentual: 0, pontuacao: 0 };
-      const iptSemDados = autoIptPercent == null && savedIptPercent == null;
+      const iptSemDados = autoIptPercent == null;
 
       // SACs hoje (opcional: período = hoje)
       const hoje = new Date().toISOString().slice(0, 10);
@@ -633,9 +618,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
       const ifSemIrregularidade = Object.values(bySigla).reduce((a, x) => a + x.sem_irregularidade, 0);
 
       if (iptPercent == null || isNaN(iptPercent)) {
-        const autoIpt = await getAutoIPTFromReport(client, inicio, fim);
-        const saved = await getSavedIPT(client, inicio, fim);
-        iptPercent = autoIpt ?? saved ?? undefined;
+        iptPercent = (await getAutoIPTFromReport(client, inicio, fim)) ?? undefined;
       }
 
       const ipt: IndicadorResult = iptPercent != null && !isNaN(iptPercent)
@@ -877,8 +860,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
       };
 
       const autoIptDetalhes = await getAutoIPTDetalhesFromReport(client, inicio, fim);
-      const savedIptPercent = await getSavedIPT(client, inicio, fim);
-      const iptPercent = autoIptDetalhes?.percent ?? savedIptPercent;
+      const iptPercent = autoIptDetalhes?.percent ?? null;
       const ipt =
         iptPercent != null
           ? {
@@ -893,7 +875,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
                     "Coluna plano: identificador do setor",
                     "Coluna de_execucao (ou percentual_execucao): percentual 0–100 ou decimal 0–1",
                   ]
-                : ["Valor informado manualmente no dashboard (não calculado da planilha SELIMP)"],
+                : ["Sem dados da planilha SELIMP para este período"],
             }
           : undefined;
 
@@ -925,6 +907,61 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
 
   fastify.get("/dashboard/indicadores/historico", async (_request, _reply) => {
     return { historico: [] };
+  });
+
+  /** Diagnóstico: meses com dados em ipt_selimp_mensal. */
+  fastify.get("/indicadores/ipt-selimp-diagnostico", async (_request, reply) => {
+    const client = await pool.connect();
+    try {
+      const r = await client.query(
+        `SELECT
+           ano,
+           mes,
+           total_linhas,
+           total_encerradas,
+           quantidade_esperada,
+           validacao_ok,
+           source_file,
+           updated_at
+         FROM ipt_selimp_mensal
+         ORDER BY ano, mes`
+      );
+      return { meses: r.rows };
+    } finally {
+      client.release();
+    }
+  });
+
+  /** IPT por mês: quantidade de ordens e percentual (sempre calculado da planilha). */
+  fastify.get<{ Querystring: { ano?: string } }>("/indicadores/ipt-por-mes", async (request, reply) => {
+    const ano = Number((request.query as { ano?: string })?.ano ?? new Date().getFullYear());
+    if (!Number.isFinite(ano) || ano < 2020 || ano > 2030) {
+      return reply.code(400).send({ detail: "ano inválido (2020-2030)" });
+    }
+    const client = await pool.connect();
+    try {
+      const meses: Array<{ mes: number; quantidade: number; percentual: number | null }> = [];
+      for (let m = 1; m <= 12; m++) {
+        const inicio = `${ano}-${String(m).padStart(2, "0")}-01`;
+        const ultimoDia = new Date(ano, m, 0).getDate();
+        const fim = `${ano}-${String(m).padStart(2, "0")}-${String(ultimoDia).padStart(2, "0")}`;
+        const { ordens } = await fetchOrdensSelimpNoPeriodo(client, inicio, fim);
+        const mensal = await client.query(
+          `SELECT total_linhas FROM ipt_selimp_mensal WHERE ano = $1 AND mes = $2`,
+          [ano, m]
+        );
+        const quantidade = Number(mensal.rows[0]?.total_linhas ?? 0);
+        const percentual = quantidade > 0 ? await getAutoIPTFromReport(client, inicio, fim) : null;
+        meses.push({
+          mes: m,
+          quantidade,
+          percentual: percentual != null ? percentual : null,
+        });
+      }
+      return { ano, meses };
+    } finally {
+      client.release();
+    }
   });
 
   fastify.get<{

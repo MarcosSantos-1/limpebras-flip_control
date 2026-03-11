@@ -274,10 +274,11 @@ export const apiService = {
     return data;
   },
 
-  uploadIptReportXlsx: async (file: File) => {
+  uploadIptReportXlsx: async (file: File, mesReferencia: string) => {
     const formData = new FormData();
     formData.append('file', file);
-    const { data } = await api.post('/upload/ipt-report', formData, {
+    const url = `/upload/ipt-report?mes_referencia=${encodeURIComponent(mesReferencia)}`;
+    const { data } = await api.post(url, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
     return data;
@@ -324,6 +325,27 @@ export const apiService = {
   /** Remove todas as Ouvidorias. */
   clearOuvidoriaImportados: async () => {
     const { data } = await api.post('/upload/clear-ouvidoria');
+    return data;
+  },
+  /** Remove todos os dados da planilha Reports (SELIMP). Use antes de reimportar. */
+  clearIptReportImportados: async () => {
+    const { data } = await api.post('/upload/clear-ipt-report');
+    return data;
+  },
+  /** Remove registros manuais de IPT. */
+  clearIptRegistros: async () => {
+    const { data } = await api.post('/upload/clear-ipt-registros');
+    return data;
+  },
+  /** Diagnóstico: registros ipt_report_selimp por dia (para debugar fev/jan). */
+  getIptSelimpDiagnostico: async () => {
+    const { data } = await api.get('/indicadores/ipt-selimp-diagnostico');
+    return data;
+  },
+  /** IPT por mês: quantidade e percentual (ano opcional, default atual). */
+  getIptPorMes: async (ano?: number) => {
+    const params = ano != null ? { ano } : {};
+    const { data } = await api.get('/indicadores/ipt-por-mes', { params });
     return data;
   },
   

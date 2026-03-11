@@ -4,6 +4,57 @@ import { invalidatePrefix } from "../cache.js";
 import { parseSacCsv, parseBfsCsv, parseOuvidoriaCsv, parseAcicCsv, parseCncDetalhesCsv } from "../services/parseCsv.js";
 import { parseIptWorkbook, type IptFileType } from "../services/parseIptXlsx.js";
 import { parseCronogramaWorkbook } from "../services/parseCronogramaIpt.js";
+import { normalizarSetor } from "../constants/ipt.js";
+
+function toExecPercent(value: string): number | null {
+  if (!value) return null;
+  const n = Number(String(value).replace(",", ".").replace("%", "").trim());
+  return Number.isFinite(n) ? n : null;
+}
+
+function extractOrdensFromReportRows(rows: { raw?: Record<string, string> }[]): Array<Record<string, unknown> & { percentual: number }> {
+  const normalizeText = (v: string) =>
+    String(v ?? "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .trim();
+  const ordens: Array<Record<string, unknown> & { percentual: number }> = [];
+  for (const row of rows) {
+    const raw = row.raw ?? {};
+    const status = normalizeText(String(raw.status ?? "").trim());
+    if (!status.includes("encerrado")) continue;
+    const plano = normalizarSetor(String(raw.plano ?? "").trim());
+    if (!plano) continue;
+    let pct = toExecPercent(String(raw.de_execucao ?? raw.percentual_execucao ?? "").trim());
+    if (pct == null) pct = 0;
+    if (pct > 0 && pct <= 1) pct *= 100;
+    const percentual = Math.min(1, Math.max(0, pct / 100));
+    ordens.push({ ...raw, percentual });
+  }
+  return ordens;
+}
+
+const EXPECTED_SELIMP_ROWS_BY_MONTH: Record<string, number> = {
+  "2026-01": 8125,
+  "2026-02": 7508,
+  "2026-03": 2329,
+};
+
+function parseMesReferencia(mesReferencia: string) {
+  const match = mesReferencia.match(/^(\d{4})-(\d{2})$/);
+  if (!match) throw new Error(`Mês inválido: "${mesReferencia}"`);
+  const ano = Number(match[1]);
+  const mes = Number(match[2]);
+  const inicio = `${ano}-${String(mes).padStart(2, "0")}-01`;
+  const ultimoDia = new Date(Date.UTC(ano, mes, 0)).getUTCDate();
+  const fim = `${ano}-${String(mes).padStart(2, "0")}-${String(ultimoDia).padStart(2, "0")}`;
+  const proximoInicio =
+    mes === 12
+      ? `${ano + 1}-01-01`
+      : `${ano}-${String(mes + 1).padStart(2, "0")}-01`;
+  return { ano, mes, inicio, fim, proximoInicio };
+}
 
 export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
   const getLastUpdate = async (table: "sacs" | "bfs" | "acic" | "ouvidoria" | "cncs") => {
@@ -19,18 +70,35 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
   };
 
   const getLastIptUpdate = async (fileType: IptFileType) => {
+    if (fileType === "ipt_report_selimp") {
+      const last = await pool.query(
+        `SELECT source_file, updated_at, ano, mes, total_linhas, total_encerradas, validacao_ok
+         FROM ipt_selimp_mensal
+         ORDER BY updated_at DESC
+         LIMIT 1`
+      );
+      const count = await pool.query(
+        `SELECT
+           COALESCE(SUM(total_linhas), 0)::bigint AS total_linhas,
+           COALESCE(SUM(total_encerradas), 0)::bigint AS total_encerradas
+         FROM ipt_selimp_mensal`
+      );
+      const r = last.rows[0];
+      return {
+        ultimo_import: r?.updated_at ?? null,
+        source_file: r?.source_file ?? null,
+        total_registros: Number(count.rows[0]?.total_linhas ?? 0),
+        total_encerradas: Number(count.rows[0]?.total_encerradas ?? 0),
+        ultimo_mes: r ? `${r.ano}-${String(r.mes).padStart(2, "0")}` : null,
+        validacao_ok: Boolean(r?.validacao_ok),
+      };
+    }
     const last = await pool.query(
-      `SELECT source_file, updated_at
-       FROM ipt_imports
-       WHERE file_type = $1
-       ORDER BY updated_at DESC NULLS LAST, id DESC
-       LIMIT 1`,
+      `SELECT source_file, updated_at FROM ipt_imports WHERE file_type = $1 ORDER BY updated_at DESC NULLS LAST, id DESC LIMIT 1`,
       [fileType]
     );
     const count = await pool.query(
-      `SELECT COUNT(*)::int AS total
-       FROM ipt_imports
-       WHERE file_type = $1`,
+      `SELECT COUNT(*)::int AS total FROM ipt_imports WHERE file_type = $1`,
       [fileType]
     );
     return {
@@ -40,7 +108,11 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
     };
   };
 
-  const importIptFile = async (fileType: IptFileType, request: FastifyRequest) => {
+  const importIptFile = async (
+    fileType: IptFileType,
+    request: FastifyRequest,
+    opts?: { mesReferencia?: string }
+  ) => {
     const data = await request.file();
     if (!data) {
       throw new Error("Arquivo XLSX obrigatório");
@@ -56,14 +128,58 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       let inserted = 0;
       let updated = 0;
 
+      let dataRefFallback: Date = yesterday;
+      if (fileType === "ipt_report_selimp" && opts?.mesReferencia) {
+        const match = opts.mesReferencia.match(/^(\d{4})-(\d{2})$/);
+        if (match) {
+          const ano = Number(match[1]);
+          const mes = Number(match[2]);
+          const ultimoDia = new Date(Date.UTC(ano, mes, 0));
+          if (!Number.isNaN(ultimoDia.getTime())) {
+            dataRefFallback = ultimoDia;
+          }
+        }
+      }
+
+      // ipt_report_selimp: antes de inserir, DELETAR dados do mesmo período para evitar bagunça
+      if (fileType === "ipt_report_selimp") {
+        const d = dataRefFallback instanceof Date ? dataRefFallback : new Date(dataRefFallback);
+        const y = d.getUTCFullYear();
+        const m = d.getUTCMonth() + 1;
+        const day = d.getUTCDate();
+        const dateKey = `${y}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+        if (opts?.mesReferencia) {
+          const [anoStr, mesStr] = opts.mesReferencia.split("-").map(Number);
+          const ini = `${anoStr}-${String(mesStr).padStart(2, "0")}-01`;
+          const ultDia = new Date(Date.UTC(anoStr, mesStr, 0)).getUTCDate();
+          const fim = `${anoStr}-${String(mesStr).padStart(2, "0")}-${String(ultDia).padStart(2, "0")}`;
+          await client.query(
+            `DELETE FROM ipt_imports WHERE file_type = 'ipt_report_selimp' AND data_referencia::date >= $1::date AND data_referencia::date <= $2::date`,
+            [ini, fim]
+          );
+        } else {
+          await client.query(
+            `DELETE FROM ipt_imports WHERE file_type = 'ipt_report_selimp' AND data_referencia::date = $1::date`,
+            [dateKey]
+          );
+        }
+      }
+
       for (const row of rows) {
         const raw = { ...(row.raw ?? {}) } as Record<string, unknown>;
         let dataReferencia = row.dataReferencia;
         if (fileType === "ipt_report_selimp" && !dataReferencia) {
-          // Fallback operacional: quando a SELIMP não traz data confiável, usamos D-1 e marcamos como estimado.
-          dataReferencia = new Date(yesterday);
-          raw._data_referencia_estimada = true;
-          raw._metodo_data_referencia = "fallback_d_1_upload";
+          dataReferencia = dataRefFallback;
+          raw._data_referencia_estimada = !opts?.mesReferencia;
+          raw._metodo_data_referencia = opts?.mesReferencia ? `mes_${opts.mesReferencia}` : "fallback_d_1_upload";
+        }
+        let recordKey = row.recordKey;
+        if (fileType === "ipt_report_selimp" && dataReferencia) {
+          const d = dataReferencia instanceof Date ? dataReferencia : new Date(dataReferencia);
+          const dateKey = !Number.isNaN(d.getTime())
+            ? `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`
+            : "";
+          if (dateKey) recordKey = `${row.recordKey}|${dateKey}`;
         }
         const result = await client.query(
           `INSERT INTO ipt_imports (
@@ -80,7 +196,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
           RETURNING (xmax = 0) AS inserted`,
           [
             fileType,
-            row.recordKey,
+            recordKey,
             row.setor || null,
             dataReferencia,
             row.servico || null,
@@ -436,9 +552,136 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
-  fastify.post("/upload/ipt-report", async (request, reply) => {
+  fastify.post<{ Querystring: { mes_referencia?: string } }>("/upload/ipt-report", async (request, reply) => {
     try {
-      return await importIptFile("ipt_report_selimp", request);
+      const mesRef = (request.query as { mes_referencia?: string })?.mes_referencia;
+      if (!mesRef || !/^\d{4}-\d{2}$/.test(mesRef)) {
+        return reply.code(400).send({ detail: `mes_referencia obrigatório (YYYY-MM). Recebido: "${mesRef ?? "(vazio)"}"` });
+      }
+      request.log.info({ mes_referencia: mesRef }, "IPT Report import - mes recebido");
+      const data = await request.file();
+      if (!data) return reply.code(400).send({ detail: "Arquivo XLSX obrigatório" });
+      const buffer = await data.toBuffer();
+      const sourceFile = data.filename;
+      const rows = parseIptWorkbook(buffer, "ipt_report_selimp");
+      if (rows.length === 0) return reply.code(400).send({ detail: "Nenhum registro na planilha" });
+
+      const { ano, mes, inicio, fim, proximoInicio } = parseMesReferencia(mesRef);
+      const quantidadeEsperada = EXPECTED_SELIMP_ROWS_BY_MONTH[mesRef] ?? null;
+      if (quantidadeEsperada != null && rows.length !== quantidadeEsperada) {
+        return reply.code(400).send({
+          detail: `Quantidade inválida para ${mesRef}. Esperado: ${quantidadeEsperada} linhas. Recebido: ${rows.length}.`,
+        });
+      }
+
+      const ordens = extractOrdensFromReportRows(rows);
+      if (ordens.length === 0) return reply.code(400).send({ detail: "Nenhuma ordem com Status=Encerrado encontrada" });
+      const dataRef = new Date(Date.UTC(ano, mes - 1, 1));
+
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          `INSERT INTO ipt_selimp_mensal (
+             ano, mes, ordens, total_linhas, total_encerradas, periodo_inicial, periodo_final,
+             quantidade_esperada, validacao_ok, source_file, updated_at
+           )
+           VALUES ($1, $2, $3::jsonb, $4, $5, $6::date, $7::date, $8, $9, $10, NOW())
+           ON CONFLICT (ano, mes) DO UPDATE SET
+             ordens = EXCLUDED.ordens,
+             total_linhas = EXCLUDED.total_linhas,
+             total_encerradas = EXCLUDED.total_encerradas,
+             periodo_inicial = EXCLUDED.periodo_inicial,
+             periodo_final = EXCLUDED.periodo_final,
+             quantidade_esperada = EXCLUDED.quantidade_esperada,
+             validacao_ok = EXCLUDED.validacao_ok,
+             source_file = EXCLUDED.source_file,
+             updated_at = NOW()`,
+          [
+            ano,
+            mes,
+            JSON.stringify(ordens),
+            rows.length,
+            ordens.length,
+            inicio,
+            fim,
+            quantidadeEsperada,
+            quantidadeEsperada == null ? true : rows.length === quantidadeEsperada,
+            sourceFile,
+          ]
+        );
+
+        await client.query(
+          `DELETE FROM ipt_imports WHERE file_type = 'ipt_report_selimp' AND data_referencia::date >= $1::date AND data_referencia::date < $2::date`,
+          [inicio, proximoInicio]
+        );
+        for (const row of rows) {
+          const raw: Record<string, unknown> = {
+            ...(row.raw ?? {}),
+            _mes_referencia: mesRef,
+            _ano_referencia: String(ano),
+            _mes_referencia_numero: String(mes),
+            _periodo_inicial_mes: inicio,
+            _periodo_final_mes: fim,
+            _data_referencia_estimada: true,
+            _metodo_data_referencia: "mes_fechado_upload",
+          };
+          const recordKey = `${row.recordKey}|${mesRef}`;
+          const setorNormalizado = normalizarSetor(String(raw["plano"] ?? "").trim()) || row.setor || null;
+          await client.query(
+            `INSERT INTO ipt_imports (
+               file_type, record_key, setor, data_referencia, ano_referencia, mes_referencia,
+               data_estimada, metodo_data_referencia, servico, raw, source_file, updated_at
+             )
+             VALUES ('ipt_report_selimp', $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, NOW())
+             ON CONFLICT (file_type, record_key) DO UPDATE SET
+               setor = EXCLUDED.setor,
+               data_referencia = EXCLUDED.data_referencia,
+               ano_referencia = EXCLUDED.ano_referencia,
+               mes_referencia = EXCLUDED.mes_referencia,
+               data_estimada = EXCLUDED.data_estimada,
+               metodo_data_referencia = EXCLUDED.metodo_data_referencia,
+               servico = EXCLUDED.servico,
+               raw = EXCLUDED.raw,
+               source_file = EXCLUDED.source_file,
+               updated_at = NOW()`,
+            [
+              recordKey,
+              setorNormalizado,
+              dataRef,
+              ano,
+              mes,
+              true,
+              "mes_fechado_upload",
+              row.servico || null,
+              JSON.stringify(raw),
+              sourceFile,
+            ]
+          );
+        }
+
+        await client.query("COMMIT");
+        invalidatePrefix("ipt_preview");
+        invalidatePrefix("kpis");
+        return {
+          processados: rows.length,
+          total: rows.length,
+          inseridos: rows.length,
+          atualizados: 0,
+          duplicados: 0,
+          erros: 0,
+          ultimo_import: new Date().toISOString(),
+          mes_importado: mesRef,
+          ordens_encerradas: ordens.length,
+          quantidade_esperada: quantidadeEsperada,
+          validacao_ok: quantidadeEsperada == null ? true : rows.length === quantidadeEsperada,
+        };
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
     } catch (error: unknown) {
       const detail = error instanceof Error ? error.message : "Falha no upload IPT";
       return reply.code(400).send({ detail });
@@ -569,6 +812,22 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
 
   fastify.post("/upload/clear-acic", async (_request, reply) => {
     const r = await pool.query("DELETE FROM acic RETURNING id");
+    return { deleted: r.rowCount ?? 0 };
+  });
+
+  /** Remove todos os dados da planilha Reports (ipt_selimp_mensal). Use antes de reimportar. */
+  fastify.post("/upload/clear-ipt-report", async (_request, reply) => {
+    const r = await pool.query("DELETE FROM ipt_selimp_mensal RETURNING ano, mes");
+    await pool.query("DELETE FROM ipt_imports WHERE file_type = 'ipt_report_selimp'");
+    invalidatePrefix("ipt_preview");
+    invalidatePrefix("kpis");
+    return { deleted: r.rowCount ?? 0 };
+  });
+
+  /** Remove registros manuais de IPT (ipt_registros). Não utilizado mais – IPT vem da planilha ou oficial. */
+  fastify.post("/upload/clear-ipt-registros", async (_request, reply) => {
+    const r = await pool.query("DELETE FROM ipt_registros RETURNING id");
+    invalidatePrefix("kpis");
     return { deleted: r.rowCount ?? 0 };
   });
 };

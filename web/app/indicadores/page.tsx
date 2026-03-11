@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { apiService } from "@/lib/api";
@@ -14,6 +14,13 @@ export default function IndicadoresPage() {
   const [periodoInicial, setPeriodoInicial] = useState(format(startOfMonth(new Date()), "yyyy-MM-dd"));
   const [periodoFinal, setPeriodoFinal] = useState(format(endOfMonth(new Date()), "yyyy-MM-dd"));
   const [mesFiltro, setMesFiltro] = useState(format(new Date(), "yyyy-MM"));
+  const [iptPorMes, setIptPorMes] = useState<{ ano: number; meses: Array<{ mes: number; quantidade: number; percentual: number | null }> } | null>(null);
+
+  useEffect(() => {
+    apiService.getIptPorMes(new Date().getFullYear()).then(setIptPorMes).catch(() => setIptPorMes(null));
+  }, []);
+
+  const MESES_NOME = ["", "Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
 
   const calcularADC = async () => {
     try {
@@ -141,6 +148,34 @@ export default function IndicadoresPage() {
             </div>
           </CardContent>
         </Card>
+
+        {iptPorMes && (
+          <Card className="border-l-4 border-l-purple-500">
+            <CardHeader>
+              <CardTitle>IPT por mês (SELIMP)</CardTitle>
+              <CardDescription>
+                Quantidade de ordens e percentual por mês – {iptPorMes.ano} (sempre calculado da planilha).
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-3">
+                {iptPorMes.meses.map((m) => (
+                  <div key={m.mes} className="p-3 rounded-lg border border-border bg-muted/20 text-sm">
+                    <div className="font-bold text-foreground">{MESES_NOME[m.mes]} {iptPorMes.ano}</div>
+                    <div className="text-muted-foreground mt-1">Qtd: <span className="font-medium text-foreground">{m.quantidade}</span></div>
+                    <div className="text-muted-foreground">
+                      {m.percentual != null ? (
+                        <span className="font-medium text-purple-600 dark:text-purple-400">{m.percentual.toFixed(2)}%</span>
+                      ) : (
+                        <span className="text-muted-foreground/70">--</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {resultado && (
           <Card className="animate-in fade-in slide-in-from-bottom-4 duration-500 border-none shadow-lg bg-background/50 backdrop-blur-sm">

@@ -121,12 +121,49 @@ export async function runMigrations() {
     `);
 
     await client.query(`
+      CREATE TABLE IF NOT EXISTS ipt_oficial_mensal (
+        ano INTEGER NOT NULL,
+        mes INTEGER NOT NULL,
+        percentual NUMERIC(8,4) NOT NULL,
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        PRIMARY KEY (ano, mes)
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS ipt_selimp_mensal (
+        ano INTEGER NOT NULL,
+        mes INTEGER NOT NULL,
+        ordens JSONB NOT NULL DEFAULT '[]',
+        total_linhas INTEGER NOT NULL DEFAULT 0,
+        total_encerradas INTEGER NOT NULL DEFAULT 0,
+        periodo_inicial DATE,
+        periodo_final DATE,
+        quantidade_esperada INTEGER,
+        validacao_ok BOOLEAN NOT NULL DEFAULT FALSE,
+        source_file TEXT,
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        PRIMARY KEY (ano, mes)
+      );
+    `);
+    await client.query("ALTER TABLE ipt_selimp_mensal ADD COLUMN IF NOT EXISTS total_linhas INTEGER NOT NULL DEFAULT 0").catch(() => {});
+    await client.query("ALTER TABLE ipt_selimp_mensal ADD COLUMN IF NOT EXISTS total_encerradas INTEGER NOT NULL DEFAULT 0").catch(() => {});
+    await client.query("ALTER TABLE ipt_selimp_mensal ADD COLUMN IF NOT EXISTS periodo_inicial DATE").catch(() => {});
+    await client.query("ALTER TABLE ipt_selimp_mensal ADD COLUMN IF NOT EXISTS periodo_final DATE").catch(() => {});
+    await client.query("ALTER TABLE ipt_selimp_mensal ADD COLUMN IF NOT EXISTS quantidade_esperada INTEGER").catch(() => {});
+    await client.query("ALTER TABLE ipt_selimp_mensal ADD COLUMN IF NOT EXISTS validacao_ok BOOLEAN NOT NULL DEFAULT FALSE").catch(() => {});
+
+    await client.query(`
       CREATE TABLE IF NOT EXISTS ipt_imports (
         id SERIAL PRIMARY KEY,
         file_type TEXT NOT NULL,
         record_key TEXT NOT NULL,
         setor TEXT,
         data_referencia TIMESTAMPTZ,
+        ano_referencia INTEGER,
+        mes_referencia INTEGER,
+        data_estimada BOOLEAN NOT NULL DEFAULT FALSE,
+        metodo_data_referencia TEXT,
         servico TEXT,
         raw JSONB NOT NULL,
         source_file TEXT,
@@ -134,6 +171,10 @@ export async function runMigrations() {
         updated_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
+    await client.query("ALTER TABLE ipt_imports ADD COLUMN IF NOT EXISTS ano_referencia INTEGER").catch(() => {});
+    await client.query("ALTER TABLE ipt_imports ADD COLUMN IF NOT EXISTS mes_referencia INTEGER").catch(() => {});
+    await client.query("ALTER TABLE ipt_imports ADD COLUMN IF NOT EXISTS data_estimada BOOLEAN NOT NULL DEFAULT FALSE").catch(() => {});
+    await client.query("ALTER TABLE ipt_imports ADD COLUMN IF NOT EXISTS metodo_data_referencia TEXT").catch(() => {});
     await client
       .query("CREATE UNIQUE INDEX IF NOT EXISTS ux_ipt_imports_file_key ON ipt_imports(file_type, record_key)")
       .catch(() => {});
@@ -142,6 +183,7 @@ export async function runMigrations() {
       .query("CREATE INDEX IF NOT EXISTS idx_ipt_imports_data_referencia ON ipt_imports(data_referencia)")
       .catch(() => {});
     await client.query("CREATE INDEX IF NOT EXISTS idx_ipt_imports_setor ON ipt_imports(setor)").catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_ipt_imports_mes_ref ON ipt_imports(file_type, ano_referencia, mes_referencia)").catch(() => {});
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS ipt_cronograma (

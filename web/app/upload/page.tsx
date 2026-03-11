@@ -1,14 +1,54 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { MainLayout } from "@/components/layout/main-layout";
 import { apiService } from "@/lib/api";
+
+interface UploadResult {
+  processados?: number;
+  total?: number;
+  inseridos?: number;
+  atualizados?: number;
+  duplicados?: number;
+  erros?: number;
+  mes_importado?: string;
+  ordens_encerradas?: number;
+  quantidade_esperada?: number | null;
+  validacao_ok?: boolean;
+  [key: string]: unknown;
+}
 
 interface UploadState {
   status: "idle" | "uploading" | "success" | "error";
   progress?: number;
-  result?: any;
+  result?: UploadResult;
   error?: string;
+}
+
+interface LastUploadInfo {
+  ultimo_import?: string | null;
+  source_file?: string | null;
+  total_registros?: number;
+  total_encerradas?: number;
+  ultimo_mes?: string | null;
+  validacao_ok?: boolean;
+}
+
+interface UploadApiError {
+  response?: {
+    data?: {
+      detail?: string;
+    };
+  };
+  message?: string;
+}
+
+function getErrorMessage(error: unknown): string {
+  if (typeof error === "object" && error !== null) {
+    const apiError = error as UploadApiError;
+    return apiError.response?.data?.detail || apiError.message || "Erro desconhecido";
+  }
+  return "Erro desconhecido";
 }
 
 const cardColors = {
@@ -95,7 +135,8 @@ export default function UploadPage() {
     iptCronograma: { status: "idle" },
   });
   const [draggedOver, setDraggedOver] = useState<string | null>(null);
-  const [lastUpdates, setLastUpdates] = useState<Record<string, { ultimo_import?: string | null; source_file?: string | null; total_registros?: number }>>({});
+  const [lastUpdates, setLastUpdates] = useState<Record<string, LastUploadInfo>>({});
+  const [mesReferenciaIpt, setMesReferenciaIpt] = useState<string>("2026-01");
 
   const carregarUltimasAtualizacoes = async () => {
     try {
@@ -146,7 +187,7 @@ export default function UploadPage() {
           data = await apiService.uploadIptHistoricoOsCompactadoresXlsx(file);
           break;
         case "iptReport":
-          data = await apiService.uploadIptReportXlsx(file);
+          data = await apiService.uploadIptReportXlsx(file, mesReferenciaIpt);
           break;
         case "iptStatusBateria":
           data = await apiService.uploadIptStatusBateriaXlsx(file);
@@ -163,14 +204,46 @@ export default function UploadPage() {
         [type]: { status: "success", result: data },
       }));
       await carregarUltimasAtualizacoes();
-    } catch (error: any) {
+    } catch (error: unknown) {
       setUploadStates((prev) => ({
         ...prev,
         [type]: {
           status: "error",
-          error: error.response?.data?.detail || error.message || "Erro desconhecido",
+          error: getErrorMessage(error),
         },
       }));
+    }
+  };
+
+  const [clearingIptReport, setClearingIptReport] = useState(false);
+  const [clearingIptRegistros, setClearingIptRegistros] = useState(false);
+
+  const handleClearIptReport = async () => {
+    if (!confirm("Tem certeza? Isso apagará TODOS os dados da planilha Reports (SELIMP) no servidor. Use antes de reimportar.")) return;
+    setClearingIptReport(true);
+    try {
+      await apiService.clearIptReportImportados();
+      await carregarUltimasAtualizacoes();
+      setUploadStates((prev) => ({ ...prev, iptReport: { status: "idle" } }));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Erro ao limpar";
+      setUploadStates((prev) => ({
+        ...prev,
+        iptReport: { status: "error", error: msg },
+      }));
+    } finally {
+      setClearingIptReport(false);
+    }
+  };
+
+  const handleClearIptRegistros = async () => {
+    if (!confirm("Remover registros manuais de IPT (ipt_registros)? Não são mais usados – IPT vem da planilha ou valor oficial.")) return;
+    setClearingIptRegistros(true);
+    try {
+      await apiService.clearIptRegistros();
+      await carregarUltimasAtualizacoes();
+    } finally {
+      setClearingIptRegistros(false);
     }
   };
 
@@ -208,40 +281,37 @@ export default function UploadPage() {
         },
       }));
       await carregarUltimasAtualizacoes();
-    } catch (error: any) {
+    } catch (error: unknown) {
       setUploadStates((prev) => ({
         ...prev,
         iptCronograma: {
           status: "error",
-          error: error.response?.data?.detail || error.message || "Erro desconhecido",
+          error: getErrorMessage(error),
         },
       }));
     }
   };
 
-  const handleDragOver = useCallback((e: React.DragEvent, type: string) => {
+  const handleDragOver = (e: React.DragEvent, type: string) => {
     e.preventDefault();
     setDraggedOver(type);
-  }, []);
+  };
 
-  const handleDragLeave = useCallback(() => {
+  const handleDragLeave = () => {
     setDraggedOver(null);
-  }, []);
+  };
 
-  const handleDrop = useCallback(
-    (e: React.DragEvent, type: string) => {
-      e.preventDefault();
-      setDraggedOver(null);
-      const file = e.dataTransfer.files[0];
-      const lowerName = file?.name?.toLowerCase() || "";
-      const isIptType = type.startsWith("ipt");
-      const isValid = isIptType ? lowerName.endsWith(".xlsx") : lowerName.endsWith(".csv");
-      if (file && isValid) {
-        handleUpload(type, file);
-      }
-    },
-    []
-  );
+  const handleDrop = (e: React.DragEvent, type: string) => {
+    e.preventDefault();
+    setDraggedOver(null);
+    const file = e.dataTransfer.files[0];
+    const lowerName = file?.name?.toLowerCase() || "";
+    const isIptType = type.startsWith("ipt");
+    const isValid = isIptType ? lowerName.endsWith(".xlsx") : lowerName.endsWith(".csv");
+    if (file && isValid) {
+      handleUpload(type, file);
+    }
+  };
 
   const UploadCard = ({
     title,
@@ -283,6 +353,21 @@ export default function UploadPage() {
         <div className={`h-1.5 w-full bg-linear-to-r ${colors.gradient}`} />
         
         <div className="p-6">
+          {type === "iptReport" && (
+            <div className="mb-4 p-3 rounded-lg border-2 border-amber-500/50 bg-amber-50/50 dark:bg-amber-900/20 dark:border-amber-500/30">
+              <label className="block font-bold text-amber-800 dark:text-amber-200 mb-2">Mês da planilha (OBRIGATÓRIO – selecione ANTES de enviar)</label>
+              <select
+                value={mesReferenciaIpt}
+                onChange={(e) => setMesReferenciaIpt(e.target.value)}
+                disabled={isUploading}
+                className="w-full px-3 py-2 rounded border-2 border-amber-600 bg-white dark:bg-gray-900 text-foreground font-medium"
+              >
+                <option value="2026-01">1 – Janeiro 2026 (8125 linhas)</option>
+                <option value="2026-02">2 – Fevereiro 2026 (7508 linhas)</option>
+                <option value="2026-03">3 – Março 2026 (2329 linhas)</option>
+              </select>
+            </div>
+          )}
           <div className="flex items-start justify-between mb-6">
             <div className="space-y-1">
               <h3 className={`text-xl font-bold ${colors.text} group-hover:scale-105 transition-transform origin-left`}>{title}</h3>
@@ -376,9 +461,44 @@ export default function UploadPage() {
             <div className="mt-1">
               Arquivo: <span className="text-foreground">{lastUpdate?.source_file || "—"}</span>
             </div>
-            <div className="mt-1">
-              Registros atuais: <span className="text-foreground">{lastUpdate?.total_registros ?? 0}</span>
+            {type === "iptReport" && (
+              <div className="mt-1">
+                Mês salvo: <span className="text-foreground">{lastUpdate?.ultimo_mes || "—"}</span>
+              </div>
+            )}
+            <div className="mt-1 flex items-center justify-between gap-2">
+              <span>Registros atuais: <span className="text-foreground">{lastUpdate?.total_registros ?? 0}</span></span>
+              {type === "iptReport" && (
+                <button
+                  type="button"
+                  onClick={handleClearIptReport}
+                  disabled={clearingIptReport || isUploading}
+                  className="shrink-0 px-2 py-1 rounded text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 hover:bg-red-200 dark:hover:bg-red-800/40 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {clearingIptReport ? "Limpando…" : "Limpar dados"}
+                </button>
+              )}
             </div>
+            {type === "iptReport" && (
+              <div className="mt-1">
+                Validação do lote:{" "}
+                <span className={lastUpdate?.validacao_ok ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}>
+                  {lastUpdate?.validacao_ok ? "OK" : "Pendente ou divergente"}
+                </span>
+              </div>
+            )}
+            {type === "iptReport" && (
+              <div className="mt-2 pt-2 border-t border-border/50">
+                <button
+                  type="button"
+                  onClick={handleClearIptRegistros}
+                  disabled={clearingIptRegistros}
+                  className="text-xs text-muted-foreground hover:text-foreground underline disabled:opacity-50"
+                >
+                  {clearingIptRegistros ? "Limpando…" : "Limpar registros manuais antigos (obsoleto)"}
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Resultado - só mostra para este card específico */}
@@ -389,6 +509,11 @@ export default function UploadPage() {
                   <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse"></span>
                   <p className="text-sm font-semibold text-green-800 dark:text-green-200">
                     Upload concluído
+                    {type === "iptReport" && state.result.mes_importado && (
+                      <span className="ml-2 font-bold text-green-900 dark:text-green-100">
+                        → Salvos em {state.result.mes_importado.replace("-", "/")} (ano/mês)
+                      </span>
+                    )}
                   </p>
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-xs">
@@ -422,6 +547,16 @@ export default function UploadPage() {
                     </span>
                     <span className="text-muted-foreground">
                       Atualizados: <strong>{state.result.atualizados ?? 0}</strong>
+                    </span>
+                  </div>
+                )}
+                {type === "iptReport" && (
+                  <div className="text-xs pt-2 flex gap-3 border-t border-green-200/50 dark:border-green-800/30">
+                    <span className="text-muted-foreground">
+                      Encerrados: <strong>{state.result.ordens_encerradas ?? 0}</strong>
+                    </span>
+                    <span className="text-muted-foreground">
+                      Validação: <strong>{state.result.validacao_ok ? "OK" : "Divergente"}</strong>
                     </span>
                   </div>
                 )}

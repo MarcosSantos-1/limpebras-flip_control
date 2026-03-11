@@ -20,7 +20,6 @@ import {
 import { ptBR } from "date-fns/locale";
 import { ADCRingChart } from "@/components/adc-ring-chart";
 import { IndicatorTooltip } from "@/components/indicator-tooltip";
-import { IPTModal } from "@/components/ipt-modal";
 import Lottie from "lottie-react";
 import loadingAnimation from "@/public/Loading.json";
 import { SACsChart } from "@/components/sacs-chart";
@@ -342,7 +341,6 @@ function computeTopBfsServices(items: CNC[], periodStart: Date, periodEnd: Date)
 
 export default function DashboardPage() {
   const [selectedMonth, setSelectedMonth] = useState(() => startOfMonth(new Date()));
-  const [iptModalOpen, setIptModalOpen] = useState(false);
   const router = useRouter();
 
   const periodStart = startOfMonth(selectedMonth);
@@ -515,8 +513,8 @@ export default function DashboardPage() {
               </Card>
 
               <Card 
-                className={`p-4 transition-all duration-200 border-l-4 border-l-purple-500 ${iptSemDados ? "cursor-pointer hover:scale-[1.02]" : "cursor-pointer hover:scale-[1.02]"}`}
-                onClick={() => (iptSemDados ? setIptModalOpen(true) : router.push("/ipt"))}
+                className="p-4 transition-all duration-200 border-l-4 border-l-purple-500 cursor-pointer hover:scale-[1.02]"
+                onClick={() => router.push(iptSemDados ? "/upload" : "/ipt")}
               >
                 <CardHeader className="p-0 pb-4">
                   <IndicatorTooltip 
@@ -531,7 +529,7 @@ export default function DashboardPage() {
                   <div className="text-lg font-semibold text-muted-foreground mb-1">
                     {(iptSemDados ? 0 : indicators.data?.IPT?.pontuacao) ?? 0} Pontos
                     {iptSemDados && (
-                      <span className="text-xs text-muted-foreground/70"> (Clique para informar manualmente)</span>
+                      <span className="text-xs text-muted-foreground/70"> (Clique para importar planilha Reports)</span>
                     )}
                     {!iptSemDados && indicators.data?.IPT?.valor != null && (
                       <span className="text-xs text-muted-foreground/70"> (Clique para ver página IPT)</span>
@@ -566,14 +564,6 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          <IPTModal
-            open={iptModalOpen}
-            onOpenChange={setIptModalOpen}
-            onSuccess={mutate}
-            currentValue={indicators?.data?.IPT?.valor ?? undefined}
-            currentPontuacao={indicators?.data?.IPT?.pontuacao ?? undefined}
-            initialMes={format(selectedMonth, "yyyy-MM")}
-          />
           </>
         ) : (
           <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4">

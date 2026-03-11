@@ -670,7 +670,6 @@ export async function gerarRelatorioIndicadoresPDF(input: RelatorioIndicadoresIn
       });
       ctx.y += 6;
     }
-
     subTitulo(ctx, "Resultado");
     const ipt = detalhes?.ipt;
     paragrafo(ctx, ipt
