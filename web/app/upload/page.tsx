@@ -280,38 +280,6 @@ export default function UploadPage() {
     }
   };
 
-  const [clearingIptReport, setClearingIptReport] = useState(false);
-  const [clearingIptRegistros, setClearingIptRegistros] = useState(false);
-
-  const handleClearIptReport = async () => {
-    if (!confirm("Tem certeza? Isso apagará TODOS os dados da planilha Reports (SELIMP) no servidor. Use antes de reimportar.")) return;
-    setClearingIptReport(true);
-    try {
-      await apiService.clearIptReportImportados();
-      await carregarUltimasAtualizacoes();
-      setUploadStates((prev) => ({ ...prev, iptReport: { status: "idle" } }));
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Erro ao limpar";
-      setUploadStates((prev) => ({
-        ...prev,
-        iptReport: { status: "error", error: msg },
-      }));
-    } finally {
-      setClearingIptReport(false);
-    }
-  };
-
-  const handleClearIptRegistros = async () => {
-    if (!confirm("Remover registros manuais de IPT (ipt_registros)? Não são mais usados – IPT vem da planilha ou valor oficial.")) return;
-    setClearingIptRegistros(true);
-    try {
-      await apiService.clearIptRegistros();
-      await carregarUltimasAtualizacoes();
-    } finally {
-      setClearingIptRegistros(false);
-    }
-  };
-
   const handleCronogramaBatchUpload = async (files: FileList | File[]) => {
     const list = Array.from(files);
     if (!list.length) return;
@@ -419,15 +387,15 @@ export default function UploadPage() {
         
         <div className="p-6">
           {type === "iptReport" && (
-            <div className="mb-4 p-3 rounded-lg border-2 border-amber-500/50 bg-amber-50/50 dark:bg-amber-900/20 dark:border-amber-500/30">
-              <label className="block font-bold text-amber-800 dark:text-amber-200 mb-2">
+            <div className="mb-4 p-4 rounded-xl bg-fuchsia-50/80 dark:bg-fuchsia-950/30 shadow-lg shadow-fuchsia-500/10 dark:shadow-fuchsia-900/20">
+              <label className="block font-bold text-fuchsia-800 dark:text-fuchsia-200 mb-2">
                 Referência da importação (OBRIGATÓRIO – selecione ANTES de enviar)
               </label>
               <select
                 value={iptReferenceMode}
                 onChange={(e) => setIptReferenceMode(e.target.value as IptReferenceMode)}
                 disabled={isUploading}
-                className="w-full px-3 py-2 rounded border-2 border-amber-600 bg-white dark:bg-gray-900 text-foreground font-medium"
+                className="w-full px-4 py-2.5 rounded-lg bg-white dark:bg-background/90 text-fuchsia-700 dark:text-fuchsia-300 font-semibold shadow-sm border border-fuchsia-200/60 dark:border-fuchsia-700/50 focus:ring-2 focus:ring-fuchsia-500/50 focus:outline-none transition-all"
               >
                 {iptReferenceOptions.map((option) => (
                   <option key={option.value} value={option.value}>
@@ -535,34 +503,12 @@ export default function UploadPage() {
                 Última referência: <span className="text-foreground">{lastUpdate?.ultima_referencia || "—"}</span>
               </div>
             )}
-            <div className="mt-1 flex items-center justify-between gap-2">
-              <span>Registros atuais: <span className="text-foreground">{lastUpdate?.total_registros ?? 0}</span></span>
-              {type === "iptReport" && (
-                <button
-                  type="button"
-                  onClick={handleClearIptReport}
-                  disabled={clearingIptReport || isUploading}
-                  className="shrink-0 px-2 py-1 rounded text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 hover:bg-red-200 dark:hover:bg-red-800/40 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {clearingIptReport ? "Limpando…" : "Limpar dados"}
-                </button>
-              )}
+            <div className="mt-1">
+              Registros atuais: <span className="text-foreground">{lastUpdate?.total_registros ?? 0}</span>
             </div>
             {type === "iptReport" && (
               <div className="mt-1">
                 Encerrados acumulados: <span className="text-foreground">{lastUpdate?.total_encerradas ?? 0}</span>
-              </div>
-            )}
-            {type === "iptReport" && (
-              <div className="mt-2 pt-2 border-t border-border/50">
-                <button
-                  type="button"
-                  onClick={handleClearIptRegistros}
-                  disabled={clearingIptRegistros}
-                  className="text-xs text-muted-foreground hover:text-foreground underline disabled:opacity-50"
-                >
-                  {clearingIptRegistros ? "Limpando…" : "Limpar registros manuais antigos (obsoleto)"}
-                </button>
               </div>
             )}
           </div>
