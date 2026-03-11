@@ -73,6 +73,15 @@ async function fetchOrdensSelimpNoPeriodo(
   inicio: string,
   fim: string
 ): Promise<{ ordens: Array<{ percentual: number }>; P: number; R: number; F: number }> {
+  const importsRes = await client.query(
+    `SELECT raw
+     FROM ipt_imports
+     WHERE file_type = 'ipt_report_selimp'
+       AND data_referencia::date >= $1::date
+       AND data_referencia::date <= $2::date`,
+    [inicio, fim]
+  );
+
   // Extrai ano e mês do período (inicio = YYYY-MM-01, fim = YYYY-MM-DD)
   const [y, m] = inicio.split("-").map(Number);
   const ano = y;
@@ -82,6 +91,23 @@ async function fetchOrdensSelimpNoPeriodo(
   const anoFim = fimParts[0];
 
   const ordens: Array<{ percentual: number }> = [];
+
+  if ((importsRes.rows?.length ?? 0) > 0) {
+    for (const row of importsRes.rows as Array<{ raw: Record<string, unknown> }>) {
+      const pct = row.raw?.percentual;
+      if (typeof pct === "number" && !Number.isNaN(pct)) {
+        ordens.push({ percentual: Math.min(1, Math.max(0, pct)) });
+        continue;
+      }
+      const percentual = getPercentualFromRaw((row.raw ?? {}) as IptRaw);
+      if (percentual != null) {
+        const pctDecimal = percentual > 1 ? percentual / 100 : percentual;
+        ordens.push({ percentual: Math.min(1, Math.max(0, pctDecimal)) });
+      }
+    }
+    const A = ordens.length;
+    return { ordens, P: A, R: 1, F: 1 };
+  }
 
   if (ano === anoFim && mes === mesFim) {
     const r = await client.query(

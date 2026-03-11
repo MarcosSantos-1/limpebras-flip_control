@@ -11,10 +11,11 @@ interface UploadResult {
   atualizados?: number;
   duplicados?: number;
   erros?: number;
-  mes_importado?: string;
+  referencia_importada?: string;
+  modo_referencia?: "d_minus_1" | "fim_de_semana";
+  periodo_inicial?: string;
+  periodo_final?: string;
   ordens_encerradas?: number;
-  quantidade_esperada?: number | null;
-  validacao_ok?: boolean;
   [key: string]: unknown;
 }
 
@@ -30,8 +31,10 @@ interface LastUploadInfo {
   source_file?: string | null;
   total_registros?: number;
   total_encerradas?: number;
-  ultimo_mes?: string | null;
-  validacao_ok?: boolean;
+  ultima_referencia?: string | null;
+  periodo_tipo?: string | null;
+  periodo_inicial?: string | null;
+  periodo_final?: string | null;
 }
 
 interface UploadApiError {
@@ -49,6 +52,58 @@ function getErrorMessage(error: unknown): string {
     return apiError.response?.data?.detail || apiError.message || "Erro desconhecido";
   }
   return "Erro desconhecido";
+}
+
+type IptReferenceMode = "d_minus_1" | "fim_de_semana";
+
+interface IptReferenceOption {
+  value: IptReferenceMode;
+  label: string;
+  periodoInicial: string;
+  periodoFinal: string;
+}
+
+function shiftDays(base: Date, days: number): Date {
+  const copy = new Date(base);
+  copy.setDate(copy.getDate() + days);
+  return copy;
+}
+
+function toDateKey(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatPtDate(dateKey: string): string {
+  return new Date(`${dateKey}T12:00:00`).toLocaleDateString("pt-BR");
+}
+
+function buildIptReferenceOptions(now = new Date()): IptReferenceOption[] {
+  const ontem = shiftDays(now, -1);
+  const diffToPreviousSunday = now.getDay() === 0 ? 7 : now.getDay();
+  const domingoAnterior = shiftDays(now, -diffToPreviousSunday);
+  const sextaAnterior = shiftDays(domingoAnterior, -2);
+
+  const dMinus1Key = toDateKey(ontem);
+  const sextaKey = toDateKey(sextaAnterior);
+  const domingoKey = toDateKey(domingoAnterior);
+
+  return [
+    {
+      value: "d_minus_1",
+      label: `D-1 (${formatPtDate(dMinus1Key)})`,
+      periodoInicial: dMinus1Key,
+      periodoFinal: dMinus1Key,
+    },
+    {
+      value: "fim_de_semana",
+      label: `Sexta, sábado e domingo (${formatPtDate(sextaKey)} a ${formatPtDate(domingoKey)})`,
+      periodoInicial: sextaKey,
+      periodoFinal: domingoKey,
+    },
+  ];
 }
 
 const cardColors = {
@@ -121,6 +176,8 @@ const cardColors = {
 };
 
 export default function UploadPage() {
+  const iptReferenceOptions = buildIptReferenceOptions();
+  const defaultIptReferenceMode: IptReferenceMode = new Date().getDay() === 1 ? "fim_de_semana" : "d_minus_1";
   const [uploadStates, setUploadStates] = useState<Record<string, UploadState>>({
     sacs: { status: "idle" },
     cnc: { status: "idle" },
@@ -136,7 +193,7 @@ export default function UploadPage() {
   });
   const [draggedOver, setDraggedOver] = useState<string | null>(null);
   const [lastUpdates, setLastUpdates] = useState<Record<string, LastUploadInfo>>({});
-  const [mesReferenciaIpt, setMesReferenciaIpt] = useState<string>("2026-01");
+  const [iptReferenceMode, setIptReferenceMode] = useState<IptReferenceMode>(defaultIptReferenceMode);
 
   const carregarUltimasAtualizacoes = async () => {
     try {
@@ -187,7 +244,15 @@ export default function UploadPage() {
           data = await apiService.uploadIptHistoricoOsCompactadoresXlsx(file);
           break;
         case "iptReport":
-          data = await apiService.uploadIptReportXlsx(file, mesReferenciaIpt);
+          {
+            const selectedReference =
+              iptReferenceOptions.find((option) => option.value === iptReferenceMode) ?? iptReferenceOptions[0];
+            data = await apiService.uploadIptReportXlsx(file, {
+              modoReferencia: selectedReference.value,
+              periodoInicial: selectedReference.periodoInicial,
+              periodoFinal: selectedReference.periodoFinal,
+            });
+          }
           break;
         case "iptStatusBateria":
           data = await apiService.uploadIptStatusBateriaXlsx(file);
@@ -355,16 +420,20 @@ export default function UploadPage() {
         <div className="p-6">
           {type === "iptReport" && (
             <div className="mb-4 p-3 rounded-lg border-2 border-amber-500/50 bg-amber-50/50 dark:bg-amber-900/20 dark:border-amber-500/30">
-              <label className="block font-bold text-amber-800 dark:text-amber-200 mb-2">Mês da planilha (OBRIGATÓRIO – selecione ANTES de enviar)</label>
+              <label className="block font-bold text-amber-800 dark:text-amber-200 mb-2">
+                Referência da importação (OBRIGATÓRIO – selecione ANTES de enviar)
+              </label>
               <select
-                value={mesReferenciaIpt}
-                onChange={(e) => setMesReferenciaIpt(e.target.value)}
+                value={iptReferenceMode}
+                onChange={(e) => setIptReferenceMode(e.target.value as IptReferenceMode)}
                 disabled={isUploading}
                 className="w-full px-3 py-2 rounded border-2 border-amber-600 bg-white dark:bg-gray-900 text-foreground font-medium"
               >
-                <option value="2026-01">1 – Janeiro 2026 (8125 linhas)</option>
-                <option value="2026-02">2 – Fevereiro 2026 (7508 linhas)</option>
-                <option value="2026-03">3 – Março 2026 (2329 linhas)</option>
+                {iptReferenceOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </select>
             </div>
           )}
@@ -463,7 +532,7 @@ export default function UploadPage() {
             </div>
             {type === "iptReport" && (
               <div className="mt-1">
-                Mês salvo: <span className="text-foreground">{lastUpdate?.ultimo_mes || "—"}</span>
+                Última referência: <span className="text-foreground">{lastUpdate?.ultima_referencia || "—"}</span>
               </div>
             )}
             <div className="mt-1 flex items-center justify-between gap-2">
@@ -481,10 +550,7 @@ export default function UploadPage() {
             </div>
             {type === "iptReport" && (
               <div className="mt-1">
-                Validação do lote:{" "}
-                <span className={lastUpdate?.validacao_ok ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}>
-                  {lastUpdate?.validacao_ok ? "OK" : "Pendente ou divergente"}
-                </span>
+                Encerrados acumulados: <span className="text-foreground">{lastUpdate?.total_encerradas ?? 0}</span>
               </div>
             )}
             {type === "iptReport" && (
@@ -509,9 +575,9 @@ export default function UploadPage() {
                   <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse"></span>
                   <p className="text-sm font-semibold text-green-800 dark:text-green-200">
                     Upload concluído
-                    {type === "iptReport" && state.result.mes_importado && (
+                    {type === "iptReport" && state.result.referencia_importada && (
                       <span className="ml-2 font-bold text-green-900 dark:text-green-100">
-                        → Salvos em {state.result.mes_importado.replace("-", "/")} (ano/mês)
+                        → {state.result.referencia_importada}
                       </span>
                     )}
                   </p>
@@ -526,16 +592,16 @@ export default function UploadPage() {
                     <strong className="text-foreground text-lg">{state.result.total}</strong>
                   </div>
                 </div>
-                {(state.result.duplicados > 0 || state.result.erros > 0) && (
+                {((state.result.duplicados ?? 0) > 0 || (state.result.erros ?? 0) > 0) && (
                   <div className="text-xs pt-2 flex gap-3 border-t border-green-200/50 dark:border-green-800/30">
-                    {state.result.duplicados > 0 && (
+                    {(state.result.duplicados ?? 0) > 0 && (
                       <span className="text-muted-foreground">
-                        Ignorados: <strong>{state.result.duplicados}</strong>
+                        Ignorados: <strong>{state.result.duplicados ?? 0}</strong>
                       </span>
                     )}
-                    {state.result.erros > 0 && (
+                    {(state.result.erros ?? 0) > 0 && (
                       <span className="text-yellow-700 dark:text-yellow-400">
-                        ⚠️ Erros: <strong>{state.result.erros}</strong>
+                        ⚠️ Erros: <strong>{state.result.erros ?? 0}</strong>
                       </span>
                     )}
                   </div>
@@ -556,7 +622,7 @@ export default function UploadPage() {
                       Encerrados: <strong>{state.result.ordens_encerradas ?? 0}</strong>
                     </span>
                     <span className="text-muted-foreground">
-                      Validação: <strong>{state.result.validacao_ok ? "OK" : "Divergente"}</strong>
+                      Período: <strong>{state.result.periodo_inicial ?? "—"}{state.result.periodo_final && state.result.periodo_final !== state.result.periodo_inicial ? ` a ${state.result.periodo_final}` : ""}</strong>
                     </span>
                   </div>
                 )}

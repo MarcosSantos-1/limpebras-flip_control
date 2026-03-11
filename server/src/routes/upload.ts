@@ -35,25 +35,22 @@ function extractOrdensFromReportRows(rows: { raw?: Record<string, string> }[]): 
   return ordens;
 }
 
-const EXPECTED_SELIMP_ROWS_BY_MONTH: Record<string, number> = {
-  "2026-01": 8125,
-  "2026-02": 7508,
-  "2026-03": 2329,
-};
+type ReportReferenceMode = "d_minus_1" | "fim_de_semana" | "mensal";
 
-function parseMesReferencia(mesReferencia: string) {
-  const match = mesReferencia.match(/^(\d{4})-(\d{2})$/);
-  if (!match) throw new Error(`Mês inválido: "${mesReferencia}"`);
-  const ano = Number(match[1]);
-  const mes = Number(match[2]);
-  const inicio = `${ano}-${String(mes).padStart(2, "0")}-01`;
-  const ultimoDia = new Date(Date.UTC(ano, mes, 0)).getUTCDate();
-  const fim = `${ano}-${String(mes).padStart(2, "0")}-${String(ultimoDia).padStart(2, "0")}`;
-  const proximoInicio =
-    mes === 12
-      ? `${ano + 1}-01-01`
-      : `${ano}-${String(mes + 1).padStart(2, "0")}-01`;
-  return { ano, mes, inicio, fim, proximoInicio };
+function isDateKey(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function parseDateKey(value: string): Date {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+function describeReportReference(mode: ReportReferenceMode, inicio: string, fim: string): string {
+  if (mode === "d_minus_1") return `D-1 (${inicio})`;
+  if (mode === "fim_de_semana") return `Sexta a domingo (${inicio} a ${fim})`;
+  if (inicio === fim) return inicio;
+  return `${inicio} a ${fim}`;
 }
 
 export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
@@ -72,16 +69,26 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
   const getLastIptUpdate = async (fileType: IptFileType) => {
     if (fileType === "ipt_report_selimp") {
       const last = await pool.query(
-        `SELECT source_file, updated_at, ano, mes, total_linhas, total_encerradas, validacao_ok
-         FROM ipt_selimp_mensal
+        `SELECT
+           source_file,
+           updated_at,
+           raw->>'_periodo_tipo' AS periodo_tipo,
+           raw->>'_periodo_inicial_referencia' AS periodo_inicial,
+           raw->>'_periodo_final_referencia' AS periodo_final,
+           raw->>'_referencia_label' AS referencia_label
+         FROM ipt_imports
+         WHERE file_type = 'ipt_report_selimp'
          ORDER BY updated_at DESC
          LIMIT 1`
       );
       const count = await pool.query(
         `SELECT
-           COALESCE(SUM(total_linhas), 0)::bigint AS total_linhas,
-           COALESCE(SUM(total_encerradas), 0)::bigint AS total_encerradas
-         FROM ipt_selimp_mensal`
+           COUNT(*)::bigint AS total_linhas,
+           COUNT(*) FILTER (
+             WHERE LOWER(COALESCE(raw->>'status', '')) LIKE '%encerrado%'
+           )::bigint AS total_encerradas
+         FROM ipt_imports
+         WHERE file_type = 'ipt_report_selimp'`
       );
       const r = last.rows[0];
       return {
@@ -89,8 +96,10 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         source_file: r?.source_file ?? null,
         total_registros: Number(count.rows[0]?.total_linhas ?? 0),
         total_encerradas: Number(count.rows[0]?.total_encerradas ?? 0),
-        ultimo_mes: r ? `${r.ano}-${String(r.mes).padStart(2, "0")}` : null,
-        validacao_ok: Boolean(r?.validacao_ok),
+        ultima_referencia: r?.referencia_label ?? null,
+        periodo_tipo: r?.periodo_tipo ?? null,
+        periodo_inicial: r?.periodo_inicial ?? null,
+        periodo_final: r?.periodo_final ?? null,
       };
     }
     const last = await pool.query(
@@ -552,13 +561,32 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
-  fastify.post<{ Querystring: { mes_referencia?: string } }>("/upload/ipt-report", async (request, reply) => {
+  fastify.post<{
+    Querystring: {
+      mes_referencia?: string;
+      modo_referencia?: string;
+      periodo_inicial?: string;
+      periodo_final?: string;
+    };
+  }>("/upload/ipt-report", async (request, reply) => {
     try {
-      const mesRef = (request.query as { mes_referencia?: string })?.mes_referencia;
-      if (!mesRef || !/^\d{4}-\d{2}$/.test(mesRef)) {
-        return reply.code(400).send({ detail: `mes_referencia obrigatório (YYYY-MM). Recebido: "${mesRef ?? "(vazio)"}"` });
+      const query = request.query as {
+        mes_referencia?: string;
+        modo_referencia?: string;
+        periodo_inicial?: string;
+        periodo_final?: string;
+      };
+      const mesRef = query.mes_referencia;
+      const modoRef = query.modo_referencia as ReportReferenceMode | undefined;
+      const periodoInicial = query.periodo_inicial;
+      const periodoFinal = query.periodo_final;
+
+      if (!mesRef && (!modoRef || !periodoInicial || !periodoFinal)) {
+        return reply.code(400).send({
+          detail: "Informe mes_referencia (YYYY-MM) ou modo_referencia + periodo_inicial + periodo_final.",
+        });
       }
-      request.log.info({ mes_referencia: mesRef }, "IPT Report import - mes recebido");
+
       const data = await request.file();
       if (!data) return reply.code(400).send({ detail: "Arquivo XLSX obrigatório" });
       const buffer = await data.toBuffer();
@@ -566,67 +594,67 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       const rows = parseIptWorkbook(buffer, "ipt_report_selimp");
       if (rows.length === 0) return reply.code(400).send({ detail: "Nenhum registro na planilha" });
 
-      const { ano, mes, inicio, fim, proximoInicio } = parseMesReferencia(mesRef);
-      const quantidadeEsperada = EXPECTED_SELIMP_ROWS_BY_MONTH[mesRef] ?? null;
-      if (quantidadeEsperada != null && rows.length !== quantidadeEsperada) {
-        return reply.code(400).send({
-          detail: `Quantidade inválida para ${mesRef}. Esperado: ${quantidadeEsperada} linhas. Recebido: ${rows.length}.`,
-        });
-      }
-
       const ordens = extractOrdensFromReportRows(rows);
       if (ordens.length === 0) return reply.code(400).send({ detail: "Nenhuma ordem com Status=Encerrado encontrada" });
-      const dataRef = new Date(Date.UTC(ano, mes - 1, 1));
+
+      let modoReferencia: ReportReferenceMode;
+      let inicio: string;
+      let fim: string;
+
+      if (mesRef) {
+        const match = mesRef.match(/^(\d{4})-(\d{2})$/);
+        if (!match) {
+          return reply.code(400).send({ detail: `mes_referencia inválido: "${mesRef}"` });
+        }
+        const ano = Number(match[1]);
+        const mes = Number(match[2]);
+        const ultimoDia = new Date(Date.UTC(ano, mes, 0)).getUTCDate();
+        inicio = `${ano}-${String(mes).padStart(2, "0")}-01`;
+        fim = `${ano}-${String(mes).padStart(2, "0")}-${String(ultimoDia).padStart(2, "0")}`;
+        modoReferencia = "mensal";
+      } else {
+        if ((modoRef !== "d_minus_1" && modoRef !== "fim_de_semana") || !periodoInicial || !periodoFinal) {
+          return reply.code(400).send({ detail: "modo_referencia inválido. Use d_minus_1 ou fim_de_semana." });
+        }
+        if (!isDateKey(periodoInicial) || !isDateKey(periodoFinal)) {
+          return reply.code(400).send({ detail: "periodo_inicial e periodo_final devem estar no formato YYYY-MM-DD." });
+        }
+        if (periodoInicial > periodoFinal) {
+          return reply.code(400).send({ detail: "periodo_inicial não pode ser maior que periodo_final." });
+        }
+        inicio = periodoInicial;
+        fim = periodoFinal;
+        modoReferencia = modoRef;
+      }
+
+      const dataRef = parseDateKey(fim);
+      const ano = dataRef.getUTCFullYear();
+      const mes = dataRef.getUTCMonth() + 1;
+      const referenciaLabel = describeReportReference(modoReferencia, inicio, fim);
 
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        await client.query(
-          `INSERT INTO ipt_selimp_mensal (
-             ano, mes, ordens, total_linhas, total_encerradas, periodo_inicial, periodo_final,
-             quantidade_esperada, validacao_ok, source_file, updated_at
-           )
-           VALUES ($1, $2, $3::jsonb, $4, $5, $6::date, $7::date, $8, $9, $10, NOW())
-           ON CONFLICT (ano, mes) DO UPDATE SET
-             ordens = EXCLUDED.ordens,
-             total_linhas = EXCLUDED.total_linhas,
-             total_encerradas = EXCLUDED.total_encerradas,
-             periodo_inicial = EXCLUDED.periodo_inicial,
-             periodo_final = EXCLUDED.periodo_final,
-             quantidade_esperada = EXCLUDED.quantidade_esperada,
-             validacao_ok = EXCLUDED.validacao_ok,
-             source_file = EXCLUDED.source_file,
-             updated_at = NOW()`,
-          [
-            ano,
-            mes,
-            JSON.stringify(ordens),
-            rows.length,
-            ordens.length,
-            inicio,
-            fim,
-            quantidadeEsperada,
-            quantidadeEsperada == null ? true : rows.length === quantidadeEsperada,
-            sourceFile,
-          ]
-        );
 
         await client.query(
-          `DELETE FROM ipt_imports WHERE file_type = 'ipt_report_selimp' AND data_referencia::date >= $1::date AND data_referencia::date < $2::date`,
-          [inicio, proximoInicio]
+          `DELETE FROM ipt_imports
+           WHERE file_type = 'ipt_report_selimp'
+             AND raw->>'_periodo_tipo' = $1
+             AND raw->>'_periodo_inicial_referencia' = $2
+             AND raw->>'_periodo_final_referencia' = $3`,
+          [modoReferencia, inicio, fim]
         );
         for (const row of rows) {
           const raw: Record<string, unknown> = {
             ...(row.raw ?? {}),
-            _mes_referencia: mesRef,
-            _ano_referencia: String(ano),
-            _mes_referencia_numero: String(mes),
-            _periodo_inicial_mes: inicio,
-            _periodo_final_mes: fim,
+            _periodo_tipo: modoReferencia,
+            _periodo_inicial_referencia: inicio,
+            _periodo_final_referencia: fim,
+            _referencia_label: referenciaLabel,
             _data_referencia_estimada: true,
-            _metodo_data_referencia: "mes_fechado_upload",
+            _metodo_data_referencia: `referencia_${modoReferencia}`,
           };
-          const recordKey = `${row.recordKey}|${mesRef}`;
+          const recordKey = `${row.recordKey}|${modoReferencia}|${inicio}|${fim}`;
           const setorNormalizado = normalizarSetor(String(raw["plano"] ?? "").trim()) || row.setor || null;
           await client.query(
             `INSERT INTO ipt_imports (
@@ -652,7 +680,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
               ano,
               mes,
               true,
-              "mes_fechado_upload",
+              `referencia_${modoReferencia}`,
               row.servico || null,
               JSON.stringify(raw),
               sourceFile,
@@ -671,10 +699,11 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
           duplicados: 0,
           erros: 0,
           ultimo_import: new Date().toISOString(),
-          mes_importado: mesRef,
+          referencia_importada: referenciaLabel,
+          modo_referencia: modoReferencia,
+          periodo_inicial: inicio,
+          periodo_final: fim,
           ordens_encerradas: ordens.length,
-          quantidade_esperada: quantidadeEsperada,
-          validacao_ok: quantidadeEsperada == null ? true : rows.length === quantidadeEsperada,
         };
       } catch (error) {
         await client.query("ROLLBACK");

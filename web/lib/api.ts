@@ -274,10 +274,17 @@ export const apiService = {
     return data;
   },
 
-  uploadIptReportXlsx: async (file: File, mesReferencia: string) => {
+  uploadIptReportXlsx: async (
+    file: File,
+    referencia: {
+      modoReferencia: "d_minus_1" | "fim_de_semana";
+      periodoInicial: string;
+      periodoFinal: string;
+    }
+  ) => {
     const formData = new FormData();
     formData.append('file', file);
-    const url = `/upload/ipt-report?mes_referencia=${encodeURIComponent(mesReferencia)}`;
+    const url = `/upload/ipt-report?modo_referencia=${encodeURIComponent(referencia.modoReferencia)}&periodo_inicial=${encodeURIComponent(referencia.periodoInicial)}&periodo_final=${encodeURIComponent(referencia.periodoFinal)}`;
     const { data } = await api.post(url, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });

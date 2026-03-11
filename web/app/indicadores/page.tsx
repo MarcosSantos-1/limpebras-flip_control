@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { apiService } from "@/lib/api";
@@ -8,19 +8,25 @@ import { endOfMonth, format, startOfMonth } from "date-fns";
 import { ArrowRight, Calculator, Sparkles } from "lucide-react";
 import { Input } from "@/components/ui/input";
 
+interface ResultadoIndicadores {
+  error?: string;
+  ird?: { valor?: number; pontuacao?: number };
+  ia?: { percentual?: number; valor?: number; pontuacao?: number };
+  if?: { percentual?: number; valor?: number; pontuacao?: number };
+  ipt?: { valor?: number; pontuacao?: number };
+  ipt_pontuacao?: number;
+  pontuacao_total?: number;
+  percentual_contrato?: number;
+  desconto?: number;
+  glosa_real?: number;
+}
+
 export default function IndicadoresPage() {
   const [calculando, setCalculando] = useState(false);
-  const [resultado, setResultado] = useState<any>(null);
+  const [resultado, setResultado] = useState<ResultadoIndicadores | null>(null);
   const [periodoInicial, setPeriodoInicial] = useState(format(startOfMonth(new Date()), "yyyy-MM-dd"));
   const [periodoFinal, setPeriodoFinal] = useState(format(endOfMonth(new Date()), "yyyy-MM-dd"));
   const [mesFiltro, setMesFiltro] = useState(format(new Date(), "yyyy-MM"));
-  const [iptPorMes, setIptPorMes] = useState<{ ano: number; meses: Array<{ mes: number; quantidade: number; percentual: number | null }> } | null>(null);
-
-  useEffect(() => {
-    apiService.getIptPorMes(new Date().getFullYear()).then(setIptPorMes).catch(() => setIptPorMes(null));
-  }, []);
-
-  const MESES_NOME = ["", "Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
 
   const calcularADC = async () => {
     try {
@@ -31,9 +37,10 @@ export default function IndicadoresPage() {
       console.log("Resultado ADC:", data);
       console.log("IPT no resultado:", data?.ipt);
       setResultado(data);
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Erro ao calcular ADC";
       console.error("Erro ao calcular ADC:", error);
-      setResultado({ error: error.message });
+      setResultado({ error: message });
     } finally {
       setCalculando(false);
     }
@@ -149,34 +156,6 @@ export default function IndicadoresPage() {
           </CardContent>
         </Card>
 
-        {iptPorMes && (
-          <Card className="border-l-4 border-l-purple-500">
-            <CardHeader>
-              <CardTitle>IPT por mês (SELIMP)</CardTitle>
-              <CardDescription>
-                Quantidade de ordens e percentual por mês – {iptPorMes.ano} (sempre calculado da planilha).
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-3">
-                {iptPorMes.meses.map((m) => (
-                  <div key={m.mes} className="p-3 rounded-lg border border-border bg-muted/20 text-sm">
-                    <div className="font-bold text-foreground">{MESES_NOME[m.mes]} {iptPorMes.ano}</div>
-                    <div className="text-muted-foreground mt-1">Qtd: <span className="font-medium text-foreground">{m.quantidade}</span></div>
-                    <div className="text-muted-foreground">
-                      {m.percentual != null ? (
-                        <span className="font-medium text-purple-600 dark:text-purple-400">{m.percentual.toFixed(2)}%</span>
-                      ) : (
-                        <span className="text-muted-foreground/70">--</span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
         {resultado && (
           <Card className="animate-in fade-in slide-in-from-bottom-4 duration-500 border-none shadow-lg bg-background/50 backdrop-blur-sm">
             <CardContent className="p-6">
@@ -256,12 +235,12 @@ export default function IndicadoresPage() {
                     </div>
                   </div>
 
-                  {resultado.desconto > 0 && (
+                  {(resultado.desconto ?? 0) > 0 && (
                     <div className="p-4 bg-yellow-50/50 dark:bg-yellow-900/10 border border-yellow-200/50 dark:border-yellow-800/30 rounded-lg flex items-start gap-3">
                       <span className="text-2xl">⚠️</span>
                       <div>
                         <p className="text-yellow-800 dark:text-yellow-200 font-bold mb-1">
-                          Desconto aplicado: {resultado.desconto.toFixed(2)}%
+                          Desconto aplicado: {(resultado.desconto ?? 0).toFixed(2)}%
                         </p>
                         <p className="text-sm text-yellow-700 dark:text-yellow-300">
                           Percentual do valor contratual a receber: <strong>{resultado.percentual_contrato?.toFixed(2)}%</strong>
@@ -275,7 +254,7 @@ export default function IndicadoresPage() {
                     </div>
                   )}
                   
-                  {resultado.desconto === 0 && resultado.pontuacao_total >= 90 && (
+                  {(resultado.desconto ?? 0) === 0 && (resultado.pontuacao_total ?? 0) >= 90 && (
                     <div className="p-4 bg-green-50/50 dark:bg-green-900/10 border border-green-200/50 dark:border-green-800/30 rounded-lg flex items-center gap-3">
                       <div className="h-10 w-10 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center text-xl">🏆</div>
                       <div>
