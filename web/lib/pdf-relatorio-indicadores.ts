@@ -128,6 +128,20 @@ export interface IptDetalhes {
   PF: number;
 }
 
+export interface SacPorSub {
+  subprefeitura: string;
+  label: string;
+  demandantes: number;
+  escalonados: number;
+  total: number;
+}
+
+export interface SacForaPrazoPorSub {
+  subprefeitura: string;
+  label: string;
+  fora_prazo: number;
+}
+
 export interface IndicadorDetalhe {
   valor?: number;
   percentual?: number;
@@ -144,6 +158,16 @@ export interface IndicadorDetalhe {
   if_por_sub?: IfPorSub[];
   ird_por_regional?: IrdPorRegional[];
   ipt_detalhes?: IptDetalhes;
+  sac_por_sub?: SacPorSub[];
+  sac_fora_prazo_por_sub?: SacForaPrazoPorSub[];
+  /** Dados IA por sub (no_prazo, fora_prazo, solic_procedentes) - mesma base do cálculo IA */
+  ia_por_sub?: Array<{
+    subprefeitura: string;
+    label: string;
+    no_prazo: number;
+    fora_prazo: number;
+    solic_procedentes: number;
+  }>;
 }
 
 export interface ResumoADC {
@@ -175,6 +199,21 @@ export interface ResumoIndicador {
   pontos: string;
 }
 
+/** Dados do IPT do dashboard SELIMP: execução média e percentual por serviço */
+export interface IptPreviewParaPDF {
+  execucao_media: {
+    media_sem_zerados: number | null;
+    media_com_zerados: number | null;
+    total_planos: number;
+    zerados: number;
+  };
+  servicos: Array<{
+    tipo_servico: string;
+    quantidade_planos: number;
+    media_execucao: number | null;
+  }>;
+}
+
 export interface RelatorioIndicadoresInput {
   periodoInicial: string;
   periodoFinal: string;
@@ -182,6 +221,8 @@ export interface RelatorioIndicadoresInput {
   pontuacaoTotal: number;
   infoDesconto: InfoDesconto;
   resumoIndicadores: ResumoIndicador[];
+  /** Dados SELIMP para a página extra do IPT (execução média e tabela serviços) */
+  iptPreview?: IptPreviewParaPDF | null;
   baseUrl?: string;
 }
 
@@ -332,55 +373,6 @@ export async function gerarRelatorioIndicadoresPDF(input: RelatorioIndicadoresIn
     ctx.y = MARGIN_TOP + 18;
   }
 
-  // --- Resumo executivo ---
-  function addResumoExecutivo(doc: typeof pdf, ctx: DocContext): void {
-    doc.addPage();
-    doc.setFillColor(255, 255, 255);
-    doc.rect(0, 0, PAGE_W, PAGE_H, "F");
-    addLogo(doc, PAGE_W - MARGIN - 30, MARGIN_TOP, 30, 16);
-    ctx.y = MARGIN_TOP + 18;
-
-    tituloSecao(ctx, "Resumo executivo do relatório");
-    ctx.y += 5; // Espaço de pelo menos 5mm (~5.2px/mm para 72 dpi, mas abaixo usamos empiricamente)
-    paragrafo(ctx, `Visão consolidada dos indicadores do período de ${periodoLabel}.`);
-    ctx.y += 4;
-
-    subTitulo(ctx, "Indicadores por tipo");
-    const resumo = input.resumoIndicadores;
-    const colW = CONTENT_W / 3;
-    ctx.y += 6;
-
-    doc.setFontSize(9);
-    doc.setFont("helvetica", "bold");
-    doc.setFillColor(COLOR_HEADER_BG[0], COLOR_HEADER_BG[1], COLOR_HEADER_BG[2]);
-    doc.rect(MARGIN_LEFT, ctx.y - 4, CONTENT_W, ROW_H + 2, "F");
-    doc.setTextColor(255, 255, 255);
-    doc.text("Indicador", MARGIN_LEFT + colW / 2, ctx.y + 2, { align: "center" });
-    doc.text("Valor", MARGIN_LEFT + colW + colW / 2, ctx.y + 2, { align: "center" });
-    doc.text("Pontuação", MARGIN_LEFT + colW * 2 + colW / 2, ctx.y + 2, { align: "center" });
-    ctx.y += ROW_H + 4;
-
-    doc.setFont("helvetica", "normal");
-    doc.setTextColor(0, 0, 0);
-    for (let i = 0; i < resumo.length; i++) {
-      const r = resumo[i];
-      const bg = i % 2 === 0 ? [245, 248, 252] : [255, 255, 255];
-      doc.setFillColor(bg[0], bg[1], bg[2]);
-      doc.rect(MARGIN_LEFT, ctx.y - 2, CONTENT_W, ROW_H, "F");
-      doc.text(sanitizarTexto(r.nome), MARGIN_LEFT + colW / 2, ctx.y + 3, { align: "center" });
-      doc.text(sanitizarTexto(r.valor), MARGIN_LEFT + colW + colW / 2, ctx.y + 3, { align: "center" });
-      doc.text(sanitizarTexto(`${r.pontos} pts`), MARGIN_LEFT + colW * 2 + colW / 2, ctx.y + 3, { align: "center" });
-      ctx.y += ROW_H;
-    }
-
-    ctx.y += 8;
-    subTitulo(ctx, "Total ADC");
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(11);
-    doc.text(`Pontuação total: ${formatarValor(input.pontuacaoTotal, 2)} pts`, MARGIN_LEFT, ctx.y);
-    ctx.y += 8;
-  }
-
   // --- C. IRD ---
   function addSecaoIRD(doc: typeof pdf, ctx: DocContext): void {
     addNovaPaginaComCabecalho(ctx);
@@ -408,12 +400,13 @@ export async function gerarRelatorioIndicadoresPDF(input: RelatorioIndicadoresIn
     if (ird?.ird_por_regional && ird.ird_por_regional.length > 0) {
       ctx.y += 4;
       subTitulo(ctx, "IRD por regional");
-      const headers = ["Regional", "Recl.", "Domicílios", "IRD"];
-      const colW = [45, 25, 35, 30];
+      const tableW = 175; // mesma largura da tabela de pontuação IRD (55+35+85)
+      const colW = [65, 35, 32, 20, 23]; // Regional, Reclamações, Domicílios, IRD, IRD Total
+      const headers = ["Regional", "Reclamações", "Domicílios", "IRD", "IRD Total"];
       doc.setFontSize(8);
       doc.setFont("helvetica", "bold");
       doc.setFillColor(COLOR_HEADER_BG[0], COLOR_HEADER_BG[1], COLOR_HEADER_BG[2]);
-      doc.rect(MARGIN_LEFT, ctx.y - 3, colW.reduce((a, b) => a + b, 0), ROW_H + 2, "F");
+      doc.rect(MARGIN_LEFT, ctx.y - 3, tableW, ROW_H + 2, "F");
       doc.setTextColor(255, 255, 255);
       let x = MARGIN_LEFT;
       headers.forEach((h, i) => {
@@ -423,13 +416,21 @@ export async function gerarRelatorioIndicadoresPDF(input: RelatorioIndicadoresIn
       ctx.y += ROW_H + 4;
       doc.setFont("helvetica", "normal");
       doc.setTextColor(0, 0, 0);
+      const tabelaH = ird.ird_por_regional.length * (ROW_H - 1);
+      const irdTotalValor = formatarValor(ird.valor, 3);
+      const irdTotalPts = formatarValor(ird.pontuacao, 2);
+      const celulaTotalTexto = `${irdTotalValor} / ${irdTotalPts} pts`;
+      const baseX = MARGIN_LEFT + colW[0] + colW[1] + colW[2] + colW[3];
+      doc.setFillColor(248, 250, 252);
+      doc.rect(baseX, ctx.y - 2, colW[4], tabelaH, "F");
+      doc.text(celulaTotalTexto, baseX + colW[4] / 2, ctx.y + tabelaH / 2, { align: "center", baseline: "middle" });
       for (let i = 0; i < ird.ird_por_regional.length; i++) {
         const row = ird.ird_por_regional[i];
         const bg = i % 2 === 0 ? [248, 250, 252] : [255, 255, 255];
         doc.setFillColor(bg[0], bg[1], bg[2]);
-        doc.rect(MARGIN_LEFT, ctx.y - 2, colW.reduce((a, b) => a + b, 0), ROW_H - 1, "F");
+        doc.rect(MARGIN_LEFT, ctx.y - 2, colW[0] + colW[1] + colW[2] + colW[3], ROW_H - 1, "F");
         x = MARGIN_LEFT;
-        doc.text(sanitizarTexto(row.label || row.subprefeitura), x + 3, ctx.y + 2);
+        doc.text(sanitizarTexto(row.label || row.subprefeitura), x + colW[0] / 2, ctx.y + 2, { align: "center" });
         doc.text(String(row.reclamacoes), x + colW[0] + colW[1] / 2, ctx.y + 2, { align: "center" });
         doc.text(row.domicilios.toLocaleString("pt-BR"), x + colW[0] + colW[1] + colW[2] / 2, ctx.y + 2, { align: "center" });
         doc.text(row.ird_valor.toFixed(3), x + colW[0] + colW[1] + colW[2] + colW[3] / 2, ctx.y + 2, { align: "center" });
@@ -496,6 +497,106 @@ export async function gerarRelatorioIndicadoresPDF(input: RelatorioIndicadoresIn
       ? `No prazo: ${noPrazo} | Fora do prazo: ${foraPrazo} | IA = (${noPrazo} / ${total}) x 100 = ${pct}%`
       : "Nenhum SAC demandante no período.");
     paragrafo(ctx, `Pontuação: ${formatarValor(ia?.pontuacao, 2)} pts`);
+
+    // Tabela unificada IA: SUBPREFEITURA | I.A. | SOLICITAÇÕES PROCEDENTES | ATENDIDOS FORA DO PRAZO | ATENDIDOS NO PRAZO
+    const iaPorSub = ia?.ia_por_sub ?? [];
+    const sacPorSub = ia?.sac_por_sub ?? [];
+    const sacForaPrazo = ia?.sac_fora_prazo_por_sub ?? [];
+    const subs = ["CV", "JT", "ST", "MG"];
+    const useIAPorSub = iaPorSub.length > 0;
+    const mapForaPrazo = useIAPorSub
+      ? new Map(iaPorSub.map((r) => [r.subprefeitura, r.fora_prazo]))
+      : new Map(sacForaPrazo.map((r) => [r.subprefeitura, r.fora_prazo]));
+    const mapNoPrazo = useIAPorSub
+      ? new Map(iaPorSub.map((r) => [r.subprefeitura, r.no_prazo]))
+      : new Map(sacPorSub.map((r) => [r.subprefeitura, (r.demandantes ?? 0) - (mapForaPrazo.get(r.subprefeitura) ?? 0)]));
+    const mapSolicProcedentes = useIAPorSub
+      ? new Map(iaPorSub.map((r) => [r.subprefeitura, r.solic_procedentes]))
+      : new Map(sacPorSub.map((r) => [r.subprefeitura, r.demandantes ?? 0]));
+
+    if (iaPorSub.length > 0 || sacPorSub.length > 0 || sacForaPrazo.length > 0) {
+      checkPage(ctx, 45);
+      ctx.y += 4;
+      subTitulo(ctx, "IA - Índice de Atendimento");
+
+      const colLabelW = 55;
+      const colDataW = (CONTENT_W - colLabelW) / 5;
+      const rowLabels = ["SUBPREFEITURA", "I.A.", "SOLICITAÇÕES PROCEDENTES", "ATENDIDOS FORA DO PRAZO", "ATENDIDOS NO PRAZO"];
+      const yBase = ctx.y;
+      const rowH = 6.5;
+      const totalTableH = rowH * 5;
+
+      // Dados por linha (5 linhas: SUBPREFEITURA com CV/JT/ST/MG/TOTAL, I.A., etc.)
+      const solicProcedentesPorSub = subs.map((s) => mapSolicProcedentes.get(s) ?? 0);
+      const foraPrazoPorSub = subs.map((s) => mapForaPrazo.get(s) ?? 0);
+      const noPrazoPorSub = subs.map((s) => mapNoPrazo.get(s) ?? 0);
+      const iaPorSubPct = subs.map((_, i) => {
+        const tot = solicProcedentesPorSub[i];
+        return tot > 0 ? (noPrazoPorSub[i] / tot) * 100 : 0;
+      });
+      const totalSolicProced = solicProcedentesPorSub.reduce((a, b) => a + b, 0);
+      const totalFora = foraPrazoPorSub.reduce((a, b) => a + b, 0);
+      const totalNo = noPrazoPorSub.reduce((a, b) => a + b, 0);
+      const iaTotal = totalSolicProced > 0 ? (totalNo / totalSolicProced) * 100 : 0;
+
+      const rowData: (string | number)[][] = [
+        ["CV", "JT", "ST", "MG", "TOTAL"],
+        [...iaPorSubPct.map((v) => `${v.toFixed(1)}%`), `${iaTotal.toFixed(1)}%`],
+        [...solicProcedentesPorSub, totalSolicProced],
+        [...foraPrazoPorSub, totalFora],
+        [...noPrazoPorSub, totalNo],
+      ];
+
+      rowLabels.forEach((label, rowIdx) => {
+        const cellTopY = ctx.y - 2;
+        const yCenter = cellTopY + rowH / 2;
+        doc.setFillColor(COLOR_HEADER_BG[0], COLOR_HEADER_BG[1], COLOR_HEADER_BG[2]);
+        doc.rect(MARGIN_LEFT, cellTopY, colLabelW, rowH, "F");
+        doc.setTextColor(255, 255, 255);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(7);
+        const labelWrap = doc.splitTextToSize(label, colLabelW - 6);
+        doc.text(labelWrap[0], MARGIN_LEFT + colLabelW / 2, yCenter, { align: "center", baseline: "middle" });
+
+        const bg = rowIdx % 2 === 0 ? [248, 250, 252] : [255, 255, 255];
+        doc.setFillColor(bg[0], bg[1], bg[2]);
+        doc.rect(MARGIN_LEFT + colLabelW, cellTopY, colDataW * 5, rowH, "F");
+
+        const isForaPrazoRow = rowIdx === 3;
+        doc.setTextColor(isForaPrazoRow ? 220 : 0, isForaPrazoRow ? 38 : 0, isForaPrazoRow ? 38 : 0);
+        if (rowIdx === 0) doc.setFont("helvetica", "bold");
+        else doc.setFont("helvetica", "normal");
+
+        const dataRow = rowData[rowIdx];
+        dataRow.forEach((val, colIdx) => {
+          const x = MARGIN_LEFT + colLabelW + colDataW * colIdx + colDataW / 2;
+          doc.text(String(val), x, yCenter, { align: "center", baseline: "middle" });
+        });
+
+        if (rowIdx === 0) doc.setFont("helvetica", "normal");
+        ctx.y += rowH;
+      });
+
+      // Bordas brancas em cada célula: primeira coluna (5 células) e primeira linha (6 células)
+      doc.setDrawColor(255, 255, 255);
+      doc.setLineWidth(0.5);
+      for (let r = 0; r < 5; r++) {
+        const cellY = yBase - 2 + r * rowH;
+        doc.rect(MARGIN_LEFT, cellY, colLabelW, rowH, "S");
+      }
+      for (let c = 0; c < 6; c++) {
+        const cellX = c === 0 ? MARGIN_LEFT : MARGIN_LEFT + colLabelW + (c - 1) * colDataW;
+        const cellW = c === 0 ? colLabelW : colDataW;
+        doc.rect(cellX, yBase - 2, cellW, rowH, "S");
+      }
+
+      // Borda preta ao redor da tabela
+      doc.setDrawColor(0, 0, 0);
+      doc.setLineWidth(0.5);
+      doc.rect(MARGIN_LEFT, yBase - 2, colLabelW + colDataW * 5, totalTableH, "S");
+
+      ctx.y += 14;
+    }
 
     subTitulo(ctx, "Tabela de pontuação IA");
     const faixasIA = [
@@ -591,7 +692,8 @@ export async function gerarRelatorioIndicadoresPDF(input: RelatorioIndicadoresIn
     subTitulo(ctx, "Resultado");
     const iff = detalhes?.if;
     const pctIf = formatarValor(iff?.percentual ?? ((iff?.valor ?? 0) / 10), 2);
-    paragrafo(ctx, `Total BFS: ${iff?.total_fiscalizacoes ?? "--"} | Sem irregularidade: ${iff?.total_sem_irregularidade ?? "--"} | IF = ${pctIf}%`);
+    const comIrreg = iff?.total_com_irregularidade ?? (typeof iff?.total_fiscalizacoes === "number" && typeof iff?.total_sem_irregularidade === "number" ? iff.total_fiscalizacoes - iff.total_sem_irregularidade : "--");
+    paragrafo(ctx, `Total BFS: ${iff?.total_fiscalizacoes ?? "--"} | Sem irregularidade: ${iff?.total_sem_irregularidade ?? "--"} | Com irregularidade: ${comIrreg} | IF = ${pctIf}%`);
     paragrafo(ctx, `Pontuação: ${formatarValor(iff?.pontuacao, 2)} pts`);
 
     subTitulo(ctx, "Tabela de pontuação IF");
@@ -703,6 +805,93 @@ export async function gerarRelatorioIndicadoresPDF(input: RelatorioIndicadoresIn
       ctx.y += ROW_H;
     });
     ctx.y += 8;
+
+    // --- Página extra: Avaliação IPT (execução média + tabela serviços SELIMP) ---
+    const iptPreview = input.iptPreview;
+    if (iptPreview) {
+      addNovaPaginaComCabecalho(ctx);
+      tituloSecao(ctx, "IPT - Avaliação e Execução no Período (SELIMP)");
+      paragrafo(ctx, `Dados com base na planilha SELIMP para o período de ${periodoLabel}.`);
+
+      subTitulo(ctx, "Execução média no período");
+      const exec = iptPreview.execucao_media;
+      const gap = 4;
+      const boxW1 = 42;
+      const boxW2 = 42;
+      const boxW3 = 40;
+      const boxW4 = 40;
+      const boxH = 20;
+      const yBox = ctx.y;
+
+      doc.setFillColor(16, 185, 129);
+      doc.roundedRect(MARGIN_LEFT, yBox, boxW1, boxH, 2, 2, "F");
+      doc.setFillColor(255, 255, 255);
+      doc.setFontSize(7);
+      doc.setFont("helvetica", "bold");
+      doc.text("Média (sem zerados)", MARGIN_LEFT + boxW1 / 2, yBox + 5, { align: "center" });
+      doc.setFontSize(12);
+      doc.text(exec.media_sem_zerados != null ? `${exec.media_sem_zerados.toFixed(1)}%` : "--", MARGIN_LEFT + boxW1 / 2, yBox + 13, { align: "center" });
+
+      doc.setFillColor(20, 184, 166);
+      doc.roundedRect(MARGIN_LEFT + boxW1 + gap, yBox, boxW2, boxH, 2, 2, "F");
+      doc.setFillColor(255, 255, 255);
+      doc.setFontSize(7);
+      doc.text("Média (com zerados)", MARGIN_LEFT + boxW1 + gap + boxW2 / 2, yBox + 5, { align: "center" });
+      doc.setFontSize(12);
+      doc.text(exec.media_com_zerados != null ? `${exec.media_com_zerados.toFixed(1)}%` : "--", MARGIN_LEFT + boxW1 + gap + boxW2 / 2, yBox + 13, { align: "center" });
+
+      doc.setFillColor(245, 158, 11);
+      doc.roundedRect(MARGIN_LEFT + boxW1 + gap + boxW2 + gap, yBox, boxW3, boxH, 2, 2, "F");
+      doc.setFillColor(255, 255, 255);
+      doc.setFontSize(7);
+      doc.text("Planos zerados", MARGIN_LEFT + boxW1 + gap + boxW2 + gap + boxW3 / 2, yBox + 5, { align: "center" });
+      doc.setFontSize(12);
+      doc.text(String(exec.zerados ?? 0), MARGIN_LEFT + boxW1 + gap + boxW2 + gap + boxW3 / 2, yBox + 13, { align: "center" });
+
+      doc.setFillColor(100, 116, 139);
+      doc.roundedRect(MARGIN_LEFT + boxW1 + gap + boxW2 + gap + boxW3 + gap, yBox, boxW4, boxH, 2, 2, "F");
+      doc.setFillColor(255, 255, 255);
+      doc.setFontSize(7);
+      doc.text("Total planos", MARGIN_LEFT + boxW1 + gap + boxW2 + gap + boxW3 + gap + boxW4 / 2, yBox + 5, { align: "center" });
+      doc.setFontSize(12);
+      doc.text(String(exec.total_planos ?? 0), MARGIN_LEFT + boxW1 + gap + boxW2 + gap + boxW3 + gap + boxW4 / 2, yBox + 13, { align: "center" });
+
+      ctx.y = yBox + boxH + 12;
+
+      subTitulo(ctx, "Percentual de execução por serviço no período");
+      const servicos = iptPreview.servicos ?? [];
+      if (servicos.length > 0) {
+        const colWServ = [90, 35, 55];
+        doc.setFontSize(8);
+        doc.setFont("helvetica", "bold");
+        doc.setFillColor(COLOR_HEADER_BG[0], COLOR_HEADER_BG[1], COLOR_HEADER_BG[2]);
+        doc.rect(MARGIN_LEFT, ctx.y - 3, colWServ.reduce((a, b) => a + b, 0), ROW_H + 2, "F");
+        doc.setTextColor(255, 255, 255);
+        doc.text("Tipo de serviço", MARGIN_LEFT + colWServ[0] / 2, ctx.y + 2, { align: "center" });
+        doc.text("Qtd planos", MARGIN_LEFT + colWServ[0] + colWServ[1] / 2, ctx.y + 2, { align: "center" });
+        doc.text("Execução (%)", MARGIN_LEFT + colWServ[0] + colWServ[1] + colWServ[2] / 2, ctx.y + 2, { align: "center" });
+        ctx.y += ROW_H + 4;
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(0, 0, 0);
+        const servicosOrdenados = [...servicos].sort((a, b) => (b.media_execucao ?? -1) - (a.media_execucao ?? -1));
+        servicosOrdenados.forEach((row, i) => {
+          checkPage(ctx, ROW_H);
+          const bg = i % 2 === 0 ? [248, 250, 252] : [255, 255, 255];
+          doc.setFillColor(bg[0], bg[1], bg[2]);
+          doc.rect(MARGIN_LEFT, ctx.y - 2, colWServ.reduce((a, b) => a + b, 0), ROW_H, "F");
+          const tipoTrunc = sanitizarTexto(row.tipo_servico || "—");
+          const tipoLines = doc.splitTextToSize(tipoTrunc, colWServ[0] - 4);
+          doc.text(tipoLines[0], MARGIN_LEFT + 3, ctx.y + 2);
+          doc.text(String(row.quantidade_planos ?? 0), MARGIN_LEFT + colWServ[0] + colWServ[1] / 2, ctx.y + 3, { align: "center" });
+          doc.text(row.media_execucao != null ? `${row.media_execucao.toFixed(1)}%` : "--", MARGIN_LEFT + colWServ[0] + colWServ[1] + colWServ[2] / 2, ctx.y + 3, { align: "center" });
+          ctx.y += ROW_H;
+        });
+        ctx.y += 6;
+      } else {
+        paragrafo(ctx, "Nenhum serviço com dados no período.");
+      }
+      ctx.y += 6;
+    }
   }
 
   // --- Resumo dos indicadores (página estilizada) ---
@@ -820,14 +1009,14 @@ export async function gerarRelatorioIndicadoresPDF(input: RelatorioIndicadoresIn
   }
 
   // ---- Execução ----
+  // Ordem: Capa -> Resumo dos indicadores (substitui Resumo executivo) -> IRD -> IA -> IF -> IPT -> Capa final
   addCapa(pdf);
   const ctx: DocContext = { doc: pdf, y: MARGIN_TOP + 18 };
-  addResumoExecutivo(pdf, ctx);
+  addResumoIndicadores(pdf, ctx);
   addSecaoIRD(pdf, ctx);
   addSecaoIA(pdf, ctx);
   addSecaoIF(pdf, ctx);
   addSecaoIPT(pdf, ctx);
-  addResumoIndicadores(pdf, ctx);
   addCapaFinal(pdf);
 
   const mesNome = format(parseLocalDate(input.periodoFinal) ?? new Date(), "MMMM", { locale: ptBR });

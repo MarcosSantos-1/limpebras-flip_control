@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { apiService } from "@/lib/api";
+import { apiService, type IptPreviewResponse } from "@/lib/api";
 import { gerarRelatorioIndicadoresPDF } from "@/lib/pdf-relatorio-indicadores";
 import { endOfMonth, format, isValid, startOfMonth } from "date-fns";
 import { AdcDonutChart } from "@/components/adc-donut-chart";
@@ -148,6 +148,7 @@ export default function ExplicacaoIndicadoresPage() {
   const [periodoInicial, setPeriodoInicial] = useState(format(startOfMonth(new Date()), "yyyy-MM-dd"));
   const [periodoFinal, setPeriodoFinal] = useState(format(endOfMonth(new Date()), "yyyy-MM-dd"));
   const [detalhes, setDetalhes] = useState<IndicadoresDetalhesResponse | null>(null);
+  const [iptPreview, setIptPreview] = useState<IptPreviewResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -158,6 +159,12 @@ export default function ExplicacaoIndicadoresPage() {
       setError(null);
       const data = await apiService.getIndicadoresDetalhes(periodoInicial, periodoFinal);
       setDetalhes(data);
+      try {
+        const iptData = await apiService.getIptPreview(periodoInicial, periodoFinal, false, "all");
+        setIptPreview(iptData);
+      } catch (_iptErr) {
+        setIptPreview(null);
+      }
     } catch (err) {
       console.error(err);
       setError("Nao foi possivel carregar os indicadores. Verifique as datas e tente novamente.");
@@ -222,6 +229,43 @@ export default function ExplicacaoIndicadoresPage() {
   );
   const reportRef = useRef<HTMLDivElement>(null);
 
+  const iptPreviewParaPDF = useMemo(() => {
+    if (!iptPreview?.comparativo?.itens) return null;
+    const itens = iptPreview.comparativo.itens as Array<{
+      percentual_selimp?: number | null;
+      percentual_nosso?: number | null;
+    }>;
+    const getPct = (row: { percentual_nosso?: number | null; percentual_selimp?: number | null }) => {
+      const v = row.percentual_nosso ?? row.percentual_selimp ?? null;
+      return v != null && !Number.isNaN(v) ? v : null;
+    };
+    const comZerados: number[] = [];
+    const semZerados: number[] = [];
+    for (const row of itens) {
+      const pct = getPct(row);
+      if (pct != null) {
+        comZerados.push(pct);
+        if (pct > 0) semZerados.push(pct);
+      }
+    }
+    const mediaCom = comZerados.length > 0 ? comZerados.reduce((a, b) => a + b, 0) / comZerados.length : null;
+    const mediaSem = semZerados.length > 0 ? semZerados.reduce((a, b) => a + b, 0) / semZerados.length : null;
+    const zerados = comZerados.filter((x) => x <= 0).length;
+    return {
+      execucao_media: {
+        media_sem_zerados: mediaSem,
+        media_com_zerados: mediaCom,
+        total_planos: itens.length,
+        zerados,
+      },
+      servicos: (iptPreview.servicos ?? []).map((s) => ({
+        tipo_servico: s.tipo_servico ?? "—",
+        quantidade_planos: s.quantidade_planos ?? 0,
+        media_execucao: s.media_execucao ?? null,
+      })),
+    };
+  }, [iptPreview]);
+
   const handleDownloadPDF = async () => {
     setPdfLoading(true);
     try {
@@ -232,6 +276,7 @@ export default function ExplicacaoIndicadoresPage() {
         pontuacaoTotal,
         infoDesconto,
         resumoIndicadores,
+        iptPreview: iptPreviewParaPDF,
       });
     } catch (err) {
       console.error(err);
@@ -718,7 +763,7 @@ export default function ExplicacaoIndicadoresPage() {
               const ifPorSub = detalhes.if?.if_por_sub ?? [];
               return (
               <div>
-                <h3 className="font-semibold mb-2">IF por subprefeitura</h3>
+                <h3 className="font-semibold mb-2">IF/ BFS por subprefeitura</h3>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm border-collapse">
                     <thead>

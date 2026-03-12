@@ -822,6 +822,77 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
             : "IRD = (reclamações procedentes / domicílios) × 1000 — Nenhuma reclamação procedente no período.",
       };
 
+      // SAC por subprefeitura (demandantes + escalonados, para outras views)
+      const sacPorSubRes = await client.query(
+        `SELECT regional,
+                COUNT(*) FILTER (WHERE TRIM(classificacao_do_servico) = 'Solicitação' AND (finalizado_fora_de_escopo IS NULL OR UPPER(TRIM(finalizado_fora_de_escopo)) = 'NÃO')) AS demandantes,
+                COUNT(*) FILTER (WHERE TRIM(classificacao_do_servico) = 'Reclamação' AND (finalizado_fora_de_escopo IS NULL OR UPPER(TRIM(finalizado_fora_de_escopo)) = 'NÃO') AND (procedente_por_status IS NOT NULL AND UPPER(TRIM(procedente_por_status)) = 'PROCEDE')) AS escalonados
+         FROM sacs
+         WHERE data_registro >= $1::date AND data_registro < ($2::date + interval '1 day')
+         GROUP BY regional`,
+        [inicio, fim]
+      );
+      const sacPorRegional: Record<string, { demandantes: number; escalonados: number }> = {};
+      for (const sigla of SUB_SIGLAS) sacPorRegional[sigla] = { demandantes: 0, escalonados: 0 };
+      for (const row of sacPorSubRes.rows as Array<{ regional: string; demandantes: string; escalonados: string }>) {
+        const sigla = regionalToSigla(row.regional);
+        if (sigla && sacPorRegional[sigla]) {
+          sacPorRegional[sigla].demandantes += Number(row.demandantes ?? 0);
+          sacPorRegional[sigla].escalonados += Number(row.escalonados ?? 0);
+        }
+      }
+      const sacPorSub = SUB_SIGLAS.map((sigla) => {
+        const { demandantes, escalonados } = sacPorRegional[sigla];
+        const total = demandantes + escalonados;
+        return {
+          subprefeitura: sigla,
+          label: sigla === "CV" ? "Casa Verde / Limão / Cachoeirinha" : sigla === "JT" ? "Jaçanã / Tremembé" : sigla === "MG" ? "Vila Maria / Vila Guilherme" : "Santana / Tucuruvi",
+          demandantes,
+          escalonados,
+          total,
+        };
+      });
+
+      // IA por sub: no_prazo e fora_prazo (mesma base do cálculo IA: Solicitação, fora escopo NÃO, responsividade SIM/NÃO)
+      const iaPorSubRes = await client.query(
+        `SELECT regional,
+                COUNT(*) FILTER (WHERE UPPER(TRIM(COALESCE(responsividade_execucao, ''))) = 'SIM') AS no_prazo,
+                COUNT(*) FILTER (WHERE UPPER(TRIM(COALESCE(responsividade_execucao, ''))) = 'NÃO') AS fora_prazo
+         FROM sacs
+         WHERE data_registro >= $1::date AND data_registro < ($2::date + interval '1 day')
+           AND (finalizado_fora_de_escopo IS NULL OR UPPER(TRIM(finalizado_fora_de_escopo)) = 'NÃO')
+           AND TRIM(classificacao_do_servico) = 'Solicitação'
+           AND (UPPER(TRIM(COALESCE(responsividade_execucao, ''))) = 'SIM' OR UPPER(TRIM(COALESCE(responsividade_execucao, ''))) = 'NÃO')
+         GROUP BY regional`,
+        [inicio, fim]
+      );
+      const iaPorRegional: Record<string, { no_prazo: number; fora_prazo: number }> = {};
+      for (const sigla of SUB_SIGLAS) iaPorRegional[sigla] = { no_prazo: 0, fora_prazo: 0 };
+      for (const row of iaPorSubRes.rows as Array<{ regional: string; no_prazo: string; fora_prazo: string }>) {
+        const sigla = regionalToSigla(row.regional);
+        if (sigla && iaPorRegional[sigla]) {
+          iaPorRegional[sigla].no_prazo += Number(row.no_prazo ?? 0);
+          iaPorRegional[sigla].fora_prazo += Number(row.fora_prazo ?? 0);
+        }
+      }
+      const iaPorSub = SUB_SIGLAS.map((sigla) => {
+        const { no_prazo, fora_prazo } = iaPorRegional[sigla];
+        const solic_procedentes = no_prazo + fora_prazo;
+        return {
+          subprefeitura: sigla,
+          label: sigla === "CV" ? "Casa Verde / Limão / Cachoeirinha" : sigla === "JT" ? "Jaçanã / Tremembé" : sigla === "MG" ? "Vila Maria / Vila Guilherme" : "Santana / Tucuruvi",
+          no_prazo,
+          fora_prazo,
+          solic_procedentes,
+        };
+      });
+
+      const sacForaPrazoPorSub = iaPorSub.map((r) => ({
+        subprefeitura: r.subprefeitura,
+        label: r.label,
+        fora_prazo: r.fora_prazo,
+      }));
+
       const totalSolic = totalSolicitacoes;
       const ia = {
         valor: iaResult.valor,
@@ -831,6 +902,9 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         total_fora_prazo: foraPrazo,
         total_solicitacoes: totalSolic,
         total_calculo: totalCalculoIA,
+        sac_por_sub: sacPorSub,
+        sac_fora_prazo_por_sub: sacForaPrazoPorSub,
+        ia_por_sub: iaPorSub,
         filtros_aplicados: [
           "Data_Registro no período",
           "Finalizado_como_fora_de_escopo = NÃO",

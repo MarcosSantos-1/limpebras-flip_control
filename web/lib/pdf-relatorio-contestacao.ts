@@ -51,9 +51,16 @@ export interface BFSContestar {
   cnc_detalhes?: CncDetalhe[];
 }
 
+export interface ItemFiscalizadoBfs {
+  item: string;
+  proatividade: string;
+  turno?: string;
+  observacoes: string;
+}
+
 export interface FotosContestarBfs {
   agente_sub: string[];
-  rastreamento: string[];
+  itens_fiscalizados?: ItemFiscalizadoBfs[];
   nosso_agente: string[];
   justificativa?: string;
 }
@@ -322,11 +329,9 @@ export async function gerarRelatorioContestacaoPDF(
     doc.setFont("helvetica", "normal");
     doc.text(`${input.contratada ?? "Limpebras Engenharia Ambiental"}`, MARGIN + 34, 80);
 
-    // Contrato n°
+    // Termo de Contrato
     doc.setFont("helvetica", "bold");
-    doc.text("Contrato n°:", MARGIN, 87);
-    doc.setFont("helvetica", "normal");
-    doc.text(`${input.contratoNumero ?? "(123456)"}`, MARGIN + 32, 87);
+    doc.text("Termo de Contrato n° 40 / SMSUB / COGEL / 2025", MARGIN, 87);
 
     // Período Avaliado
     doc.setFont("helvetica", "bold");
@@ -674,7 +679,7 @@ export async function gerarRelatorioContestacaoPDF(
       }
       if (drawn.length > 0) {
         const maxH = Math.max(...drawn.map((d) => d.h));
-        y += maxH + 4;
+        y += maxH + 5; // 5mm entre fotos e legenda
         doc.setFontSize(10);
         doc.setFont("helvetica", "bold");
         doc.setTextColor(0, 0, 0);
@@ -686,21 +691,82 @@ export async function gerarRelatorioContestacaoPDF(
       doc.setFont("helvetica", "normal");
     }
 
-    const fotosRastreamento = fotos?.rastreamento ?? [];
-    if (fotosRastreamento.length > 0) {
-      addFaixaAzul(doc, y, "Rastreamento do plano");
-      y += 12;
-      try {
-        let src = await loadImageAsBase64(fotosRastreamento[0]);
-        src = await ensurePngOrJpeg(src);
-        const dim = await getImageDimensions(src);
-        const { w: imgW, h: imgH } = fitImageDimensions(dim.w, dim.h, CONTENT_W, FOTO_MAX_SIZE);
-        const x = MARGIN_LEFT + (CONTENT_W - imgW) / 2;
-        doc.addImage(src, getImageFormat(src), x, y, imgW, imgH);
-        y += imgH + 5;
-      } catch (err) {
-        console.warn("Falha ao carregar foto rastreamento:", fotosRastreamento[0]?.slice?.(0, 50), err);
+    const itensFiscalizados = fotos?.itens_fiscalizados ?? [];
+    if (itensFiscalizados.length > 0) {
+      addFaixaAzul(doc, y, "Itens Fiscalizados");
+      y += 8 + 10; // altura da faixa (8mm) + espaço até tabela (10mm)
+      const tableTopY = y;
+
+      const getTurnoFromSetor = (setor: string): string => {
+        const s = String(setor ?? "").trim().replace(/\s+/g, "");
+        if (s.length >= 3) {
+          const t = s.charAt(2);
+          if (t === "1") return "1° turno";
+          if (t === "2") return "2° turno";
+          if (t === "3") return "3° turno";
+        }
+        return "--";
+      };
+
+      const ROW_H = 17; // altura da linha (11 +50% ≈ 17)
+      const colW = [22, 55, 35, 25, 55];
+      const headers = ["Item", "Serviço", "Proatividade", "Turno", "Observações"];
+      const tabelaW = Math.min(CONTENT_W, colW.reduce((a, b) => a + b, 0));
+      const scale = tabelaW / colW.reduce((a, b) => a + b, 0);
+      const adjColW = colW.map((w) => Math.floor(w * scale));
+
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(255, 255, 255);
+      doc.setFillColor(0, 48, 107);
+      doc.rect(MARGIN_LEFT, tableTopY, tabelaW, ROW_H + 2, "F");
+      let xH = MARGIN_LEFT;
+      headers.forEach((h, i) => {
+        doc.text(h, xH + adjColW[i] / 2, y + (ROW_H + 2) / 2, { align: "center", baseline: "middle" });
+        xH += adjColW[i];
+      });
+      y += ROW_H + 2;
+
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(0, 0, 0);
+      const servicoNome = bfs.tipo_servico ?? "--";
+      const centerCols = [0, 1, 2, 3]; // Item, Serviço, Proatividade, Turno — centralizados
+
+      for (let idx = 0; idx < itensFiscalizados.length; idx++) {
+        const row = itensFiscalizados[idx];
+        const turno = row.turno?.trim() || getTurnoFromSetor(bfs.setor_resolvido ?? bfs.cnc_detalhes?.[0]?.setor ?? bfs.setor ?? "");
+        const cells = [
+          row.item?.trim() || "--",
+          servicoNome,
+          row.proatividade?.trim() || "--",
+          turno || "--",
+          row.observacoes?.trim() || "--",
+        ];
+        const corFundo = idx % 2 === 0 ? [248, 250, 252] : [255, 255, 255];
+        doc.setFillColor(corFundo[0], corFundo[1], corFundo[2]);
+        doc.rect(MARGIN_LEFT, y - 2, tabelaW, ROW_H, "F");
+        doc.setTextColor(0, 0, 0);
+
+        const cellTopY = y - 2;
+        const cellCenterY = cellTopY + ROW_H / 2;
+        let xC = MARGIN_LEFT;
+        for (let i = 0; i < cells.length; i++) {
+          const txt = doc.splitTextToSize(cells[i], adjColW[i] - 2);
+          const align = centerCols.includes(i) ? "center" : "left";
+          const cellCenterX = xC + adjColW[i] / 2;
+          doc.text(txt, align === "center" ? cellCenterX : xC + 2, cellCenterY, {
+            align: align as "left" | "center",
+            baseline: "middle",
+            maxWidth: adjColW[i] - 2,
+          });
+          xC += adjColW[i];
+        }
+        y += ROW_H;
       }
+
+      doc.setDrawColor(0, 48, 107);
+      doc.setLineWidth(0.3);
+      doc.rect(MARGIN_LEFT, tableTopY, tabelaW, y - tableTopY);
     }
   }
 
@@ -761,7 +827,7 @@ export async function gerarRelatorioContestacaoPDF(
       }
       if (drawnExec.length > 0) {
         const maxH = Math.max(...drawnExec.map((d) => d.h));
-        y += maxH + 4;
+        y += maxH + 5; // 5mm entre fotos e legenda
         doc.setFontSize(10);
         doc.setFont("helvetica", "bold");
         doc.setTextColor(0, 0, 0);
@@ -780,7 +846,14 @@ export async function gerarRelatorioContestacaoPDF(
     doc.setFont("helvetica", "normal");
     doc.setTextColor(0, 0, 0);
     const justificativa = fotos?.justificativa ?? "Justificativa a ser preenchida.";
-    doc.text(justificativa, MARGIN_LEFT, y, { maxWidth: CONTENT_W });
+    const lineHeightFactor = 1.3;
+    const lines = doc.splitTextToSize(justificativa, CONTENT_W);
+    const PT_TO_MM = 0.35278;
+    const lineHeight = 12 * PT_TO_MM * lineHeightFactor; // ~5.5mm por linha (font 12pt × 1.3)
+    for (let i = 0; i < lines.length; i++) {
+      doc.text(lines[i], MARGIN_LEFT, y);
+      y += lineHeight;
+    }
   }
 
   function addCapaFinal(doc: typeof pdf) {

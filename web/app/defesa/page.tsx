@@ -32,6 +32,7 @@ import {
   ImagePlus,
   X,
   ClipboardPaste,
+  Plus,
 } from "lucide-react";
 
 const STATUS_DEFESA_KEY = "flip_defesa_status";
@@ -39,11 +40,30 @@ const FOTOS_DEFESA_KEY = "flip_defesa_fotos";
 
 export type StatusDefesa = "Analisar" | "Irregular" | "Contestar";
 
+export interface ItemFiscalizado {
+  item: string;
+  proatividade: string;
+  turno?: string;
+  observacoes: string;
+}
+
 export interface FotosContestar {
   agente_sub: string[];
-  rastreamento: string[];
+  itens_fiscalizados: ItemFiscalizado[];
   nosso_agente: string[];
   justificativa?: string;
+}
+
+/** Extrai turno do setor (ex: ST10304VJ0060 -> "1" = 1° turno). 1=1° turno, 2=2° turno, 3=3° turno. */
+function getTurnoFromSetor(setor: string): string {
+  const s = String(setor ?? "").trim().replace(/\s+/g, "");
+  if (s.length >= 3) {
+    const t = s.charAt(2);
+    if (t === "1") return "1° turno";
+    if (t === "2") return "2° turno";
+    if (t === "3") return "3° turno";
+  }
+  return "";
 }
 
 function getFotosStorage(): Record<string, FotosContestar> {
@@ -150,6 +170,7 @@ function FotoInputZone({
   label,
   hint,
   single = false,
+  landscape = false,
 }: {
   images: string[];
   onChange: (imgs: string[]) => void;
@@ -157,6 +178,7 @@ function FotoInputZone({
   label: string;
   hint?: string;
   single?: boolean;
+  landscape?: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -210,10 +232,18 @@ function FotoInputZone({
     <div className="space-y-3">
       <label className="text-base font-semibold text-foreground">{label}</label>
       {hint && <p className="text-sm text-muted-foreground/90">{hint}</p>}
-      <div className="flex flex-wrap gap-4">
+      <div className={landscape ? "flex flex-col gap-3" : "flex flex-wrap gap-4"}>
         {images.map((img, i) => (
-          <div key={i} className="relative group">
-            <img src={img} alt="" className="w-28 h-28 object-cover rounded-xl border-2 border-emerald-200 dark:border-emerald-800 shadow-sm" />
+          <div key={i} className={`relative group ${landscape ? "w-full max-w-md" : ""}`}>
+            <img
+              src={img}
+              alt=""
+              className={
+                landscape
+                  ? "w-full aspect-video object-contain rounded-xl border-2 border-emerald-200 dark:border-emerald-800 shadow-sm"
+                  : "w-28 h-28 object-cover rounded-xl border-2 border-emerald-200 dark:border-emerald-800 shadow-sm"
+              }
+            />
             <button
               type="button"
               onClick={() => removeImage(i)}
@@ -225,7 +255,7 @@ function FotoInputZone({
         ))}
         {images.length < maxCount && (
           <div
-            className={`w-32 h-32 rounded-xl border-2 border-dashed flex flex-col items-center justify-center cursor-pointer transition-all ${
+            className={`${landscape ? "w-full max-w-md aspect-video" : "w-32 h-32"} rounded-xl border-2 border-dashed flex flex-col items-center justify-center cursor-pointer transition-all ${
               isDragging
                 ? "border-emerald-500 bg-emerald-100 dark:bg-emerald-900/40 scale-105 shadow-md"
                 : "border-muted-foreground/40 hover:border-emerald-400 hover:bg-emerald-50/70 dark:hover:bg-emerald-950/40 hover:shadow-md"
@@ -343,7 +373,7 @@ export default function DefesaPage() {
   const [downloadLoading, setDownloadLoading] = useState(false);
   const [modalContestarOpen, setModalContestarOpen] = useState(false);
   const [contestarBfsId, setContestarBfsId] = useState<string | null>(null);
-  const [fotosContestarDraft, setFotosContestarDraft] = useState<FotosContestar>({ agente_sub: [], rastreamento: [], nosso_agente: [], justificativa: "" });
+  const [fotosContestarDraft, setFotosContestarDraft] = useState<FotosContestar>({ agente_sub: [], itens_fiscalizados: [], nosso_agente: [], justificativa: "" });
   const [confirmExcluirFotosOpen, setConfirmExcluirFotosOpen] = useState(false);
   const [pendingStatusChange, setPendingStatusChange] = useState<StatusDefesa | null>(null);
   const [pendingBfsId, setPendingBfsId] = useState<string | null>(null);
@@ -449,7 +479,15 @@ export default function DefesaPage() {
     if (newStatus === "Contestar") {
       setContestarBfsId(bfsId);
       const existing = getFotosForBfs(bfsId);
-      setFotosContestarDraft(existing ?? { agente_sub: [], rastreamento: [], nosso_agente: [], justificativa: "" });
+      const migrated = existing
+        ? {
+            agente_sub: existing.agente_sub ?? [],
+            itens_fiscalizados: existing.itens_fiscalizados ?? [],
+            nosso_agente: existing.nosso_agente ?? [],
+            justificativa: existing.justificativa ?? "",
+          }
+        : { agente_sub: [], itens_fiscalizados: [], nosso_agente: [], justificativa: "" };
+      setFotosContestarDraft(migrated);
       setModalContestarOpen(true);
       return;
     }
@@ -487,7 +525,7 @@ export default function DefesaPage() {
       setStatusDefesa(bfsId, "Contestar");
       setModalContestarOpen(false);
       setContestarBfsId(null);
-      setFotosContestarDraft({ agente_sub: [], rastreamento: [], nosso_agente: [], justificativa: "" });
+      setFotosContestarDraft({ agente_sub: [], itens_fiscalizados: [], nosso_agente: [], justificativa: "" });
     } catch (err) {
       console.error("Erro ao enviar fotos para o Firebase:", err);
     } finally {
@@ -970,7 +1008,7 @@ export default function DefesaPage() {
                 {/* BFS Contestado - fotos salvas */}
                 {getStatusDefesa(selectedBFS.id) === "Contestar" && (() => {
                   const fotos = getFotosForBfs(selectedBFS.id);
-                  const hasFotos = fotos && (fotos.agente_sub.length > 0 || fotos.rastreamento.length > 0 || fotos.nosso_agente.length > 0);
+                  const hasFotos = fotos && (fotos.agente_sub.length > 0 || (fotos.itens_fiscalizados?.length ?? 0) > 0 || fotos.nosso_agente.length > 0);
                   if (!hasFotos) return null;
                   return (
                     <div className="rounded-xl border-2 border-emerald-500/50 bg-emerald-50/30 dark:bg-emerald-950/20 p-6 space-y-4">
@@ -989,10 +1027,33 @@ export default function DefesaPage() {
                             </div>
                           </div>
                         )}
-                        {fotos!.rastreamento.length > 0 && (
-                          <div>
-                            <p className="text-xs font-medium text-muted-foreground mb-2">Rastreamento do plano</p>
-                            <img src={fotos!.rastreamento[0]} alt="" className="w-full max-w-40 h-24 object-cover rounded-lg border" />
+                        {(fotos!.itens_fiscalizados?.length ?? 0) > 0 && (
+                          <div className="col-span-full">
+                            <p className="text-xs font-medium text-muted-foreground mb-2">Itens Fiscalizados</p>
+                            <div className="overflow-x-auto rounded-lg border">
+                              <table className="w-full text-sm">
+                                <thead>
+                                  <tr className="bg-muted/50">
+                                    <th className="px-3 py-2 text-left font-semibold">Item</th>
+                                    <th className="px-3 py-2 text-left font-semibold">Serviço</th>
+                                    <th className="px-3 py-2 text-left font-semibold">Proatividade</th>
+                                    <th className="px-3 py-2 text-left font-semibold">Turno</th>
+                                    <th className="px-3 py-2 text-left font-semibold">Observações</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {fotos!.itens_fiscalizados!.map((row, i) => (
+                                    <tr key={i} className="border-t border-border">
+                                      <td className="px-3 py-2">{row.item || "—"}</td>
+                                      <td className="px-3 py-2 text-muted-foreground">{selectedBFS?.tipo_servico || "—"}</td>
+                                      <td className="px-3 py-2">{row.proatividade || "—"}</td>
+                                      <td className="px-3 py-2">{row.turno || "—"}</td>
+                                      <td className="px-3 py-2">{row.observacoes || "—"}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
                           </div>
                         )}
                         {fotos!.nosso_agente.length > 0 && (
@@ -1132,15 +1193,15 @@ export default function DefesaPage() {
         </Dialog>
 
         {/* Modal Contestar - Fotos */}
-        <Dialog open={modalContestarOpen} onOpenChange={(open) => { setModalContestarOpen(open); if (!open) { setFotosContestarDraft({ agente_sub: [], rastreamento: [], nosso_agente: [], justificativa: "" }); setContestarBfsId(null); } }}>
-          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto gap-6 p-8">
+        <Dialog open={modalContestarOpen} onOpenChange={(open) => { setModalContestarOpen(open); if (!open) { setFotosContestarDraft({ agente_sub: [], itens_fiscalizados: [], nosso_agente: [], justificativa: "" }); setContestarBfsId(null); } }}>
+          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto gap-6 p-8">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <FileCheck className="h-5 w-5 text-emerald-500" />
-                Contestar BFS {contestarBfsId ? bfss.find((b) => b.id === contestarBfsId)?.bfs : selectedBFS?.bfs} — Adicionar fotos
+                Contestar BFS {contestarBfsId ? bfss.find((b) => b.id === contestarBfsId)?.bfs : selectedBFS?.bfs} — Dados da contestação
               </DialogTitle>
               <DialogDescription>
-                Preencha as fotos necessárias para a contestação. Você pode arrastar, selecionar ou colar imagens (Ctrl+V).
+                Preencha as fotos e os itens fiscalizados. Você pode arrastar, selecionar ou colar imagens (Ctrl+V).
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-6">
@@ -1150,14 +1211,118 @@ export default function DefesaPage() {
                 onChange={(imgs) => setFotosContestarDraft((p) => ({ ...p, agente_sub: imgs }))}
                 maxCount={2}
               />
-              <FotoInputZone
-                label="Foto do Rastreamento do plano"
-                images={fotosContestarDraft.rastreamento}
-                onChange={(imgs) => setFotosContestarDraft((p) => ({ ...p, rastreamento: imgs }))}
-                maxCount={1}
-                single
-                hint="Formato retangular, estilo paisagem (landscape)."
-              />
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-base font-semibold text-foreground">Itens Fiscalizados</label>
+                  <button
+                    type="button"
+                    onClick={() => setFotosContestarDraft((p) => ({
+                      ...p,
+                      itens_fiscalizados: [...(p.itens_fiscalizados ?? []), {
+                        item: "",
+                        proatividade: "",
+                        turno: getTurnoFromSetor(contestarBfsId ? bfss.find((b) => b.id === contestarBfsId)?.setor_resolvido ?? bfss.find((b) => b.id === contestarBfsId)?.cnc_detalhes?.[0]?.setor ?? "" : selectedBFS?.setor_resolvido ?? selectedBFS?.cnc_detalhes?.[0]?.setor ?? selectedBFS?.setor ?? "") || "",
+                        observacoes: "",
+                      }],
+                    }))}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg border border-emerald-500/50 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Adicionar item
+                  </button>
+                </div>
+                <div className="overflow-x-auto rounded-lg border border-border">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-muted/60">
+                        <th className="px-3 py-2.5 text-left font-semibold">Item</th>
+                        <th className="px-3 py-2.5 text-left font-semibold">Serviço</th>
+                        <th className="px-3 py-2.5 text-left font-semibold">Proatividade</th>
+                        <th className="px-3 py-2.5 text-left font-semibold">Turno</th>
+                        <th className="px-3 py-2.5 text-left font-semibold">Observações</th>
+                        <th className="w-10 px-1" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(fotosContestarDraft.itens_fiscalizados?.length ?? 0) === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="px-3 py-6 text-center text-muted-foreground">
+                            Nenhum item. Clique em &quot;Adicionar item&quot; para incluir.
+                          </td>
+                        </tr>
+                      ) : (
+                        fotosContestarDraft.itens_fiscalizados!.map((row, i) => (
+                          <tr key={i} className="border-t border-border hover:bg-muted/20">
+                            <td className="px-3 py-2 align-top">
+                              <Input
+                                value={row.item}
+                                onChange={(e) => setFotosContestarDraft((p) => {
+                                  const next = [...(p.itens_fiscalizados ?? [])];
+                                  next[i] = { ...next[i], item: e.target.value };
+                                  return { ...p, itens_fiscalizados: next };
+                                })}
+                                placeholder="Ex: Item 1"
+                                className="h-8 text-sm"
+                              />
+                            </td>
+                            <td className="px-3 py-2 align-top text-muted-foreground min-w-[180px]">
+                              {contestarBfsId ? bfss.find((b) => b.id === contestarBfsId)?.tipo_servico ?? "—" : selectedBFS?.tipo_servico ?? "—"}
+                            </td>
+                            <td className="px-3 py-2 align-top">
+                              <Input
+                                value={row.proatividade}
+                                onChange={(e) => setFotosContestarDraft((p) => {
+                                  const next = [...(p.itens_fiscalizados ?? [])];
+                                  next[i] = { ...next[i], proatividade: e.target.value };
+                                  return { ...p, itens_fiscalizados: next };
+                                })}
+                                placeholder="Proatividade"
+                                className="h-8 text-sm"
+                              />
+                            </td>
+                            <td className="px-3 py-2 align-top">
+                              <Input
+                                value={row.turno ?? ""}
+                                onChange={(e) => setFotosContestarDraft((p) => {
+                                  const next = [...(p.itens_fiscalizados ?? [])];
+                                  next[i] = { ...next[i], turno: e.target.value };
+                                  return { ...p, itens_fiscalizados: next };
+                                })}
+                                placeholder="1° turno, 2° turno..."
+                                className="h-8 text-sm w-28"
+                              />
+                            </td>
+                            <td className="px-3 py-2 align-top">
+                              <Input
+                                value={row.observacoes ?? ""}
+                                onChange={(e) => setFotosContestarDraft((p) => {
+                                  const next = [...(p.itens_fiscalizados ?? [])];
+                                  next[i] = { ...next[i], observacoes: e.target.value };
+                                  return { ...p, itens_fiscalizados: next };
+                                })}
+                                placeholder="Observações"
+                                className="h-8 text-sm"
+                              />
+                            </td>
+                            <td className="px-1 py-2 align-top">
+                              <button
+                                type="button"
+                                onClick={() => setFotosContestarDraft((p) => ({
+                                  ...p,
+                                  itens_fiscalizados: (p.itens_fiscalizados ?? []).filter((_, idx) => idx !== i),
+                                }))}
+                                className="p-1.5 rounded-md text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors"
+                              >
+                                <X className="h-4 w-4" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
               <FotoInputZone
                 label="Foto do Nosso agente (finalização)"
                 images={fotosContestarDraft.nosso_agente}
@@ -1165,13 +1330,13 @@ export default function DefesaPage() {
                 maxCount={2}
               />
               <div className="space-y-2">
-                <label className="text-sm font-semibold">Justificativa Técnica</label>
+                <label className="text-base font-semibold">Justificativa Técnica</label>
                 <textarea
                   value={fotosContestarDraft.justificativa ?? ""}
                   onChange={(e) => setFotosContestarDraft((p) => ({ ...p, justificativa: e.target.value }))}
                   placeholder="Descreva a justificativa técnica para contestação desta BFS..."
-                  className="w-full min-h-[100px] px-3 py-2 rounded-lg border border-input bg-background text-sm resize-y"
-                  rows={4}
+                  className="w-full min-h-[120px] px-3 py-2.5 rounded-lg border border-input bg-background text-sm resize-y leading-relaxed"
+                  rows={5}
                 />
               </div>
             </div>
@@ -1254,15 +1419,6 @@ export default function DefesaPage() {
                     onChange={(e) => setRelatorioPeriodo((p) => ({ ...p, periodo_final: e.target.value }))}
                   />
                 </div>
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-muted-foreground">Nº do Contrato (opcional)</label>
-                <Input
-                  type="text"
-                  placeholder="Ex: 123456"
-                  value={relatorioContratoNumero}
-                  onChange={(e) => setRelatorioContratoNumero(e.target.value)}
-                />
               </div>
             </div>
             <div className="flex flex-wrap justify-end gap-3 pt-2">

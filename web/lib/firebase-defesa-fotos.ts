@@ -18,7 +18,7 @@ function isDataUrl(str: string): boolean {
 
 export interface FotosContestar {
   agente_sub: string[];
-  rastreamento: string[];
+  itens_fiscalizados: { item: string; proatividade: string; turno?: string; observacoes: string }[];
   nosso_agente: string[];
 }
 
@@ -47,13 +47,12 @@ export async function uploadFotosToStorage(bfsId: string, fotos: FotosContestar)
     return urls;
   };
 
-  const [agente_sub, rastreamento, nosso_agente] = await Promise.all([
+  const [agente_sub, nosso_agente] = await Promise.all([
     uploadOne("agente_sub"),
-    uploadOne("rastreamento"),
     uploadOne("nosso_agente"),
   ]);
 
-  return { agente_sub, rastreamento, nosso_agente };
+  return { agente_sub, itens_fiscalizados: fotos.itens_fiscalizados ?? [], nosso_agente };
 }
 
 export async function deleteFotosFromStorage(bfsId: string): Promise<void> {
