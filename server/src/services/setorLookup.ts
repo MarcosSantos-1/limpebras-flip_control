@@ -6,6 +6,13 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { regionalToSigla } from "../constants/regionais.js";
+import { FREQUENCIAS } from "../constants/ipt.js";
+
+/** Converte código de frequência (ex: "500", "0500") para descrição legível (ex: "Quinzenal - 2x/Mês"). */
+function frequenciaParaExibicao(raw: string): string {
+  const code4 = String(raw ?? "").trim().padStart(4, "0").slice(-4);
+  return FREQUENCIAS[code4] ?? raw;
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -33,15 +40,20 @@ let indexCache: IndexEntry[] | null = null;
  * Ordem: mais específico primeiro.
  */
 const TIPO_SERVICO_TO_KEYS: Array<{ pattern: RegExp | string; keys: string[] }> = [
+  { pattern: /equipe\s+para\s+varri/i, keys: ["VP"] },
   { pattern: /varri[cç]ao\s+manual|varrição manual/i, keys: ["VJ_VL"] },
   { pattern: /varri[cç]ao\s+mecanizada|varrição mecanizada/i, keys: ["VJ_VL"] },
+  { pattern: /varri[cç]ao\s+de\s+p[oó]s\s+feiras|varrição de pós feiras/i, keys: ["LF"] },
+  { pattern: /lavagem\s+e\s+desinfec[cç][aã]o.*p[oó]s\s+feiras|lavagem.*p[oó]s feiras/i, keys: ["LF"] },
   { pattern: /varri[cç]ao/i, keys: ["VJ_VL"] },
   { pattern: /mutir[aã]o|mutirão/i, keys: ["MT_ESC"] },
-  { pattern: /lavagem/i, keys: ["LE", "LF", "BL"] },
-  { pattern: /bueiro|desobstru[cç]ao/i, keys: ["LE", "LF"] },
+  { pattern: /lavagem\s+especial|lavagem especial/i, keys: ["LE"] },
+  { pattern: /lavagem\s+de\s+vias\s+p[oó]s\s+feiras|lavagem de vias pós feiras/i, keys: ["LF"] },
+  { pattern: /lavagem/i, keys: ["LE", "LF"] },
+  { pattern: /bueiro|desobstru[cç][aã]o/i, keys: ["BL"] },
   { pattern: /cata-bagulho|volumoso|entulho/i, keys: ["GO"] },
   { pattern: /ecoponto/i, keys: ["NH"] },
-  { pattern: /pev|ponto de entrega/i, keys: ["PV", "VP"] },
+  { pattern: /pev|ponto de entrega volunt[aá]ria/i, keys: ["PV"] },
   { pattern: /zeladoria/i, keys: ["MT_ESC"] },
 ];
 
@@ -109,7 +121,7 @@ export function findSetorByCoords(
   if (!best) return null;
   return {
     setor: best.setor,
-    frequencia: best.frequencia,
+    frequencia: frequenciaParaExibicao(best.frequencia),
     cronograma: best.cronograma,
     service: best.service,
   };

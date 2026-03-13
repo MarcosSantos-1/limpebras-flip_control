@@ -185,7 +185,7 @@ export const cncRoutes: FastifyPluginAsync = async (fastify) => {
           return {
             ...item,
             cnc_detalhes: cncs,
-            setor_resolvido: setorResolvido?.setor ?? null,
+            setor_resolvido: setorResolvido ? setorResolvido.setor : "Sem Setor",
             frequencia_resolvida: setorResolvido?.frequencia ?? null,
             cronograma_resolvido: setorResolvido?.cronograma ?? null,
           };

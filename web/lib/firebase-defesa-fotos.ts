@@ -20,6 +20,7 @@ export interface FotosContestar {
   agente_sub: string[];
   itens_fiscalizados: { item: string; proatividade: string; turno?: string; observacoes: string }[];
   nosso_agente: string[];
+  setor_override?: string | null;
 }
 
 async function uploadImage(bfsId: string, section: string, index: number, dataUrl: string): Promise<string> {
@@ -52,7 +53,12 @@ export async function uploadFotosToStorage(bfsId: string, fotos: FotosContestar)
     uploadOne("nosso_agente"),
   ]);
 
-  return { agente_sub, itens_fiscalizados: fotos.itens_fiscalizados ?? [], nosso_agente };
+  return {
+    agente_sub,
+    itens_fiscalizados: fotos.itens_fiscalizados ?? [],
+    nosso_agente,
+    setor_override: fotos.setor_override ?? undefined,
+  };
 }
 
 export async function deleteFotosFromStorage(bfsId: string): Promise<void> {

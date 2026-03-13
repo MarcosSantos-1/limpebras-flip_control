@@ -93,8 +93,9 @@ export function parseSetor(setor: string): ParsedSetor | null {
  * Nunca exibir "Não informado" — sempre usar este mapeamento quando disponível.
  */
 export const SERVICO_POR_CODIGO: Record<string, string> = {
-  MT: "Equipe de mutirão de zeladoria de vias e logradouros públicos",
+  MT: "Equipe de Mutirão de Zeladoria de Vias e Logradouros Públicos",
   BL: "Limpeza e desobstrução de bueiros, bocas de lobo e bocas de leão",
+  LF: "Lavagem de vias pós feiras livres",
   NH: "Limpeza de áreas externas e internas de núcleos habitacionais de difícil acesso",
   LE: "Lavagem especial de equipamentos públicos",
   GO: "Coleta de grandes objetos (cata-bagulho)",

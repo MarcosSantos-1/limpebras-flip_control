@@ -63,6 +63,32 @@ export interface FotosContestarBfs {
   itens_fiscalizados?: ItemFiscalizadoBfs[];
   nosso_agente: string[];
   justificativa?: string;
+  setor_override?: string | null;
+}
+
+/** Retorna true se o serviço é MT, BL ou GO (usa cronograma reduzido a 2 datas). */
+function isServicoCronogramaReduzido(tipoServico: string | undefined): boolean {
+  const t = (tipoServico || "").toLowerCase();
+  return /mutir[aã]o|bueiro|desobstru|cata-bagulho|volumoso|entulho/i.test(t);
+}
+
+/** Retorna as 2 datas do cronograma mais próximas de hoje. Formato: "01/09/2025; 16/12/2025; ..." */
+function cronogramaProximas2(cronograma: string | undefined | null): string {
+  if (!cronograma?.trim()) return "";
+  const partes = cronograma.split(";").map((d) => d.trim()).filter(Boolean);
+  if (partes.length <= 2) return cronograma.trim();
+  const hoje = new Date();
+  hoje.setHours(0, 0, 0, 0);
+  const parsed = partes
+    .map((s) => {
+      const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+      if (!m) return null;
+      const d = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+      return isValid(d) ? { str: s, d, dist: Math.abs(d.getTime() - hoje.getTime()) } : null;
+    })
+    .filter((x): x is NonNullable<typeof x> => x != null);
+  parsed.sort((a, b) => a.dist - b.dist);
+  return parsed.slice(0, 2).map((x) => x.str).join("; ");
 }
 
 function hexToRgb(hex: string): [number, number, number] {
@@ -648,7 +674,23 @@ export async function gerarRelatorioContestacaoPDF(
     y += 6;
     doc.text(`Serviço: ${bfs.tipo_servico ?? "--"}`, MARGIN, y);
     y += 6;
-    doc.text(`Setor: ${bfs.setor_resolvido ?? cnc?.setor ?? bfs.setor ?? "--"}  |  Cronograma (do setor): ${bfs.cronograma_resolvido ?? "--"}`, MARGIN, y);
+    const setorDisplay = fotos?.setor_override !== undefined
+      ? (fotos.setor_override ?? "Sem Setor")
+      : (bfs.setor_resolvido ?? cnc?.setor ?? bfs.setor ?? "--");
+    const cronoParaExibir = setorDisplay === "Sem Setor"
+      ? "--"
+      : (isServicoCronogramaReduzido(bfs.tipo_servico)
+        ? cronogramaProximas2(bfs.cronograma_resolvido ?? "")
+        : (bfs.cronograma_resolvido ?? "--"));
+    if (setorDisplay === "Sem Setor") {
+      doc.setTextColor(255, 0, 0);
+      doc.setFont("helvetica", "bold");
+    }
+    doc.text(`Setor: ${setorDisplay}  |  Cronograma (do setor): ${cronoParaExibir}`, MARGIN, y);
+    if (setorDisplay === "Sem Setor") {
+      doc.setTextColor(0, 0, 0);
+      doc.setFont("helvetica", "normal");
+    }
     y += 6;
     doc.setTextColor(r3, g3, b3);
     doc.text(`Data Registro: ${safeFormatDateTime(bfs.data_abertura)}`, MARGIN, y);
@@ -734,7 +776,10 @@ export async function gerarRelatorioContestacaoPDF(
 
       for (let idx = 0; idx < itensFiscalizados.length; idx++) {
         const row = itensFiscalizados[idx];
-        const turno = row.turno?.trim() || getTurnoFromSetor(bfs.setor_resolvido ?? bfs.cnc_detalhes?.[0]?.setor ?? bfs.setor ?? "");
+        const setorParaTurno = fotos?.setor_override !== undefined
+          ? (fotos.setor_override ?? "")
+          : (bfs.setor_resolvido ?? bfs.cnc_detalhes?.[0]?.setor ?? bfs.setor ?? "");
+        const turno = row.turno?.trim() || getTurnoFromSetor(setorParaTurno);
         const cells = [
           row.item?.trim() || "--",
           servicoNome,

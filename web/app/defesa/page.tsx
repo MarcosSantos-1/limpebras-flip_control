@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { apiService } from "@/lib/api";
 import { uploadFotosToStorage, deleteFotosFromStorage } from "@/lib/firebase-defesa-fotos";
-import { format, startOfMonth, endOfMonth } from "date-fns";
+import { format, startOfMonth, endOfMonth, isValid } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
   Select,
@@ -52,6 +52,55 @@ export interface FotosContestar {
   itens_fiscalizados: ItemFiscalizado[];
   nosso_agente: string[];
   justificativa?: string;
+  setor_override?: string | null;
+}
+
+/** Retorna true se o serviço é MT, BL ou GO (usa cronograma reduzido a 2 datas). */
+function isServicoCronogramaReduzido(tipoServico: string | undefined): boolean {
+  const t = (tipoServico || "").toLowerCase();
+  return /mutir[aã]o|bueiro|desobstru|cata-bagulho|volumoso|entulho/.test(t);
+}
+
+/** Retorna as 2 datas do cronograma mais próximas de hoje. Formato: "01/09/2025; 16/12/2025; ..." */
+function cronogramaProximas2(cronograma: string | undefined | null): string {
+  if (!cronograma?.trim()) return "";
+  const partes = cronograma.split(";").map((d) => d.trim()).filter(Boolean);
+  if (partes.length <= 2) return cronograma.trim();
+  const hoje = new Date();
+  hoje.setHours(0, 0, 0, 0);
+  const parsed = partes
+    .map((s) => {
+      const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+      if (!m) return null;
+      const d = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+      return isValid(d) ? { str: s, d, dist: Math.abs(d.getTime() - hoje.getTime()) } : null;
+    })
+    .filter((x): x is NonNullable<typeof x> => x != null);
+  parsed.sort((a, b) => a.dist - b.dist);
+  return parsed.slice(0, 2).map((x) => x.str).join("; ");
+}
+
+/** Retorna o setor efetivo: fotos.setor_override ou o setor do BFS. */
+function getSetorParaExibir(
+  bfs: { setor_resolvido?: string | null; cnc_detalhes?: { setor?: string }[]; setor?: string } | undefined,
+  fotos: { setor_override?: string | null } | undefined
+): string {
+  const override = fotos?.setor_override;
+  if (override !== undefined) return override ?? "Sem Setor";
+  return bfs?.setor_resolvido ?? bfs?.cnc_detalhes?.[0]?.setor ?? bfs?.setor ?? "—";
+}
+
+/** Retorna o cronograma efetivo: vazio se Sem Setor; 2 datas mais próximas para MT/BL/GO. */
+function getCronogramaParaExibir(
+  bfs: { setor_resolvido?: string | null; cnc_detalhes?: { setor?: string }[]; setor?: string; cronograma_resolvido?: string | null; tipo_servico?: string } | undefined,
+  fotos: { setor_override?: string | null } | undefined
+): string {
+  const setor = getSetorParaExibir(bfs, fotos);
+  if (setor === "Sem Setor" || !setor?.trim()) return "";
+  const crono = bfs?.cronograma_resolvido?.trim();
+  if (!crono) return "";
+  if (isServicoCronogramaReduzido(bfs?.tipo_servico)) return cronogramaProximas2(crono);
+  return crono;
 }
 
 /** Extrai turno do setor (ex: ST10304VJ0060 -> "1" = 1° turno). 1=1° turno, 2=2° turno, 3=3° turno. */
@@ -396,6 +445,19 @@ export default function DefesaPage() {
     return `${inicio} → ${fim}`;
   }, [filters.periodo_inicial, filters.periodo_final]);
 
+  const tipoServicoOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const opts: string[] = [];
+    for (const b of bfss) {
+      const ts = (b.tipo_servico || "").trim();
+      if (ts && !seen.has(ts)) {
+        seen.add(ts);
+        opts.push(ts);
+      }
+    }
+    return opts.sort((a, b) => a.localeCompare(b, "pt-BR"));
+  }, [bfss]);
+
   const bfssFiltered = useMemo(() => {
     const getStatus = (b: BFSDefesa) => statusDefesaMap[b.id] ?? "Analisar";
     if (filters.status_defesa === "todos") return bfss;
@@ -485,8 +547,9 @@ export default function DefesaPage() {
             itens_fiscalizados: existing.itens_fiscalizados ?? [],
             nosso_agente: existing.nosso_agente ?? [],
             justificativa: existing.justificativa ?? "",
+            setor_override: existing.setor_override ?? undefined,
           }
-        : { agente_sub: [], itens_fiscalizados: [], nosso_agente: [], justificativa: "" };
+        : { agente_sub: [], itens_fiscalizados: [], nosso_agente: [], justificativa: "", setor_override: undefined };
       setFotosContestarDraft(migrated);
       setModalContestarOpen(true);
       return;
@@ -521,11 +584,15 @@ export default function DefesaPage() {
     setContestarSalvando(true);
     try {
       const fotosComUrls = await uploadFotosToStorage(bfsId, fotosContestarDraft);
-      setFotosStorage(bfsId, { ...fotosComUrls, justificativa: fotosContestarDraft.justificativa });
+      setFotosStorage(bfsId, {
+        ...fotosComUrls,
+        justificativa: fotosContestarDraft.justificativa,
+        setor_override: fotosContestarDraft.setor_override ?? undefined,
+      });
       setStatusDefesa(bfsId, "Contestar");
       setModalContestarOpen(false);
       setContestarBfsId(null);
-      setFotosContestarDraft({ agente_sub: [], itens_fiscalizados: [], nosso_agente: [], justificativa: "" });
+      setFotosContestarDraft({ agente_sub: [], itens_fiscalizados: [], nosso_agente: [], justificativa: "", setor_override: undefined });
     } catch (err) {
       console.error("Erro ao enviar fotos para o Firebase:", err);
     } finally {
@@ -816,14 +883,11 @@ export default function DefesaPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="todos">Todos</SelectItem>
-                    <SelectItem value="Varrição manual">Varrição manual</SelectItem>
-                    <SelectItem value="Varrição mecanizada">Varrição mecanizada</SelectItem>
-                    <SelectItem value="Lavagem">Lavagem</SelectItem>
-                    <SelectItem value="Mutirão">Mutirão</SelectItem>
-                    <SelectItem value="Bueiros">Bueiros</SelectItem>
-                    <SelectItem value="Cata-Bagulho">Cata-Bagulho</SelectItem>
-                    <SelectItem value="Ecoponto">Ecoponto</SelectItem>
-                    <SelectItem value="PEV">PEV</SelectItem>
+                    {tipoServicoOptions.map((ts) => (
+                      <SelectItem key={ts} value={ts}>
+                        {ts.length > 50 ? `${ts.slice(0, 47)}...` : ts}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -879,7 +943,16 @@ export default function DefesaPage() {
                               </button>
                             </td>
                             <td className="px-6 py-4 font-medium font-mono text-primary">{bfs.bfs}</td>
-                            <td className="px-6 py-4 font-medium">{bfs.setor_resolvido || cnc?.setor || bfs.setor || "—"}</td>
+                            <td className="px-6 py-4 font-medium">
+                              {(() => {
+                                const setor = getSetorParaExibir(bfs, getFotosForBfs(bfs.id));
+                                return setor === "Sem Setor" ? (
+                                  <span className="text-red-600 dark:text-red-400 font-semibold">Sem Setor</span>
+                                ) : (
+                                  setor
+                                );
+                              })()}
+                            </td>
                             <td className="px-6 py-4">
                               <span
                                 className={`inline-flex items-center justify-center min-w-20 h-7 px-2.5 text-xs font-semibold rounded-full ${getStatusDefesaColor(statusDefesa)}`}
@@ -929,11 +1002,14 @@ export default function DefesaPage() {
                                   <div><strong>Data Registro:</strong> {bfs.data_abertura ? format(new Date(bfs.data_abertura), "dd/MM/yyyy HH:mm") : "—"}</div>
                                   <div><strong>Data vistoria:</strong> {bfs.data_vistoria ? format(new Date(bfs.data_vistoria), "dd/MM/yyyy HH:mm") : "—"}</div>
                                   <div><strong>Subprefeitura:</strong> {bfs.subprefeitura || "—"}</div>
-                                  <div><strong>Setor:</strong> {bfs.setor_resolvido || cnc?.setor || bfs.setor || "—"}</div>
-                                  {(bfs.frequencia_resolvida || bfs.cronograma_resolvido) && (
+                                  <div><strong>Setor:</strong>{(() => {
+                                    const s = getSetorParaExibir(bfs, getFotosForBfs(bfs.id));
+                                    return s === "Sem Setor" ? <span className="text-red-600 dark:text-red-400 font-semibold">Sem Setor</span> : ` ${s}`;
+                                  })()}</div>
+                                  {(bfs.frequencia_resolvida || getCronogramaParaExibir(bfs, getFotosForBfs(bfs.id))) && (
                                     <>
                                       <div><strong>Frequência:</strong> {bfs.frequencia_resolvida || "—"}</div>
-                                      <div className="md:col-span-2"><strong>Cronograma:</strong> {bfs.cronograma_resolvido || "—"}</div>
+                                      <div className="md:col-span-2"><strong>Cronograma:</strong> {getCronogramaParaExibir(bfs, getFotosForBfs(bfs.id)) || "—"}</div>
                                     </>
                                   )}
                                   <div className="md:col-span-3"><strong>Endereço:</strong> {bfs.endereco || "—"}</div>
@@ -1101,7 +1177,9 @@ export default function DefesaPage() {
                     <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
                       <Hash className="h-3.5 w-3.5" /> Setor
                     </label>
-                    <p className="text-sm font-mono">{selectedBFS.setor_resolvido || selectedBFS.cnc_detalhes?.[0]?.setor || selectedBFS.setor || "—"}</p>
+                    <p className={`text-sm font-mono ${getSetorParaExibir(selectedBFS, selectedBFS ? getFotosForBfs(selectedBFS.id) : undefined) === "Sem Setor" ? "text-red-600 dark:text-red-400 font-semibold" : ""}`}>
+                      {getSetorParaExibir(selectedBFS, selectedBFS ? getFotosForBfs(selectedBFS.id) : undefined)}
+                    </p>
                   </div>
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
@@ -1119,10 +1197,10 @@ export default function DefesaPage() {
                       <p className="text-sm">{selectedBFS.frequencia_resolvida}</p>
                     </div>
                   )}
-                  {selectedBFS.cronograma_resolvido && (
+                  {getCronogramaParaExibir(selectedBFS, selectedBFS ? getFotosForBfs(selectedBFS.id) : undefined) && (
                     <div className="col-span-2 space-y-1.5">
                       <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Cronograma (do setor)</label>
-                      <p className="text-sm">{selectedBFS.cronograma_resolvido}</p>
+                      <p className="text-sm">{getCronogramaParaExibir(selectedBFS, selectedBFS ? getFotosForBfs(selectedBFS.id) : undefined)}</p>
                     </div>
                   )}
                 </div>
@@ -1193,7 +1271,7 @@ export default function DefesaPage() {
         </Dialog>
 
         {/* Modal Contestar - Fotos */}
-        <Dialog open={modalContestarOpen} onOpenChange={(open) => { setModalContestarOpen(open); if (!open) { setFotosContestarDraft({ agente_sub: [], itens_fiscalizados: [], nosso_agente: [], justificativa: "" }); setContestarBfsId(null); } }}>
+        <Dialog open={modalContestarOpen} onOpenChange={(open) => { setModalContestarOpen(open); if (!open) { setFotosContestarDraft({ agente_sub: [], itens_fiscalizados: [], nosso_agente: [], justificativa: "", setor_override: undefined }); setContestarBfsId(null); } }}>
           <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto gap-6 p-8">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
@@ -1211,6 +1289,33 @@ export default function DefesaPage() {
                 onChange={(imgs) => setFotosContestarDraft((p) => ({ ...p, agente_sub: imgs }))}
                 maxCount={2}
               />
+              <div className="space-y-2">
+                <label className="text-base font-semibold">Setor no relatório</label>
+                <div className="flex gap-2 items-center">
+                  <Input
+                    value={
+                      fotosContestarDraft.setor_override !== undefined
+                        ? fotosContestarDraft.setor_override ?? "Sem Setor"
+                        : (contestarBfsId
+                          ? bfss.find((b) => b.id === contestarBfsId)?.setor_resolvido ?? bfss.find((b) => b.id === contestarBfsId)?.cnc_detalhes?.[0]?.setor ?? bfss.find((b) => b.id === contestarBfsId)?.setor ?? ""
+                          : selectedBFS?.setor_resolvido ?? selectedBFS?.cnc_detalhes?.[0]?.setor ?? selectedBFS?.setor ?? "")
+                    }
+                    onChange={(e) => setFotosContestarDraft((p) => ({ ...p, setor_override: e.target.value || null }))}
+                    placeholder="Ex: ST10304VJ0060"
+                    className="flex-1"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setFotosContestarDraft((p) => ({ ...p, setor_override: "Sem Setor" }))}
+                    className="px-3 py-2 text-sm font-medium rounded-lg border border-amber-500/50 bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/40"
+                  >
+                    SEM SETOR
+                  </button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Edite o setor exibido no relatório e na tabela. &quot;Sem Setor&quot; oculta o cronograma.
+                </p>
+              </div>
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <label className="text-base font-semibold text-foreground">Itens Fiscalizados</label>
@@ -1221,7 +1326,11 @@ export default function DefesaPage() {
                       itens_fiscalizados: [...(p.itens_fiscalizados ?? []), {
                         item: "",
                         proatividade: "",
-                        turno: getTurnoFromSetor(contestarBfsId ? bfss.find((b) => b.id === contestarBfsId)?.setor_resolvido ?? bfss.find((b) => b.id === contestarBfsId)?.cnc_detalhes?.[0]?.setor ?? "" : selectedBFS?.setor_resolvido ?? selectedBFS?.cnc_detalhes?.[0]?.setor ?? selectedBFS?.setor ?? "") || "",
+                        turno: getTurnoFromSetor(
+                          fotosContestarDraft.setor_override !== undefined
+                            ? (fotosContestarDraft.setor_override ?? "")
+                            : (contestarBfsId ? bfss.find((b) => b.id === contestarBfsId)?.setor_resolvido ?? bfss.find((b) => b.id === contestarBfsId)?.cnc_detalhes?.[0]?.setor ?? bfss.find((b) => b.id === contestarBfsId)?.setor ?? "" : selectedBFS?.setor_resolvido ?? selectedBFS?.cnc_detalhes?.[0]?.setor ?? selectedBFS?.setor ?? "")
+                        ) || "",
                         observacoes: "",
                       }],
                     }))}
