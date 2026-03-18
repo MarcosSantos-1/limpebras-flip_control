@@ -35,6 +35,7 @@ async function uploadImage(bfsId: string, section: string, index: number, dataUr
 export async function uploadFotosToStorage(bfsId: string, fotos: FotosContestar): Promise<FotosContestar> {
   const uploadOne = async (section: keyof FotosContestar): Promise<string[]> => {
     const arr = fotos[section];
+    if (!Array.isArray(arr)) return [];
     const urls: string[] = [];
     for (let i = 0; i < arr.length; i++) {
       const item = arr[i];
