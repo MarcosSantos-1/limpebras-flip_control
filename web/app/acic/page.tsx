@@ -1,74 +1,108 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { MainLayout } from "@/components/layout/main-layout";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { apiService } from "@/lib/api";
-import { format, subDays } from "date-fns";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import { Input } from "@/components/ui/input"
+import { format, startOfMonth, isValid } from "date-fns";
+import { Input } from "@/components/ui/input";
+import { ShieldCheck, Clock, DollarSign, Archive, Ban } from "lucide-react";
+
+/** Formata número no padrão BR: R$ 1.234,56 */
+function formatBr(valor: number): string {
+  if (valor <= 0 || isNaN(valor)) return "R$ 0,00";
+  const [int, dec] = valor.toFixed(2).split(".");
+  const intFormatted = int.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  return `R$ ${intFormatted},${dec}`;
+}
+
+/** Parse input BR (R$ 1.234,56 / 1.234,56 / 1234,56) para número */
+function parseBrInput(s: string): number {
+  const t = String(s ?? "").trim().replace(/\s/g, "").replace(/R\$/gi, "");
+  const normalized = t.replace(/\./g, "").replace(",", ".");
+  const n = parseFloat(normalized);
+  return isNaN(n) ? 0 : Math.max(0, n);
+}
+
+/** Normaliza campos do ACIC (CSV pode vir com N_ACIC, N_BFS, etc.) */
+function getAcicField(acic: Record<string, unknown>, ...keys: string[]): string | undefined {
+  for (const k of keys) {
+    const v = acic[k] ?? acic[k.toLowerCase()];
+    if (v != null && String(v).trim()) return String(v).trim();
+  }
+  return undefined;
+}
+
+function getAcicNum(acic: Record<string, unknown>, ...keys: string[]): number {
+  const v = getAcicField(acic, ...keys);
+  if (!v) return 0;
+  const n = parseFloat(String(v).replace(",", "."));
+  return isNaN(n) ? 0 : n;
+}
+
+/** Formata data FLIP (dd/MM/yyyy HH:mm or dd/MM/yyyy) de forma segura. */
+function formatAcicDate(s: string | undefined): string {
+  if (!s?.trim()) return "—";
+  const t = s.trim();
+  const m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+  if (!m) return t;
+  const [, d, mo, y, h, min, sec] = m;
+  const date = new Date(Number(y), Number(mo) - 1, Number(d), h ? Number(h) : 0, min ? Number(min) : 0, sec ? Number(sec) : 0);
+  if (!isValid(date)) return t;
+  return format(date, "dd/MM/yyyy HH:mm");
+}
+
+type FiltroRegistro = "todos" | "defesa" | "em_aberto" | "valor" | "sem_recurso";
 
 interface ACIC {
   id: string;
-  n_acic: string;
-  n_bfs?: string;
-  n_cnc?: string;
-  status?: string;
-  data_fiscalizacao?: string;
-  data_sincronizacao?: string;
-  data_execucao?: string;
-  data_acic?: string;
-  data_confirmacao?: string;
-  servico?: string;
-  responsavel?: string;
-  agente_fiscalizador?: string;
-  contratada?: string;
-  regional?: string;
-  area?: string;
-  setor?: string;
-  turno?: string;
-  descricao?: string;
-  valor_multa?: number;
-  clausula_contratual?: string;
-  observacao?: string;
-  endereco?: string;
+  [key: string]: unknown;
 }
 
 export default function ACICPage() {
   const [acics, setAcics] = useState<ACIC[]>([]);
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(0);
+  const [defesaMap, setDefesaMap] = useState<Record<string, boolean>>({});
+  const [semRecursoMap, setSemRecursoMap] = useState<Record<string, boolean>>({});
+  const [valorMap, setValorMap] = useState<Record<string, number>>({});
+  const hoje = new Date();
   const [filters, setFilters] = useState({
-    status: "todos",
-    subprefeitura: "todas",
-    periodo_inicial: format(subDays(new Date(), 30), "yyyy-MM-dd"),
-    periodo_final: format(new Date(), "yyyy-MM-dd"),
+    registro: "todos" as FiltroRegistro,
+    periodo_inicial: format(startOfMonth(hoje), "yyyy-MM-dd"),
+    periodo_final: format(hoje, "yyyy-MM-dd"),
   });
 
   useEffect(() => {
     loadACICs();
-  }, [filters]);
+  }, [filters.periodo_inicial, filters.periodo_final]);
 
   const loadACICs = async () => {
     try {
       setLoading(true);
-      // Preparar filtros para API
-      const apiFilters: any = {};
-      
-      if (filters.status && filters.status !== "todos") apiFilters.status = filters.status;
-      if (filters.subprefeitura && filters.subprefeitura !== "todas") apiFilters.subprefeitura = filters.subprefeitura;
-      if (filters.periodo_inicial) apiFilters.periodo_inicial = filters.periodo_inicial;
-      if (filters.periodo_final) apiFilters.periodo_final = filters.periodo_final;
-      
-      const data = await apiService.getACICs(apiFilters);
-      setAcics(data.items || []);
-      setTotal(data.total || 0);
+      const data = await apiService.getACICs({
+        periodo_inicial: filters.periodo_inicial,
+        periodo_final: filters.periodo_final,
+      });
+      const items = data.items || [];
+      setAcics(items);
+      setTotal(items.length);
+
+      const defesa: Record<string, boolean> = {};
+      const semRecurso: Record<string, boolean> = {};
+      const valor: Record<string, number> = {};
+      for (const a of items) {
+        const n = getAcicField(a, "N_ACIC", "n_acic") ?? "";
+        if (n) {
+          defesa[n] = Boolean((a as { _defesa?: boolean })._defesa);
+          semRecurso[n] = Boolean((a as { _sem_recurso?: boolean })._sem_recurso);
+          const v = (a as { _valor_override?: number | null })._valor_override;
+          if (v != null && Number(v) > 0) valor[n] = Number(v);
+        }
+      }
+      setDefesaMap(defesa);
+      setSemRecursoMap(semRecurso);
+      setValorMap(valor);
     } catch (error) {
       console.error("Erro ao carregar ACICs:", error);
       setAcics([]);
@@ -78,128 +112,220 @@ export default function ACICPage() {
     }
   };
 
+  const toggleDefesa = async (nAcic: string) => {
+    const next = !defesaMap[nAcic];
+    setDefesaMap((prev) => ({ ...prev, [nAcic]: next }));
+    try {
+      await apiService.updateACICOverride(nAcic, { defesa: next });
+    } catch (e) {
+      console.error("Erro ao salvar defesa:", e);
+      setDefesaMap((prev) => ({ ...prev, [nAcic]: !next }));
+    }
+  };
+
+  const toggleSemRecurso = async (nAcic: string) => {
+    const next = !semRecursoMap[nAcic];
+    setSemRecursoMap((prev) => ({ ...prev, [nAcic]: next }));
+    try {
+      await apiService.updateACICOverride(nAcic, { sem_recurso: next });
+    } catch (e) {
+      console.error("Erro ao salvar sem recurso:", e);
+      setSemRecursoMap((prev) => ({ ...prev, [nAcic]: !next }));
+    }
+  };
+
+  const getValorForAcic = (acic: ACIC, nAcic: string): number => {
+    const override = valorMap[nAcic];
+    if (override !== undefined && override > 0) return override;
+    return getAcicNum(acic, "Valor_Multa", "valor_multa");
+  };
+
+  const setValorForAcic = async (nAcic: string, valor: number) => {
+    setValorMap((prev) => ({ ...prev, [nAcic]: valor }));
+    try {
+      await apiService.updateACICOverride(nAcic, { valor: valor > 0 ? valor : null });
+    } catch (e) {
+      console.error("Erro ao salvar valor:", e);
+    }
+  };
+
+  const acicsFiltered = useMemo(() => {
+    return acics.filter((acic) => {
+      const nAcic = getAcicField(acic, "N_ACIC", "n_acic") ?? "";
+      const status = (getAcicField(acic, "Status", "status") ?? "").toLowerCase();
+      const valor = getValorForAcic(acic, nAcic);
+      const temDefesa = defesaMap[nAcic];
+      const temSemRecurso = semRecursoMap[nAcic];
+      const emAberto = status.includes("solicitacao") || status.includes("solicitação");
+
+      switch (filters.registro) {
+        case "defesa":
+          return temDefesa;
+        case "em_aberto":
+          return emAberto;
+        case "valor":
+          return valor > 0;
+        case "sem_recurso":
+          return temSemRecurso;
+        default:
+          return true;
+      }
+    });
+  }, [acics, filters.registro, defesaMap, semRecursoMap, valorMap]);
+
+  const totalMultas = useMemo(() => {
+    return acicsFiltered.reduce((sum, acic) => {
+      const nAcic = getAcicField(acic, "N_ACIC", "n_acic") ?? "";
+      return sum + getValorForAcic(acic, nAcic);
+    }, 0);
+  }, [acicsFiltered, valorMap]);
+
+  const stats = useMemo(() => {
+    return {
+      defesa: acics.filter((a) => defesaMap[getAcicField(a, "N_ACIC", "n_acic") ?? ""]).length,
+      emAberto: acics.filter((a) => {
+        const s = (getAcicField(a, "Status", "status") ?? "").toLowerCase();
+        return s.includes("solicitacao") || s.includes("solicitação");
+      }).length,
+      valor: acics.filter((a) => {
+        const n = getAcicField(a, "N_ACIC", "n_acic") ?? "";
+        const v = valorMap[n] ?? getAcicNum(a, "Valor_Multa", "valor_multa");
+        return v > 0;
+      }).length,
+      semRecurso: acics.filter((a) => semRecursoMap[getAcicField(a, "N_ACIC", "n_acic") ?? ""]).length,
+    };
+  }, [acics, defesaMap, semRecursoMap, valorMap]);
+
   const getStatusColor = (status?: string) => {
     if (!status) return "bg-zinc-100 text-zinc-800 dark:bg-zinc-900 dark:text-zinc-200";
-    const colors: Record<string, string> = {
-      "Confirmado": "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300 border-green-200 dark:border-green-800",
-      "Solicitacao": "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300 border-yellow-200 dark:border-yellow-800",
-      "Cancelado": "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300 border-red-200 dark:border-red-800",
-    };
-    return colors[status] || "bg-zinc-100 text-zinc-800 dark:bg-zinc-900 dark:text-zinc-200";
+    const s = status.toLowerCase();
+    if (s.includes("confirmado")) return "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300 border-green-200 dark:border-green-800";
+    if (s.includes("solicitacao") || s.includes("solicitação")) return "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300 border-yellow-200 dark:border-yellow-800";
+    if (s.includes("autuado")) return "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300 border-red-200 dark:border-red-800";
+    if (s.includes("arquivado")) return "bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200";
+    if (s.includes("cancelado")) return "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300";
+    return "bg-zinc-100 text-zinc-800 dark:bg-zinc-900 dark:text-zinc-200";
   };
 
   return (
     <MainLayout>
       <div className="space-y-8">
-        <div className="relative overflow-hidden rounded-xl bg-linear-to-r from-red-600/10 via-red-600/5 to-transparent p-8 border border-red-200/50 dark:border-red-800/50">
-          <div className="absolute top-0 right-0 -mt-4 -mr-4 w-32 h-32 bg-red-600/10 rounded-full blur-3xl"></div>
+        <div className="relative overflow-hidden rounded-xl bg-linear-to-r from-amber-600/10 via-amber-600/5 to-transparent p-8 border border-amber-200/50 dark:border-amber-800/50">
+          <div className="absolute top-0 right-0 -mt-4 -mr-4 w-32 h-32 bg-amber-600/10 rounded-full blur-3xl" />
           <div className="relative">
-            <h1 className="text-4xl font-bold tracking-tight bg-linear-to-r from-red-600 to-rose-500 bg-clip-text text-transparent pb-2">ACICs</h1>
+            <h1 className="text-4xl font-bold tracking-tight bg-linear-to-r from-amber-600 to-amber-500 bg-clip-text text-transparent pb-2">
+              Histórico de ACICs
+            </h1>
             <p className="text-muted-foreground mt-2 text-lg max-w-2xl">
-              Atas de Confirmação de Irregularidades - Registros confirmados de não conformidade.
+              Autos de Constatação de Irregularidade da Contratada — Registro para histórico: defesa apresentada, em aberto, valor e sem recurso.
             </p>
           </div>
         </div>
 
-        {/* Contador e Estatísticas */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Card className="hover:shadow-md transition-all duration-200 border-l-4 border-l-primary">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Total de ACICs</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-4xl font-bold text-primary">{total}</div>
-              <p className="text-xs text-muted-foreground mt-1">
-                Total de registros no sistema
-              </p>
-            </CardContent>
-          </Card>
-          <Card className="hover:shadow-md transition-all duration-200 border-l-4 border-l-muted">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Exibindo</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-4xl font-bold text-muted-foreground">{acics.length}</div>
-              <p className="text-xs text-muted-foreground mt-1">
-                Registros com filtros aplicados
-              </p>
-            </CardContent>
-          </Card>
-          <Card className="hover:shadow-md transition-all duration-200 border-l-4 border-l-green-500">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Confirmados</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-4xl font-bold text-green-600 dark:text-green-400">
-                {acics.filter(a => a.status === "Confirmado").length}
+        {/* Total de multas (padrão BR) */}
+        <Card className="border-l-4 border-l-red-500 bg-red-50/50 dark:bg-red-950/20">
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Total de multas (filtro atual)</p>
+                <p className="text-3xl font-bold text-red-700 dark:text-red-400 mt-1">{formatBr(totalMultas)}</p>
               </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                ACICs confirmadas
-              </p>
-            </CardContent>
-          </Card>
-          <Card className="hover:shadow-md transition-all duration-200 border-l-4 border-l-red-500">
+              <DollarSign className="w-12 h-12 text-red-400/50" />
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Cards de estatísticas por tipo de registro */}
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          <Card
+            className={`cursor-pointer transition-all hover:shadow-md border-l-4 ${
+              filters.registro === "todos" ? "border-l-primary ring-2 ring-primary/20" : "border-l-muted"
+            }`}
+            onClick={() => setFilters({ ...filters, registro: "todos" })}
+          >
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Com Multa</CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+                <Archive className="w-4 h-4" /> Todos
+              </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-4xl font-bold text-red-600 dark:text-red-400">
-                {acics.filter(a => a.valor_multa && Number(a.valor_multa) > 0).length}
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                ACICs com multa aplicada
-              </p>
+              <div className="text-2xl font-bold">{total}</div>
+              <p className="text-xs text-muted-foreground mt-1">Registros no período</p>
+            </CardContent>
+          </Card>
+          <Card
+            className={`cursor-pointer transition-all hover:shadow-md border-l-4 ${
+              filters.registro === "defesa" ? "border-l-emerald-500 ring-2 ring-emerald-500/20" : "border-l-muted"
+            }`}
+            onClick={() => setFilters({ ...filters, registro: "defesa" })}
+          >
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4" /> Defesa
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{stats.defesa}</div>
+              <p className="text-xs text-muted-foreground mt-1">Apresentamos defesa</p>
+            </CardContent>
+          </Card>
+          <Card
+            className={`cursor-pointer transition-all hover:shadow-md border-l-4 ${
+              filters.registro === "em_aberto" ? "border-l-amber-500 ring-2 ring-amber-500/20" : "border-l-muted"
+            }`}
+            onClick={() => setFilters({ ...filters, registro: "em_aberto" })}
+          >
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+                <Clock className="w-4 h-4" /> Em aberto
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-amber-600 dark:text-amber-400">{stats.emAberto}</div>
+              <p className="text-xs text-muted-foreground mt-1">Solicitação</p>
+            </CardContent>
+          </Card>
+          <Card
+            className={`cursor-pointer transition-all hover:shadow-md border-l-4 ${
+              filters.registro === "valor" ? "border-l-red-500 ring-2 ring-red-500/20" : "border-l-muted"
+            }`}
+            onClick={() => setFilters({ ...filters, registro: "valor" })}
+          >
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+                <DollarSign className="w-4 h-4" /> Valor
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-red-600 dark:text-red-400">{stats.valor}</div>
+              <p className="text-xs text-muted-foreground mt-1">Com multa registrada</p>
+            </CardContent>
+          </Card>
+          <Card
+            className={`cursor-pointer transition-all hover:shadow-md border-l-4 ${
+              filters.registro === "sem_recurso" ? "border-l-red-600 ring-2 ring-red-600/20" : "border-l-muted"
+            }`}
+            onClick={() => setFilters({ ...filters, registro: "sem_recurso" })}
+          >
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+                <Ban className="w-4 h-4" /> Sem Recurso
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-red-600 dark:text-red-400">{stats.semRecurso}</div>
+              <p className="text-xs text-muted-foreground mt-1">autuados</p>
             </CardContent>
           </Card>
         </div>
 
-        {/* Filtros */}
+        {/* Filtros de período */}
         <Card className="overflow-hidden border-none shadow-sm bg-muted/30">
           <CardHeader className="pb-4">
-            <CardTitle className="text-base font-medium flex items-center gap-2">
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-filter"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
-              Filtros Avançados
-            </CardTitle>
+            <CardTitle className="text-base font-medium">Período</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Status</label>
-                <Select
-                  value={filters.status}
-                  onValueChange={(value) => setFilters({ ...filters, status: value })}
-                >
-                  <SelectTrigger className="bg-background">
-                    <SelectValue placeholder="Todos" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="todos">Todos</SelectItem>
-                    <SelectItem value="Confirmado">Confirmado</SelectItem>
-                    <SelectItem value="Solicitacao">Solicitação</SelectItem>
-                    <SelectItem value="Cancelado">Cancelado</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              
-              <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Subprefeitura</label>
-                <Select
-                  value={filters.subprefeitura}
-                  onValueChange={(value) => setFilters({ ...filters, subprefeitura: value })}
-                >
-                  <SelectTrigger className="bg-background">
-                    <SelectValue placeholder="Todas" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="todas">Todas</SelectItem>
-                    <SelectItem value="Santana/Tucuruvi">Santana/Tucuruvi</SelectItem>
-                    <SelectItem value="Casa Verde/Cachoeirinha">Casa Verde/Cachoeirinha</SelectItem>
-                    <SelectItem value="Jaçanã/Tremembé">Jaçanã/Tremembé</SelectItem>
-                    <SelectItem value="Vila Maria/Vila Guilherme">Vila Maria/Vila Guilherme</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-1">
                 <label className="text-xs font-medium text-muted-foreground">Início</label>
                 <Input
@@ -209,7 +335,6 @@ export default function ACICPage() {
                   className="bg-background"
                 />
               </div>
-              
               <div className="space-y-1">
                 <label className="text-xs font-medium text-muted-foreground">Fim</label>
                 <Input
@@ -226,95 +351,149 @@ export default function ACICPage() {
         {/* Lista de ACICs */}
         {loading ? (
           <div className="p-12 text-center text-muted-foreground animate-pulse">Carregando...</div>
-        ) : acics.length === 0 ? (
+        ) : acicsFiltered.length === 0 ? (
           <div className="p-12 text-center text-muted-foreground flex flex-col items-center gap-2">
-            <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-file-x text-muted-foreground/50"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="m14.5 12.5-5 5"/><path d="m9.5 12.5 5 5"/></svg>
+            <Archive className="w-12 h-12 text-muted-foreground/50" />
             <p>Nenhuma ACIC encontrada com os filtros atuais</p>
           </div>
         ) : (
           <div className="grid gap-4">
-            {acics.map((acic) => (
-              <Card key={acic.id} className="hover:shadow-md transition-all duration-200 hover:border-primary/20">
-                <CardContent className="p-6">
-                  <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 mb-4">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-3 mb-2">
-                        <h3 className="text-lg font-bold font-mono text-primary">
-                          ACIC: {acic.n_acic || "N/A"}
-                        </h3>
-                        {acic.status && (
-                          <span className={`px-2.5 py-0.5 text-xs font-medium rounded-full border bg-opacity-10 border-opacity-20 ${getStatusColor(acic.status)}`}>
-                            {acic.status}
-                          </span>
-                        )}
-                      </div>
-                      
-                      <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
-                        {acic.n_bfs && (
-                          <span className="flex items-center gap-1 bg-muted/50 px-2 py-0.5 rounded">
-                            <span className="font-medium">BFS:</span> {acic.n_bfs}
-                          </span>
-                        )}
-                        {acic.n_cnc && (
-                          <span className="flex items-center gap-1 bg-muted/50 px-2 py-0.5 rounded">
-                            <span className="font-medium">CNC:</span> {acic.n_cnc}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2 text-sm">
-                    {acic.endereco && (
-                      <div className="md:col-span-2 flex items-start gap-2 text-muted-foreground mb-2">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-map-pin mt-0.5 shrink-0"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
-                        <span>{acic.endereco}</span>
-                      </div>
-                    )}
-                    
-                    {acic.servico && (
-                      <div className="flex justify-between border-b border-dashed border-border/50 py-1">
-                        <span className="text-muted-foreground">Serviço:</span>
-                        <span className="font-medium text-right">{acic.servico}</span>
-                      </div>
-                    )}
-                    {acic.area && (
-                      <div className="flex justify-between border-b border-dashed border-border/50 py-1">
-                        <span className="text-muted-foreground">Área:</span>
-                        <span className="font-medium text-right">{acic.area}</span>
-                      </div>
-                    )}
-                    {acic.agente_fiscalizador && (
-                      <div className="flex justify-between border-b border-dashed border-border/50 py-1">
-                        <span className="text-muted-foreground">Fiscal:</span>
-                        <span className="font-medium text-right">{acic.agente_fiscalizador}</span>
-                      </div>
-                    )}
-                    {acic.valor_multa && Number(acic.valor_multa) > 0 && (
-                      <div className="flex justify-between border-b border-dashed border-border/50 py-1">
-                        <span className="text-muted-foreground">Multa:</span>
-                        <span className="font-bold text-red-600 dark:text-red-400">R$ {Number(acic.valor_multa).toFixed(2)}</span>
-                      </div>
-                    )}
-                    {acic.data_acic && (
-                      <div className="flex justify-between border-b border-dashed border-border/50 py-1">
-                        <span className="text-muted-foreground">Data:</span>
-                        <span className="font-medium text-right">{format(new Date(acic.data_acic), "dd/MM/yyyy HH:mm")}</span>
-                      </div>
-                    )}
-                  </div>
+            {acicsFiltered.map((acic) => {
+              const nAcic = getAcicField(acic, "N_ACIC", "n_acic") ?? "N/A";
+              const nBfs = getAcicField(acic, "N_BFS", "n_bfs");
+              const nCnc = getAcicField(acic, "N_CNC", "n_cnc");
+              const status = getAcicField(acic, "Status", "status");
+              const valor = getValorForAcic(acic, nAcic);
+              const temDefesa = defesaMap[nAcic];
+              const temSemRecurso = semRecursoMap[nAcic];
+              const endereco = getAcicField(acic, "Endereco", "endereco");
+              const servico = getAcicField(acic, "Servico", "servico");
+              const area = getAcicField(acic, "Area", "area");
+              const agente = getAcicField(acic, "Agente_Fiscalizador", "agente_fiscalizador");
+              const dataAcic = getAcicField(acic, "Data_ACIC", "data_acic");
+              const descricao = getAcicField(acic, "Descricao", "descricao");
 
-                  {acic.descricao && (
-                    <div className="mt-4 p-3 bg-muted/30 rounded-md text-xs border border-border/50">
-                      <p className="font-medium mb-1 text-muted-foreground uppercase tracking-wider text-[10px]">Descrição</p>
-                      <p className="text-foreground whitespace-pre-wrap leading-relaxed">
-                        {acic.descricao}
-                      </p>
+              return (
+                <Card key={acic.id} className="hover:shadow-md transition-all duration-200 hover:border-amber-200/50 dark:hover:border-amber-800/50">
+                  <CardContent className="p-6">
+                    <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 mb-4">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-3 mb-2 flex-wrap">
+                          <h3 className="text-lg font-bold font-mono text-primary">ACIC: {nAcic}</h3>
+                          {status && (
+                            <span className={`px-2.5 py-0.5 text-xs font-medium rounded-full border ${getStatusColor(status)}`}>
+                              {status}
+                            </span>
+                          )}
+                          {temDefesa && (
+                            <span className="px-2.5 py-0.5 text-xs font-medium rounded-full border bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800">
+                              Defesa
+                            </span>
+                          )}
+                          {temSemRecurso && (
+                            <span className="px-2.5 py-0.5 text-xs font-medium rounded-full border bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300 border-red-200 dark:border-red-800">
+                              Sem Recurso
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
+                          {nBfs && (
+                            <span className="flex items-center gap-1 bg-muted/50 px-2 py-0.5 rounded">
+                              <span className="font-medium">BFS:</span> {nBfs}
+                            </span>
+                          )}
+                          {nCnc && (
+                            <span className="flex items-center gap-1 bg-muted/50 px-2 py-0.5 rounded">
+                              <span className="font-medium">CNC:</span> {nCnc}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="shrink-0 flex flex-col gap-2">
+                        <button
+                          type="button"
+                          onClick={() => toggleDefesa(nAcic)}
+                          className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
+                            temDefesa
+                              ? "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-900/40 dark:text-emerald-300 dark:border-emerald-700"
+                              : "bg-muted/50 text-muted-foreground border-border hover:bg-muted"
+                          }`}
+                        >
+                          {temDefesa ? "✓ Defesa" : "+ Marcar defesa"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => toggleSemRecurso(nAcic)}
+                          className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
+                            temSemRecurso
+                              ? "bg-red-100 text-red-800 border-red-300 dark:bg-red-900/40 dark:text-red-300 dark:border-red-700"
+                              : "bg-muted/50 text-muted-foreground border-border hover:bg-muted hover:border-red-300"
+                          }`}
+                        >
+                          {temSemRecurso ? "✓ Sem Recurso" : "+ Sem Recurso"}
+                        </button>
+                      </div>
                     </div>
-                  )}
-                </CardContent>
-              </Card>
-            ))}
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2 text-sm">
+                      {endereco && (
+                        <div className="md:col-span-2 flex items-start gap-2 text-muted-foreground mb-2">
+                          <span className="shrink-0">📍</span>
+                          <span>{endereco}</span>
+                        </div>
+                      )}
+                      {servico && (
+                        <div className="flex justify-between border-b border-dashed border-border/50 py-1">
+                          <span className="text-muted-foreground">Serviço:</span>
+                          <span className="font-medium text-right">{servico}</span>
+                        </div>
+                      )}
+                      {area && (
+                        <div className="flex justify-between border-b border-dashed border-border/50 py-1">
+                          <span className="text-muted-foreground">Área:</span>
+                          <span className="font-medium text-right">{area}</span>
+                        </div>
+                      )}
+                      {agente && (
+                        <div className="flex justify-between border-b border-dashed border-border/50 py-1">
+                          <span className="text-muted-foreground">Fiscal:</span>
+                          <span className="font-medium text-right">{agente}</span>
+                        </div>
+                      )}
+                      <div className="flex flex-col gap-1 md:col-span-2">
+                        <label className="text-xs font-medium text-muted-foreground">Valor da multa</label>
+                        <Input
+                          type="text"
+                          inputMode="decimal"
+                          placeholder="0,00"
+                          value={valor > 0 ? formatBr(valor) : ""}
+                          onChange={(e) => {
+                            const n = parseBrInput(e.target.value);
+                            setValorForAcic(nAcic, n);
+                          }}
+                          className="bg-background max-w-[180px] font-mono font-bold text-red-600 dark:text-red-400"
+                        />
+                      </div>
+                      {dataAcic && (
+                        <div className="flex justify-between border-b border-dashed border-border/50 py-1">
+                          <span className="text-muted-foreground">Data:</span>
+                          <span className="font-medium text-right">
+                            {formatAcicDate(dataAcic)}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    {descricao && (
+                      <div className="mt-4 p-3 bg-muted/30 rounded-md text-xs border border-border/50">
+                        <p className="font-medium mb-1 text-muted-foreground uppercase tracking-wider text-[10px]">Descrição</p>
+                        <p className="text-foreground whitespace-pre-wrap leading-relaxed">{descricao}</p>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })}
           </div>
         )}
       </div>

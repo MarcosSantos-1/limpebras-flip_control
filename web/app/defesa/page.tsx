@@ -749,7 +749,7 @@ export default function DefesaPage() {
           <div className="absolute top-0 right-0 -mt-4 -mr-4 w-32 h-32 bg-violet-600/10 rounded-full blur-3xl" />
           <div className="relative">
             <h1 className="text-4xl font-bold tracking-tight bg-linear-to-r from-violet-600 to-purple-500 bg-clip-text text-transparent pb-2">
-              Defesa / Contestação
+              Defesa / Contestação (IF)
             </h1>
             <p className="text-muted-foreground mt-2 text-lg max-w-3xl">
               BFSs escalonados (Com irregularidade). Futura geração de relatórios de contestação.

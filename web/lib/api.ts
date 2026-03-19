@@ -199,7 +199,13 @@ export const apiService = {
     const { data } = await api.get(`/acic/${id}`);
     return data;
   },
-  
+
+  /** Atualiza override (defesa, sem_recurso, valor) de um ACIC. Persiste no backend - não é perdido ao reimportar. */
+  updateACICOverride: async (nAcic: string, payload: { defesa?: boolean; sem_recurso?: boolean; valor?: number | null }) => {
+    const { data } = await api.patch(`/acic/overrides/${encodeURIComponent(nAcic)}`, payload);
+    return data;
+  },
+
   // Upload
   uploadSACsCSV: async (file: File) => {
     const formData = new FormData();

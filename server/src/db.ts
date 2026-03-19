@@ -109,6 +109,16 @@ export async function runMigrations() {
     await client.query("ALTER TABLE acic ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()").catch(() => {});
 
     await client.query(`
+      CREATE TABLE IF NOT EXISTS acic_overrides (
+        n_acic TEXT PRIMARY KEY,
+        defesa BOOLEAN DEFAULT FALSE,
+        sem_recurso BOOLEAN DEFAULT FALSE,
+        valor NUMERIC DEFAULT NULL,
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    await client.query(`
       CREATE TABLE IF NOT EXISTS ipt_registros (
         id SERIAL PRIMARY KEY,
         periodo_inicial DATE NOT NULL,
