@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { apiService } from "@/lib/api";
 import { uploadFotosToStorage, deleteFotosFromStorage } from "@/lib/firebase-defesa-fotos";
+import { defesaStorageKey, firebaseDefesaFolderSegment } from "@/lib/defesa-storage-key";
 import { format, startOfMonth, endOfMonth, isValid } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
@@ -34,9 +35,6 @@ import {
   ClipboardPaste,
   Plus,
 } from "lucide-react";
-
-const STATUS_DEFESA_KEY = "flip_defesa_status";
-const FOTOS_DEFESA_KEY = "flip_defesa_fotos";
 
 export type StatusDefesa = "Analisar" | "Irregular" | "Contestar";
 
@@ -115,28 +113,6 @@ function getTurnoFromSetor(setor: string): string {
   return "";
 }
 
-function getFotosStorage(): Record<string, FotosContestar> {
-  if (typeof window === "undefined") return {};
-  try {
-    const s = localStorage.getItem(FOTOS_DEFESA_KEY);
-    return s ? JSON.parse(s) : {};
-  } catch {
-    return {};
-  }
-}
-
-function setFotosStorage(bfsId: string, fotos: FotosContestar) {
-  const map = getFotosStorage();
-  map[bfsId] = fotos;
-  localStorage.setItem(FOTOS_DEFESA_KEY, JSON.stringify(map));
-}
-
-function removeFotosStorage(bfsId: string) {
-  const map = getFotosStorage();
-  delete map[bfsId];
-  localStorage.setItem(FOTOS_DEFESA_KEY, JSON.stringify(map));
-}
-
 const STATUS_DEFESA_OPTIONS: {
   value: StatusDefesa;
   label: string;
@@ -167,22 +143,6 @@ const STATUS_DEFESA_OPTIONS: {
   },
 ];
 
-function getStatusDefesaStorage(): Record<string, StatusDefesa> {
-  if (typeof window === "undefined") return {};
-  try {
-    const s = localStorage.getItem(STATUS_DEFESA_KEY);
-    return s ? JSON.parse(s) : {};
-  } catch {
-    return {};
-  }
-}
-
-function setStatusDefesaStorage(bfsId: string, status: StatusDefesa) {
-  const map = getStatusDefesaStorage();
-  map[bfsId] = status;
-  localStorage.setItem(STATUS_DEFESA_KEY, JSON.stringify(map));
-}
-
 interface CncDetalhe {
   numero_cnc?: string;
   situacao_cnc?: string;
@@ -192,6 +152,12 @@ interface CncDetalhe {
   fiscal_contratada?: string;
   responsividade?: string;
   coordenada?: string;
+}
+
+/** Defesa/contestação persistida no banco (tabela bfs_defesa_state). */
+export interface DefesaTrabalhoPersistido {
+  status: StatusDefesa;
+  dados: FotosContestar | null;
 }
 
 interface BFSDefesa {
@@ -210,6 +176,25 @@ interface BFSDefesa {
   sem_irregularidade?: boolean;
   data_vistoria?: string;
   cnc_detalhes?: CncDetalhe[];
+  defesa_trabalho?: DefesaTrabalhoPersistido | null;
+}
+
+function getStatusDefesaForRow(b: BFSDefesa): StatusDefesa {
+  const s = b.defesa_trabalho?.status;
+  if (s === "Irregular" || s === "Contestar" || s === "Analisar") return s;
+  return "Analisar";
+}
+
+function getFotosDadosForRow(b: BFSDefesa): FotosContestar | undefined {
+  const d = b.defesa_trabalho?.dados;
+  if (!d || typeof d !== "object") return undefined;
+  return d as FotosContestar;
+}
+
+function rowMatchesSituacaoCncFilter(b: BFSDefesa, filtro: string): boolean {
+  if (filtro === "todas") return true;
+  if (filtro === "__sem_cnc__") return (b.cnc_detalhes?.length ?? 0) === 0;
+  return (b.cnc_detalhes ?? []).some((c) => (c.situacao_cnc ?? "").trim() === filtro);
 }
 
 function FotoInputZone({
@@ -405,11 +390,12 @@ export default function DefesaPage() {
       periodo_inicial: format(startOfMonth(now), "yyyy-MM-dd"),
       periodo_final: format(endOfMonth(now), "yyyy-MM-dd"),
       subprefeitura: "todas",
-      status_defesa: "analisar_contestar" as "todos" | "analisar_contestar" | StatusDefesa,
+      /** Padrão "todos" para não ocultar linhas em "Irregular" (ex.: CNC Autuado). */
+      status_defesa: "todos" as "todos" | "analisar_contestar" | StatusDefesa,
+      situacao_cnc: "todas",
       tipo_servico: "todos",
     };
   });
-  const [statusDefesaMap, setStatusDefesaMap] = useState<Record<string, StatusDefesa>>({});
   const [modalRelatorioOpen, setModalRelatorioOpen] = useState(false);
   const [relatorioPeriodo, setRelatorioPeriodo] = useState(() => {
     const now = new Date();
@@ -458,11 +444,27 @@ export default function DefesaPage() {
     return opts.sort((a, b) => a.localeCompare(b, "pt-BR"));
   }, [bfss]);
 
+  const situacaoCncOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const opts: string[] = [];
+    for (const b of bfss) {
+      for (const c of b.cnc_detalhes ?? []) {
+        const s = (c.situacao_cnc ?? "").trim();
+        if (s && !seen.has(s)) {
+          seen.add(s);
+          opts.push(s);
+        }
+      }
+    }
+    return opts.sort((a, b) => a.localeCompare(b, "pt-BR"));
+  }, [bfss]);
+
   const bfssFiltered = useMemo(() => {
-    const getStatus = (b: BFSDefesa) => statusDefesaMap[b.id] ?? "Analisar";
-    if (filters.status_defesa === "todos") return bfss;
+    const porSituacao = bfss.filter((b) => rowMatchesSituacaoCncFilter(b, filters.situacao_cnc));
+    const getStatus = (b: BFSDefesa) => getStatusDefesaForRow(b);
+    if (filters.status_defesa === "todos") return porSituacao;
     if (filters.status_defesa === "analisar_contestar") {
-      const filtered = bfss.filter((b) => {
+      const filtered = porSituacao.filter((b) => {
         const s = getStatus(b);
         return s === "Analisar" || s === "Contestar";
       });
@@ -474,8 +476,8 @@ export default function DefesaPage() {
         return 0;
       });
     }
-    return bfss.filter((b) => getStatus(b) === filters.status_defesa);
-  }, [bfss, filters.status_defesa, statusDefesaMap]);
+    return porSituacao.filter((b) => getStatus(b) === filters.status_defesa);
+  }, [bfss, filters.status_defesa, filters.situacao_cnc]);
 
   const totalFiltered = bfssFiltered.length;
 
@@ -495,25 +497,29 @@ export default function DefesaPage() {
       Contestar: { total: 0, comCnc: 0, semCnc: 0 },
     };
     for (const b of bfss) {
-      const status = statusDefesaMap[b.id] ?? "Analisar";
+      const status = getStatusDefesaForRow(b);
       byStatus[status].total++;
       const hasCnc = (b.cnc_detalhes?.length ?? 0) > 0;
       if (hasCnc) byStatus[status].comCnc++;
       else byStatus[status].semCnc++;
     }
     return byStatus;
-  }, [bfss, statusDefesaMap]);
+  }, [bfss]);
 
   const getStatusDefesaColor = (status: StatusDefesa) =>
     STATUS_DEFESA_OPTIONS.find((o) => o.value === status)?.color ?? "bg-muted text-muted-foreground";
 
   useEffect(() => {
-    setStatusDefesaMap(getStatusDefesaStorage());
-  }, []);
+    loadBFSs();
+  }, [filters.periodo_inicial, filters.periodo_final, filters.subprefeitura, filters.tipo_servico]);
 
   useEffect(() => {
-    loadBFSs();
-  }, [filters]);
+    setSelectedBFS((cur) => {
+      if (!cur) return null;
+      const fresh = bfss.find((x) => x.id === cur.id);
+      return fresh ?? cur;
+    });
+  }, [bfss]);
 
   useEffect(() => {
     if (modalRelatorioOpen) {
@@ -524,72 +530,109 @@ export default function DefesaPage() {
     }
   }, [modalRelatorioOpen, filters.periodo_inicial, filters.periodo_final]);
 
-  const getStatusDefesa = useCallback((bfsId: string): StatusDefesa => {
-    return statusDefesaMap[bfsId] ?? "Analisar";
-  }, [statusDefesaMap]);
-
-  const setStatusDefesa = useCallback((bfsId: string, status: StatusDefesa) => {
-    setStatusDefesaStorage(bfsId, status);
-    setStatusDefesaMap((prev) => ({ ...prev, [bfsId]: status }));
-    setSelectedBFS((current) => (current && current.id === bfsId ? { ...current } : current));
+  const applyDefesaTrabalhoToRow = useCallback((rowId: string, trabalho: DefesaTrabalhoPersistido | null) => {
+    setBfss((prev) => prev.map((x) => (x.id === rowId ? { ...x, defesa_trabalho: trabalho } : x)));
+    setSelectedBFS((cur) => (cur?.id === rowId ? { ...cur, defesa_trabalho: trabalho } : cur));
   }, []);
 
-  const getFotosForBfs = useCallback((bfsId: string) => getFotosStorage()[bfsId], []);
+  const setStatusDefesaForRow = useCallback(
+    async (b: BFSDefesa, status: StatusDefesa, dados?: FotosContestar | null) => {
+      const numero = defesaStorageKey(b);
+      const prevTrabalho = b.defesa_trabalho ?? null;
+      const payloadDados =
+        status === "Contestar"
+          ? dados !== undefined
+            ? dados
+            : ((prevTrabalho?.dados as FotosContestar | null) ?? null)
+          : null;
+      const optimistic: DefesaTrabalhoPersistido = { status, dados: payloadDados };
 
-  const handleStatusClick = useCallback((bfsId: string, newStatus: StatusDefesa) => {
-    const current = getStatusDefesa(bfsId);
-    if (newStatus === "Contestar") {
-      setContestarBfsId(bfsId);
-      const existing = getFotosForBfs(bfsId);
-      const migrated = existing
-        ? {
-            agente_sub: existing.agente_sub ?? [],
-            itens_fiscalizados: existing.itens_fiscalizados ?? [],
-            nosso_agente: existing.nosso_agente ?? [],
-            justificativa: existing.justificativa ?? "",
-            setor_override: existing.setor_override ?? undefined,
-          }
-        : { agente_sub: [], itens_fiscalizados: [], nosso_agente: [], justificativa: "", setor_override: undefined };
-      setFotosContestarDraft(migrated);
-      setModalContestarOpen(true);
-      return;
-    }
-    if (current === "Contestar") {
-      setPendingBfsId(bfsId);
-      setPendingStatusChange(newStatus);
-      setConfirmExcluirFotosOpen(true);
-      return;
-    }
-    setStatusDefesa(bfsId, newStatus);
-  }, [getStatusDefesa, getFotosForBfs]);
+      applyDefesaTrabalhoToRow(b.id, optimistic);
+      try {
+        const data = await apiService.updateDefesaBfs(numero, {
+          status_defesa: status,
+          dados_contestacao: status === "Contestar" ? payloadDados : null,
+        });
+        const t = data.defesa_trabalho;
+        if (t) {
+          applyDefesaTrabalhoToRow(b.id, {
+            status: t.status as StatusDefesa,
+            dados: (t.dados as FotosContestar) ?? null,
+          });
+        }
+      } catch (err) {
+        console.error(err);
+        applyDefesaTrabalhoToRow(b.id, prevTrabalho);
+        alert("Não foi possível salvar no servidor. Tente novamente.");
+      }
+    },
+    [applyDefesaTrabalhoToRow]
+  );
+
+  const handleStatusClick = useCallback(
+    (b: BFSDefesa, newStatus: StatusDefesa) => {
+      const k = defesaStorageKey(b);
+      const current = getStatusDefesaForRow(b);
+      if (newStatus === "Contestar") {
+        setContestarBfsId(k);
+        const existing = getFotosDadosForRow(b);
+        const migrated = existing
+          ? {
+              agente_sub: existing.agente_sub ?? [],
+              itens_fiscalizados: existing.itens_fiscalizados ?? [],
+              nosso_agente: existing.nosso_agente ?? [],
+              justificativa: existing.justificativa ?? "",
+              setor_override: existing.setor_override ?? undefined,
+            }
+          : { agente_sub: [], itens_fiscalizados: [], nosso_agente: [], justificativa: "", setor_override: undefined };
+        setFotosContestarDraft(migrated);
+        setModalContestarOpen(true);
+        return;
+      }
+      if (current === "Contestar") {
+        setPendingBfsId(k);
+        setPendingStatusChange(newStatus);
+        setConfirmExcluirFotosOpen(true);
+        return;
+      }
+      void setStatusDefesaForRow(b, newStatus, null);
+    },
+    [setStatusDefesaForRow]
+  );
 
   const confirmStatusChangeAndDeleteFotos = useCallback(async () => {
-    const bfsId = pendingBfsId ?? selectedBFS?.id;
-    if (!bfsId || !pendingStatusChange) return;
+    const row =
+      selectedBFS ??
+      (pendingBfsId ? bfss.find((x) => defesaStorageKey(x) === pendingBfsId || x.id === pendingBfsId) : null);
+    const storageKey = pendingBfsId ?? (row ? defesaStorageKey(row) : null);
+    if (!storageKey || !pendingStatusChange || !row) return;
+    const folderKeys = new Set<string>([storageKey, defesaStorageKey(row), row.id]);
     try {
-      await deleteFotosFromStorage(bfsId);
+      await deleteFotosFromStorage(...folderKeys);
     } catch (e) {
       console.warn("Erro ao excluir fotos do Firebase:", e);
     }
-    removeFotosStorage(bfsId);
-    setStatusDefesa(bfsId, pendingStatusChange);
+    await setStatusDefesaForRow(row, pendingStatusChange, null);
     setPendingStatusChange(null);
     setPendingBfsId(null);
     setConfirmExcluirFotosOpen(false);
-  }, [selectedBFS, pendingBfsId, pendingStatusChange, setStatusDefesa]);
+  }, [selectedBFS, pendingBfsId, pendingStatusChange, bfss, setStatusDefesaForRow]);
 
   const handleContestarSalvar = useCallback(async () => {
-    const bfsId = contestarBfsId ?? selectedBFS?.id;
-    if (!bfsId) return;
+    const row =
+      selectedBFS ??
+      (contestarBfsId ? bfss.find((x) => defesaStorageKey(x) === contestarBfsId) : null);
+    if (!row) return;
+    const folderSeg = firebaseDefesaFolderSegment(row.bfs, row.id);
     setContestarSalvando(true);
     try {
-      const fotosComUrls = await uploadFotosToStorage(bfsId, fotosContestarDraft);
-      setFotosStorage(bfsId, {
+      const fotosComUrls = await uploadFotosToStorage(folderSeg, fotosContestarDraft);
+      const dados: FotosContestar = {
         ...fotosComUrls,
         justificativa: fotosContestarDraft.justificativa,
         setor_override: fotosContestarDraft.setor_override ?? undefined,
-      });
-      setStatusDefesa(bfsId, "Contestar");
+      };
+      await setStatusDefesaForRow(row, "Contestar", dados);
       setModalContestarOpen(false);
       setContestarBfsId(null);
       setFotosContestarDraft({ agente_sub: [], itens_fiscalizados: [], nosso_agente: [], justificativa: "", setor_override: undefined });
@@ -598,7 +641,7 @@ export default function DefesaPage() {
     } finally {
       setContestarSalvando(false);
     }
-  }, [selectedBFS, contestarBfsId, fotosContestarDraft, setStatusDefesa]);
+  }, [selectedBFS, contestarBfsId, bfss, fotosContestarDraft, setStatusDefesaForRow]);
 
   const loadBFSs = async () => {
     try {
@@ -653,13 +696,17 @@ export default function DefesaPage() {
         apiService.getIndicadoresDetalhes(relatorioPeriodo.periodo_inicial, relatorioPeriodo.periodo_final),
       ]);
       const items = (dataDefesa.items || []) as BFSDefesa[];
-      const storage = getStatusDefesaStorage();
-      const fotosMap = getFotosStorage();
 
-      const bfssContestar = items.filter((b) => (storage[b.id] ?? "Analisar") === "Contestar");
+      const bfssContestar = items.filter((b) => getStatusDefesaForRow(b) === "Contestar");
       if (bfssContestar.length === 0) {
         alert("Nenhum BFS marcado como 'Contestar' no período selecionado. Marque os BFSs que deseja contestar antes de gerar o PDF.");
         return;
+      }
+
+      const fotosMapPorId: Record<string, import("@/lib/pdf-relatorio-contestacao").FotosContestarBfs> = {};
+      for (const b of bfssContestar) {
+        const f = getFotosDadosForRow(b);
+        if (f) fotosMapPorId[b.id] = f;
       }
 
       const { gerarRelatorioContestacaoPDF } = await import("@/lib/pdf-relatorio-contestacao");
@@ -669,7 +716,7 @@ export default function DefesaPage() {
         contratada: "Limpebras Engenharia Ambiental",
         contratoNumero: relatorioContratoNumero || undefined,
         bfssContestar,
-        fotosMap: fotosMap as Record<string, import("@/lib/pdf-relatorio-contestacao").FotosContestarBfs>,
+        fotosMap: fotosMapPorId,
         ifPorSub: dataIndicadores?.if?.if_por_sub,
         baseUrl: typeof window !== "undefined" ? window.location.origin : undefined,
       });
@@ -692,7 +739,6 @@ export default function DefesaPage() {
       };
       const data = await apiService.getCNCsDefesa(params);
       const items = (data.items || []) as BFSDefesa[];
-      const storage = getStatusDefesaStorage();
 
       const headers = [
         "BFS",
@@ -707,7 +753,7 @@ export default function DefesaPage() {
         "Situação CNC(s)",
       ];
       const rows = items.map((b) => {
-        const statusDefesa = storage[b.id] ?? "Analisar";
+        const statusDefesa = getStatusDefesaForRow(b);
         const cncs = b.cnc_detalhes ?? [];
         const cncsStr = cncs.map((c) => c.numero_cnc).filter(Boolean).join("; ");
         const situacoes = cncs.map((c) => c.situacao_cnc).filter(Boolean).join("; ");
@@ -819,7 +865,7 @@ export default function DefesaPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
               <div className="space-y-1">
                 <label className="text-xs font-medium text-muted-foreground">Período Inicial</label>
                 <Input
@@ -864,11 +910,31 @@ export default function DefesaPage() {
                     <SelectValue placeholder="Filtrar" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="analisar_contestar">Analisar + Contestar (padrão)</SelectItem>
-                    <SelectItem value="todos">Todos</SelectItem>
+                    <SelectItem value="todos">Todos (padrão)</SelectItem>
+                    <SelectItem value="analisar_contestar">Só Analisar + Contestar</SelectItem>
                     <SelectItem value="Analisar">Analisar</SelectItem>
                     <SelectItem value="Irregular">Irregular</SelectItem>
                     <SelectItem value="Contestar">Contestar</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground">Situação CNC</label>
+                <Select
+                  value={filters.situacao_cnc}
+                  onValueChange={(value) => setFilters({ ...filters, situacao_cnc: value })}
+                >
+                  <SelectTrigger className="bg-background">
+                    <SelectValue placeholder="Todas" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todas">Todas</SelectItem>
+                    <SelectItem value="__sem_cnc__">Sem CNC importado</SelectItem>
+                    {situacaoCncOptions.map((s) => (
+                      <SelectItem key={s} value={s}>
+                        {s.length > 56 ? `${s.slice(0, 53)}…` : s}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -923,7 +989,7 @@ export default function DefesaPage() {
                   <tbody className="divide-y divide-border">
                     {bfssFiltered.map((bfs) => {
                       const cnc = primaryCnc(bfs);
-                      const statusDefesa = getStatusDefesa(bfs.id);
+                      const statusDefesa = getStatusDefesaForRow(bfs);
                       return (
                         <Fragment key={bfs.id}>
                           <tr
@@ -945,7 +1011,7 @@ export default function DefesaPage() {
                             <td className="px-6 py-4 font-medium font-mono text-primary">{bfs.bfs}</td>
                             <td className="px-6 py-4 font-medium">
                               {(() => {
-                                const setor = getSetorParaExibir(bfs, getFotosForBfs(bfs.id));
+                                const setor = getSetorParaExibir(bfs, getFotosDadosForRow(bfs));
                                 return setor === "Sem Setor" ? (
                                   <span className="text-red-600 dark:text-red-400 font-semibold">Sem Setor</span>
                                 ) : (
@@ -1003,13 +1069,13 @@ export default function DefesaPage() {
                                   <div><strong>Data vistoria:</strong> {bfs.data_vistoria ? format(new Date(bfs.data_vistoria), "dd/MM/yyyy HH:mm") : "—"}</div>
                                   <div><strong>Subprefeitura:</strong> {bfs.subprefeitura || "—"}</div>
                                   <div><strong>Setor:</strong>{(() => {
-                                    const s = getSetorParaExibir(bfs, getFotosForBfs(bfs.id));
+                                    const s = getSetorParaExibir(bfs, getFotosDadosForRow(bfs));
                                     return s === "Sem Setor" ? <span className="text-red-600 dark:text-red-400 font-semibold">Sem Setor</span> : ` ${s}`;
                                   })()}</div>
-                                  {(bfs.frequencia_resolvida || getCronogramaParaExibir(bfs, getFotosForBfs(bfs.id))) && (
+                                  {(bfs.frequencia_resolvida || getCronogramaParaExibir(bfs, getFotosDadosForRow(bfs))) && (
                                     <>
                                       <div><strong>Frequência:</strong> {bfs.frequencia_resolvida || "—"}</div>
-                                      <div className="md:col-span-2"><strong>Cronograma:</strong> {getCronogramaParaExibir(bfs, getFotosForBfs(bfs.id)) || "—"}</div>
+                                      <div className="md:col-span-2"><strong>Cronograma:</strong> {getCronogramaParaExibir(bfs, getFotosDadosForRow(bfs)) || "—"}</div>
                                     </>
                                   )}
                                   <div className="md:col-span-3"><strong>Endereço:</strong> {bfs.endereco || "—"}</div>
@@ -1068,13 +1134,13 @@ export default function DefesaPage() {
                   </p>
                   <div className="flex flex-wrap gap-4">
                     {STATUS_DEFESA_OPTIONS.map((opt) => {
-                      const isActive = getStatusDefesa(selectedBFS.id) === opt.value;
+                      const isActive = getStatusDefesaForRow(selectedBFS) === opt.value;
                       return (
                         <StatusDefesaButton
                           key={opt.value}
                           opt={opt}
                           isActive={isActive}
-                          onSelect={() => handleStatusClick(selectedBFS.id, opt.value)}
+                          onSelect={() => handleStatusClick(selectedBFS, opt.value)}
                         />
                       );
                     })}
@@ -1082,8 +1148,8 @@ export default function DefesaPage() {
                 </div>
 
                 {/* BFS Contestado - fotos salvas */}
-                {getStatusDefesa(selectedBFS.id) === "Contestar" && (() => {
-                  const fotos = getFotosForBfs(selectedBFS.id);
+                {getStatusDefesaForRow(selectedBFS) === "Contestar" && (() => {
+                  const fotos = getFotosDadosForRow(selectedBFS);
                   const hasFotos = fotos && (fotos.agente_sub.length > 0 || (fotos.itens_fiscalizados?.length ?? 0) > 0 || fotos.nosso_agente.length > 0);
                   if (!hasFotos) return null;
                   return (
@@ -1177,8 +1243,8 @@ export default function DefesaPage() {
                     <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
                       <Hash className="h-3.5 w-3.5" /> Setor
                     </label>
-                    <p className={`text-sm font-mono ${getSetorParaExibir(selectedBFS, selectedBFS ? getFotosForBfs(selectedBFS.id) : undefined) === "Sem Setor" ? "text-red-600 dark:text-red-400 font-semibold" : ""}`}>
-                      {getSetorParaExibir(selectedBFS, selectedBFS ? getFotosForBfs(selectedBFS.id) : undefined)}
+                    <p className={`text-sm font-mono ${getSetorParaExibir(selectedBFS, selectedBFS ? getFotosDadosForRow(selectedBFS) : undefined) === "Sem Setor" ? "text-red-600 dark:text-red-400 font-semibold" : ""}`}>
+                      {getSetorParaExibir(selectedBFS, selectedBFS ? getFotosDadosForRow(selectedBFS) : undefined)}
                     </p>
                   </div>
                   <div className="space-y-1.5">
@@ -1197,10 +1263,10 @@ export default function DefesaPage() {
                       <p className="text-sm">{selectedBFS.frequencia_resolvida}</p>
                     </div>
                   )}
-                  {getCronogramaParaExibir(selectedBFS, selectedBFS ? getFotosForBfs(selectedBFS.id) : undefined) && (
+                  {getCronogramaParaExibir(selectedBFS, selectedBFS ? getFotosDadosForRow(selectedBFS) : undefined) && (
                     <div className="col-span-2 space-y-1.5">
                       <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Cronograma (do setor)</label>
-                      <p className="text-sm">{getCronogramaParaExibir(selectedBFS, selectedBFS ? getFotosForBfs(selectedBFS.id) : undefined)}</p>
+                      <p className="text-sm">{getCronogramaParaExibir(selectedBFS, selectedBFS ? getFotosDadosForRow(selectedBFS) : undefined)}</p>
                     </div>
                   )}
                 </div>
@@ -1276,7 +1342,8 @@ export default function DefesaPage() {
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <FileCheck className="h-5 w-5 text-emerald-500" />
-                Contestar BFS {contestarBfsId ? bfss.find((b) => b.id === contestarBfsId)?.bfs : selectedBFS?.bfs} — Dados da contestação
+                Contestar BFS{" "}
+                {contestarBfsId ? bfss.find((b) => defesaStorageKey(b) === contestarBfsId)?.bfs : selectedBFS?.bfs} — Dados da contestação
               </DialogTitle>
               <DialogDescription>
                 Preencha as fotos e os itens fiscalizados. Você pode arrastar, selecionar ou colar imagens (Ctrl+V).
@@ -1297,7 +1364,10 @@ export default function DefesaPage() {
                       fotosContestarDraft.setor_override !== undefined
                         ? fotosContestarDraft.setor_override ?? "Sem Setor"
                         : (contestarBfsId
-                          ? bfss.find((b) => b.id === contestarBfsId)?.setor_resolvido ?? bfss.find((b) => b.id === contestarBfsId)?.cnc_detalhes?.[0]?.setor ?? bfss.find((b) => b.id === contestarBfsId)?.setor ?? ""
+                          ? (() => {
+                              const cr = bfss.find((b) => defesaStorageKey(b) === contestarBfsId);
+                              return cr?.setor_resolvido ?? cr?.cnc_detalhes?.[0]?.setor ?? cr?.setor ?? "";
+                            })()
                           : selectedBFS?.setor_resolvido ?? selectedBFS?.cnc_detalhes?.[0]?.setor ?? selectedBFS?.setor ?? "")
                     }
                     onChange={(e) => setFotosContestarDraft((p) => ({ ...p, setor_override: e.target.value || null }))}
@@ -1329,7 +1399,12 @@ export default function DefesaPage() {
                         turno: getTurnoFromSetor(
                           fotosContestarDraft.setor_override !== undefined
                             ? (fotosContestarDraft.setor_override ?? "")
-                            : (contestarBfsId ? bfss.find((b) => b.id === contestarBfsId)?.setor_resolvido ?? bfss.find((b) => b.id === contestarBfsId)?.cnc_detalhes?.[0]?.setor ?? bfss.find((b) => b.id === contestarBfsId)?.setor ?? "" : selectedBFS?.setor_resolvido ?? selectedBFS?.cnc_detalhes?.[0]?.setor ?? selectedBFS?.setor ?? "")
+                            : (contestarBfsId
+                              ? (() => {
+                                  const cr = bfss.find((b) => defesaStorageKey(b) === contestarBfsId);
+                                  return cr?.setor_resolvido ?? cr?.cnc_detalhes?.[0]?.setor ?? cr?.setor ?? "";
+                                })()
+                              : selectedBFS?.setor_resolvido ?? selectedBFS?.cnc_detalhes?.[0]?.setor ?? selectedBFS?.setor ?? "")
                         ) || "",
                         observacoes: "",
                       }],
@@ -1375,7 +1450,9 @@ export default function DefesaPage() {
                               />
                             </td>
                             <td className="px-3 py-2 align-top text-muted-foreground min-w-[180px]">
-                              {contestarBfsId ? bfss.find((b) => b.id === contestarBfsId)?.tipo_servico ?? "—" : selectedBFS?.tipo_servico ?? "—"}
+                              {contestarBfsId
+                                ? bfss.find((b) => defesaStorageKey(b) === contestarBfsId)?.tipo_servico ?? "—"
+                                : selectedBFS?.tipo_servico ?? "—"}
                             </td>
                             <td className="px-3 py-2 align-top">
                               <Input

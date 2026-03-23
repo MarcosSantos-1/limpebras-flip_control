@@ -7,6 +7,7 @@
 import type { jsPDF } from "jspdf";
 import { format, isValid } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { defesaStorageKey } from "./defesa-storage-key";
 
 const PAGE_W = 210;
 const PAGE_H = 297;
@@ -936,7 +937,8 @@ export async function gerarRelatorioContestacaoPDF(
     addCapa(pdf, sub, false);
     const bfssSub = bySub.get(sub)!;
     for (const bfs of bfssSub) {
-      const fotos = input.fotosMap[bfs.id];
+      const sk = defesaStorageKey(bfs);
+      const fotos = input.fotosMap[bfs.id] ?? input.fotosMap[sk];
       await addPaginaNotificacao(pdf, bfs, fotos);
       await addPaginaExecucaoJustificativa(pdf, bfs, fotos);
     }

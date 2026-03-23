@@ -55,6 +55,7 @@ export async function runMigrations() {
       );
     `);
     await client.query("ALTER TABLE bfs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()").catch(() => {});
+    await client.query("ALTER TABLE bfs ADD COLUMN IF NOT EXISTS fiscal TEXT").catch(() => {});
     await client.query("CREATE INDEX IF NOT EXISTS idx_bfs_data_fiscalizacao ON bfs(data_fiscalizacao)").catch(() => {});
     await client.query("CREATE INDEX IF NOT EXISTS idx_bfs_tipo_servico ON bfs(tipo_servico)").catch(() => {});
 
@@ -114,6 +115,16 @@ export async function runMigrations() {
         defesa BOOLEAN DEFAULT FALSE,
         sem_recurso BOOLEAN DEFAULT FALSE,
         valor NUMERIC DEFAULT NULL,
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    /** Status Defesa / Contestação por número BFS — compartilhado entre usuários (não usa localStorage). */
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS bfs_defesa_state (
+        numero_bfs TEXT PRIMARY KEY,
+        status_defesa TEXT NOT NULL DEFAULT 'Analisar',
+        dados_contestacao JSONB,
         updated_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);

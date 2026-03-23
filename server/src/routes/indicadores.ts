@@ -11,7 +11,7 @@ import {
   type IndicadorResult,
 } from "../services/indicadores.js";
 import { calcularPF, calcularPFComDetalhes, type PfDetalhes } from "../services/ipt-pf-algoritmo.js";
-import { BFS_IF_EXCLUSAO_SQL } from "../constants/bfs.js";
+import { BFS_IF_EXCLUSAO_SQL, sqlBfsFiscalNaoEhSelimp } from "../constants/bfs.js";
 import { SUB_SIGLAS, DOMICILIOS_POR_REGIONAL, regionalToSigla } from "../constants/regionais.js";
 import {
   normalizarSetor,
@@ -580,8 +580,9 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
       const irdReclamacoes = Number(irdCount.rows[0]?.total ?? 0);
       const ird = pontuacaoIRD(irdReclamacoes);
 
-      // IF: todos BFS no período EXCETO os 3 serviços excluídos
+      // IF: todos BFS no período EXCETO os 3 serviços excluídos; exclui fiscais SELIMP (coluna Fiscal "SELIMP -...")
       const ifExcludeSql = BFS_IF_EXCLUSAO_SQL.map((_, i) => `tipo_servico NOT ILIKE $${3 + i}`).join(" AND ");
+      const ifFiscalSql = sqlBfsFiscalNaoEhSelimp();
       const ifByRegional = await client.query(
         `SELECT regional,
                 COUNT(*) AS total,
@@ -589,6 +590,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
          FROM bfs
          WHERE data_fiscalizacao >= $1::date AND data_fiscalizacao < ($2::date + interval '1 day')
            AND ${ifExcludeSql}
+           AND ${ifFiscalSql}
          GROUP BY regional`,
         [inicio, fim, ...BFS_IF_EXCLUSAO_SQL]
       );
@@ -700,13 +702,15 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
       );
       const ird = pontuacaoIRD(Number(irdCount.rows[0]?.total ?? 0));
 
-      // IF: todos BFS no período EXCETO os 3 serviços excluídos
+      // IF: todos BFS no período EXCETO os 3 serviços excluídos; exclui fiscais SELIMP (coluna Fiscal "SELIMP -...")
       const ifExcludeSql = BFS_IF_EXCLUSAO_SQL.map((_, i) => `tipo_servico NOT ILIKE $${3 + i}`).join(" AND ");
+      const ifFiscalSql = sqlBfsFiscalNaoEhSelimp();
       const ifByRegional = await client.query(
         `SELECT regional, COUNT(*) AS total,
                 COUNT(*) FILTER (WHERE TRIM(status) = 'Sem Irregularidades') AS sem_irregularidade
          FROM bfs WHERE data_fiscalizacao >= $1::date AND data_fiscalizacao < ($2::date + interval '1 day')
            AND ${ifExcludeSql}
+           AND ${ifFiscalSql}
          GROUP BY regional`,
         [inicio, fim, ...BFS_IF_EXCLUSAO_SQL]
       );
@@ -851,8 +855,9 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         ird_valor: (DOMICILIOS_POR_REGIONAL[sigla] ?? 0) > 0 ? ((irdPorRegional[sigla] ?? 0) / (DOMICILIOS_POR_REGIONAL[sigla] ?? 1)) * 1000 : 0,
       }));
 
-      // IF: todos BFS no período EXCETO os 3 serviços excluídos
+      // IF: todos BFS no período EXCETO os 3 serviços excluídos; exclui fiscais SELIMP (coluna Fiscal "SELIMP -...")
       const ifExcludeSql = BFS_IF_EXCLUSAO_SQL.map((_, i) => `tipo_servico NOT ILIKE $${3 + i}`).join(" AND ");
+      const ifFiscalSql = sqlBfsFiscalNaoEhSelimp();
       const ifByRegional = await client.query(
         `SELECT regional,
                 COUNT(*) AS total,
@@ -860,6 +865,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
          FROM bfs
          WHERE data_fiscalizacao >= $1::date AND data_fiscalizacao < ($2::date + interval '1 day')
            AND ${ifExcludeSql}
+           AND ${ifFiscalSql}
          GROUP BY regional`,
         [inicio, fim, ...BFS_IF_EXCLUSAO_SQL]
       );
@@ -1036,6 +1042,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         filtros_aplicados: [
           "Data_Fiscalizacao no período",
           "Todos os BFS exceto 3 serviços: Coleta e transporte de entulho e grandes objetos...; Fornecimento, instalação e reposição de papeleiras...; Remoção de animais mortos de proprietários não identificados...",
+          "Exclui BFS cujo fiscal (coluna Fiscal) começa por \"SELIMP -\" (fiscalização interna SELIMP)",
           "Sem irregularidade = Status = 'Sem Irregularidades'",
           "Cálculo: IF por sub (JT, CV, ST, MG) = (sem irregularidades / total) × 100, média dos 4 = IF final",
         ],

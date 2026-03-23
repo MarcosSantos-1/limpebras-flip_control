@@ -188,6 +188,21 @@ export const apiService = {
     const { data } = await api.get('/cnc/defesa', { params });
     return data;
   },
+
+  /** Persiste status de defesa e dados da contestação no servidor (compartilhado entre usuários). */
+  updateDefesaBfs: async (
+    numeroBfs: string,
+    payload: { status_defesa: string; dados_contestacao?: unknown | null }
+  ) => {
+    const { data } = await api.patch(
+      `/cnc/defesa/bfs/${encodeURIComponent(numeroBfs)}`,
+      payload
+    );
+    return data as {
+      numero_bfs: string;
+      defesa_trabalho: { status: string; dados: unknown } | null;
+    };
+  },
   
   // ACICs
   getACICs: async (params?: any) => {

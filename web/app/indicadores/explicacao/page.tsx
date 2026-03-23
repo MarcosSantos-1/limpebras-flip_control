@@ -717,7 +717,7 @@ export default function ExplicacaoIndicadoresPage() {
                 IF por sub = (sem irregularidades / total BFS escalonados) × 100
               </div>
               <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-2">
-                Média dos 4 percentuais (JT, CV, ST, MG) = IF final. Todos os BFS do período, exceto 3 serviços excluídos.
+                Média dos 4 percentuais (JT, CV, ST, MG) = IF final. BFS do período, exceto 3 serviços excluídos e exceto fiscalizações em que o fiscal (coluna Fiscal) começa por &quot;SELIMP -&quot;.
               </p>
             </div>
 
@@ -731,8 +731,9 @@ export default function ExplicacaoIndicadoresPage() {
                   <strong>IF final:</strong> média dos 4 percentuais (soma ÷ 4). Ex: 67%.
                 </li>
                 <li>
-                  <strong>Excluídos do cálculo (apenas 3 serviços):</strong>
+                  <strong>Excluídos do cálculo:</strong>
                   <ul className="list-disc list-inside ml-4 mt-1 space-y-0.5">
+                    <li>BFS em que o nome do fiscal (coluna Fiscal) começa por &quot;SELIMP -&quot; (fiscalização interna SELIMP)</li>
                     <li>Coleta e transporte de entulho e grandes objetos depositados irregularmente nas vias, logradouros e áreas públicas</li>
                     <li>Fornecimento, instalação e reposição de papeleiras e outros equipamentos de recepção de resíduos</li>
                     <li>Remoção de animais mortos de proprietários não identificados em vias e logradouros públicos</li>

@@ -339,8 +339,9 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
             tipo_servico = $5,
             regional = $6,
             endereco = $7,
-            raw = $8,
-            source_file = $9,
+            fiscal = $8,
+            raw = $9,
+            source_file = $10,
             updated_at = NOW()
           WHERE numero_bfs = $1`,
           [
@@ -351,6 +352,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
             r.tipo_servico || null,
             r.regional || null,
             r.endereco || null,
+            r.fiscal || null,
             JSON.stringify(r.raw),
             sourceFile,
           ]
@@ -361,8 +363,8 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         }
         await client.query(
           `INSERT INTO bfs (
-            numero_bfs, data_fiscalizacao, data_vistoria, status, tipo_servico, regional, endereco, raw, source_file, updated_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())`,
+            numero_bfs, data_fiscalizacao, data_vistoria, status, tipo_servico, regional, endereco, fiscal, raw, source_file, updated_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
           [
             r.numero_bfs || null,
             r.data_fiscalizacao,
@@ -371,6 +373,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
             r.tipo_servico || null,
             r.regional || null,
             r.endereco || null,
+            r.fiscal || null,
             JSON.stringify(r.raw),
             sourceFile,
           ]
@@ -378,6 +381,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         inserted += 1;
       }
       invalidatePrefix("cnc");
+      invalidatePrefix("cnc_defesa");
       invalidatePrefix("kpis");
       return {
         processados: inserted + updated,

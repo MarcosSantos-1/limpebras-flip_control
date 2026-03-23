@@ -117,6 +117,8 @@ export interface BfsRow {
   tipo_servico: string;
   regional: string;
   endereco: string;
+  /** Coluna Fiscal do CSV (também persistida em bfs.fiscal para filtro IF). */
+  fiscal: string;
   raw: Record<string, string>;
 }
 
@@ -134,6 +136,7 @@ export function parseBfsCsv(buffer: Buffer, _sourceFile: string): BfsRow[] {
       tipo_servico: getCanonical(row, ["tipo_servico", "servico"]),
       regional: getCanonical(row, ["regionaal", "regional"]),
       endereco: getCanonical(row, ["endereco"]),
+      fiscal: getCanonical(row, ["fiscal"]),
       raw: { ...row },
     } as BfsRow;
   });

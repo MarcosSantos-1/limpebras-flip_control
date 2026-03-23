@@ -62,8 +62,8 @@ export async function uploadFotosToStorage(bfsId: string, fotos: FotosContestar)
   };
 }
 
-export async function deleteFotosFromStorage(bfsId: string): Promise<void> {
-  const folderRef = ref(storage, `${DEFESA_FOTOS_PREFIX}/${bfsId}`);
+async function deleteOneDefesaFolder(folderKey: string): Promise<void> {
+  const folderRef = ref(storage, `${DEFESA_FOTOS_PREFIX}/${folderKey}`);
   try {
     const result = await listAll(folderRef);
     await Promise.all(result.items.map((itemRef) => deleteObject(itemRef)));
@@ -74,4 +74,10 @@ export async function deleteFotosFromStorage(bfsId: string): Promise<void> {
   } catch {
     // folder may not exist
   }
+}
+
+/** Remove pastas de fotos (ex.: chave por número BFS e legado por id da linha). */
+export async function deleteFotosFromStorage(...folderKeys: string[]): Promise<void> {
+  const unique = [...new Set(folderKeys.map((k) => k.trim()).filter(Boolean))];
+  await Promise.all(unique.map((k) => deleteOneDefesaFolder(k)));
 }

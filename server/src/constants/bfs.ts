@@ -27,6 +27,26 @@ export const BFS_IF_EXCLUSAO_SQL: string[] = [
 ];
 
 /**
+ * BFS cuja coluna Fiscal começa por "SELIMP -" não entram no IF nem na lista de Defesa/Contestação.
+ * Usa b.fiscal quando preenchido (upload); senão inspeciona raw via jsonb_each_text (chave "Fiscal" em qualquer caixa).
+ */
+export function sqlBfsFiscalNaoEhSelimp(tableAlias?: string): string {
+  const p = tableAlias ? `${tableAlias}.` : "";
+  const rawExpr = `COALESCE(${p}raw, '{}'::jsonb)`;
+  const fiscalCol = `NULLIF(trim(COALESCE(${p}fiscal, '')), '')`;
+  return `NOT (
+  (${fiscalCol} IS NOT NULL AND ${fiscalCol} ~* '^\\s*selimp\\s*-\\s*')
+  OR
+  (${fiscalCol} IS NULL AND EXISTS (
+    SELECT 1
+    FROM jsonb_each_text(${rawExpr}) AS e(key, value)
+    WHERE trim(e.key) ILIKE 'fiscal'
+      AND trim(e.value) ~* '^\\s*selimp\\s*-\\s*'
+  ))
+)`;
+}
+
+/**
  * Serviços excluídos da página Defesa/Contestação (BFS escalonados).
  * BFS escalonados = Não Demandantes COM irregularidade, exceto estes 4.
  */

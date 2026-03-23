@@ -1,8 +1,14 @@
 import { FastifyPluginAsync } from "fastify";
 import { pool } from "../db.js";
-import { cacheKey, getOrSet } from "../cache.js";
-import { BFS_DEFESA_EXCLUSAO_SQL } from "../constants/bfs.js";
+import { cacheKey, getOrSet, invalidatePrefix } from "../cache.js";
+import { BFS_DEFESA_EXCLUSAO_SQL, sqlBfsFiscalNaoEhSelimp } from "../constants/bfs.js";
 import { findSetorByCoords, parseCoordenada } from "../services/setorLookup.js";
+
+const STATUS_DEFESA_VALID = new Set(["Analisar", "Irregular", "Contestar"]);
+
+function normNumeroBfs(v: string | null | undefined): string {
+  return (v ?? "").trim();
+}
 
 export const cncRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get<{
@@ -85,6 +91,7 @@ export const cncRoutes: FastifyPluginAsync = async (fastify) => {
    * BFSs escalonados para Defesa/Contestação:
    * - Apenas BFS "Com irregularidade" (não "Sem Irregularidades")
    * - Exclui os 4 serviços: entulho irregular, animais mortos, papeleiras, equipe pontos viciados
+   * - Exclui BFS cujo fiscal (coluna Fiscal no raw) começa por "SELIMP -"
    * - Cruzamento com cncs (data_execucao, situacao_cnc, fiscal_contratada, etc)
    */
   fastify.get<{
@@ -92,14 +99,19 @@ export const cncRoutes: FastifyPluginAsync = async (fastify) => {
       periodo_inicial?: string;
       periodo_final?: string;
       subprefeitura?: string;
+      /** Filtro pela coluna situação CNC (ex.: Autuado). Use "todas" para não filtrar. */
+      situacao_cnc?: string;
+      /** @deprecated use situacao_cnc — mesmo efeito */
       status?: string;
       tipo_servico?: string;
     };
   }>(
     "/cnc/defesa",
     async (request, reply) => {
-      const { periodo_inicial, periodo_final, subprefeitura, status, tipo_servico } = request.query;
+      const { periodo_inicial, periodo_final, subprefeitura, situacao_cnc, status, tipo_servico } = request.query;
+      const situacaoFiltro = (situacao_cnc ?? status ?? "").trim() || "todas";
       const excludeSql = BFS_DEFESA_EXCLUSAO_SQL.map((_, i) => `b.tipo_servico NOT ILIKE $${i + 1}`).join(" AND ");
+      const fiscalNaoSelimp = sqlBfsFiscalNaoEhSelimp("b");
       let sql = `
         SELECT b.id, b.numero_bfs, b.data_fiscalizacao, b.data_vistoria, b.status, b.tipo_servico, b.regional, b.endereco, b.raw,
           c.numero_cnc, c.situacao_cnc, c.data_execucao, c.data_sincronizacao, c.setor, c.fiscal_contratada, c.responsividade, c.coordenada
@@ -107,6 +119,7 @@ export const cncRoutes: FastifyPluginAsync = async (fastify) => {
         LEFT JOIN cncs c ON c.numero_bfs = b.numero_bfs
         WHERE TRIM(COALESCE(b.status, '')) <> 'Sem Irregularidades'
           AND (${excludeSql})
+          AND ${fiscalNaoSelimp}
       `;
       const params: (string | number)[] = [...BFS_DEFESA_EXCLUSAO_SQL];
       let i = params.length + 1;
@@ -125,10 +138,14 @@ export const cncRoutes: FastifyPluginAsync = async (fastify) => {
         params.push(subprefeitura);
         i++;
       }
-      if (status && status !== "todos") {
-        sql += ` AND c.situacao_cnc ILIKE $${i}`;
-        params.push(`%${status}%`);
-        i++;
+      if (situacaoFiltro !== "todas" && situacaoFiltro !== "todos") {
+        if (situacaoFiltro === "__sem_cnc__") {
+          sql += ` AND c.numero_cnc IS NULL`;
+        } else {
+          sql += ` AND c.situacao_cnc ILIKE $${i}`;
+          params.push(`%${situacaoFiltro}%`);
+          i++;
+        }
       }
       if (tipo_servico && tipo_servico !== "todos") {
         sql += ` AND b.tipo_servico ILIKE $${i}`;
@@ -137,7 +154,13 @@ export const cncRoutes: FastifyPluginAsync = async (fastify) => {
       }
       sql += " ORDER BY b.data_fiscalizacao DESC";
 
-      const key = cacheKey("cnc_defesa", { periodo_inicial, periodo_final, subprefeitura, status, tipo_servico });
+      const key = cacheKey("cnc_defesa", {
+        periodo_inicial,
+        periodo_final,
+        subprefeitura,
+        situacao_cnc: situacaoFiltro,
+        tipo_servico,
+      });
       const result = await getOrSet(key, async () => {
         const r = await pool.query(sql, params);
         const byBfs = new Map<string, { item: Record<string, unknown>; cncs: unknown[] }>();
@@ -169,7 +192,7 @@ export const cncRoutes: FastifyPluginAsync = async (fastify) => {
             cncs: cncEntry ? [cncEntry] : [],
           });
         }
-        const rows = Array.from(byBfs.values()).map(({ item, cncs }) => {
+        let rows = Array.from(byBfs.values()).map(({ item, cncs }) => {
           const primaryCnc = cncs[0] as { coordenada?: string } | undefined;
           const coord = primaryCnc?.coordenada;
           const parsed = parseCoordenada(coord);
@@ -190,9 +213,91 @@ export const cncRoutes: FastifyPluginAsync = async (fastify) => {
             cronograma_resolvido: setorResolvido?.cronograma ?? null,
           };
         });
+
+        const numeros = [
+          ...new Set(
+            rows.map((r) => normNumeroBfs(String((r as { bfs?: string }).bfs ?? ""))).filter(Boolean)
+          ),
+        ];
+        const overrideMap = new Map<string, { status_defesa: string; dados_contestacao: unknown }>();
+        if (numeros.length > 0) {
+          const ov = await pool.query(
+            `SELECT numero_bfs, status_defesa, dados_contestacao FROM bfs_defesa_state WHERE numero_bfs = ANY($1::text[])`,
+            [numeros]
+          );
+          for (const row of ov.rows) {
+            overrideMap.set(normNumeroBfs(row.numero_bfs as string), {
+              status_defesa: String(row.status_defesa ?? "Analisar"),
+              dados_contestacao: row.dados_contestacao,
+            });
+          }
+        }
+
+        rows = rows.map((item) => {
+          const n = normNumeroBfs(String((item as { bfs?: string }).bfs ?? ""));
+          const o = n ? overrideMap.get(n) : undefined;
+          return {
+            ...item,
+            defesa_trabalho: o
+              ? {
+                  status: o.status_defesa,
+                  dados: o.dados_contestacao ?? null,
+                }
+              : null,
+          };
+        });
+
         return { items: rows, total: rows.length };
       });
       return result;
     }
   );
+
+  fastify.patch<{
+    Params: { numero_bfs: string };
+    Body: { status_defesa?: string; dados_contestacao?: unknown | null };
+  }>("/cnc/defesa/bfs/:numero_bfs", async (request, reply) => {
+    const rawParam = request.params.numero_bfs;
+    const numero = normNumeroBfs(decodeURIComponent(rawParam ?? ""));
+    if (!numero) return reply.code(400).send({ detail: "numero_bfs inválido" });
+
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const statusRaw = typeof body.status_defesa === "string" ? body.status_defesa.trim() : "Analisar";
+    if (!STATUS_DEFESA_VALID.has(statusRaw)) {
+      return reply.code(400).send({ detail: "status_defesa deve ser Analisar, Irregular ou Contestar" });
+    }
+
+    let dados: unknown = null;
+    if ("dados_contestacao" in body) {
+      dados = body.dados_contestacao === undefined ? null : body.dados_contestacao;
+    }
+    if (statusRaw !== "Contestar") {
+      dados = null;
+    }
+
+    await pool.query(
+      `INSERT INTO bfs_defesa_state (numero_bfs, status_defesa, dados_contestacao, updated_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (numero_bfs) DO UPDATE SET
+         status_defesa = EXCLUDED.status_defesa,
+         dados_contestacao = EXCLUDED.dados_contestacao,
+         updated_at = NOW()`,
+      [numero, statusRaw, dados]
+    );
+
+    invalidatePrefix("cnc_defesa");
+
+    const r = await pool.query(
+      `SELECT numero_bfs, status_defesa, dados_contestacao FROM bfs_defesa_state WHERE numero_bfs = $1`,
+      [numero]
+    );
+    const row = r.rows[0];
+    return {
+      numero_bfs: row.numero_bfs,
+      defesa_trabalho: {
+        status: row.status_defesa,
+        dados: row.dados_contestacao ?? null,
+      },
+    };
+  });
 };
