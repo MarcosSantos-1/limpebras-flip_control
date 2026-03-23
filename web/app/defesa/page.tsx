@@ -17,6 +17,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
+import { DatePicker } from "@/components/ui/date-picker";
 import {
   Search,
   AlertTriangle,
@@ -854,36 +857,35 @@ export default function DefesaPage() {
           <CardHeader className="pb-4">
             <CardTitle className="text-base font-medium flex items-center justify-between flex-wrap gap-3">
               Filtros
-              <button
-                type="button"
+              <Button
                 onClick={() => setModalRelatorioOpen(true)}
-                className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-semibold rounded-lg bg-violet-600 hover:bg-violet-700 text-white transition-colors shadow-sm"
+                className="bg-violet-600 text-white shadow-sm hover:bg-violet-700"
               >
                 <Download className="h-4 w-4" />
                 Gerar relatório
-              </button>
+              </Button>
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Período Inicial</label>
-                <Input
-                  type="date"
+                <Label className="text-xs text-muted-foreground">Período Inicial</Label>
+                <DatePicker
                   value={filters.periodo_inicial}
-                  onChange={(e) => setFilters({ ...filters, periodo_inicial: e.target.value })}
+                  onChange={(value) => setFilters({ ...filters, periodo_inicial: value })}
+                  placeholder="Selecionar início"
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Período Final</label>
-                <Input
-                  type="date"
+                <Label className="text-xs text-muted-foreground">Período Final</Label>
+                <DatePicker
                   value={filters.periodo_final}
-                  onChange={(e) => setFilters({ ...filters, periodo_final: e.target.value })}
+                  onChange={(value) => setFilters({ ...filters, periodo_final: value })}
+                  placeholder="Selecionar fim"
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Subprefeitura</label>
+                <Label className="text-xs text-muted-foreground">Subprefeitura</Label>
                 <Select
                   value={filters.subprefeitura}
                   onValueChange={(value) => setFilters({ ...filters, subprefeitura: value })}
@@ -901,7 +903,7 @@ export default function DefesaPage() {
                 </Select>
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Status Defesa</label>
+                <Label className="text-xs text-muted-foreground">Status Defesa</Label>
                 <Select
                   value={filters.status_defesa}
                   onValueChange={(value: "todos" | "analisar_contestar" | StatusDefesa) => setFilters({ ...filters, status_defesa: value })}
@@ -919,7 +921,7 @@ export default function DefesaPage() {
                 </Select>
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Situação CNC</label>
+                <Label className="text-xs text-muted-foreground">Situação CNC</Label>
                 <Select
                   value={filters.situacao_cnc}
                   onValueChange={(value) => setFilters({ ...filters, situacao_cnc: value })}
@@ -939,7 +941,7 @@ export default function DefesaPage() {
                 </Select>
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Tipo de Serviço</label>
+                <Label className="text-xs text-muted-foreground">Tipo de Serviço</Label>
                 <Select
                   value={filters.tipo_servico}
                   onValueChange={(value) => setFilters({ ...filters, tipo_servico: value })}
@@ -1557,20 +1559,18 @@ export default function DefesaPage() {
               </DialogDescription>
             </DialogHeader>
             <div className="flex justify-end gap-3 pt-2">
-              <button
-                type="button"
+              <Button
+                variant="ghost"
                 onClick={() => { setConfirmExcluirFotosOpen(false); setPendingStatusChange(null); }}
-                className="px-4 py-2 text-sm font-medium"
               >
                 Cancelar
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="destructive"
                 onClick={confirmStatusChangeAndDeleteFotos}
-                className="px-4 py-2 text-sm font-semibold rounded-lg bg-red-600 hover:bg-red-700 text-white"
               >
                 OK, excluir fotos
-              </button>
+              </Button>
             </div>
           </DialogContent>
         </Dialog>
@@ -1590,44 +1590,42 @@ export default function DefesaPage() {
             <div className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <label className="text-sm font-medium text-muted-foreground">Período Inicial</label>
-                  <Input
-                    type="date"
+                  <Label className="text-sm text-muted-foreground">Período Inicial</Label>
+                  <DatePicker
                     value={relatorioPeriodo.periodo_inicial}
-                    onChange={(e) => setRelatorioPeriodo((p) => ({ ...p, periodo_inicial: e.target.value }))}
+                    onChange={(value) => setRelatorioPeriodo((p) => ({ ...p, periodo_inicial: value }))}
+                    placeholder="Selecionar início"
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-sm font-medium text-muted-foreground">Período Final</label>
-                  <Input
-                    type="date"
+                  <Label className="text-sm text-muted-foreground">Período Final</Label>
+                  <DatePicker
                     value={relatorioPeriodo.periodo_final}
-                    onChange={(e) => setRelatorioPeriodo((p) => ({ ...p, periodo_final: e.target.value }))}
+                    onChange={(value) => setRelatorioPeriodo((p) => ({ ...p, periodo_final: value }))}
+                    placeholder="Selecionar fim"
                   />
                 </div>
               </div>
             </div>
             <div className="flex flex-wrap justify-end gap-3 pt-2">
-              <button
-                type="button"
+              <Button
+                variant="ghost"
                 onClick={() => setModalRelatorioOpen(false)}
-                className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
               >
                 Cancelar
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="outline"
                 onClick={handleDownloadRelatorioCSV}
                 disabled={downloadLoading}
-                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border border-violet-400/50 bg-violet-500/10 text-violet-700 dark:text-violet-300 hover:bg-violet-500/20 disabled:opacity-70"
+                className="border-violet-400/50 bg-violet-500/10 text-violet-700 hover:bg-violet-500/20 dark:text-violet-300"
               >
                 Baixar CSV
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
                 onClick={handleDownloadRelatorioPDF}
                 disabled={downloadLoading}
-                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-70 disabled:cursor-not-allowed transition-all"
+                className="bg-violet-600 text-white hover:bg-violet-700"
               >
                 {downloadLoading ? (
                   <>
@@ -1640,7 +1638,7 @@ export default function DefesaPage() {
                     Baixar PDF
                   </>
                 )}
-              </button>
+              </Button>
             </div>
           </DialogContent>
         </Dialog>
