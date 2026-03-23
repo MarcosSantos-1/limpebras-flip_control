@@ -8,7 +8,9 @@ import { gerarRelatorioIndicadoresPDF } from "@/lib/pdf-relatorio-indicadores";
 import { endOfMonth, format, isValid, startOfMonth } from "date-fns";
 import { AdcDonutChart } from "@/components/adc-donut-chart";
 import { Download, CalendarRange } from "lucide-react";
-import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { DatePicker } from "@/components/ui/date-picker";
+import { Button } from "@/components/ui/button";
 
 interface IfPorSub {
   subprefeitura: string;
@@ -379,30 +381,30 @@ export default function ExplicacaoIndicadoresPage() {
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 report-screen-only">
-              <div>
-                <label className="block text-sm font-medium mb-2">Período inicial</label>
-                <Input
-                  type="date"
+              <div className="space-y-2">
+                <Label className="text-sm text-muted-foreground">Período inicial</Label>
+                <DatePicker
                   value={periodoInicial}
-                  onChange={(e) => setPeriodoInicial(e.target.value)}
+                  onChange={setPeriodoInicial}
+                  placeholder="Selecionar início"
                 />
               </div>
-              <div>
-                <label className="block text-sm font-medium mb-2">Período final</label>
-                <Input
-                  type="date"
+              <div className="space-y-2">
+                <Label className="text-sm text-muted-foreground">Período final</Label>
+                <DatePicker
                   value={periodoFinal}
-                  onChange={(e) => setPeriodoFinal(e.target.value)}
+                  onChange={setPeriodoFinal}
+                  placeholder="Selecionar fim"
                 />
               </div>
               <div className="flex items-end">
-                <button
+                <Button
                   onClick={carregarDetalhes}
                   disabled={loading}
-                  className="w-full px-4 py-2 bg-violet-600 text-white rounded-md hover:bg-violet-700 disabled:opacity-50"
+                  className="w-full bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50"
                 >
                   {loading ? "Atualizando..." : "Atualizar explicação"}
-                </button>
+                </Button>
               </div>
             </div>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-4 report-screen-only">

@@ -1,10 +1,12 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import { format, endOfMonth, startOfMonth, subDays } from "date-fns";
+import { format, startOfMonth, subDays } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Activity, AlertTriangle, BarChart2, Battery, BatteryWarning, Calendar, Check, ChevronDown, ChevronRight, ChevronUp, Cpu, Info, Package, PanelBottomClose, PanelBottomOpen, Plus, RotateCcw, Sparkles, TrendingUp, Truck, X } from "lucide-react";
+import { Label } from "@/components/ui/label";
+import { DatePicker } from "@/components/ui/date-picker";
 import { MainLayout } from "@/components/layout/main-layout";
 import {
   Select,
@@ -209,12 +211,7 @@ export default function IPTPage() {
   const [modalBateriaOpen, setModalBateriaOpen] = useState(false);
   const [modalCruzamentoOpen, setModalCruzamentoOpen] = useState(false);
   const [iptFormulaTooltip, setIptFormulaTooltip] = useState(false);
-  const [diagnosticoOpen, setDiagnosticoOpen] = useState(false);
-  const [diagnosticoData, setDiagnosticoData] = useState<{
-    contagem_por_tipo?: Array<{ file_type: string; total: number; ultimo: string | null }>;
-    ddmx_amostra?: Array<Record<string, unknown>>;
-    selimp_amostra?: Array<Record<string, unknown>>;
-  } | null>(null);
+  const monthReferenciaInputRef = useRef<HTMLInputElement>(null);
   const [columnWidths, setColumnWidths] = useState<Record<TableColumnKey, number>>({
     plano: 170,
     sub: 90,
@@ -600,6 +597,47 @@ export default function IPTPage() {
     setHeaderMenuOpen(null);
   };
 
+  const openNativeMonthReferenciaPicker = () => {
+    const el = monthReferenciaInputRef.current;
+    if (!el) return;
+    const withPicker = el as HTMLInputElement & { showPicker?: () => void };
+    if (typeof withPicker.showPicker === "function") {
+      try {
+        withPicker.showPicker();
+        return;
+      } catch {
+        // ignore
+      }
+    }
+    el.focus();
+    el.click();
+  };
+
+  const mesReferenciaLabel = useMemo(() => {
+    const raw = format(selectedMonth, "MMMM yyyy", { locale: ptBR });
+    return raw.charAt(0).toUpperCase() + raw.slice(1);
+  }, [selectedMonth]);
+
+  const tablePeriodInicioStr = useMemo(() => {
+    if (tableScope === "periodo" && tablePeriodRange) return format(tablePeriodRange.inicio, "yyyy-MM-dd");
+    if (tableScope === "todos") return format(startOfMonth(new Date()), "yyyy-MM-dd");
+    return format(subDays(new Date(), 1), "yyyy-MM-dd");
+  }, [tableScope, tablePeriodRange]);
+
+  const tablePeriodFimStr = useMemo(() => {
+    if (tableScope === "periodo" && tablePeriodRange) return format(tablePeriodRange.fim, "yyyy-MM-dd");
+    if (tableScope === "todos") return format(new Date(), "yyyy-MM-dd");
+    return format(subDays(new Date(), 1), "yyyy-MM-dd");
+  }, [tableScope, tablePeriodRange]);
+
+  const clampDateNotFuture = (d: Date) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const dd = new Date(d);
+    dd.setHours(0, 0, 0, 0);
+    return dd > today ? today : dd;
+  };
+
   return (
     <MainLayout>
       <div className="space-y-6">
@@ -617,35 +655,66 @@ export default function IPTPage() {
         </div>
 
         <div className="rounded-2xl bg-card/70 backdrop-blur p-4 shadow-lg">
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-3 items-end">
-            <div>
-              <p className="text-xs text-muted-foreground mb-1">Mês de referência</p>
-              <input
-                type="month"
-                value={format(selectedMonth, "yyyy-MM")}
-                max={format(new Date(), "yyyy-MM")}
-                onChange={(e) => {
-                  if (!e.target.value) return;
-                  const [year, month] = e.target.value.split("-");
-                  setSelectedMonth(startOfMonth(new Date(Number(year), Number(month) - 1, 1)));
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 items-end">
+            <div className="space-y-1.5 min-w-0">
+              <Label
+                id="ipt-mes-referencia-lbl"
+                className="text-xs text-muted-foreground cursor-pointer select-none"
+                onClick={(e) => {
+                  e.preventDefault();
+                  openNativeMonthReferenciaPicker();
                 }}
-                className="h-10 rounded-xl bg-background/90 px-3 text-sm w-full shadow-inner ring-1 ring-white/10 focus:ring-2 focus:ring-emerald-500/60 outline-none"
-              />
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground mb-1">Subprefeitura</p>
-              <select
-                value={subprefeituraFilter}
-                onChange={(e) => setSubprefeituraFilter(e.target.value)}
-                className="h-10 rounded-xl bg-background/90 px-3 text-sm w-full shadow-inner ring-1 ring-white/10 focus:ring-2 focus:ring-emerald-500/60 outline-none"
               >
-                <option value="all">Todas</option>
-                {subprefeituraOptions.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
+                Mês de referência
+              </Label>
+              <div
+                className="flex h-10 w-full cursor-pointer items-center rounded-xl bg-background/90 px-3 text-sm shadow-inner ring-1 ring-white/10 outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60"
+                role="button"
+                tabIndex={0}
+                aria-labelledby="ipt-mes-referencia-lbl"
+                onClick={(e) => {
+                  e.preventDefault();
+                  openNativeMonthReferenciaPicker();
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    openNativeMonthReferenciaPicker();
+                  }
+                }}
+              >
+                <span className="truncate text-foreground">{mesReferenciaLabel}</span>
+                <input
+                  ref={monthReferenciaInputRef}
+                  id="ipt-mes-referencia"
+                  type="month"
+                  value={format(selectedMonth, "yyyy-MM")}
+                  max={format(new Date(), "yyyy-MM")}
+                  tabIndex={-1}
+                  onChange={(e) => {
+                    if (!e.target.value) return;
+                    const [year, month] = e.target.value.split("-");
+                    setSelectedMonth(startOfMonth(new Date(Number(year), Number(month) - 1, 1)));
+                  }}
+                  className="sr-only"
+                />
+              </div>
+            </div>
+            <div className="space-y-1.5 min-w-0">
+              <Label className="text-xs text-muted-foreground">Subprefeitura</Label>
+              <Select value={subprefeituraFilter} onValueChange={setSubprefeituraFilter}>
+                <SelectTrigger className="h-10 w-full rounded-xl bg-background/90 shadow-inner ring-1 ring-white/10 focus:ring-2 focus:ring-emerald-500/60">
+                  <SelectValue placeholder="Todas" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas</SelectItem>
+                  {subprefeituraOptions.map((option) => (
+                    <SelectItem key={option} value={option}>
+                      {option}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <button
               type="button"
@@ -657,23 +726,6 @@ export default function IPTPage() {
                 <polyline points="21 3 21 9 15 9" />
               </svg>
               Atualizar
-            </button>
-            <button
-              type="button"
-              onClick={async () => {
-                setDiagnosticoOpen(true);
-                try {
-                  const data = await apiService.getIptDiagnostico();
-                  setDiagnosticoData(data);
-                } catch {
-                  setDiagnosticoData(null);
-                }
-              }}
-              className="h-10 rounded-xl px-3 text-sm font-medium text-muted-foreground hover:text-foreground border border-border hover:bg-muted/50 transition-all inline-flex items-center gap-2"
-              title="Diagnóstico das importações DDMX/SELIMP"
-            >
-              <Cpu className="h-4 w-4" />
-              Diagnóstico
             </button>
           </div>
         </div>
@@ -853,48 +905,6 @@ export default function IPTPage() {
                     </table>
                   </div>
                 </div>
-              </div>
-            </DialogContent>
-          </Dialog>
-
-          <Dialog open={diagnosticoOpen} onOpenChange={setDiagnosticoOpen}>
-            <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
-              <DialogHeader>
-                <DialogTitle>Diagnóstico das importações IPT</DialogTitle>
-                <DialogDescription>
-                  Contagens e amostra dos dados DDMX e SELIMP no banco. Use para verificar se as importações estão refletindo.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4 py-2">
-                {diagnosticoData?.contagem_por_tipo && (
-                  <div>
-                    <p className="text-sm font-medium mb-2">Contagem por tipo</p>
-                    <div className="grid grid-cols-2 gap-2 text-sm">
-                      {diagnosticoData.contagem_por_tipo.map((r) => (
-                        <div key={r.file_type} className="flex justify-between rounded bg-muted/50 px-3 py-2">
-                          <span className="font-mono">{r.file_type}</span>
-                          <span className="tabular-nums">{r.total} reg.</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {diagnosticoData?.ddmx_amostra && diagnosticoData.ddmx_amostra.length > 0 && (
-                  <div>
-                    <p className="text-sm font-medium mb-2">DDMX (amostra) — rota, data_referencia, pct</p>
-                    <pre className="text-xs bg-muted/30 p-3 rounded overflow-x-auto max-h-40">{JSON.stringify(diagnosticoData.ddmx_amostra, null, 2)}</pre>
-                  </div>
-                )}
-                {diagnosticoData?.selimp_amostra && diagnosticoData.selimp_amostra.length > 0 && (
-                  <div>
-                    <p className="text-sm font-medium mb-2">SELIMP (amostra) — plano, data_referencia, pct, status</p>
-                    <pre className="text-xs bg-muted/30 p-3 rounded overflow-x-auto max-h-40">{JSON.stringify(diagnosticoData.selimp_amostra, null, 2)}</pre>
-                  </div>
-                )}
-                {diagnosticoData && (!diagnosticoData.ddmx_amostra?.length && !diagnosticoData.selimp_amostra?.length) && (
-                  <p className="text-sm text-amber-600">Sem dados DDMX ou SELIMP no banco. Verifique as importações na página de Upload.</p>
-                )}
-                {!diagnosticoData && diagnosticoOpen && <p className="text-sm text-muted-foreground">Carregando…</p>}
               </div>
             </DialogContent>
           </Dialog>
@@ -1401,55 +1411,43 @@ export default function IPTPage() {
                   <SelectItem value="sem" className="focus:bg-slate-600 focus:text-white">Sem alerta</SelectItem>
                 </SelectContent>
               </Select>
-              <div className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 shadow-lg text-white">
+              <div className="flex max-w-full shrink-0 items-center gap-2 rounded-lg bg-emerald-600 px-2.5 py-1.5 shadow-lg text-white">
                 <Calendar className="h-4 w-4 shrink-0" />
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <input
-                    type="date"
-                    value={
-                      tableScope === "periodo" && tablePeriodRange
-                        ? format(tablePeriodRange.inicio, "yyyy-MM-dd")
-                        : tableScope === "todos"
-                        ? format(startOfMonth(new Date()), "yyyy-MM-dd")
-                        : format(subDays(new Date(), 1), "yyyy-MM-dd")
-                    }
-                    max={format(new Date(), "yyyy-MM-dd")}
-                    onChange={(e) => {
-                      const v = e.target.value;
+                <div className="flex min-w-0 flex-nowrap items-center gap-1.5">
+                  <DatePicker
+                    compact
+                    value={tablePeriodInicioStr}
+                    onChange={(v) => {
                       if (!v) return;
                       const [y, m, day] = v.split("-").map(Number);
-                      const date = new Date(y, m - 1, day);
+                      let date = new Date(y, m - 1, day);
+                      date = clampDateNotFuture(date);
                       setTableScope("periodo");
                       setTablePeriodRange((prev) => ({
                         inicio: date,
                         fim: prev?.fim && prev.fim >= date ? prev.fim : date,
                       }));
                     }}
-                    className="h-8 rounded-lg bg-white/95 px-2 text-sm font-bold text-slate-800 focus:ring-2 focus:ring-white outline-none"
+                    placeholder="Início"
+                    className="border-white/40 bg-white/95 text-slate-800 shadow-sm hover:bg-white [&_svg]:text-emerald-600"
                   />
-                  <span className="text-emerald-100 text-xs font-bold">até</span>
-                  <input
-                    type="date"
-                    value={
-                      tableScope === "periodo" && tablePeriodRange
-                        ? format(tablePeriodRange.fim, "yyyy-MM-dd")
-                        : tableScope === "todos"
-                        ? format(new Date(), "yyyy-MM-dd")
-                        : format(subDays(new Date(), 1), "yyyy-MM-dd")
-                    }
-                    max={format(new Date(), "yyyy-MM-dd")}
-                    onChange={(e) => {
-                      const v = e.target.value;
+                  <span className="shrink-0 text-emerald-100 text-xs font-bold">até</span>
+                  <DatePicker
+                    compact
+                    value={tablePeriodFimStr}
+                    onChange={(v) => {
                       if (!v) return;
                       const [y, m, day] = v.split("-").map(Number);
-                      const date = new Date(y, m - 1, day);
+                      let date = new Date(y, m - 1, day);
+                      date = clampDateNotFuture(date);
                       setTableScope("periodo");
                       setTablePeriodRange((prev) => ({
                         inicio: prev?.inicio && prev.inicio <= date ? prev.inicio : date,
                         fim: date,
                       }));
                     }}
-                    className="h-8 rounded-lg bg-white/95 px-2 text-sm font-bold text-slate-800 focus:ring-2 focus:ring-white outline-none"
+                    placeholder="Fim"
+                    className="border-white/40 bg-white/95 text-slate-800 shadow-sm hover:bg-white [&_svg]:text-emerald-600"
                   />
                   <span className="text-xs font-bold text-white">
                     {tableScope === "dia_anterior" && "Dia anterior"}

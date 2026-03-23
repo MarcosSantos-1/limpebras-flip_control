@@ -14,7 +14,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { DatePicker } from "@/components/ui/date-picker";
 
 interface BFS {
   id: string;
@@ -209,25 +210,25 @@ export default function BFSPage() {
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Período Inicial</label>
-                <Input
-                  type="date"
+                <Label className="text-xs text-muted-foreground">Período Inicial</Label>
+                <DatePicker
                   value={filters.periodo_inicial}
-                  onChange={(e) => setFilters({ ...filters, periodo_inicial: e.target.value })}
+                  onChange={(value) => setFilters({ ...filters, periodo_inicial: value })}
+                  placeholder="Selecionar início"
                 />
               </div>
               
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Período Final</label>
-                <Input
-                  type="date"
+                <Label className="text-xs text-muted-foreground">Período Final</Label>
+                <DatePicker
                   value={filters.periodo_final}
-                  onChange={(e) => setFilters({ ...filters, periodo_final: e.target.value })}
+                  onChange={(value) => setFilters({ ...filters, periodo_final: value })}
+                  placeholder="Selecionar fim"
                 />
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Subprefeitura</label>
+                <Label className="text-xs text-muted-foreground">Subprefeitura</Label>
                 <Select
                   value={filters.subprefeitura}
                   onValueChange={(value) => setFilters({ ...filters, subprefeitura: value })}
@@ -246,7 +247,7 @@ export default function BFSPage() {
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Status</label>
+                <Label className="text-xs text-muted-foreground">Status</Label>
                 <Select
                   value={filters.status}
                   onValueChange={(value) => setFilters({ ...filters, status: value })}
@@ -263,7 +264,7 @@ export default function BFSPage() {
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Tipo de Serviço</label>
+                <Label className="text-xs text-muted-foreground">Tipo de Serviço</Label>
                 <Select
                   value={filters.tipo_servico}
                   onValueChange={(value) => setFilters({ ...filters, tipo_servico: value })}

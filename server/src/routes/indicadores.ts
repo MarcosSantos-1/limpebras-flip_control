@@ -535,6 +535,20 @@ const isModuleInactive = (statusBateria: string, statusComunicacao: string, dias
   return false;
 };
 
+function calcularMediaIfPorSubprefeitura(
+  bySigla: Record<string, { total: number; sem_irregularidade: number }>
+): number {
+  const percentuais = SUB_SIGLAS.map((sigla) => {
+    const { total, sem_irregularidade } = bySigla[sigla];
+    return total > 0 ? (sem_irregularidade / total) * 100 : 0;
+  });
+
+  const somaPercentuais = percentuais.reduce((acc, value) => acc + value, 0);
+  // Regra solicitada: quando alguma sub ficar zerada, usa divisor 3.
+  const divisor = percentuais.some((value) => value === 0) ? 3 : 4;
+  return somaPercentuais / divisor;
+}
+
 export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
   /** KPIs do dashboard: contagens e indicadores no período */
   fastify.get<{
@@ -603,12 +617,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
           bySigla[sigla].sem_irregularidade += Number(row.sem_irregularidade ?? 0);
         }
       }
-      let somaPercentuais = 0;
-      for (const sigla of SUB_SIGLAS) {
-        const { total, sem_irregularidade } = bySigla[sigla];
-        somaPercentuais += total > 0 ? (sem_irregularidade / total) * 100 : 0;
-      }
-      const mediaPercentual = somaPercentuais / 4;
+      const mediaPercentual = calcularMediaIfPorSubprefeitura(bySigla);
       const ifInd = pontuacaoIFFromPercentual(mediaPercentual);
       const totalBfs = Object.values(bySigla).reduce((a, x) => a + x.total, 0);
       const semIrreg = Object.values(bySigla).reduce((a, x) => a + x.sem_irregularidade, 0);
@@ -723,12 +732,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
           bySigla[sigla].sem_irregularidade += Number(row.sem_irregularidade ?? 0);
         }
       }
-      let somaPct = 0;
-      for (const sigla of SUB_SIGLAS) {
-        const { total, sem_irregularidade } = bySigla[sigla];
-        somaPct += total > 0 ? (sem_irregularidade / total) * 100 : 0;
-      }
-      const mediaPercentual = somaPct / 4;
+      const mediaPercentual = calcularMediaIfPorSubprefeitura(bySigla);
       const ifInd = pontuacaoIFFromPercentual(mediaPercentual);
       const ifTotal = Object.values(bySigla).reduce((a, x) => a + x.total, 0);
       const ifSemIrregularidade = Object.values(bySigla).reduce((a, x) => a + x.sem_irregularidade, 0);
@@ -878,12 +882,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
           ifBySigla[sigla].sem_irregularidade += Number(row.sem_irregularidade ?? 0);
         }
       }
-      let somaPctIf = 0;
-      for (const sigla of SUB_SIGLAS) {
-        const { total, sem_irregularidade } = ifBySigla[sigla];
-        somaPctIf += total > 0 ? (sem_irregularidade / total) * 100 : 0;
-      }
-      const mediaPercentualIf = somaPctIf / 4;
+      const mediaPercentualIf = calcularMediaIfPorSubprefeitura(ifBySigla);
       const ifResult = pontuacaoIFFromPercentual(mediaPercentualIf);
       const totalBfs = Object.values(ifBySigla).reduce((a, x) => a + x.total, 0);
       const semIrreg = Object.values(ifBySigla).reduce((a, x) => a + x.sem_irregularidade, 0);

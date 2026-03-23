@@ -3,6 +3,14 @@
 import { useState, useEffect } from "react";
 import { MainLayout } from "@/components/layout/main-layout";
 import { apiService } from "@/lib/api";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface UploadResult {
   processados?: number;
@@ -388,21 +396,25 @@ export default function UploadPage() {
         <div className="p-6">
           {type === "iptReport" && (
             <div className="mb-4 p-4 rounded-xl bg-fuchsia-50/80 dark:bg-fuchsia-950/30 shadow-lg shadow-fuchsia-500/10 dark:shadow-fuchsia-900/20">
-              <label className="block font-bold text-fuchsia-800 dark:text-fuchsia-200 mb-2">
+              <Label className="block font-bold text-fuchsia-800 dark:text-fuchsia-200 mb-2">
                 Referência da importação (OBRIGATÓRIO – selecione ANTES de enviar)
-              </label>
-              <select
+              </Label>
+              <Select
                 value={iptReferenceMode}
-                onChange={(e) => setIptReferenceMode(e.target.value as IptReferenceMode)}
+                onValueChange={(v) => setIptReferenceMode(v as IptReferenceMode)}
                 disabled={isUploading}
-                className="w-full px-4 py-2.5 rounded-lg bg-white dark:bg-background/90 text-fuchsia-700 dark:text-fuchsia-300 font-semibold shadow-sm border border-fuchsia-200/60 dark:border-fuchsia-700/50 focus:ring-2 focus:ring-fuchsia-500/50 focus:outline-none transition-all"
               >
-                {iptReferenceOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger className="w-full bg-white dark:bg-background/90 text-fuchsia-700 dark:text-fuchsia-300 font-semibold border-fuchsia-200/60 dark:border-fuchsia-700/50">
+                  <SelectValue placeholder="Selecione a referência" />
+                </SelectTrigger>
+                <SelectContent>
+                  {iptReferenceOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           )}
           <div className="flex items-start justify-between mb-6">

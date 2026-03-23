@@ -15,6 +15,8 @@ export interface DatePickerProps {
   placeholder?: string
   className?: string
   disabled?: boolean
+  /** Botão estreito (ex.: barras de filtro em uma linha) — não usa largura total */
+  compact?: boolean
 }
 
 function parseDateValue(value?: string) {
@@ -33,6 +35,7 @@ function DatePicker({
   placeholder = "Selecione uma data",
   className,
   disabled,
+  compact,
 }: DatePickerProps) {
   const selectedDate = parseDateValue(value)
 
@@ -41,20 +44,28 @@ function DatePicker({
       <PopoverTrigger asChild>
         <Button
           variant="outline"
+          size={compact ? "sm" : "default"}
           className={cn(
-            "w-full justify-between bg-background px-3 font-normal shadow-sm",
+            "justify-between bg-background font-normal shadow-sm",
+            compact
+              ? "h-8 w-auto max-w-[118px] min-w-0 shrink-0 gap-1 px-2 text-xs md:max-w-[124px]"
+              : "w-full px-3 text-base md:text-sm",
             !selectedDate && "text-muted-foreground",
             className
           )}
           disabled={disabled}
         >
-          <span className="flex min-w-0 items-center gap-2">
-            <CalendarIcon className="h-4 w-4 shrink-0 text-violet-500" />
-            <span className="truncate">
+          <span className={cn("flex min-w-0 items-center", compact ? "gap-1" : "gap-2")}>
+            <CalendarIcon
+              className={cn("shrink-0 text-violet-500", compact ? "h-3 w-3" : "h-4 w-4")}
+            />
+            <span className="truncate tabular-nums">
               {selectedDate ? format(selectedDate, "dd/MM/yyyy", { locale: ptBR }) : placeholder}
             </span>
           </span>
-          <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-50" />
+          <ChevronsUpDown
+            className={cn("shrink-0 opacity-50", compact ? "h-3 w-3" : "h-4 w-4")}
+          />
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-auto p-0" align="start">

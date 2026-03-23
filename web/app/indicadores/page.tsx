@@ -1,12 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { apiService } from "@/lib/api";
 import { endOfMonth, format, startOfMonth } from "date-fns";
+import { ptBR } from "date-fns/locale";
 import { ArrowRight, Calculator, Sparkles } from "lucide-react";
-import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { DatePicker } from "@/components/ui/date-picker";
+import { Button } from "@/components/ui/button";
 
 interface ResultadoIndicadores {
   error?: string;
@@ -27,6 +30,38 @@ export default function IndicadoresPage() {
   const [periodoInicial, setPeriodoInicial] = useState(format(startOfMonth(new Date()), "yyyy-MM-dd"));
   const [periodoFinal, setPeriodoFinal] = useState(format(endOfMonth(new Date()), "yyyy-MM-dd"));
   const [mesFiltro, setMesFiltro] = useState(format(new Date(), "yyyy-MM"));
+  const monthInputRef = useRef<HTMLInputElement>(null);
+
+  const openNativeMonthPicker = () => {
+    const el = monthInputRef.current;
+    if (!el) return;
+    const withPicker = el as HTMLInputElement & { showPicker?: () => void };
+    if (typeof withPicker.showPicker === "function") {
+      try {
+        withPicker.showPicker();
+        return;
+      } catch {
+        // alguns browsers só permitem showPicker após gesto do usuário (clique já conta)
+      }
+    }
+    el.focus();
+    el.click();
+  };
+
+  const mesFiltroLabel = useMemo(() => {
+    const [y, m] = mesFiltro.split("-").map(Number);
+    if (!y || !m) return "—";
+    const d = new Date(y, m - 1, 1);
+    const raw = format(d, "MMMM yyyy", { locale: ptBR });
+    return raw.charAt(0).toUpperCase() + raw.slice(1);
+  }, [mesFiltro]);
+
+  const syncMesFromYmd = (value: string) => {
+    if (!value) return;
+    const m = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return;
+    setMesFiltro(`${m[1]}-${m[2]}`);
+  };
 
   const calcularADC = async () => {
     try {
@@ -90,67 +125,100 @@ export default function IndicadoresPage() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4 mb-4">
-              <div className="flex flex-wrap items-center gap-3 p-3 rounded-lg bg-muted/30 border border-border">
-                <label className="text-sm font-medium text-muted-foreground">Filtrar por mês</label>
-                <Input
-                  type="month"
-                  value={mesFiltro}
-                  max={format(new Date(), "yyyy-MM")}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    if (!val) return;
-                    setMesFiltro(val);
-                    const [y, m] = val.split("-").map(Number);
-                    const inicio = startOfMonth(new Date(y, m - 1, 1));
-                    const fim = endOfMonth(inicio);
-                    setPeriodoInicial(format(inicio, "yyyy-MM-dd"));
-                    setPeriodoFinal(format(fim, "yyyy-MM-dd"));
-                  }}
-                  className="w-40"
-                />
-                <span className="text-xs text-muted-foreground">
+              <div className="flex flex-wrap items-end gap-3 p-3 rounded-lg bg-muted/30 border border-border">
+                <div className="space-y-1.5 min-w-[200px] max-w-[min(100%,280px)]">
+                  <Label
+                    id="indicadores-mes-filtro-lbl"
+                    className="text-sm text-muted-foreground cursor-pointer select-none"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      openNativeMonthPicker();
+                    }}
+                  >
+                    Filtrar por mês
+                  </Label>
+                  {/* Input nativo invisível; clique na área chama showPicker() (readOnly/opacity-0 falham em vários browsers) */}
+                  <div
+                    className="flex h-9 w-full cursor-pointer items-center rounded-md border border-input bg-background px-3 text-sm shadow-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    role="button"
+                    tabIndex={0}
+                    aria-labelledby="indicadores-mes-filtro-lbl"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      openNativeMonthPicker();
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        openNativeMonthPicker();
+                      }
+                    }}
+                  >
+                    <span className="truncate text-foreground">{mesFiltroLabel}</span>
+                    <input
+                      ref={monthInputRef}
+                      id="indicadores-mes-filtro"
+                      type="month"
+                      value={mesFiltro}
+                      max={format(new Date(), "yyyy-MM")}
+                      tabIndex={-1}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (!val) return;
+                        setMesFiltro(val);
+                        const [y, m] = val.split("-").map(Number);
+                        const inicio = startOfMonth(new Date(y, m - 1, 1));
+                        const fim = endOfMonth(inicio);
+                        setPeriodoInicial(format(inicio, "yyyy-MM-dd"));
+                        setPeriodoFinal(format(fim, "yyyy-MM-dd"));
+                      }}
+                      className="sr-only"
+                    />
+                  </div>
+                </div>
+                <span className="text-xs text-muted-foreground pb-1">
                   Define período inicial e final do mês selecionado
                 </span>
               </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-4 items-end">
               <div className="space-y-2">
-                <label className="text-sm font-medium text-muted-foreground">Período Inicial</label>
-                <Input
-                  type="date"
+                <Label className="text-sm text-muted-foreground">Período Inicial</Label>
+                <DatePicker
                   value={periodoInicial}
-                  onChange={(e) => {
-                    setPeriodoInicial(e.target.value);
-                    const d = e.target.value ? new Date(e.target.value) : null;
-                    if (d) setMesFiltro(format(d, "yyyy-MM"));
+                  onChange={(value) => {
+                    setPeriodoInicial(value);
+                    syncMesFromYmd(value);
                   }}
+                  placeholder="Selecionar início"
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-sm font-medium text-muted-foreground">Período Final</label>
-                <Input
-                  type="date"
+                <Label className="text-sm text-muted-foreground">Período Final</Label>
+                <DatePicker
                   value={periodoFinal}
-                  onChange={(e) => {
-                    setPeriodoFinal(e.target.value);
-                    const d = e.target.value ? new Date(e.target.value) : null;
-                    if (d) setMesFiltro(format(d, "yyyy-MM"));
+                  onChange={(value) => {
+                    setPeriodoFinal(value);
+                    syncMesFromYmd(value);
                   }}
+                  placeholder="Selecionar fim"
                 />
               </div>
               <div>
-                <button
+                <Button
                   onClick={calcularADC}
                   disabled={calculando}
-                  className="w-full px-4 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 font-medium shadow-sm hover:shadow active:scale-[0.98]"
+                  className="w-full bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
                 >
                   {calculando ? (
                     <span className="flex items-center justify-center gap-2">
                       <div className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                       Calculando...
                     </span>
-                  ) : "Calcular ADC"}
-                </button>
+                  ) : (
+                    "Calcular ADC"
+                  )}
+                </Button>
               </div>
             </div>
           </CardContent>

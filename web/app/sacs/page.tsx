@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
+import { DatePicker } from "@/components/ui/date-picker";
 
 export default function SACsPage() {
   const [sacs, setSacs] = useState<SAC[]>([]);
@@ -201,25 +201,25 @@ export default function SACsPage() {
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Período Inicial</label>
-                <Input
-                  type="date"
+                <Label className="text-xs text-muted-foreground">Período Inicial</Label>
+                <DatePicker
                   value={filters.data_inicio}
-                  onChange={(e) => setFilters({ ...filters, data_inicio: e.target.value })}
+                  onChange={(value) => setFilters({ ...filters, data_inicio: value })}
+                  placeholder="Selecionar início"
                 />
               </div>
               
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Período Final</label>
-                <Input
-                  type="date"
+                <Label className="text-xs text-muted-foreground">Período Final</Label>
+                <DatePicker
                   value={filters.data_fim}
-                  onChange={(e) => setFilters({ ...filters, data_fim: e.target.value })}
+                  onChange={(value) => setFilters({ ...filters, data_fim: value })}
+                  placeholder="Selecionar fim"
                 />
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Tipo</label>
+                <Label className="text-xs text-muted-foreground">Tipo</Label>
                 <Select
                   value={filters.tipo}
                   onValueChange={(value: "IA" | "IRD" | "all") => setFilters({ ...filters, tipo: value })}
@@ -236,7 +236,7 @@ export default function SACsPage() {
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Status</label>
+                <Label className="text-xs text-muted-foreground">Status</Label>
                 <Select
                   value={filters.status}
                   onValueChange={(value) => setFilters({ ...filters, status: value })}
@@ -256,7 +256,7 @@ export default function SACsPage() {
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Procedência</label>
+                <Label className="text-xs text-muted-foreground">Procedência</Label>
                 <Select
                   value={filters.procedente}
                   onValueChange={(value: "todos" | "PROCEDE" | "NAO_PROCEDE") =>
@@ -275,7 +275,7 @@ export default function SACsPage() {
               </div>
               
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Subprefeitura</label>
+                <Label className="text-xs text-muted-foreground">Subprefeitura</Label>
                 <Select
                   value={filters.subprefeitura}
                   onValueChange={(value) => setFilters({ ...filters, subprefeitura: value })}
@@ -294,7 +294,7 @@ export default function SACsPage() {
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Tipo de Serviço</label>
+                <Label className="text-xs text-muted-foreground">Tipo de Serviço</Label>
                 <Select
                   value={filters.tipo_servico}
                   onValueChange={(value) => setFilters({ ...filters, tipo_servico: value })}

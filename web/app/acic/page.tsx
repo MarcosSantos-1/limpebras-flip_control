@@ -6,6 +6,15 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { apiService } from "@/lib/api";
 import { format, startOfMonth, isValid } from "date-fns";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { DatePicker } from "@/components/ui/date-picker";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { ShieldCheck, Clock, DollarSign, Archive, Ban } from "lucide-react";
 
 /** Formata número no padrão BR: R$ 1.234,56 */
@@ -325,24 +334,40 @@ export default function ACICPage() {
             <CardTitle className="text-base font-medium">Período</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Início</label>
-                <Input
-                  type="date"
+                <Label className="text-xs text-muted-foreground">Início</Label>
+                <DatePicker
                   value={filters.periodo_inicial}
-                  onChange={(e) => setFilters({ ...filters, periodo_inicial: e.target.value })}
-                  className="bg-background"
+                  onChange={(value) => setFilters({ ...filters, periodo_inicial: value })}
+                  placeholder="Selecionar início"
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Fim</label>
-                <Input
-                  type="date"
+                <Label className="text-xs text-muted-foreground">Fim</Label>
+                <DatePicker
                   value={filters.periodo_final}
-                  onChange={(e) => setFilters({ ...filters, periodo_final: e.target.value })}
-                  className="bg-background"
+                  onChange={(value) => setFilters({ ...filters, periodo_final: value })}
+                  placeholder="Selecionar fim"
                 />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Filtro por registro</Label>
+                <Select
+                  value={filters.registro}
+                  onValueChange={(value: FiltroRegistro) => setFilters({ ...filters, registro: value })}
+                >
+                  <SelectTrigger className="bg-background">
+                    <SelectValue placeholder="Todos" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todos">Todos</SelectItem>
+                    <SelectItem value="defesa">Defesa apresentada</SelectItem>
+                    <SelectItem value="em_aberto">Em aberto (solicitação)</SelectItem>
+                    <SelectItem value="valor">Com multa registrada</SelectItem>
+                    <SelectItem value="sem_recurso">Sem recurso</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </div>
           </CardContent>
