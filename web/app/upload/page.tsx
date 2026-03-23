@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { Upload } from "lucide-react";
 import { MainLayout } from "@/components/layout/main-layout";
 import { apiService } from "@/lib/api";
 import { Label } from "@/components/ui/label";
@@ -611,13 +612,20 @@ export default function UploadPage() {
   return (
     <MainLayout>
       <div className="space-y-8">
-        <div className="relative overflow-hidden rounded-xl bg-linear-to-r from-indigo-600/10 via-indigo-600/5 to-transparent p-8 border border-indigo-200/50 dark:border-indigo-800/50">
-          <div className="absolute top-0 right-0 -mt-4 -mr-4 w-32 h-32 bg-indigo-600/10 rounded-full blur-3xl"></div>
-          <div className="relative">
-            <h1 className="text-4xl font-bold tracking-tight bg-linear-to-r from-indigo-600 to-purple-500 bg-clip-text text-transparent pb-2">Upload de Dados</h1>
-            <p className="text-muted-foreground mt-2 text-lg max-w-2xl">
-              Importação de arquivos CSV (ADC) e XLSX (IPT) para atualização da base de dados.
-            </p>
+        <div className="relative overflow-hidden rounded-2xl bg-linear-to-br from-indigo-600 via-indigo-700 to-purple-900 p-8 shadow-xl shadow-indigo-900/35 dark:bg-linear-to-br dark:from-indigo-800 dark:via-purple-900 dark:to-indigo-950 dark:shadow-2xl dark:shadow-black/45">
+          <div className="relative flex flex-col gap-4 sm:flex-row sm:items-start sm:gap-6">
+            <div
+              className="flex h-22 w-22 shrink-0 items-center justify-center rounded-2xl bg-indigo-950 shadow-lg dark:bg-indigo-950"
+              aria-hidden
+            >
+              <Upload className="h-11 w-11 text-white" strokeWidth={1.5} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <h1 className="text-4xl font-bold tracking-tight text-white">Upload de Dados</h1>
+              <p className="mt-3 max-w-2xl text-lg text-indigo-50">
+                Importação de arquivos CSV (ADC) e XLSX (IPT) para atualização da base de dados.
+              </p>
+            </div>
           </div>
         </div>
 

@@ -78,10 +78,8 @@ export function useIptData(
     dedupingInterval: DEDUP_INTERVAL_MS,
   });
 
-  const isLoading =
-    previewCardsSwr.isLoading ||
-    previewTableSwr.isLoading ||
-    (kpisSwr.isLoading && !kpisSwr.data);
+  /** Enquanto cards ou tabela estão no primeiro fetch (SWR) para a chave atual — overlay e estados vazios. */
+  const isLoading = previewCardsSwr.isLoading || previewTableSwr.isLoading;
   const isValidating = previewCardsSwr.isValidating || previewTableSwr.isValidating || kpisSwr.isValidating;
 
   const mutate = async () => {
@@ -99,7 +97,7 @@ export function useIptData(
     observacoes: observacoesSwr.data ?? { globais: {}, diarias: {} },
     mutate,
     kpis: kpisSwr.data ?? null,
-    isLoading: isLoading && !previewCardsSwr.data && !previewTableSwr.data,
+    isLoading,
     isValidating,
   };
 }

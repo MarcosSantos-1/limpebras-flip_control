@@ -7,7 +7,7 @@ import { apiService, type IptPreviewResponse } from "@/lib/api";
 import { gerarRelatorioIndicadoresPDF } from "@/lib/pdf-relatorio-indicadores";
 import { endOfMonth, format, isValid, startOfMonth } from "date-fns";
 import { AdcDonutChart } from "@/components/adc-donut-chart";
-import { Download, CalendarRange } from "lucide-react";
+import { ChartPie, Download, CalendarRange } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { DatePicker } from "@/components/ui/date-picker";
 import { Button } from "@/components/ui/button";
@@ -346,22 +346,34 @@ export default function ExplicacaoIndicadoresPage() {
   return (
     <MainLayout>
       <div ref={reportRef} className="space-y-6 w-full max-w-7xl mx-auto report-print-area">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 report-screen-only">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">Explicação dos Cálculos dos Indicadores</h1>
-            <p className="text-zinc-600 dark:text-zinc-400 mt-2">
-              Combine a teoria com os números reais vindos do backend para auditar qualquer mês ou subprefeitura.
-            </p>
-          </div>
-          <div className="flex gap-2">
-            <button
-              onClick={handleDownloadPDF}
-              disabled={pdfLoading}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-violet-400/50 bg-violet-500/10 text-violet-700 dark:text-violet-300 hover:bg-violet-500/20 transition disabled:opacity-50"
-            >
-              <Download className="h-4 w-4" />
-              {pdfLoading ? "Gerando PDF…" : "Baixar PDF"}
-            </button>
+        <div className="report-screen-only">
+          <div className="relative overflow-hidden rounded-2xl bg-linear-to-br from-emerald-600 via-emerald-700 to-teal-800 p-8 shadow-xl shadow-emerald-900/35 dark:bg-linear-to-br dark:from-emerald-800 dark:via-emerald-900 dark:to-teal-950 dark:shadow-2xl dark:shadow-black/45">
+            <div className="relative flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+              <div className="flex min-w-0 flex-1 flex-col gap-4 sm:flex-row sm:items-start sm:gap-6">
+                <div
+                  className="flex h-22 w-22 shrink-0 items-center justify-center rounded-2xl bg-teal-950 shadow-lg dark:bg-teal-950"
+                  aria-hidden
+                >
+                  <ChartPie className="h-11 w-11 text-white" strokeWidth={1.5} />
+                </div>
+                <div className="min-w-0">
+                  <h1 className="text-4xl font-bold tracking-tight text-white">Explicação dos Cálculos dos Indicadores</h1>
+                  <p className="mt-3 max-w-3xl text-lg text-emerald-50">
+                    Combine a teoria com os números reais vindos do backend para auditar qualquer mês ou subprefeitura.
+                  </p>
+                </div>
+              </div>
+              <div className="flex shrink-0 gap-2">
+                <button
+                  onClick={handleDownloadPDF}
+                  disabled={pdfLoading}
+                  className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-emerald-800 shadow-lg transition hover:bg-emerald-50 disabled:opacity-50"
+                >
+                  <Download className="h-4 w-4" />
+                  {pdfLoading ? "Gerando PDF…" : "Baixar PDF"}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 

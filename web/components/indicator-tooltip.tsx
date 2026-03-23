@@ -2,11 +2,14 @@
 
 import { useState } from "react"
 import { Info } from "lucide-react"
+import { cn } from "@/lib/utils"
 
 interface IndicatorTooltipProps {
   tipo: "IA" | "IRD" | "IF" | "IPT"
   valor?: number
   pontuacao?: number
+  /** Sobrescreve estilos do ícone (ex.: card colorido no modo claro). */
+  iconClassName?: string
   children: React.ReactNode
 }
 
@@ -37,7 +40,7 @@ const tooltips = {
   },
 }
 
-export function IndicatorTooltip({ tipo, valor, pontuacao, children }: IndicatorTooltipProps) {
+export function IndicatorTooltip({ tipo, valor, pontuacao, iconClassName, children }: IndicatorTooltipProps) {
   const [showTooltip, setShowTooltip] = useState(false)
   const info = tooltips[tipo]
 
@@ -49,7 +52,12 @@ export function IndicatorTooltip({ tipo, valor, pontuacao, children }: Indicator
         onMouseEnter={() => setShowTooltip(true)}
         onMouseLeave={() => setShowTooltip(false)}
       >
-        <Info className="h-4 w-4 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 cursor-help transition-colors" />
+        <Info
+          className={cn(
+            "h-4 w-4 cursor-help transition-colors",
+            iconClassName ?? "text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+          )}
+        />
         {showTooltip && (
           <div className="absolute left-0 top-6 z-50 w-80 rounded-lg bg-zinc-900 dark:bg-zinc-800 p-4 text-xs text-white shadow-xl border border-zinc-700">
             <div className="font-bold mb-2 text-sm text-violet-400">{info.nome}</div>

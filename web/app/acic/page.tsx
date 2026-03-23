@@ -15,7 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ShieldCheck, Clock, DollarSign, Archive, Ban } from "lucide-react";
+import { ShieldCheck, Clock, DollarSign, Archive, Ban, FileWarning } from "lucide-react";
 
 /** Formata número no padrão BR: R$ 1.234,56 */
 function formatBr(valor: number): string {
@@ -219,15 +219,20 @@ export default function ACICPage() {
   return (
     <MainLayout>
       <div className="space-y-8">
-        <div className="relative overflow-hidden rounded-xl bg-linear-to-r from-amber-600/10 via-amber-600/5 to-transparent p-8 border border-amber-200/50 dark:border-amber-800/50">
-          <div className="absolute top-0 right-0 -mt-4 -mr-4 w-32 h-32 bg-amber-600/10 rounded-full blur-3xl" />
-          <div className="relative">
-            <h1 className="text-4xl font-bold tracking-tight bg-linear-to-r from-amber-600 to-amber-500 bg-clip-text text-transparent pb-2">
-              Histórico de ACICs
-            </h1>
-            <p className="text-muted-foreground mt-2 text-lg max-w-2xl">
-              Autos de Constatação de Irregularidade da Contratada — Registro para histórico: defesa apresentada, em aberto, valor e sem recurso.
-            </p>
+        <div className="relative overflow-hidden rounded-2xl bg-linear-to-br from-amber-600 via-amber-700 to-orange-900 p-8 shadow-xl shadow-amber-900/35 dark:bg-linear-to-br dark:from-amber-800 dark:via-orange-900 dark:to-amber-950 dark:shadow-2xl dark:shadow-black/45">
+          <div className="relative flex flex-col gap-4 sm:flex-row sm:items-start sm:gap-6">
+            <div
+              className="flex h-22 w-22 shrink-0 items-center justify-center rounded-2xl bg-orange-950 shadow-lg dark:bg-orange-950"
+              aria-hidden
+            >
+              <FileWarning className="h-11 w-11 text-white" strokeWidth={1.5} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <h1 className="text-4xl font-bold tracking-tight text-white">Histórico de ACICs</h1>
+              <p className="mt-3 max-w-2xl text-lg text-amber-50">
+                Autos de Constatação de Irregularidade da Contratada — Registro para histórico: defesa apresentada, em aberto, valor e sem recurso.
+              </p>
+            </div>
           </div>
         </div>
 

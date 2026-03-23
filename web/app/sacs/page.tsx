@@ -16,6 +16,7 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { DatePicker } from "@/components/ui/date-picker";
+import { FileText } from "lucide-react";
 
 export default function SACsPage() {
   const [sacs, setSacs] = useState<SAC[]>([]);
@@ -127,15 +128,20 @@ export default function SACsPage() {
   return (
     <MainLayout>
       <div className="space-y-8">
-        <div className="relative overflow-hidden rounded-xl bg-linear-to-r from-blue-600/10 via-blue-600/5 to-transparent p-8 border border-blue-200/50 dark:border-blue-800/50">
-          <div className="absolute top-0 right-0 -mt-4 -mr-4 w-32 h-32 bg-blue-600/10 rounded-full blur-3xl"></div>
-          <div className="relative">
-            <h1 className="text-4xl font-bold tracking-tight bg-linear-to-r from-blue-600 to-cyan-500 bg-clip-text text-transparent pb-2">
-              SACs - Sistema de Atendimento ao Cidadão
-            </h1>
-            <p className="text-muted-foreground mt-2 text-lg max-w-2xl">
-              Solicitações e reclamações de serviços de limpeza urbana.
-            </p>
+        <div className="relative overflow-hidden rounded-2xl bg-linear-to-br from-blue-600 via-blue-700 to-cyan-800 p-8 shadow-xl shadow-blue-900/35 dark:bg-linear-to-br dark:from-blue-800 dark:via-blue-900 dark:to-cyan-950 dark:shadow-2xl dark:shadow-black/45">
+          <div className="relative flex flex-col gap-4 sm:flex-row sm:items-start sm:gap-6">
+            <div
+              className="flex h-22 w-22 shrink-0 items-center justify-center rounded-2xl bg-slate-950 shadow-lg dark:bg-slate-950"
+              aria-hidden
+            >
+              <FileText className="h-11 w-11 text-white" strokeWidth={1.5} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <h1 className="text-4xl font-bold tracking-tight text-white">SACs - Sistema de Atendimento ao Cidadão</h1>
+              <p className="mt-3 max-w-2xl text-lg text-blue-50">
+                Solicitações e reclamações de serviços de limpeza urbana.
+              </p>
+            </div>
           </div>
         </div>
 

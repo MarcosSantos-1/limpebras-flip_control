@@ -158,22 +158,28 @@ export default function SimuladorADCPage() {
   return (
     <MainLayout>
       <div className="space-y-8">
-        <div className="relative overflow-hidden rounded-2xl bg-linear-to-r from-red-600/10 via-rose-500/10 to-rose-200/20 dark:from-red-900/20 dark:via-rose-900/10 dark:to-rose-800/5 p-8 shadow-sm">
-          <div className="absolute top-0 right-0 -mt-8 -mr-8 w-48 h-48 bg-rose-400/20 rounded-full blur-3xl" />
-          <div className="absolute bottom-0 left-0 w-32 h-32 bg-red-500/10 rounded-full blur-2xl" />
-          <div className="relative">
-            <h1 className="text-4xl font-bold tracking-tight bg-linear-to-r from-red-600 to-rose-300 bg-clip-text text-transparent pb-2">
-              Simulador ADC
-            </h1>
-            <p className="text-muted-foreground mt-2 text-lg max-w-2xl">
-              Simule o ADC completo ajustando IRD, IA, IF e IPT. Use para validar resultados ou estimar o valor aproximado.
-            </p>
-            <Link
-              href="/indicadores"
-              className="inline-flex items-center gap-2 mt-4 text-sm text-rose-600 dark:text-rose-400 hover:text-rose-700 dark:hover:text-rose-300 transition-colors font-medium"
-            >
-              ← Voltar aos Indicadores
-            </Link>
+        <div className="relative overflow-hidden rounded-2xl bg-linear-to-br from-red-600 via-rose-700 to-red-950 p-8 shadow-xl shadow-red-900/35 dark:bg-linear-to-br dark:from-red-800 dark:via-rose-900 dark:to-red-950 dark:shadow-2xl dark:shadow-black/45">
+          <div className="relative flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+            <div className="flex min-w-0 flex-1 flex-col gap-4 sm:flex-row sm:items-start sm:gap-6">
+              <div
+                className="flex h-22 w-22 shrink-0 items-center justify-center rounded-2xl bg-rose-950 shadow-lg dark:bg-rose-950"
+                aria-hidden
+              >
+                <Calculator className="h-11 w-11 text-white" strokeWidth={1.5} />
+              </div>
+              <div className="min-w-0">
+                <h1 className="text-4xl font-bold tracking-tight text-white">Simulador ADC</h1>
+                <p className="mt-3 max-w-2xl text-lg text-rose-50">
+                  Simule o ADC completo ajustando IRD, IA, IF e IPT. Use para validar resultados ou estimar o valor aproximado.
+                </p>
+                <Link
+                  href="/indicadores"
+                  className="mt-4 inline-flex items-center gap-2 text-sm font-medium text-white/90 underline-offset-4 hover:text-white hover:underline"
+                >
+                  ← Voltar aos Indicadores
+                </Link>
+              </div>
+            </div>
           </div>
         </div>
 

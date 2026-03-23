@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { DatePicker } from "@/components/ui/date-picker";
+import { AlertTriangle } from "lucide-react";
 
 interface BFS {
   id: string;
@@ -129,15 +130,20 @@ export default function BFSPage() {
   return (
     <MainLayout>
       <div className="space-y-8">
-        <div className="relative overflow-hidden rounded-xl bg-linear-to-r from-orange-600/10 via-orange-600/5 to-transparent p-8 border border-orange-200/50 dark:border-orange-800/50">
-          <div className="absolute top-0 right-0 -mt-4 -mr-4 w-32 h-32 bg-orange-600/10 rounded-full blur-3xl"></div>
-          <div className="relative">
-            <h1 className="text-4xl font-bold tracking-tight bg-linear-to-r from-orange-600 to-amber-500 bg-clip-text text-transparent pb-2">
-              BFSs - Boletins de Fiscalização
-            </h1>
-            <p className="text-muted-foreground mt-2 text-lg max-w-2xl">
-              Registros de fiscalização dos serviços não demandantes.
-            </p>
+        <div className="relative overflow-hidden rounded-2xl bg-linear-to-br from-orange-600 via-orange-700 to-amber-900 p-8 shadow-xl shadow-orange-900/35 dark:bg-linear-to-br dark:from-orange-700 dark:via-amber-800 dark:to-orange-950 dark:shadow-2xl dark:shadow-black/45">
+          <div className="relative flex flex-col gap-4 sm:flex-row sm:items-start sm:gap-6">
+            <div
+              className="flex h-22 w-22 shrink-0 items-center justify-center rounded-2xl bg-amber-950 shadow-lg dark:bg-amber-950"
+              aria-hidden
+            >
+              <AlertTriangle className="h-11 w-11 text-white" strokeWidth={1.5} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <h1 className="text-4xl font-bold tracking-tight text-white">BFSs - Boletins de Fiscalização</h1>
+              <p className="mt-3 max-w-2xl text-lg text-orange-50">
+                Registros de fiscalização dos serviços não demandantes.
+              </p>
+            </div>
           </div>
         </div>
 
@@ -311,7 +317,7 @@ export default function BFSPage() {
                     <tr>
                       <th className="px-3 py-3"></th>
                       <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider">BFS</th>
-                      <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider">Status</th>
+                      <th className="whitespace-nowrap px-6 py-3 font-medium uppercase text-xs tracking-wider">Status</th>
                       <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider">Tipo de Serviço</th>
                       <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider">Fiscal</th>
                       <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider">Subprefeitura</th>
@@ -340,8 +346,8 @@ export default function BFSPage() {
                           <td className="px-6 py-4 font-medium font-mono text-primary">
                             {bfs.bfs}
                           </td>
-                          <td className="px-6 py-4">
-                            <span className={`px-2.5 py-0.5 text-xs font-medium rounded-full border ${getStatusColor(bfs.status, bfs.sem_irregularidade)} bg-opacity-10 border-opacity-20`}>
+                          <td className="whitespace-nowrap px-6 py-4 align-middle">
+                            <span className={`inline-flex max-w-none whitespace-nowrap px-2.5 py-0.5 text-xs font-medium rounded-full border ${getStatusColor(bfs.status, bfs.sem_irregularidade)} bg-opacity-10 border-opacity-20`}>
                               {formatStatus(bfs.status)}
                             </span>
                           </td>
@@ -400,8 +406,8 @@ export default function BFSPage() {
                   </div>
                   <div>
                     <label className="text-sm font-medium text-muted-foreground">Status</label>
-                    <p className="text-sm">
-                      <span className={`px-2.5 py-0.5 text-xs font-medium rounded-full border ${getStatusColor(selectedBFS.status, selectedBFS.sem_irregularidade)}`}>
+                    <p className="text-sm whitespace-nowrap">
+                      <span className={`inline-flex whitespace-nowrap px-2.5 py-0.5 text-xs font-medium rounded-full border ${getStatusColor(selectedBFS.status, selectedBFS.sem_irregularidade)}`}>
                         {formatStatus(selectedBFS.status)}
                       </span>
                     </p>

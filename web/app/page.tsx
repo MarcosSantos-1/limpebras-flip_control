@@ -30,6 +30,7 @@ import { CNCsTopServicesChart, type CNCsTopServiceDatum } from "@/components/cnc
 import { SACsOverdueBySubChart, type SACOverdueBySubDatum } from "@/components/sacs-overdue-by-sub-chart";
 import { SUBPREFEITURAS } from "@/constants/sacs";
 import { useDashboardData } from "@/lib/use-dashboard-data";
+import { LayoutDashboard } from "lucide-react";
 
 const SUBPREF_LOOKUP = SUBPREFEITURAS.reduce<Record<string, string>>((acc, sub) => {
   acc[sub.code.toUpperCase()] = sub.code;
@@ -425,7 +426,7 @@ export default function DashboardPage() {
       <div className="space-y-8">
         {isLoading && (
           <div className="fixed inset-0 z-90 bg-background/90 backdrop-blur-sm flex items-center justify-center">
-            <div className="flex flex-col items-center gap-3 rounded-2xl border border-border bg-card/90 px-8 py-6 shadow-xl">
+            <div className="flex flex-col items-center gap-3 rounded-2xl bg-card/95 px-8 py-6 shadow-2xl shadow-zinc-900/20">
               <div className="h-48 w-48">
                 <Lottie animationData={loadingAnimation} loop autoplay />
               </div>
@@ -434,13 +435,26 @@ export default function DashboardPage() {
           </div>
         )}
 
-        <div className="relative overflow-hidden rounded-xl bg-linear-to-r from-cyan-600/10 via-zinc-600/5 to-transparent p-8 border border-cyan-200/50 dark:border-cyan-800/50">
-          <div className="absolute top-0 right-0 -mt-4 -mr-4 w-32 h-32 bg-cyan-600/10 rounded-full blur-3xl"></div>
-          <div className="relative">
-            <h1 className="text-4xl font-bold tracking-tight bg-linear-to-r from-primary to-indigo-600 bg-clip-text text-transparent pb-2">Dashboard</h1>
-            <p className="text-muted-foreground mt-2 text-lg max-w-2xl">
-              Visão geral dos indicadores de desempenho.
-            </p>
+        <div className="relative overflow-hidden rounded-2xl bg-card p-8 shadow-xl shadow-zinc-900/12 dark:bg-linear-to-br dark:from-cyan-950/50 dark:via-zinc-900/60 dark:to-zinc-950 dark:shadow-2xl dark:shadow-black/40">
+          <div className="pointer-events-none absolute -right-6 -top-10 h-44 w-44 rounded-full bg-linear-to-br from-primary/25 to-indigo-500/20 blur-3xl dark:from-cyan-500/20 dark:to-indigo-600/10" />
+          <div className="pointer-events-none absolute -bottom-12 -left-8 h-36 w-36 rounded-full bg-linear-to-tr from-cyan-400/20 to-transparent blur-2xl dark:from-cyan-600/15 dark:to-transparent" />
+          <div className="relative flex flex-col gap-6 sm:flex-row sm:items-start sm:justify-between sm:gap-8">
+            <div className="min-w-0 flex-1">
+              <h1 className="text-4xl font-bold tracking-tight text-slate-900 dark:bg-linear-to-r dark:from-primary dark:to-indigo-400 dark:bg-clip-text dark:text-transparent">
+                Dashboard - Limpebras
+              </h1>
+              <p className="mt-3 max-w-2xl text-lg text-slate-600 dark:text-muted-foreground">
+                Visão geral dos indicadores de desempenho.
+              </p>
+            </div>
+            <div className="flex shrink-0 justify-start sm:justify-end">
+              <div
+                className="flex h-22 w-22 items-center justify-center rounded-2xl bg-linear-to-br from-primary/15 via-indigo-500/12 to-cyan-500/15 shadow-md shadow-slate-900/10 dark:from-primary/25 dark:via-indigo-500/20 dark:to-cyan-950/40 dark:shadow-lg dark:shadow-black/30"
+                aria-hidden
+              >
+                <LayoutDashboard className="h-11 w-11 text-primary dark:text-primary" strokeWidth={1.5} />
+              </div>
+            </div>
           </div>
         </div>
 
@@ -452,68 +466,71 @@ export default function DashboardPage() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* Grid 2x2 dos indicadores */}
             <div className="grid grid-cols-2 gap-3 md:col-span-2">
-              <Card className="p-4 hover:scale-[1.02] transition-all duration-200 cursor-default border-l-4 border-l-blue-500">
+              <Card className="rounded-xl border-0 bg-linear-to-br from-blue-600 to-blue-800 p-4 text-white shadow-xl shadow-blue-900/25 transition-all duration-200 hover:scale-[1.02] hover:shadow-2xl hover:border-transparent cursor-default dark:bg-none dark:bg-card dark:text-card-foreground dark:shadow-md dark:hover:shadow-md">
                 <CardHeader className="p-0 pb-4">
                   <IndicatorTooltip 
                     tipo="IA" 
                     valor={indicators.data?.IA?.valor}
                     pontuacao={indicators.data?.IA?.pontuacao}
+                    iconClassName="text-white/75 hover:text-white dark:text-zinc-400 dark:hover:text-zinc-300"
                   >
-                    <CardTitle className="text-sm font-medium text-blue-600 dark:text-blue-400">IA</CardTitle>
+                    <CardTitle className="text-sm font-medium text-white/95 dark:text-blue-400">IA - ÍNDICADOR DE ATENDIMENTO</CardTitle>
                   </IndicatorTooltip>
                 </CardHeader>
                 <CardContent className="p-0">
-                  <div className="text-lg font-semibold text-muted-foreground mb-1">
+                  <div className="mb-1 text-lg font-semibold text-white/85 dark:text-muted-foreground">
                     {indicators.data?.IA?.pontuacao || 0} Pontos
                   </div>
-                  <div className="text-3xl font-bold bg-linear-to-r from-blue-600 to-blue-400 bg-clip-text text-transparent">
+                  <div className="text-3xl font-bold text-white dark:bg-linear-to-r dark:from-blue-600 dark:to-blue-400 dark:bg-clip-text dark:text-transparent">
                     {indicators.data?.IA?.valor?.toFixed(1) || "0"}%
                   </div>
                 </CardContent>
               </Card>
 
-              <Card className="p-4 hover:scale-[1.02] transition-all duration-200 cursor-default border-l-4 border-l-emerald-500">
+              <Card className="rounded-xl border-0 bg-linear-to-br from-emerald-600 to-emerald-900 p-4 text-white shadow-xl shadow-emerald-900/25 transition-all duration-200 hover:scale-[1.02] hover:shadow-2xl hover:border-transparent cursor-default dark:bg-none dark:bg-card dark:text-card-foreground dark:shadow-md dark:hover:shadow-md">
                 <CardHeader className="p-0 pb-4">
                   <IndicatorTooltip 
                     tipo="IRD" 
                     valor={indicators.data?.IRD?.valor}
                     pontuacao={indicators.data?.IRD?.pontuacao}
+                    iconClassName="text-white/75 hover:text-white dark:text-zinc-400 dark:hover:text-zinc-300"
                   >
-                    <CardTitle className="text-sm font-medium text-emerald-600 dark:text-emerald-400">IRD</CardTitle>
+                    <CardTitle className="text-sm font-medium text-white/95 dark:text-emerald-400">IRD - ÍNDICADOR DE RECLAMAÇÕES POR DOMICÍLIO</CardTitle>
                   </IndicatorTooltip>
                 </CardHeader>
                 <CardContent className="p-0">
-                  <div className="text-lg font-semibold text-muted-foreground mb-1">
+                  <div className="mb-1 text-lg font-semibold text-white/85 dark:text-muted-foreground">
                     {indicators.data?.IRD?.pontuacao || 0} Pontos
                   </div>
-                  <div className="text-3xl font-bold bg-linear-to-r from-emerald-600 to-emerald-400 bg-clip-text text-transparent">
+                  <div className="text-3xl font-bold text-white dark:bg-linear-to-r dark:from-emerald-600 dark:to-emerald-400 dark:bg-clip-text dark:text-transparent">
                     {indicators.data?.IRD?.valor?.toFixed(2) || "0"}
                   </div>
                 </CardContent>
               </Card>
 
-              <Card className="p-4 hover:scale-[1.02] transition-all duration-200 cursor-default border-l-4 border-l-amber-500">
+              <Card className="rounded-xl border-0 bg-linear-to-br from-amber-500 to-amber-800 p-4 text-white shadow-xl shadow-amber-900/25 transition-all duration-200 hover:scale-[1.02] hover:shadow-2xl hover:border-transparent cursor-default dark:bg-none dark:bg-card dark:text-card-foreground dark:shadow-md dark:hover:shadow-md">
                 <CardHeader className="p-0 pb-4">
                   <IndicatorTooltip 
                     tipo="IF" 
                     valor={indicators.data?.IF?.valor}
                     pontuacao={indicators.data?.IF?.pontuacao}
+                    iconClassName="text-white/75 hover:text-white dark:text-zinc-400 dark:hover:text-zinc-300"
                   >
-                    <CardTitle className="text-sm font-medium text-amber-600 dark:text-amber-400">IF</CardTitle>
+                    <CardTitle className="text-sm font-medium text-white/95 dark:text-amber-400">IF - ÍNDICADOR DE FISCALIZAÇÃO</CardTitle>
                   </IndicatorTooltip>
                 </CardHeader>
                 <CardContent className="p-0">
-                  <div className="text-lg font-semibold text-muted-foreground mb-1">
+                  <div className="mb-1 text-lg font-semibold text-white/85 dark:text-muted-foreground">
                     {indicators.data?.IF?.pontuacao || 0} Pontos
                   </div>
-                  <div className="text-3xl font-bold bg-linear-to-r from-amber-600 to-amber-400 bg-clip-text text-transparent">
+                  <div className="text-3xl font-bold text-white dark:bg-linear-to-r dark:from-amber-600 dark:to-amber-400 dark:bg-clip-text dark:text-transparent">
                     {indicators.data?.IF?.valor?.toFixed(1) || "0"}%
                   </div>
                 </CardContent>
               </Card>
 
               <Card 
-                className="p-4 transition-all duration-200 border-l-4 border-l-purple-500 cursor-pointer hover:scale-[1.02]"
+                className="rounded-xl border-0 bg-linear-to-br from-violet-600 to-purple-900 p-4 text-white shadow-xl shadow-purple-900/25 transition-all duration-200 hover:scale-[1.02] hover:shadow-2xl hover:border-transparent cursor-pointer dark:bg-none dark:bg-card dark:text-card-foreground dark:shadow-md dark:hover:shadow-md"
                 onClick={() => router.push(iptSemDados ? "/upload" : "/ipt")}
               >
                 <CardHeader className="p-0 pb-4">
@@ -521,21 +538,22 @@ export default function DashboardPage() {
                     tipo="IPT" 
                     valor={indicators.data?.IPT?.valor ?? undefined}
                     pontuacao={indicators.data?.IPT?.pontuacao ?? undefined}
+                    iconClassName="text-white/75 hover:text-white dark:text-zinc-400 dark:hover:text-zinc-300"
                   >
-                    <CardTitle className="text-sm font-medium text-purple-600 dark:text-purple-400">IPT</CardTitle>
+                    <CardTitle className="text-sm font-medium text-white/95 dark:text-purple-400">IPT - INDICADOR PLANO DE TRABALHO</CardTitle>
                   </IndicatorTooltip>
                 </CardHeader>
                 <CardContent className="p-0">
-                  <div className="text-lg font-semibold text-muted-foreground mb-1">
+                  <div className="mb-1 text-lg font-semibold text-white/85 dark:text-muted-foreground">
                     {(iptSemDados ? 0 : indicators.data?.IPT?.pontuacao) ?? 0} Pontos
                     {iptSemDados && (
-                      <span className="text-xs text-muted-foreground/70"> (Clique para importar planilha Reports)</span>
+                      <span className="text-xs text-white/70 dark:text-muted-foreground/70"> (Clique para importar planilha Reports)</span>
                     )}
                     {!iptSemDados && indicators.data?.IPT?.valor != null && (
-                      <span className="text-xs text-muted-foreground/70"> (Clique para ver página IPT)</span>
+                      <span className="text-xs text-white/70 dark:text-muted-foreground/70"> (Clique para ver página IPT)</span>
                     )}
                   </div>
-                  <div className="text-3xl font-bold bg-linear-to-r from-purple-600 to-purple-400 bg-clip-text text-transparent">
+                  <div className="text-3xl font-bold text-white dark:bg-linear-to-r dark:from-purple-600 dark:to-purple-400 dark:bg-clip-text dark:text-transparent">
                     {iptSemDados
                       ? "0%"
                       : indicators.data?.IPT?.valor != null && !Number.isNaN(indicators.data.IPT.valor)
@@ -546,18 +564,18 @@ export default function DashboardPage() {
               </Card>
             </div>
 
-            {/* ADC à direita - ring estilizado com design neon */}
+            {/* ADC — anel com gradiente forte (sem glow neon) */}
             <div className="flex items-center justify-center">
               <Link
                 href="/indicadores/explicacao"
-                className="group relative rounded-xl p-2 transition-all hover:scale-[1.02] hover:shadow-[0_0_24px_rgba(99,102,241,0.25)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                className="group relative rounded-2xl bg-card/40 p-2 shadow-lg shadow-slate-900/12 transition-all hover:scale-[1.02] hover:shadow-xl dark:bg-transparent dark:shadow-none dark:hover:shadow-lg focus-visible:outline-none focus-visible:shadow-xl"
                 title="Clique para ver a explicação detalhada dos indicadores"
               >
                 <ADCRingChart
                   total={indicators.data?.ADC?.total || 0}
                   percentual={indicators.data?.ADC?.percentual || 0}
                 />
-                <span className="pointer-events-none absolute left-1/2 top-full mt-2 -translate-x-1/2 whitespace-nowrap rounded-md bg-popover px-3 py-1 text-xs text-popover-foreground opacity-0 shadow-md ring-1 ring-border transition-opacity group-hover:opacity-100">
+                <span className="pointer-events-none absolute left-1/2 top-full mt-2 -translate-x-1/2 whitespace-nowrap rounded-md bg-popover px-3 py-1 text-xs text-popover-foreground opacity-0 shadow-lg shadow-zinc-900/20 transition-opacity group-hover:opacity-100">
                   Clique para ver detalhes dos indicadores
                 </span>
               </Link>
@@ -627,7 +645,7 @@ export default function DashboardPage() {
         </div>
 
         <div className="grid grid-cols-1 gap-4">
-          <Card className="border-0 shadow-xl bg-linear-to-br from-background to-muted/20">
+          <Card className="border-0 bg-linear-to-br from-background to-muted/25 shadow-xl shadow-zinc-900/10">
             <CardHeader>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
@@ -676,7 +694,7 @@ export default function DashboardPage() {
               ].map((group) => (
                 <details
                   key={group.title}
-                  className="group/ranking rounded-xl bg-card/70 shadow-md ring-1 ring-primary/10 px-4 py-3 open:shadow-lg transition-all hover:shadow-[0_0_24px_rgba(56,189,248,0.16)] hover:ring-primary/30"
+                  className="group/ranking rounded-xl bg-card/85 px-4 py-3 shadow-md shadow-zinc-900/10 transition-all open:shadow-xl hover:shadow-lg dark:bg-card/70 dark:shadow-none dark:hover:shadow-[0_0_24px_rgba(56,189,248,0.16)]"
                 >
                   <summary className="cursor-pointer list-none select-none">
                     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -703,7 +721,7 @@ export default function DashboardPage() {
                       group.data.map((item, index) => (
                         <details
                           key={item.nome}
-                          className="group/item rounded-lg bg-background/90 p-3 shadow-sm ring-1 ring-border/40 open:shadow-md hover:shadow-[0_0_14px_rgba(99,102,241,0.12)]"
+                          className="group/item rounded-lg bg-background/95 p-3 shadow-md shadow-zinc-900/8 transition-all open:shadow-lg hover:shadow-lg dark:bg-background/90 dark:shadow-sm dark:hover:shadow-[0_0_14px_rgba(99,102,241,0.12)]"
                         >
                           <summary className="cursor-pointer list-none">
                             <div className="flex flex-wrap items-center justify-between gap-3">

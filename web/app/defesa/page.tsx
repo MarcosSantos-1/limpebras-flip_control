@@ -37,6 +37,7 @@ import {
   X,
   ClipboardPaste,
   Plus,
+  ShieldCheck,
 } from "lucide-react";
 
 export type StatusDefesa = "Analisar" | "Irregular" | "Contestar";
@@ -794,15 +795,20 @@ export default function DefesaPage() {
   return ( 
     <MainLayout>
       <div className="space-y-8">
-        <div className="relative overflow-hidden rounded-xl bg-linear-to-r from-violet-600/10 via-violet-600/5 to-transparent p-8 border border-violet-200/50 dark:border-violet-800/50">
-          <div className="absolute top-0 right-0 -mt-4 -mr-4 w-32 h-32 bg-violet-600/10 rounded-full blur-3xl" />
-          <div className="relative">
-            <h1 className="text-4xl font-bold tracking-tight bg-linear-to-r from-violet-600 to-purple-500 bg-clip-text text-transparent pb-2">
-              Defesa / Contestação (IF)
-            </h1>
-            <p className="text-muted-foreground mt-2 text-lg max-w-3xl">
-              BFSs escalonados (Com irregularidade). Futura geração de relatórios de contestação.
-            </p>
+        <div className="relative overflow-hidden rounded-2xl bg-linear-to-br from-violet-600 via-purple-700 to-indigo-900 p-8 shadow-xl shadow-violet-900/35 dark:bg-linear-to-br dark:from-violet-800 dark:via-purple-900 dark:to-indigo-950 dark:shadow-2xl dark:shadow-black/45">
+          <div className="relative flex flex-col gap-4 sm:flex-row sm:items-start sm:gap-6">
+            <div
+              className="flex h-22 w-22 shrink-0 items-center justify-center rounded-2xl bg-violet-950 shadow-lg dark:bg-violet-950"
+              aria-hidden
+            >
+              <ShieldCheck className="h-11 w-11 text-white" strokeWidth={1.5} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <h1 className="text-4xl font-bold tracking-tight text-white">Defesa / Contestação (IF)</h1>
+              <p className="mt-3 max-w-3xl text-lg text-violet-50">
+                BFSs escalonados (Com irregularidade). Futura geração de relatórios de contestação.
+              </p>
+            </div>
           </div>
         </div>
 

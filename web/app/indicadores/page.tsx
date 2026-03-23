@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { apiService } from "@/lib/api";
 import { endOfMonth, format, startOfMonth } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { ArrowRight, Calculator, Sparkles } from "lucide-react";
+import { ArrowRight, Calculator, ChartPie, Sparkles } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { DatePicker } from "@/components/ui/date-picker";
 import { Button } from "@/components/ui/button";
@@ -84,33 +84,38 @@ export default function IndicadoresPage() {
   return (
     <MainLayout>
       <div className="space-y-8">
-        <div className="relative overflow-hidden rounded-xl bg-linear-to-r from-emerald-600/10 via-emerald-600/5 to-transparent p-8 border border-emerald-200/50 dark:border-emerald-800/50">
-          <div className="absolute top-0 right-0 -mt-4 -mr-4 w-32 h-32 bg-emerald-600/10 rounded-full blur-3xl"></div>
-          <div className="relative flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-            <div>
-              <h1 className="text-4xl font-bold tracking-tight bg-linear-to-r from-emerald-600 to-teal-500 bg-clip-text text-transparent pb-2">Indicadores</h1>
-              <p className="text-muted-foreground mt-2 text-lg max-w-2xl">
-                Cálculo e visualização dos indicadores ADC (Avaliação de Desempenho da Contratada).
-              </p>
+        <div className="relative overflow-hidden rounded-2xl bg-linear-to-br from-emerald-600 via-emerald-700 to-teal-800 p-8 shadow-xl shadow-emerald-900/35 dark:bg-linear-to-br dark:from-emerald-800 dark:via-emerald-900 dark:to-teal-950 dark:shadow-2xl dark:shadow-black/45">
+          <div className="relative flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+            <div className="flex min-w-0 flex-1 flex-col gap-4 sm:flex-row sm:items-start sm:gap-6">
+              <div
+                className="flex h-22 w-22 shrink-0 items-center justify-center rounded-2xl bg-teal-950 shadow-lg dark:bg-teal-950"
+                aria-hidden
+              >
+                <ChartPie className="h-11 w-11 text-white" strokeWidth={1.5} />
+              </div>
+              <div className="min-w-0">
+                <h1 className="text-4xl font-bold tracking-tight text-white">Indicadores</h1>
+                <p className="mt-3 max-w-2xl text-lg text-emerald-50">
+                  Cálculo e visualização dos indicadores ADC (Avaliação de Desempenho da Contratada).
+                </p>
+              </div>
             </div>
-            <div className="flex flex-col gap-2">
+            <div className="flex shrink-0 flex-col gap-2 sm:min-w-[min(100%,260px)]">
               <a
                 href="/indicadores/explicacao"
-                className="group relative overflow-hidden px-5 py-3 rounded-xl border border-emerald-300/60 dark:border-emerald-700/60 bg-linear-to-r from-emerald-500 to-teal-500 text-white transition-all shadow-lg hover:shadow-emerald-500/30 hover:-translate-y-0.5 text-sm font-semibold flex items-center gap-2 whitespace-nowrap"
+                className="group flex items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-white px-5 py-3 text-sm font-semibold text-emerald-800 shadow-lg transition-all hover:-translate-y-0.5 hover:bg-emerald-50 hover:shadow-xl"
               >
-                <span className="absolute inset-0 opacity-0 group-hover:opacity-100 transition bg-linear-to-r from-white/15 to-transparent" />
-                <Sparkles className="h-4 w-4 relative z-10" />
-                <span className="relative z-10">Ver Explicação Detalhada</span>
-                <ArrowRight className="h-4 w-4 relative z-10 transition-transform group-hover:translate-x-0.5" />
+                <Sparkles className="h-4 w-4 shrink-0 text-emerald-600" />
+                <span>Ver Explicação Detalhada</span>
+                <ArrowRight className="h-4 w-4 shrink-0 transition-transform group-hover:translate-x-0.5" />
               </a>
               <a
                 href="/indicadores/simulador"
-                className="group relative overflow-hidden px-5 py-3 rounded-xl  dark:border-rose-600/60 bg-linear-to-r from-red-500 to-rose-400 text-white transition-all shadow-lg hover:shadow-rose-500/30 hover:-translate-y-0.5 text-sm font-semibold flex items-center gap-2 whitespace-nowrap"
+                className="group flex items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-linear-to-r from-red-600 to-rose-600 px-5 py-3 text-sm font-semibold text-white shadow-lg transition-all hover:-translate-y-0.5 hover:from-red-500 hover:to-rose-500 hover:shadow-xl"
               >
-                <span className="absolute inset-0 opacity-0 group-hover:opacity-100 transition bg-linear-to-r from-white/15 to-transparent" />
-                <Calculator className="h-4 w-4 relative z-10" />
-                <span className="relative z-10">Simulador ADC</span>
-                <ArrowRight className="h-4 w-4 relative z-10 transition-transform group-hover:translate-x-0.5" />
+                <Calculator className="h-4 w-4 shrink-0" />
+                <span>Simulador ADC</span>
+                <ArrowRight className="h-4 w-4 shrink-0 transition-transform group-hover:translate-x-0.5" />
               </a>
             </div>
           </div>

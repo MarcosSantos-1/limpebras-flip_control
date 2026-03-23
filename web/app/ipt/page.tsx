@@ -4,7 +4,31 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { format, startOfMonth, subDays } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { Activity, AlertTriangle, BarChart2, Battery, BatteryWarning, Calendar, Check, ChevronDown, ChevronRight, ChevronUp, Cpu, Info, Package, PanelBottomClose, PanelBottomOpen, Plus, RotateCcw, Sparkles, TrendingUp, Truck, X } from "lucide-react";
+import {
+  Activity,
+  AlertTriangle,
+  BarChart2,
+  Battery,
+  BatteryWarning,
+  Calendar,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  ChevronUp,
+  Cpu,
+  Info,
+  Package,
+  PanelBottomClose,
+  PanelBottomOpen,
+  Plus,
+  RotateCcw,
+  Sparkles,
+  TrendingUp,
+  Truck,
+  X,
+} from "lucide-react";
+import Lottie from "lottie-react";
+import loadingAnimation from "@/public/Loading.json";
 import { Label } from "@/components/ui/label";
 import { DatePicker } from "@/components/ui/date-picker";
 import { MainLayout } from "@/components/layout/main-layout";
@@ -641,16 +665,31 @@ export default function IPTPage() {
   return (
     <MainLayout>
       <div className="space-y-6">
-        <div className="relative overflow-hidden rounded-2xl bg-linear-to-br from-emerald-400/20 via-teal-400/10 to-cyan-400/15 p-8 shadow-[0_0_45px_-20px_rgba(16,185,129,0.75)]">
-          <div className="pointer-events-none absolute -top-16 right-10 h-44 w-44 rounded-full bg-emerald-400/20 blur-3xl" />
-          <div className="pointer-events-none absolute -bottom-16 left-10 h-44 w-44 rounded-full bg-cyan-400/20 blur-3xl" />
-          <div className="relative">
-            <h1 className="text-4xl font-bold tracking-tight bg-linear-to-r from-emerald-600 to-teal-500 bg-clip-text text-transparent pb-2">
-              IPT
-            </h1>
-            <p className="text-muted-foreground mt-2 text-lg max-w-3xl">
-              Análise macro e conferência SELIMP x base interna.
-            </p>
+        {loading && (
+          <div className="fixed inset-0 z-90 flex items-center justify-center bg-background/90 backdrop-blur-sm">
+            <div className="flex flex-col items-center gap-3 rounded-2xl bg-card/95 px-8 py-6 shadow-2xl shadow-zinc-900/20">
+              <div className="h-48 w-48">
+                <Lottie animationData={loadingAnimation} loop autoplay />
+              </div>
+              <p className="text-sm font-semibold text-muted-foreground">Carregando dados IPT...</p>
+            </div>
+          </div>
+        )}
+
+        <div className="relative overflow-hidden rounded-2xl bg-linear-to-br from-emerald-600 via-emerald-700 to-teal-800 p-8 shadow-xl shadow-emerald-900/35 dark:bg-linear-to-br dark:from-emerald-800 dark:via-emerald-900 dark:to-teal-950 dark:shadow-2xl dark:shadow-black/45">
+          <div className="relative flex flex-col gap-4 sm:flex-row sm:items-start sm:gap-6">
+            <div
+              className="flex h-22 w-22 shrink-0 items-center justify-center rounded-2xl bg-teal-950 shadow-lg dark:bg-teal-950"
+              aria-hidden
+            >
+              <Activity className="h-11 w-11 text-white" strokeWidth={1.5} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <h1 className="text-4xl font-bold tracking-tight text-white">IPT</h1>
+              <p className="mt-3 max-w-3xl text-lg text-emerald-50">
+                Análise macro e conferência SELIMP x base interna.
+              </p>
+            </div>
           </div>
         </div>
 
