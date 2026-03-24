@@ -189,6 +189,17 @@ export const apiService = {
     return data;
   },
 
+  /** Preview frequência/cronograma ao digitar código de setor (defesa). */
+  getDefesaSetorPreview: async (params: { setor: string; subprefeitura?: string; tipo_servico?: string }) => {
+    const { data } = await api.get("/cnc/defesa/setor-preview", { params });
+    return data as {
+      setor: string;
+      frequencia_resolvida: string | null;
+      cronograma_resolvido: string | null;
+      source: "index" | "ipt_cronograma" | "nomenclatura";
+    };
+  },
+
   /** Persiste status de defesa e dados da contestação no servidor (compartilhado entre usuários). */
   updateDefesaBfs: async (
     numeroBfs: string,

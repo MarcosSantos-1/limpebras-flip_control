@@ -2,7 +2,8 @@ import { FastifyPluginAsync } from "fastify";
 import { pool } from "../db.js";
 import { cacheKey, getOrSet, invalidatePrefix } from "../cache.js";
 import { BFS_DEFESA_EXCLUSAO_SQL, sqlBfsFiscalNaoEhSelimp } from "../constants/bfs.js";
-import { findSetorByCoords, parseCoordenada } from "../services/setorLookup.js";
+import { findSetorByCoords, parseCoordenada, findSetorByPlano } from "../services/setorLookup.js";
+import { parseSetor, FREQUENCIAS, normalizarSetor } from "../constants/ipt.js";
 
 const STATUS_DEFESA_VALID = new Set(["Analisar", "Irregular", "Contestar"]);
 
@@ -252,6 +253,56 @@ export const cncRoutes: FastifyPluginAsync = async (fastify) => {
       return result;
     }
   );
+
+  /**
+   * Preview de frequência e cronograma ao digitar um código de setor (índice + ipt_cronograma + nomenclatura).
+   */
+  fastify.get<{
+    Querystring: { setor?: string; subprefeitura?: string; tipo_servico?: string };
+  }>("/cnc/defesa/setor-preview", async (request, reply) => {
+    const q = request.query;
+    const setor = (q.setor ?? "").trim();
+    if (!setor) return reply.code(400).send({ detail: "setor obrigatório" });
+    const subprefeitura = (q.subprefeitura ?? "").trim();
+    const tipo_servico = (q.tipo_servico ?? "").trim();
+
+    const fromIndex = findSetorByPlano(setor, tipo_servico || undefined, subprefeitura || undefined);
+
+    let cronograma = fromIndex?.cronograma?.trim() || null;
+    let frequencia = fromIndex?.frequencia?.trim() || null;
+    let source: "index" | "ipt_cronograma" | "nomenclatura" = fromIndex ? "index" : "nomenclatura";
+
+    if (!cronograma) {
+      const norm = normalizarSetor(setor);
+      const r = await pool.query<{ d: string }>(
+        `SELECT to_char(data_esperada, 'DD/MM/YYYY') AS d
+         FROM ipt_cronograma
+         WHERE TRIM(setor) = $1 OR TRIM(setor) = $2
+         ORDER BY data_esperada`,
+        [setor, norm]
+      );
+      const parts = r.rows.map((row) => row.d).filter(Boolean);
+      if (parts.length > 0) {
+        cronograma = parts.join("; ");
+        source = "ipt_cronograma";
+      }
+    }
+
+    if (!frequencia) {
+      const parsed = parseSetor(setor);
+      if (parsed) {
+        const code = String(parsed.frequencia).padStart(4, "0").slice(-4);
+        frequencia = FREQUENCIAS[code] ?? null;
+      }
+    }
+
+    return {
+      setor: setor,
+      frequencia_resolvida: frequencia,
+      cronograma_resolvido: cronograma,
+      source,
+    };
+  });
 
   fastify.patch<{
     Params: { numero_bfs: string };

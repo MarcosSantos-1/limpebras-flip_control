@@ -7,7 +7,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { apiService } from "@/lib/api";
 import { uploadFotosToStorage, deleteFotosFromStorage } from "@/lib/firebase-defesa-fotos";
 import { defesaStorageKey, firebaseDefesaFolderSegment } from "@/lib/defesa-storage-key";
-import { format, startOfMonth, endOfMonth, isValid } from "date-fns";
+import { format, startOfMonth, endOfMonth } from "date-fns";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { ptBR } from "date-fns/locale";
 import {
   Select,
@@ -23,6 +24,7 @@ import { DatePicker } from "@/components/ui/date-picker";
 import {
   Search,
   AlertTriangle,
+  CheckCircle2,
   FileCheck,
   FileText,
   MapPin,
@@ -38,7 +40,12 @@ import {
   ClipboardPaste,
   Plus,
   ShieldCheck,
+  Sparkles,
+  Route,
+  Info,
+  Clock,
 } from "lucide-react";
+import { getCronogramaTextoParaExibir } from "@/lib/defesa-cronograma";
 
 export type StatusDefesa = "Analisar" | "Irregular" | "Contestar";
 
@@ -55,31 +62,9 @@ export interface FotosContestar {
   nosso_agente: string[];
   justificativa?: string;
   setor_override?: string | null;
-}
-
-/** Retorna true se o serviço é MT, BL ou GO (usa cronograma reduzido a 2 datas). */
-function isServicoCronogramaReduzido(tipoServico: string | undefined): boolean {
-  const t = (tipoServico || "").toLowerCase();
-  return /mutir[aã]o|bueiro|desobstru|cata-bagulho|volumoso|entulho/.test(t);
-}
-
-/** Retorna as 2 datas do cronograma mais próximas de hoje. Formato: "01/09/2025; 16/12/2025; ..." */
-function cronogramaProximas2(cronograma: string | undefined | null): string {
-  if (!cronograma?.trim()) return "";
-  const partes = cronograma.split(";").map((d) => d.trim()).filter(Boolean);
-  if (partes.length <= 2) return cronograma.trim();
-  const hoje = new Date();
-  hoje.setHours(0, 0, 0, 0);
-  const parsed = partes
-    .map((s) => {
-      const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-      if (!m) return null;
-      const d = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
-      return isValid(d) ? { str: s, d, dist: Math.abs(d.getTime() - hoje.getTime()) } : null;
-    })
-    .filter((x): x is NonNullable<typeof x> => x != null);
-  parsed.sort((a, b) => a.dist - b.dist);
-  return parsed.slice(0, 2).map((x) => x.str).join("; ");
+  /** Texto base do cronograma (planilha/índice ou editado). A exibição aplica 3 datas conforme o serviço. */
+  cronograma_override?: string | null;
+  frequencia_override?: string | null;
 }
 
 /** Retorna o setor efetivo: fotos.setor_override ou o setor do BFS. */
@@ -92,17 +77,68 @@ function getSetorParaExibir(
   return bfs?.setor_resolvido ?? bfs?.cnc_detalhes?.[0]?.setor ?? bfs?.setor ?? "—";
 }
 
-/** Retorna o cronograma efetivo: vazio se Sem Setor; 2 datas mais próximas para MT/BL/GO. */
+function getCronogramaBruto(
+  bfs: { cronograma_resolvido?: string | null } | undefined,
+  fotos: { cronograma_override?: string | null } | undefined
+): string {
+  const o = fotos?.cronograma_override;
+  if (o !== undefined && o !== null && String(o).trim() !== "") return String(o).trim();
+  return bfs?.cronograma_resolvido?.trim() ?? "";
+}
+
+function getFrequenciaParaExibir(
+  bfs: { frequencia_resolvida?: string | null } | undefined,
+  fotos: { frequencia_override?: string | null } | undefined
+): string {
+  const o = fotos?.frequencia_override;
+  if (o !== undefined && o !== null && String(o).trim() !== "") return String(o).trim();
+  return bfs?.frequencia_resolvida?.trim() ?? "";
+}
+
+/** Cronograma para UI/PDF: vazio se Sem Setor; serviços com muitas datas → 3 datas vs. data de registro. */
 function getCronogramaParaExibir(
-  bfs: { setor_resolvido?: string | null; cnc_detalhes?: { setor?: string }[]; setor?: string; cronograma_resolvido?: string | null; tipo_servico?: string } | undefined,
-  fotos: { setor_override?: string | null } | undefined
+  bfs: {
+    setor_resolvido?: string | null;
+    cnc_detalhes?: { setor?: string }[];
+    setor?: string;
+    cronograma_resolvido?: string | null;
+    tipo_servico?: string;
+    data_abertura?: string;
+  } | undefined,
+  fotos: { setor_override?: string | null; cronograma_override?: string | null } | undefined
 ): string {
   const setor = getSetorParaExibir(bfs, fotos);
   if (setor === "Sem Setor" || !setor?.trim()) return "";
-  const crono = bfs?.cronograma_resolvido?.trim();
-  if (!crono) return "";
-  if (isServicoCronogramaReduzido(bfs?.tipo_servico)) return cronogramaProximas2(crono);
-  return crono;
+  const raw = getCronogramaBruto(bfs, fotos);
+  if (!raw) return "";
+  return getCronogramaTextoParaExibir(raw, bfs?.tipo_servico, bfs?.data_abertura ?? null);
+}
+
+function formatDefesaDateTime(iso?: string | null): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "—" : format(d, "dd/MM/yyyy HH:mm", { locale: ptBR });
+}
+
+/** True se há algo no rascunho de contestação que não deva ser perdido ao fechar sem salvar. */
+function hasContestarDraftContent(d: FotosContestar): boolean {
+  if ((d.agente_sub?.length ?? 0) > 0 && d.agente_sub.some((x) => String(x ?? "").trim())) return true;
+  if ((d.nosso_agente?.length ?? 0) > 0 && d.nosso_agente.some((x) => String(x ?? "").trim())) return true;
+  if ((d.itens_fiscalizados?.length ?? 0) > 0) {
+    const temItemPreenchido = d.itens_fiscalizados!.some(
+      (row) =>
+        String(row.item ?? "").trim() ||
+        String(row.proatividade ?? "").trim() ||
+        String(row.turno ?? "").trim() ||
+        String(row.observacoes ?? "").trim()
+    );
+    if (temItemPreenchido) return true;
+  }
+  if (String(d.justificativa ?? "").trim()) return true;
+  if (d.setor_override !== undefined) return true;
+  if (String(d.cronograma_override ?? "").trim()) return true;
+  if (String(d.frequencia_override ?? "").trim()) return true;
+  return false;
 }
 
 /** Extrai turno do setor (ex: ST10304VJ0060 -> "1" = 1° turno). 1=1° turno, 2=2° turno, 3=3° turno. */
@@ -358,21 +394,30 @@ function StatusDefesaButton({
   onSelect: () => void;
 }) {
   const [isHovered, setIsHovered] = useState(false);
-  const baseClass = "inline-flex items-center justify-center gap-3 px-6 py-4 text-base font-bold rounded-xl transition-all duration-200 min-w-36 cursor-pointer";
+  const analisarJaSelecionado = opt.value === "Analisar" && isActive;
+  const baseClass =
+    "inline-flex items-center justify-center gap-3 px-6 py-4 text-base font-bold rounded-xl transition-all duration-200 min-w-36";
+  const cursorClass = analisarJaSelecionado ? "cursor-not-allowed" : "cursor-pointer";
   const activeClass = isActive ? opt.btnSelected : opt.btnOutline;
-  const hoverClass = !isActive && isHovered
-    ? opt.value === "Analisar"
-      ? "!bg-amber-100 !border-amber-500 !scale-[1.03] !shadow-lg dark:!bg-amber-900/50"
-      : opt.value === "Irregular"
-        ? "!bg-red-100 !border-red-500 !scale-[1.03] !shadow-lg dark:!bg-red-900/50"
-        : "!bg-emerald-100 !border-emerald-500 !scale-[1.03] !shadow-lg dark:!bg-emerald-900/50"
+  const hoverClass =
+    !analisarJaSelecionado && !isActive && isHovered
+      ? opt.value === "Analisar"
+        ? "!bg-amber-100 !border-amber-500 !scale-[1.03] !shadow-lg dark:!bg-amber-900/50"
+        : opt.value === "Irregular"
+          ? "!bg-red-100 !border-red-500 !scale-[1.03] !shadow-lg dark:!bg-red-900/50"
+          : "!bg-emerald-100 !border-emerald-500 !scale-[1.03] !shadow-lg dark:!bg-emerald-900/50"
+      : "";
+  /** Estado atual já é Analisar: sem hover/scale no selecionado (btnSelected traz hover:bg e hover:scale). */
+  const analisarLockedOverrides = analisarJaSelecionado
+    ? "opacity-100 shadow-lg !scale-100 hover:!scale-100 hover:!bg-amber-400 active:!scale-100 dark:hover:!bg-amber-400"
     : "";
   return (
     <button
       type="button"
-      className={`${baseClass} ${activeClass} ${hoverClass}`}
+      disabled={analisarJaSelecionado}
+      className={`${baseClass} ${cursorClass} ${activeClass} ${hoverClass} ${analisarLockedOverrides}`}
       onClick={onSelect}
-      onMouseEnter={() => setIsHovered(true)}
+      onMouseEnter={() => !analisarJaSelecionado && setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
       {opt.value === "Analisar" && <Search className="h-6 w-6" />}
@@ -417,6 +462,66 @@ export default function DefesaPage() {
   const [pendingStatusChange, setPendingStatusChange] = useState<StatusDefesa | null>(null);
   const [pendingBfsId, setPendingBfsId] = useState<string | null>(null);
   const [contestarSalvando, setContestarSalvando] = useState(false);
+  const [setorPreviewLoading, setSetorPreviewLoading] = useState(false);
+  /** Destaque na lista só na sessão atual (some ao recarregar a página). */
+  const [recentDefesaHighlightKeys, setRecentDefesaHighlightKeys] = useState<Set<string>>(() => new Set());
+  const [confirmFecharContestarOpen, setConfirmFecharContestarOpen] = useState(false);
+  const fotosContestarDraftRef = useRef(fotosContestarDraft);
+  fotosContestarDraftRef.current = fotosContestarDraft;
+  const setorPreviewTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const setorPreviewSeqRef = useRef(0);
+
+  const contestarRow = useMemo(() => {
+    if (!modalContestarOpen) return null;
+    if (contestarBfsId) return bfss.find((b) => defesaStorageKey(b) === contestarBfsId) ?? null;
+    return selectedBFS;
+  }, [modalContestarOpen, contestarBfsId, bfss, selectedBFS]);
+
+  const setorPreviewKey = useMemo(() => {
+    if (!modalContestarOpen || !contestarRow) return "";
+    const v =
+      fotosContestarDraft.setor_override !== undefined
+        ? (fotosContestarDraft.setor_override ?? "")
+        : (contestarRow.setor_resolvido ?? contestarRow.cnc_detalhes?.[0]?.setor ?? contestarRow.setor ?? "");
+    return v.trim();
+  }, [modalContestarOpen, contestarRow, fotosContestarDraft.setor_override]);
+
+  useEffect(() => {
+    if (!modalContestarOpen || !contestarRow) return;
+    if (setorPreviewTimeoutRef.current) clearTimeout(setorPreviewTimeoutRef.current);
+    if (!setorPreviewKey || setorPreviewKey === "Sem Setor") {
+      setSetorPreviewLoading(false);
+      setFotosContestarDraft((p) => {
+        if (p.cronograma_override === undefined && p.frequencia_override === undefined) return p;
+        return { ...p, cronograma_override: undefined, frequencia_override: undefined };
+      });
+      return;
+    }
+    setorPreviewTimeoutRef.current = setTimeout(async () => {
+      const seq = ++setorPreviewSeqRef.current;
+      setSetorPreviewLoading(true);
+      try {
+        const data = await apiService.getDefesaSetorPreview({
+          setor: setorPreviewKey,
+          subprefeitura: contestarRow.subprefeitura,
+          tipo_servico: contestarRow.tipo_servico,
+        });
+        if (seq !== setorPreviewSeqRef.current) return;
+        setFotosContestarDraft((p) => ({
+          ...p,
+          cronograma_override: data.cronograma_resolvido ?? p.cronograma_override,
+          frequencia_override: data.frequencia_resolvida ?? p.frequencia_override,
+        }));
+      } catch (e) {
+        console.warn("Preview setor:", e);
+      } finally {
+        if (seq === setorPreviewSeqRef.current) setSetorPreviewLoading(false);
+      }
+    }, 450);
+    return () => {
+      if (setorPreviewTimeoutRef.current) clearTimeout(setorPreviewTimeoutRef.current);
+    };
+  }, [modalContestarOpen, contestarRow, setorPreviewKey]);
 
   const parseDateInputLocal = (value?: string) => {
     if (!value) return null;
@@ -564,6 +669,9 @@ export default function DefesaPage() {
             dados: (t.dados as FotosContestar) ?? null,
           });
         }
+        if (status === "Contestar" || status === "Irregular") {
+          setRecentDefesaHighlightKeys((prev) => new Set([...prev, defesaStorageKey(b)]));
+        }
       } catch (err) {
         console.error(err);
         applyDefesaTrabalhoToRow(b.id, prevTrabalho);
@@ -587,8 +695,18 @@ export default function DefesaPage() {
               nosso_agente: existing.nosso_agente ?? [],
               justificativa: existing.justificativa ?? "",
               setor_override: existing.setor_override ?? undefined,
+              cronograma_override: existing.cronograma_override ?? undefined,
+              frequencia_override: existing.frequencia_override ?? undefined,
             }
-          : { agente_sub: [], itens_fiscalizados: [], nosso_agente: [], justificativa: "", setor_override: undefined };
+          : {
+              agente_sub: [],
+              itens_fiscalizados: [],
+              nosso_agente: [],
+              justificativa: "",
+              setor_override: undefined,
+              cronograma_override: undefined,
+              frequencia_override: undefined,
+            };
         setFotosContestarDraft(migrated);
         setModalContestarOpen(true);
         return;
@@ -622,6 +740,29 @@ export default function DefesaPage() {
     setConfirmExcluirFotosOpen(false);
   }, [selectedBFS, pendingBfsId, pendingStatusChange, bfss, setStatusDefesaForRow]);
 
+  const closeContestarModalAndClear = useCallback(() => {
+    setModalContestarOpen(false);
+    setConfirmFecharContestarOpen(false);
+    setFotosContestarDraft({
+      agente_sub: [],
+      itens_fiscalizados: [],
+      nosso_agente: [],
+      justificativa: "",
+      setor_override: undefined,
+      cronograma_override: undefined,
+      frequencia_override: undefined,
+    });
+    setContestarBfsId(null);
+  }, []);
+
+  const requestCloseContestarModal = useCallback(() => {
+    if (hasContestarDraftContent(fotosContestarDraftRef.current)) {
+      setConfirmFecharContestarOpen(true);
+      return;
+    }
+    closeContestarModalAndClear();
+  }, [closeContestarModalAndClear]);
+
   const handleContestarSalvar = useCallback(async () => {
     const row =
       selectedBFS ??
@@ -635,17 +776,17 @@ export default function DefesaPage() {
         ...fotosComUrls,
         justificativa: fotosContestarDraft.justificativa,
         setor_override: fotosContestarDraft.setor_override ?? undefined,
+        cronograma_override: fotosContestarDraft.cronograma_override ?? undefined,
+        frequencia_override: fotosContestarDraft.frequencia_override ?? undefined,
       };
       await setStatusDefesaForRow(row, "Contestar", dados);
-      setModalContestarOpen(false);
-      setContestarBfsId(null);
-      setFotosContestarDraft({ agente_sub: [], itens_fiscalizados: [], nosso_agente: [], justificativa: "", setor_override: undefined });
+      closeContestarModalAndClear();
     } catch (err) {
       console.error("Erro ao enviar fotos para o Firebase:", err);
     } finally {
       setContestarSalvando(false);
     }
-  }, [selectedBFS, contestarBfsId, bfss, fotosContestarDraft, setStatusDefesaForRow]);
+  }, [selectedBFS, contestarBfsId, bfss, fotosContestarDraft, setStatusDefesaForRow, closeContestarModalAndClear]);
 
   const loadBFSs = async () => {
     try {
@@ -998,6 +1139,10 @@ export default function DefesaPage() {
                     {bfssFiltered.map((bfs) => {
                       const cnc = primaryCnc(bfs);
                       const statusDefesa = getStatusDefesaForRow(bfs);
+                      const rowKey = defesaStorageKey(bfs);
+                      const showRecentPulse =
+                        recentDefesaHighlightKeys.has(rowKey) &&
+                        (statusDefesa === "Contestar" || statusDefesa === "Irregular");
                       return (
                         <Fragment key={bfs.id}>
                           <tr
@@ -1016,7 +1161,20 @@ export default function DefesaPage() {
                                 {expandedIds[bfs.id] ? "▾" : "▸"}
                               </button>
                             </td>
-                            <td className="px-6 py-4 font-medium font-mono text-primary">{bfs.bfs}</td>
+                            <td className="px-6 py-4 font-medium font-mono text-primary">
+                              <span className="inline-flex items-center gap-2">
+                                {showRecentPulse && (
+                                  <span
+                                    className="inline-flex shrink-0 text-base animate-bounce motion-reduce:animate-none"
+                                    title="Atualizado agora nesta sessão"
+                                    aria-hidden
+                                  >
+                                    {statusDefesa === "Contestar" ? "✅" : "⚠️"}
+                                  </span>
+                                )}
+                                {bfs.bfs}
+                              </span>
+                            </td>
                             <td className="px-6 py-4 font-medium">
                               {(() => {
                                 const setor = getSetorParaExibir(bfs, getFotosDadosForRow(bfs));
@@ -1080,9 +1238,9 @@ export default function DefesaPage() {
                                     const s = getSetorParaExibir(bfs, getFotosDadosForRow(bfs));
                                     return s === "Sem Setor" ? <span className="text-red-600 dark:text-red-400 font-semibold">Sem Setor</span> : ` ${s}`;
                                   })()}</div>
-                                  {(bfs.frequencia_resolvida || getCronogramaParaExibir(bfs, getFotosDadosForRow(bfs))) && (
+                                  {(getFrequenciaParaExibir(bfs, getFotosDadosForRow(bfs)) || getCronogramaParaExibir(bfs, getFotosDadosForRow(bfs))) && (
                                     <>
-                                      <div><strong>Frequência:</strong> {bfs.frequencia_resolvida || "—"}</div>
+                                      <div><strong>Frequência:</strong> {getFrequenciaParaExibir(bfs, getFotosDadosForRow(bfs)) || "—"}</div>
                                       <div className="md:col-span-2"><strong>Cronograma:</strong> {getCronogramaParaExibir(bfs, getFotosDadosForRow(bfs)) || "—"}</div>
                                     </>
                                   )}
@@ -1124,18 +1282,35 @@ export default function DefesaPage() {
 
         {/* Modal de detalhes */}
         <Dialog open={!!selectedBFS} onOpenChange={() => setSelectedBFS(null)}>
-          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto gap-6 p-8">
-            <DialogHeader className="space-y-2">
-              <DialogTitle className="flex items-center gap-3 text-xl">
-                <FileText className="h-6 w-6 text-violet-500" />
-                Detalhes - BFS {selectedBFS?.bfs}
-              </DialogTitle>
-              <DialogDescription>Informações para relatório de Defesa/Contestação</DialogDescription>
-            </DialogHeader>
+          <DialogContent className="max-w-4xl max-h-[92vh] overflow-y-auto gap-0 p-0 sm:p-0 border-0 shadow-2xl shadow-black/20">
+            <div className="p-6 sm:p-8 space-y-6 bg-linear-to-b from-background to-muted/30">
+              <DialogHeader className="space-y-2 text-left px-0">
+                <DialogTitle className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xl">
+                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-violet-500/15 text-violet-600 dark:text-violet-400 shadow-inner">
+                    <FileText className="h-6 w-6" />
+                  </span>
+                  <span className="min-w-0">Detalhes — BFS {selectedBFS?.bfs}</span>
+                  {selectedBFS && getStatusDefesaForRow(selectedBFS) === "Contestar" && (
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/50 bg-emerald-500/12 px-3 py-1.5 text-sm font-bold text-emerald-700 shadow-sm dark:bg-emerald-500/20 dark:text-emerald-300">
+                      <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden />
+                      Contestado
+                    </span>
+                  )}
+                  {selectedBFS && getStatusDefesaForRow(selectedBFS) === "Irregular" && (
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-red-500/50 bg-red-500/12 px-3 py-1.5 text-sm font-bold text-red-700 shadow-sm dark:bg-red-500/20 dark:text-red-300">
+                      <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden />
+                      Irregular
+                    </span>
+                  )}
+                </DialogTitle>
+                <DialogDescription className="text-base">
+                  Informações para relatório de Defesa/Contestação
+                </DialogDescription>
+              </DialogHeader>
             {selectedBFS && (
-              <div className="space-y-6">
+              <div className="space-y-8">
                 {/* Status Defesa - destaque */}
-                <div className="rounded-xl border border-border bg-muted/10 p-8">
+                <div className="rounded-2xl border border-border/80 bg-card p-6 sm:p-8 shadow-lg shadow-black/5 dark:shadow-black/40">
                   <p className="text-sm font-semibold text-muted-foreground mb-3 flex items-center gap-2">
                     <FileStack className="h-4 w-4" />
                     Status para Defesa
@@ -1159,9 +1334,10 @@ export default function DefesaPage() {
                 {getStatusDefesaForRow(selectedBFS) === "Contestar" && (() => {
                   const fotos = getFotosDadosForRow(selectedBFS);
                   const hasFotos = fotos && (fotos.agente_sub.length > 0 || (fotos.itens_fiscalizados?.length ?? 0) > 0 || fotos.nosso_agente.length > 0);
-                  if (!hasFotos) return null;
+                  const justificativaTxt = (fotos?.justificativa ?? "").trim();
+                  if (!hasFotos && !justificativaTxt) return null;
                   return (
-                    <div className="rounded-xl border-2 border-emerald-500/50 bg-emerald-50/30 dark:bg-emerald-950/20 p-6 space-y-4">
+                    <div className="rounded-2xl border-2 border-emerald-500/45 bg-emerald-50/35 dark:bg-emerald-950/25 p-6 sm:p-8 space-y-4 shadow-md shadow-emerald-900/10">
                       <p className="text-sm font-semibold text-emerald-800 dark:text-emerald-300 flex items-center gap-2">
                         <FileCheck className="h-4 w-4" />
                         BFS Contestado — Fotos anexadas
@@ -1217,12 +1393,25 @@ export default function DefesaPage() {
                           </div>
                         )}
                       </div>
+                      {justificativaTxt ? (
+                        <div className="rounded-xl border border-emerald-400/40 bg-white/70 dark:bg-emerald-950/40 p-4 sm:p-5 shadow-sm">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800 dark:text-emerald-200 mb-2">
+                            Justificativa técnica
+                          </p>
+                          <p className="text-sm text-foreground leading-relaxed whitespace-pre-wrap">{justificativaTxt}</p>
+                        </div>
+                      ) : null}
                     </div>
                   );
                 })()}
 
                 {/* Dados gerais */}
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-6">
+                <div className="rounded-2xl border border-border/80 bg-card p-6 sm:p-8 shadow-lg shadow-black/5 dark:shadow-black/40">
+                  <p className="text-sm font-semibold text-muted-foreground mb-5 flex items-center gap-2">
+                    <Sparkles className="h-4 w-4 text-violet-500" />
+                    Dados da BFS
+                  </p>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-6">
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
                       <Hash className="h-3.5 w-3.5" /> Número BFS
@@ -1265,25 +1454,34 @@ export default function DefesaPage() {
                         : "—"}
                     </p>
                   </div>
-                  {selectedBFS.frequencia_resolvida && (
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Frequência</label>
-                      <p className="text-sm">{selectedBFS.frequencia_resolvida}</p>
-                    </div>
+                  {(getFrequenciaParaExibir(selectedBFS, selectedBFS ? getFotosDadosForRow(selectedBFS) : undefined) || getCronogramaParaExibir(selectedBFS, selectedBFS ? getFotosDadosForRow(selectedBFS) : undefined)) && (
+                    <>
+                      {getFrequenciaParaExibir(selectedBFS, selectedBFS ? getFotosDadosForRow(selectedBFS) : undefined) ? (
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                            <Calendar className="h-3.5 w-3.5" /> Frequência
+                          </label>
+                          <p className="text-sm leading-relaxed">{getFrequenciaParaExibir(selectedBFS, selectedBFS ? getFotosDadosForRow(selectedBFS) : undefined)}</p>
+                        </div>
+                      ) : null}
+                      {getCronogramaParaExibir(selectedBFS, selectedBFS ? getFotosDadosForRow(selectedBFS) : undefined) ? (
+                        <div className="col-span-2 space-y-1.5 md:col-span-3">
+                          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                            <Route className="h-3.5 w-3.5" /> Cronograma (referência à data de registro do BFS)
+                          </label>
+                          <p className="text-sm leading-relaxed">{getCronogramaParaExibir(selectedBFS, selectedBFS ? getFotosDadosForRow(selectedBFS) : undefined)}</p>
+                        </div>
+                      ) : null}
+                    </>
                   )}
-                  {getCronogramaParaExibir(selectedBFS, selectedBFS ? getFotosDadosForRow(selectedBFS) : undefined) && (
-                    <div className="col-span-2 space-y-1.5">
-                      <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Cronograma (do setor)</label>
-                      <p className="text-sm">{getCronogramaParaExibir(selectedBFS, selectedBFS ? getFotosDadosForRow(selectedBFS) : undefined)}</p>
-                    </div>
-                  )}
+                  </div>
                 </div>
 
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                <div className="rounded-2xl border border-border/80 bg-muted/15 p-5 sm:p-6 shadow-md">
+                  <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5 mb-2">
                     <MapPin className="h-3.5 w-3.5" /> Endereço
                   </label>
-                  <p className="text-sm">{selectedBFS.endereco || "—"}</p>
+                  <p className="text-sm leading-relaxed">{selectedBFS.endereco || "—"}</p>
                 </div>
 
                 {(selectedBFS.cnc_detalhes?.length ?? 0) > 0 && (
@@ -1341,60 +1539,283 @@ export default function DefesaPage() {
                 )}
               </div>
             )}
+            </div>
           </DialogContent>
         </Dialog>
 
         {/* Modal Contestar - Fotos */}
-        <Dialog open={modalContestarOpen} onOpenChange={(open) => { setModalContestarOpen(open); if (!open) { setFotosContestarDraft({ agente_sub: [], itens_fiscalizados: [], nosso_agente: [], justificativa: "", setor_override: undefined }); setContestarBfsId(null); } }}>
-          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto gap-6 p-8">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                <FileCheck className="h-5 w-5 text-emerald-500" />
-                Contestar BFS{" "}
-                {contestarBfsId ? bfss.find((b) => defesaStorageKey(b) === contestarBfsId)?.bfs : selectedBFS?.bfs} — Dados da contestação
+        <Dialog
+          open={modalContestarOpen}
+          onOpenChange={(open) => {
+            if (open) {
+              setModalContestarOpen(true);
+              return;
+            }
+            if (hasContestarDraftContent(fotosContestarDraftRef.current)) {
+              setConfirmFecharContestarOpen(true);
+              return;
+            }
+            closeContestarModalAndClear();
+          }}
+        >
+          <DialogContent className="max-w-4xl max-h-[92vh] overflow-y-auto gap-0 p-0 sm:p-0 border-0 shadow-2xl shadow-black/20">
+            <div className="p-6 sm:p-8 space-y-8 bg-linear-to-b from-background to-muted/25">
+            <DialogHeader className="space-y-2 text-left">
+              <DialogTitle className="flex items-center gap-3 text-xl">
+                <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 shadow-inner">
+                  <FileCheck className="h-6 w-6" />
+                </span>
+                <span>
+                  Contestar BFS{" "}
+                  {contestarBfsId ? bfss.find((b) => defesaStorageKey(b) === contestarBfsId)?.bfs : selectedBFS?.bfs}
+                </span>
               </DialogTitle>
-              <DialogDescription>
-                Preencha as fotos e os itens fiscalizados. Você pode arrastar, selecionar ou colar imagens (Ctrl+V).
+              <DialogDescription className="text-base leading-relaxed">
+                Preencha as fotos e os itens fiscalizados. Arraste, selecione ou cole imagens (Ctrl+V). Ao informar o setor, o sistema busca frequência e cronograma nas planilhas importadas.
               </DialogDescription>
             </DialogHeader>
-            <div className="space-y-6">
+
+              {contestarRow && (
+                <Accordion type="single" collapsible className="w-full">
+                  <AccordionItem value="bfs-detalhes-modal" className="rounded-2xl border border-border/80 bg-card shadow-lg shadow-black/5 dark:shadow-black/40 ring-1 ring-border/60">
+                    <AccordionTrigger className="hover:no-underline py-4 px-4 sm:px-5 text-left data-[state=open]:border-b border-border/60">
+                      <span className="flex items-center gap-3 text-sm font-semibold text-foreground">
+                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-violet-500/12 text-violet-600 dark:text-violet-400">
+                          <Info className="h-4 w-4" />
+                        </span>
+                        <span className="flex flex-col gap-0.5 sm:flex-row sm:items-center sm:gap-2">
+                          <span>Detalhes da BFS e CNCs</span>
+                          <span className="text-xs font-normal text-muted-foreground sm:font-medium">
+                            (abrir aqui — sem voltar à lista)
+                          </span>
+                        </span>
+                      </span>
+                    </AccordionTrigger>
+                    <AccordionContent className="space-y-6 text-sm">
+                      <div className="rounded-xl border border-border/70 bg-muted/20 p-4 sm:p-5 space-y-4">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-2">
+                          <FileText className="h-3.5 w-3.5" />
+                          BFS
+                        </p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3">
+                          <div>
+                            <span className="text-muted-foreground text-xs block mb-0.5">Número</span>
+                            <span className="font-mono font-medium">{contestarRow.bfs}</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground text-xs block mb-0.5">Subprefeitura</span>
+                            <span>{contestarRow.subprefeitura || "—"}</span>
+                          </div>
+                          <div className="sm:col-span-2">
+                            <span className="text-muted-foreground text-xs block mb-0.5">Tipo de serviço</span>
+                            <span>{contestarRow.tipo_servico || "—"}</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground text-xs block mb-0.5">Fiscal (BFS)</span>
+                            <span>{contestarRow.fiscal || "—"}</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground text-xs block mb-0.5">Status</span>
+                            <span>{contestarRow.status || "—"}</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground text-xs flex items-center gap-1 mb-0.5">
+                              <Calendar className="h-3 w-3" /> Data registro (BFS)
+                            </span>
+                            <span>{formatDefesaDateTime(contestarRow.data_abertura)}</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground text-xs flex items-center gap-1 mb-0.5">
+                              <Clock className="h-3 w-3" /> Data vistoria
+                            </span>
+                            <span>{formatDefesaDateTime(contestarRow.data_vistoria)}</span>
+                          </div>
+                          <div className="sm:col-span-2">
+                            <span className="text-muted-foreground text-xs flex items-center gap-1 mb-0.5">
+                              <MapPin className="h-3 w-3" /> Endereço
+                            </span>
+                            <span className="leading-relaxed">{contestarRow.endereco || "—"}</span>
+                          </div>
+                          <div className="sm:col-span-2">
+                            <span className="text-muted-foreground text-xs block mb-0.5">Setor (referência)</span>
+                            <span className="font-mono text-xs sm:text-sm break-all">
+                              {getSetorParaExibir(contestarRow, fotosContestarDraft)}
+                            </span>
+                          </div>
+                          {(getFrequenciaParaExibir(contestarRow, fotosContestarDraft) || getCronogramaParaExibir(contestarRow, fotosContestarDraft)) && (
+                            <>
+                              {getFrequenciaParaExibir(contestarRow, fotosContestarDraft) ? (
+                                <div className="sm:col-span-2">
+                                  <span className="text-muted-foreground text-xs block mb-0.5">Frequência</span>
+                                  <span className="leading-relaxed">{getFrequenciaParaExibir(contestarRow, fotosContestarDraft)}</span>
+                                </div>
+                              ) : null}
+                              {getCronogramaParaExibir(contestarRow, fotosContestarDraft) ? (
+                                <div className="sm:col-span-2">
+                                  <span className="text-muted-foreground text-xs block mb-0.5">Cronograma (vs. data de registro)</span>
+                                  <span className="leading-relaxed">{getCronogramaParaExibir(contestarRow, fotosContestarDraft)}</span>
+                                </div>
+                              ) : null}
+                            </>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="rounded-xl border border-border/70 bg-card p-4 sm:p-5 space-y-4">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-2">
+                          <FileStack className="h-3.5 w-3.5" />
+                          CNCs vinculadas
+                          {(contestarRow.cnc_detalhes?.length ?? 0) > 0 && (
+                            <span className="inline-flex items-center justify-center min-w-6 h-6 px-1.5 rounded-full bg-violet-500/15 text-violet-700 dark:text-violet-300 text-xs font-bold">
+                              {contestarRow.cnc_detalhes!.length}
+                            </span>
+                          )}
+                        </p>
+                        {(contestarRow.cnc_detalhes?.length ?? 0) === 0 ? (
+                          <p className="text-muted-foreground text-sm py-2">
+                            Nenhuma CNC cadastrada para este BFS no período.
+                          </p>
+                        ) : (
+                          <div className="space-y-4">
+                            {contestarRow.cnc_detalhes!.map((c, idx) => (
+                              <div
+                                key={`${c.numero_cnc ?? idx}-${idx}`}
+                                className="rounded-lg border border-violet-200/60 dark:border-violet-800/50 bg-violet-50/50 dark:bg-violet-950/20 p-4 space-y-3"
+                              >
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="font-mono font-semibold text-foreground">CNC {c.numero_cnc ?? "—"}</span>
+                                  {c.situacao_cnc && (
+                                    <span className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded ${getCncSituacaoColor(c.situacao_cnc)}`}>
+                                      {c.situacao_cnc}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2.5 text-sm">
+                                  <div>
+                                    <span className="text-muted-foreground text-xs block mb-0.5">Dia / horário regist. CNC</span>
+                                    <span>{formatDefesaDateTime(c.data_sincronizacao)}</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-muted-foreground text-xs block mb-0.5">Dia / horário finalização (execução)</span>
+                                    <span className="font-medium">{formatDefesaDateTime(c.data_execucao)}</span>
+                                  </div>
+                                  <div className="sm:col-span-2">
+                                    <span className="text-muted-foreground text-xs block mb-0.5">Fiscal (contratada / resposta)</span>
+                                    <span>{c.fiscal_contratada || "—"}</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-muted-foreground text-xs block mb-0.5">Responsividade</span>
+                                    <span>{c.responsividade || "—"}</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-muted-foreground text-xs block mb-0.5">Setor (CNC)</span>
+                                    <span className="font-mono text-xs break-all">{c.setor || "—"}</span>
+                                  </div>
+                                  {c.coordenada && (
+                                    <div className="sm:col-span-2">
+                                      <span className="text-muted-foreground text-xs block mb-0.5">Coordenada</span>
+                                      <code className="text-xs bg-muted/80 px-2 py-1 rounded break-all">{c.coordenada}</code>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
+                </Accordion>
+              )}
+
+              <div className="rounded-2xl border border-border/80 bg-card p-5 sm:p-7 shadow-lg shadow-black/5 dark:shadow-black/40">
               <FotoInputZone
                 label="Foto da Agente da sub"
                 images={fotosContestarDraft.agente_sub}
                 onChange={(imgs) => setFotosContestarDraft((p) => ({ ...p, agente_sub: imgs }))}
                 maxCount={2}
               />
-              <div className="space-y-2">
-                <label className="text-base font-semibold">Setor no relatório</label>
-                <div className="flex gap-2 items-center">
-                  <Input
-                    value={
-                      fotosContestarDraft.setor_override !== undefined
-                        ? fotosContestarDraft.setor_override ?? "Sem Setor"
-                        : (contestarBfsId
-                          ? (() => {
-                              const cr = bfss.find((b) => defesaStorageKey(b) === contestarBfsId);
-                              return cr?.setor_resolvido ?? cr?.cnc_detalhes?.[0]?.setor ?? cr?.setor ?? "";
-                            })()
-                          : selectedBFS?.setor_resolvido ?? selectedBFS?.cnc_detalhes?.[0]?.setor ?? selectedBFS?.setor ?? "")
-                    }
-                    onChange={(e) => setFotosContestarDraft((p) => ({ ...p, setor_override: e.target.value || null }))}
-                    placeholder="Ex: ST10304VJ0060"
-                    className="flex-1"
-                  />
+              </div>
+              <div className="rounded-2xl border border-border/80 bg-card p-5 sm:p-7 shadow-lg shadow-black/5 dark:shadow-black/40 space-y-4">
+                <div className="flex items-center gap-2">
+                  <Building2 className="h-5 w-5 text-violet-500" />
+                  <label className="text-base font-semibold">Setor no relatório</label>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
+                  <div className="relative flex-1">
+                    <Input
+                      value={
+                        fotosContestarDraft.setor_override !== undefined
+                          ? fotosContestarDraft.setor_override ?? "Sem Setor"
+                          : (contestarBfsId
+                            ? (() => {
+                                const cr = bfss.find((b) => defesaStorageKey(b) === contestarBfsId);
+                                return cr?.setor_resolvido ?? cr?.cnc_detalhes?.[0]?.setor ?? cr?.setor ?? "";
+                              })()
+                            : selectedBFS?.setor_resolvido ?? selectedBFS?.cnc_detalhes?.[0]?.setor ?? selectedBFS?.setor ?? "")
+                      }
+                      onChange={(e) => setFotosContestarDraft((p) => ({ ...p, setor_override: e.target.value || null }))}
+                      placeholder="Ex: CV10302VM0002 ou ST10304VJ0060"
+                      className="flex-1 pr-10 h-11"
+                    />
+                    {setorPreviewLoading && (
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground" title="Buscando cronograma…">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      </span>
+                    )}
+                  </div>
                   <button
                     type="button"
-                    onClick={() => setFotosContestarDraft((p) => ({ ...p, setor_override: "Sem Setor" }))}
-                    className="px-3 py-2 text-sm font-medium rounded-lg border border-amber-500/50 bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/40"
+                    onClick={() => setFotosContestarDraft((p) => ({ ...p, setor_override: "Sem Setor", cronograma_override: undefined, frequencia_override: undefined }))}
+                    className="shrink-0 px-4 py-2.5 text-sm font-semibold rounded-xl border-2 border-amber-500/50 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40 shadow-sm"
                   >
                     SEM SETOR
                   </button>
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  Edite o setor exibido no relatório e na tabela. &quot;Sem Setor&quot; oculta o cronograma.
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  O setor é exibido no relatório e na tabela. Códigos como <span className="font-mono text-foreground/90">CV…VM…</span> indicam varrição mecanizada; a frequência é lida da nomenclatura (ex.: 0203 = Ter/Qua/Sáb). &quot;Sem Setor&quot; oculta cronograma no PDF.
                 </p>
+                {(() => {
+                  const setorModal = getSetorParaExibir(contestarRow ?? undefined, fotosContestarDraft);
+                  if (setorModal === "Sem Setor" || !setorModal?.trim() || setorModal === "—") return null;
+                  return (
+                  <div className="rounded-xl border-2 border-purple-500/55 bg-purple-50/80 dark:bg-purple-950/40 p-4 sm:p-5 space-y-3 shadow-inner shadow-purple-900/10">
+                    <div className="flex items-center gap-2 text-purple-800 dark:text-purple-200">
+                      <Route className="h-4 w-4 shrink-0" />
+                      <span className="text-sm font-semibold">Frequência e cronograma (relatório)</span>
+                      {setorPreviewLoading && <Loader2 className="h-3.5 w-3.5 animate-spin opacity-70" />}
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-xs font-medium uppercase tracking-wide text-purple-700/80 dark:text-purple-300/90">Frequência</p>
+                      <p className="text-sm text-purple-950 dark:text-purple-50 leading-relaxed">
+                        {getFrequenciaParaExibir(contestarRow ?? undefined, fotosContestarDraft) || "— (ajuste o setor ou aguarde a busca)"}
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <p className="text-xs font-medium uppercase tracking-wide text-purple-700/80 dark:text-purple-300/90">Cronograma (texto base — editável)</p>
+                      <textarea
+                        value={getCronogramaBruto(contestarRow ?? undefined, fotosContestarDraft)}
+                        onChange={(e) =>
+                          setFotosContestarDraft((p) => ({ ...p, cronograma_override: e.target.value }))
+                        }
+                        placeholder="Datas no formato dd/MM/aaaa; separadas por ; conforme a planilha importada"
+                        rows={3}
+                        className="w-full min-h-[88px] px-3 py-2.5 rounded-lg border border-purple-200/80 dark:border-purple-800 bg-white/90 dark:bg-purple-950/50 text-sm text-purple-950 dark:text-purple-50 resize-y leading-relaxed"
+                      />
+                    </div>
+                    {contestarRow?.data_abertura && getCronogramaBruto(contestarRow, fotosContestarDraft) ? (
+                      <div className="pt-1 border-t border-purple-200/60 dark:border-purple-800/80">
+                        <p className="text-xs font-medium text-purple-800/90 dark:text-purple-200 mb-1">Como no relatório (referência: data de registro do BFS)</p>
+                        <p className="text-sm text-purple-900 dark:text-purple-100 leading-relaxed">
+                          {getCronogramaParaExibir(contestarRow, fotosContestarDraft) || "—"}
+                        </p>
+                      </div>
+                    ) : null}
+                  </div>
+                  );
+                })()}
               </div>
-              <div className="space-y-3">
+              <div className="space-y-3 rounded-2xl border border-border/80 bg-card p-5 sm:p-7 shadow-lg shadow-black/5 dark:shadow-black/40">
                 <div className="flex items-center justify-between">
                   <label className="text-base font-semibold text-foreground">Itens Fiscalizados</label>
                   <button
@@ -1517,27 +1938,32 @@ export default function DefesaPage() {
                   </table>
                 </div>
               </div>
-              <FotoInputZone
-                label="Foto do Nosso agente (finalização)"
-                images={fotosContestarDraft.nosso_agente}
-                onChange={(imgs) => setFotosContestarDraft((p) => ({ ...p, nosso_agente: imgs }))}
-                maxCount={2}
-              />
-              <div className="space-y-2">
-                <label className="text-base font-semibold">Justificativa Técnica</label>
+              <div className="rounded-2xl border border-border/80 bg-card p-5 sm:p-7 shadow-lg shadow-black/5 dark:shadow-black/40">
+                <FotoInputZone
+                  label="Foto do Nosso agente (finalização)"
+                  images={fotosContestarDraft.nosso_agente}
+                  onChange={(imgs) => setFotosContestarDraft((p) => ({ ...p, nosso_agente: imgs }))}
+                  maxCount={2}
+                />
+              </div>
+              <div className="rounded-2xl border border-border/80 bg-card p-5 sm:p-7 shadow-lg shadow-black/5 dark:shadow-black/40 space-y-3">
+                <label className="text-base font-semibold flex items-center gap-2">
+                  <FileText className="h-4 w-4 text-muted-foreground" />
+                  Justificativa técnica
+                </label>
                 <textarea
                   value={fotosContestarDraft.justificativa ?? ""}
                   onChange={(e) => setFotosContestarDraft((p) => ({ ...p, justificativa: e.target.value }))}
                   placeholder="Descreva a justificativa técnica para contestação desta BFS..."
-                  className="w-full min-h-[120px] px-3 py-2.5 rounded-lg border border-input bg-background text-sm resize-y leading-relaxed"
+                  className="w-full min-h-[128px] px-3 py-2.5 rounded-lg border border-input bg-background text-sm resize-y leading-relaxed"
                   rows={5}
                 />
               </div>
             </div>
-            <div className="flex justify-end gap-3 pt-2">
+            <div className="flex justify-end gap-3 px-6 sm:px-8 py-4 border-t border-border/80 bg-muted/15">
               <button
                 type="button"
-                onClick={() => setModalContestarOpen(false)}
+                onClick={() => requestCloseContestarModal()}
                 className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
               >
                 Cancelar
@@ -1551,6 +1977,36 @@ export default function DefesaPage() {
                 {contestarSalvando ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCheck className="h-4 w-4" />}
                 {contestarSalvando ? "Enviando fotos..." : "Salvar contestação"}
               </button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Rascunho da contestação: fechar sem salvar */}
+        <Dialog open={confirmFecharContestarOpen} onOpenChange={setConfirmFecharContestarOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Descartar rascunho da contestação?</DialogTitle>
+              <DialogDescription className="text-base leading-relaxed">
+                Há fotos, texto ou outros dados preenchidos neste formulário. Se fechar agora, esse rascunho será perdido e você precisará preencher de novo.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-3 pt-2">
+              <Button
+                type="button"
+                variant="ghost"
+                className="w-full sm:w-auto"
+                onClick={() => setConfirmFecharContestarOpen(false)}
+              >
+                Continuar editando
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                className="w-full sm:w-auto"
+                onClick={() => closeContestarModalAndClear()}
+              >
+                Excluir rascunho
+              </Button>
             </div>
           </DialogContent>
         </Dialog>

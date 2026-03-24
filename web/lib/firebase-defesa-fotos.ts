@@ -21,6 +21,8 @@ export interface FotosContestar {
   itens_fiscalizados: { item: string; proatividade: string; turno?: string; observacoes: string }[];
   nosso_agente: string[];
   setor_override?: string | null;
+  cronograma_override?: string | null;
+  frequencia_override?: string | null;
 }
 
 async function uploadImage(bfsId: string, section: string, index: number, dataUrl: string): Promise<string> {
@@ -59,6 +61,8 @@ export async function uploadFotosToStorage(bfsId: string, fotos: FotosContestar)
     itens_fiscalizados: fotos.itens_fiscalizados ?? [],
     nosso_agente,
     setor_override: fotos.setor_override ?? undefined,
+    cronograma_override: fotos.cronograma_override ?? undefined,
+    frequencia_override: fotos.frequencia_override ?? undefined,
   };
 }
 

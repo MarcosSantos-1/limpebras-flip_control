@@ -8,6 +8,7 @@ import type { jsPDF } from "jspdf";
 import { format, isValid } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { defesaStorageKey } from "./defesa-storage-key";
+import { getCronogramaTextoParaExibir } from "./defesa-cronograma";
 
 const PAGE_W = 210;
 const PAGE_H = 297;
@@ -44,6 +45,7 @@ export interface BFSContestar {
   subprefeitura: string;
   setor?: string;
   setor_resolvido?: string | null;
+  frequencia_resolvida?: string | null;
   cronograma_resolvido?: string | null;
   tipo_servico?: string;
   data_abertura: string;
@@ -65,31 +67,8 @@ export interface FotosContestarBfs {
   nosso_agente: string[];
   justificativa?: string;
   setor_override?: string | null;
-}
-
-/** Retorna true se o serviço é MT, BL ou GO (usa cronograma reduzido a 2 datas). */
-function isServicoCronogramaReduzido(tipoServico: string | undefined): boolean {
-  const t = (tipoServico || "").toLowerCase();
-  return /mutir[aã]o|bueiro|desobstru|cata-bagulho|volumoso|entulho/i.test(t);
-}
-
-/** Retorna as 2 datas do cronograma mais próximas de hoje. Formato: "01/09/2025; 16/12/2025; ..." */
-function cronogramaProximas2(cronograma: string | undefined | null): string {
-  if (!cronograma?.trim()) return "";
-  const partes = cronograma.split(";").map((d) => d.trim()).filter(Boolean);
-  if (partes.length <= 2) return cronograma.trim();
-  const hoje = new Date();
-  hoje.setHours(0, 0, 0, 0);
-  const parsed = partes
-    .map((s) => {
-      const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-      if (!m) return null;
-      const d = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
-      return isValid(d) ? { str: s, d, dist: Math.abs(d.getTime() - hoje.getTime()) } : null;
-    })
-    .filter((x): x is NonNullable<typeof x> => x != null);
-  parsed.sort((a, b) => a.dist - b.dist);
-  return parsed.slice(0, 2).map((x) => x.str).join("; ");
+  cronograma_override?: string | null;
+  frequencia_override?: string | null;
 }
 
 function hexToRgb(hex: string): [number, number, number] {
@@ -678,16 +657,33 @@ export async function gerarRelatorioContestacaoPDF(
     const setorDisplay = fotos?.setor_override !== undefined
       ? (fotos.setor_override ?? "Sem Setor")
       : (bfs.setor_resolvido ?? cnc?.setor ?? bfs.setor ?? "--");
-    const cronoParaExibir = setorDisplay === "Sem Setor"
-      ? "--"
-      : (isServicoCronogramaReduzido(bfs.tipo_servico)
-        ? cronogramaProximas2(bfs.cronograma_resolvido ?? "")
-        : (bfs.cronograma_resolvido ?? "--"));
+    const cronogramaBruto =
+      (fotos?.cronograma_override !== undefined && fotos?.cronograma_override !== null && String(fotos.cronograma_override).trim() !== "")
+        ? String(fotos.cronograma_override)
+        : (bfs.cronograma_resolvido ?? "");
+    const cronoParaExibir =
+      setorDisplay === "Sem Setor"
+        ? "--"
+        : (cronogramaBruto
+          ? getCronogramaTextoParaExibir(cronogramaBruto, bfs.tipo_servico, bfs.data_abertura)
+          : "--");
+    const freqParaExibir =
+      (fotos?.frequencia_override !== undefined && fotos?.frequencia_override !== null && String(fotos.frequencia_override).trim() !== "")
+        ? String(fotos.frequencia_override)
+        : (bfs.frequencia_resolvida ?? "");
     if (setorDisplay === "Sem Setor") {
       doc.setTextColor(255, 0, 0);
       doc.setFont("helvetica", "bold");
     }
-    doc.text(`Setor: ${setorDisplay}  |  Cronograma (do setor): ${cronoParaExibir}`, MARGIN, y);
+    doc.text(`Setor: ${setorDisplay}`, MARGIN, y);
+    y += 6;
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(0, 0, 0);
+    if (freqParaExibir) {
+      doc.text(`Frequência (do setor): ${freqParaExibir}`, MARGIN, y);
+      y += 6;
+    }
+    doc.text(`Cronograma (do setor): ${cronoParaExibir}`, MARGIN, y);
     if (setorDisplay === "Sem Setor") {
       doc.setTextColor(0, 0, 0);
       doc.setFont("helvetica", "normal");

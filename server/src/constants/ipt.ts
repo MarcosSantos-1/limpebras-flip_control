@@ -102,6 +102,8 @@ export const SERVICO_POR_CODIGO: Record<string, string> = {
   VP: "Equipe para varrição de praças",
   VJ: "Varrição manual de vias e logradouros públicos - sarjetas",
   VL: "Varrição manual de vias e logradouros públicos - sarjetas e calçadas",
+  /** Varrição mecanizada (código no plano, ex.: CV10302VM0002) */
+  VM: "Varrição mecanizada de vias e logradouros públicos",
   LM: "Equipe de asseio a locais com população em situação de rua e comércio desordenado",
   CV: "Coleta manual de resíduos de varrição com compactador",
 };

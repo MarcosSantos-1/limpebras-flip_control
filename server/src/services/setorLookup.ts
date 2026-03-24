@@ -6,7 +6,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { regionalToSigla } from "../constants/regionais.js";
-import { FREQUENCIAS } from "../constants/ipt.js";
+import { FREQUENCIAS, normalizarSetor } from "../constants/ipt.js";
 
 /** Converte código de frequência (ex: "500", "0500") para descrição legível (ex: "Quinzenal - 2x/Mês"). */
 function frequenciaParaExibicao(raw: string): string {
@@ -125,6 +125,35 @@ export function findSetorByCoords(
     cronograma: best.cronograma,
     service: best.service,
   };
+}
+
+/**
+ * Busca no índice por código de plano/setor (texto exato normalizado), sub e tipo de serviço.
+ */
+export function findSetorByPlano(
+  setorPlano: string,
+  tipoServico: string | undefined,
+  subprefeitura: string | undefined
+): SetorMatch | null {
+  const index = loadIndex();
+  const normalized = normalizarSetor(setorPlano);
+  if (!normalized) return null;
+
+  const subSigla = regionalToSigla(subprefeitura);
+  const serviceKeys = getServiceKeysForTipoServico(tipoServico);
+
+  for (const entry of index) {
+    if (normalizarSetor(entry.setor) !== normalized) continue;
+    if (subSigla && entry.sub !== subSigla) continue;
+    if (!serviceKeys.includes(entry.service)) continue;
+    return {
+      setor: entry.setor,
+      frequencia: frequenciaParaExibicao(entry.frequencia),
+      cronograma: entry.cronograma,
+      service: entry.service,
+    };
+  }
+  return null;
 }
 
 /**
