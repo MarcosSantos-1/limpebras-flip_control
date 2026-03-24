@@ -295,6 +295,15 @@ export const apiService = {
     return data;
   },
 
+  uploadSessionFile: async (session: "flip" | "ddmx", file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const { data } = await api.post(`/upload/session/${session}`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return data;
+  },
+
   uploadIptReportXlsx: async (
     file: File,
     referencia: {

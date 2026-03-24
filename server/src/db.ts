@@ -207,6 +207,26 @@ export async function runMigrations() {
     await client.query("CREATE INDEX IF NOT EXISTS idx_ipt_imports_mes_ref ON ipt_imports(file_type, ano_referencia, mes_referencia)").catch(() => {});
 
     await client.query(`
+      CREATE TABLE IF NOT EXISTS upload_events (
+        id SERIAL PRIMARY KEY,
+        session_key TEXT NOT NULL,
+        upload_type TEXT NOT NULL,
+        source_file TEXT NOT NULL,
+        processados INTEGER NOT NULL DEFAULT 0,
+        total INTEGER NOT NULL DEFAULT 0,
+        inseridos INTEGER NOT NULL DEFAULT 0,
+        atualizados INTEGER NOT NULL DEFAULT 0,
+        duplicados INTEGER NOT NULL DEFAULT 0,
+        erros INTEGER NOT NULL DEFAULT 0,
+        referencia_importada TEXT,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client.query("CREATE INDEX IF NOT EXISTS idx_upload_events_session_created ON upload_events(session_key, created_at DESC)").catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_upload_events_type_created ON upload_events(upload_type, created_at DESC)").catch(() => {});
+
+    await client.query(`
       CREATE TABLE IF NOT EXISTS ipt_cronograma (
         id SERIAL PRIMARY KEY,
         servico TEXT NOT NULL,

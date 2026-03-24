@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "react-toastify/dist/ReactToastify.css";
 import { ThemeProvider } from "@/components/theme-provider";
+import { ToastProvider } from "@/components/ui/toast-provider";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 
 export const metadata: Metadata = {
@@ -33,6 +35,7 @@ export default function RootLayout({
           storageKey="flip-theme"
         >
           {children}
+          <ToastProvider />
         </ThemeProvider>
         <SpeedInsights />
       </body>

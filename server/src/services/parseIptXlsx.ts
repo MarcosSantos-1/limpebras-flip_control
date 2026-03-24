@@ -8,6 +8,11 @@ export type IptFileType =
   | "ipt_report_selimp"
   | "ipt_status_bateria";
 
+export type DdmxWorkbookType =
+  | "ipt_historico_os"
+  | "ipt_historico_os_varricao"
+  | "ipt_historico_os_compactadores";
+
 export interface IptParsedRow {
   recordKey: string;
   setor: string;
@@ -70,6 +75,14 @@ function canonicalHeader(value: string): string {
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "");
+}
+
+function normalizeText(value: string): string {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 }
 
 function normalizeCell(value: unknown): string {
@@ -139,6 +152,51 @@ function detectHeaderRow(rawRows: unknown[][], config: ParseConfig): number {
   return bestRow;
 }
 
+function getWorkbookRows(buffer: Buffer): unknown[][] {
+  const workbook = XLSX.read(buffer, { type: "buffer", cellDates: false });
+  const sheetName = workbook.SheetNames[0];
+  if (!sheetName) return [];
+  const sheet = workbook.Sheets[sheetName];
+  return XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+    header: 1,
+    raw: false,
+    defval: "",
+    blankrows: false,
+  });
+}
+
+function scoreWorkbookAgainstType(rawRows: unknown[][], fileType: IptFileType): number {
+  const aliases = FILE_CONFIG[fileType].signalAliases.map(canonicalHeader);
+  let bestScore = 0;
+  for (let i = 0; i < Math.min(rawRows.length, 25); i += 1) {
+    const row = rawRows[i] ?? [];
+    const canonical = row.map((cell) => canonicalHeader(normalizeCell(cell)));
+    let score = 0;
+    for (const alias of aliases) {
+      if (canonical.includes(alias)) score += 1;
+    }
+    bestScore = Math.max(bestScore, score);
+  }
+  return bestScore;
+}
+
+export function detectDdmxWorkbookType(buffer: Buffer, sourceFile: string): DdmxWorkbookType | null {
+  const filename = normalizeText(sourceFile);
+  if (filename.includes("compact")) return "ipt_historico_os_compactadores";
+  if (filename.includes("varri")) return "ipt_historico_os_varricao";
+
+  const rawRows = getWorkbookRows(buffer);
+  if (!rawRows.length) return null;
+
+  const compactScore = scoreWorkbookAgainstType(rawRows, "ipt_historico_os_compactadores");
+  const historicoScore = scoreWorkbookAgainstType(rawRows, "ipt_historico_os");
+  if (compactScore >= 3 && compactScore > historicoScore) {
+    return "ipt_historico_os_compactadores";
+  }
+
+  return "ipt_historico_os";
+}
+
 function buildRecordKey(
   fileType: IptFileType,
   row: Record<string, string>,
@@ -194,17 +252,7 @@ function buildRecordKey(
 }
 
 export function parseIptWorkbook(buffer: Buffer, fileType: IptFileType): IptParsedRow[] {
-  const workbook = XLSX.read(buffer, { type: "buffer", cellDates: false });
-  const sheetName = workbook.SheetNames[0];
-  if (!sheetName) return [];
-
-  const sheet = workbook.Sheets[sheetName];
-  const rawRows = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
-    header: 1,
-    raw: false,
-    defval: "",
-    blankrows: false,
-  });
+  const rawRows = getWorkbookRows(buffer);
   if (!rawRows.length) return [];
 
   const config = FILE_CONFIG[fileType];

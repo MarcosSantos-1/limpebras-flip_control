@@ -1,9 +1,27 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { Upload } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  FileSpreadsheet,
+  Settings,
+  ShieldAlert,
+  Upload,
+} from "lucide-react";
+import { toast } from "react-toastify";
 import { MainLayout } from "@/components/layout/main-layout";
-import { apiService } from "@/lib/api";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -12,39 +30,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { apiService } from "@/lib/api";
 
-interface UploadResult {
-  processados?: number;
-  total?: number;
-  inseridos?: number;
-  atualizados?: number;
-  duplicados?: number;
-  erros?: number;
-  referencia_importada?: string;
-  modo_referencia?: "d_minus_1" | "fim_de_semana";
-  periodo_inicial?: string;
-  periodo_final?: string;
-  ordens_encerradas?: number;
-  [key: string]: unknown;
-}
-
-interface UploadState {
-  status: "idle" | "uploading" | "success" | "error";
-  progress?: number;
-  result?: UploadResult;
-  error?: string;
-}
-
-interface LastUploadInfo {
-  ultimo_import?: string | null;
-  source_file?: string | null;
-  total_registros?: number;
-  total_encerradas?: number;
-  ultima_referencia?: string | null;
-  periodo_tipo?: string | null;
-  periodo_inicial?: string | null;
-  periodo_final?: string | null;
-}
+type SessionKey = "flip" | "ddmx" | "selimp";
+type UploadKey = "flip" | "ddmx" | "iptReport" | "iptStatusBateria" | "iptCronograma";
+type IptReferenceMode = "d_minus_1" | "fim_de_semana";
 
 interface UploadApiError {
   response?: {
@@ -55,21 +45,75 @@ interface UploadApiError {
   message?: string;
 }
 
-function getErrorMessage(error: unknown): string {
-  if (typeof error === "object" && error !== null) {
-    const apiError = error as UploadApiError;
-    return apiError.response?.data?.detail || apiError.message || "Erro desconhecido";
-  }
-  return "Erro desconhecido";
+interface UploadResult {
+  processados?: number;
+  total?: number;
+  inseridos?: number;
+  atualizados?: number;
+  duplicados?: number;
+  erros?: number;
+  referencia_importada?: string;
+  periodo_inicial?: string;
+  periodo_final?: string;
+  ordens_encerradas?: number;
+  tipo_detectado?: string;
+  tipo_detectado_label?: string;
+  source_file?: string;
 }
 
-type IptReferenceMode = "d_minus_1" | "fim_de_semana";
+interface UploadState {
+  status: "idle" | "uploading" | "success" | "error";
+  result?: UploadResult;
+  error?: string;
+}
+
+interface UploadHistoryEntry {
+  tipo?: string;
+  tipo_label?: string;
+  source_file?: string | null;
+  processados?: number;
+  total?: number;
+  inseridos?: number;
+  atualizados?: number;
+  referencia_importada?: string | null;
+  ordens_encerradas?: number | null;
+  periodo_inicial?: string | null;
+  periodo_final?: string | null;
+  created_at?: string | null;
+}
+
+interface LastUploadInfo {
+  ultimo_import?: string | null;
+  source_file?: string | null;
+  total_registros?: number;
+  total_encerradas?: number;
+  ultima_referencia?: string | null;
+  tipo_detectado?: string | null;
+  tipo_detectado_label?: string | null;
+  referencia_importada?: string | null;
+  history?: UploadHistoryEntry[];
+}
+
+interface UploadOverviewResponse {
+  iptReport?: LastUploadInfo;
+  iptStatusBateria?: LastUploadInfo;
+  iptCronograma?: LastUploadInfo;
+  sessions?: Record<SessionKey, LastUploadInfo>;
+}
 
 interface IptReferenceOption {
   value: IptReferenceMode;
   label: string;
   periodoInicial: string;
   periodoFinal: string;
+}
+
+function getErrorMessage(error: unknown): string {
+  if (typeof error === "object" && error !== null) {
+    const apiError = error as UploadApiError;
+    return apiError.response?.data?.detail || apiError.message || "Erro desconhecido";
+  }
+  return "Erro desconhecido";
 }
 
 function shiftDays(base: Date, days: number): Date {
@@ -87,6 +131,13 @@ function toDateKey(date: Date): string {
 
 function formatPtDate(dateKey: string): string {
   return new Date(`${dateKey}T12:00:00`).toLocaleDateString("pt-BR");
+}
+
+function formatDateTime(value?: string | null): string {
+  if (!value) return "Sem importacao ainda";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "Sem importacao ainda";
+  return parsed.toLocaleString("pt-BR");
 }
 
 function buildIptReferenceOptions(now = new Date()): IptReferenceOption[] {
@@ -108,199 +159,311 @@ function buildIptReferenceOptions(now = new Date()): IptReferenceOption[] {
     },
     {
       value: "fim_de_semana",
-      label: `Sexta, sábado e domingo (${formatPtDate(sextaKey)} a ${formatPtDate(domingoKey)})`,
+      label: `Sexta a domingo (${formatPtDate(sextaKey)} a ${formatPtDate(domingoKey)})`,
       periodoInicial: sextaKey,
       periodoFinal: domingoKey,
     },
   ];
 }
 
-const cardColors = {
-  sacs: {
-    border: "border-blue-500",
-    bg: "bg-blue-50 dark:bg-blue-900/20",
-    text: "text-blue-600 dark:text-blue-400",
-    gradient: "from-blue-500 to-cyan-500",
-  },
-  cnc: {
-    border: "border-orange-500",
-    bg: "bg-orange-50 dark:bg-orange-900/20",
-    text: "text-orange-600 dark:text-orange-400",
-    gradient: "from-orange-500 to-amber-500",
-  },
-  cncsDetalhes: {
-    border: "border-amber-500",
-    bg: "bg-amber-50 dark:bg-amber-900/20",
-    text: "text-amber-600 dark:text-amber-400",
-    gradient: "from-amber-500 to-orange-500",
-  },
-  acic: {
-    border: "border-red-500",
-    bg: "bg-red-50 dark:bg-red-900/20",
-    text: "text-red-600 dark:text-red-400",
-    gradient: "from-red-500 to-rose-500",
-  },
-  ouvidoria: {
-    border: "border-purple-500",
-    bg: "bg-purple-50 dark:bg-purple-900/20",
-    text: "text-purple-600 dark:text-purple-400",
-    gradient: "from-purple-500 to-violet-500",
-  },
-  iptHistoricoOs: {
-    border: "border-emerald-500",
-    bg: "bg-emerald-50 dark:bg-emerald-900/20",
-    text: "text-emerald-600 dark:text-emerald-400",
-    gradient: "from-emerald-500 to-teal-500",
-  },
-  iptHistoricoOsVarricao: {
-    border: "border-lime-500",
-    bg: "bg-lime-50 dark:bg-lime-900/20",
-    text: "text-lime-600 dark:text-lime-400",
-    gradient: "from-lime-500 to-green-500",
-  },
-  iptHistoricoOsCompactadores: {
-    border: "border-teal-500",
-    bg: "bg-teal-50 dark:bg-teal-900/20",
-    text: "text-teal-600 dark:text-teal-400",
-    gradient: "from-teal-500 to-cyan-500",
-  },
-  iptReport: {
-    border: "border-fuchsia-500",
-    bg: "bg-fuchsia-50 dark:bg-fuchsia-900/20",
-    text: "text-fuchsia-600 dark:text-fuchsia-400",
-    gradient: "from-fuchsia-500 to-pink-500",
-  },
-  iptStatusBateria: {
-    border: "border-sky-500",
-    bg: "bg-sky-50 dark:bg-sky-900/20",
-    text: "text-sky-600 dark:text-sky-400",
-    gradient: "from-sky-500 to-indigo-500",
-  },
-  iptCronograma: {
-    border: "border-violet-500",
-    bg: "bg-violet-50 dark:bg-violet-900/20",
-    text: "text-violet-600 dark:text-violet-400",
-    gradient: "from-violet-500 to-purple-500",
-  },
-};
-
-export default function UploadPage() {
-  const iptReferenceOptions = buildIptReferenceOptions();
-  const defaultIptReferenceMode: IptReferenceMode = new Date().getDay() === 1 ? "fim_de_semana" : "d_minus_1";
-  const [uploadStates, setUploadStates] = useState<Record<string, UploadState>>({
-    sacs: { status: "idle" },
-    cnc: { status: "idle" },
-    cncsDetalhes: { status: "idle" },
-    acic: { status: "idle" },
-    ouvidoria: { status: "idle" },
-    iptHistoricoOs: { status: "idle" },
-    iptHistoricoOsVarricao: { status: "idle" },
-    iptHistoricoOsCompactadores: { status: "idle" },
+function createInitialStates(): Record<UploadKey, UploadState> {
+  return {
+    flip: { status: "idle" },
+    ddmx: { status: "idle" },
     iptReport: { status: "idle" },
     iptStatusBateria: { status: "idle" },
     iptCronograma: { status: "idle" },
-  });
-  const [draggedOver, setDraggedOver] = useState<string | null>(null);
-  const [lastUpdates, setLastUpdates] = useState<Record<string, LastUploadInfo>>({});
-  const [iptReferenceMode, setIptReferenceMode] = useState<IptReferenceMode>(defaultIptReferenceMode);
+  };
+}
 
-  const carregarUltimasAtualizacoes = async () => {
+function SummaryBox({ state }: { state: UploadState }) {
+  if (state.status === "success" && state.result) {
+    return (
+      <div className="mt-6 rounded-2xl border-0 bg-emerald-50/90 p-5 text-sm shadow-md shadow-emerald-900/10 ring-1 ring-emerald-500/15 dark:bg-emerald-950/30 dark:shadow-emerald-950/40 dark:ring-emerald-500/20">
+        <div className="flex items-center gap-2 font-semibold text-emerald-800 dark:text-emerald-300">
+          <CheckCircle2 className="h-4 w-4" />
+          Upload concluido
+        </div>
+        <div className="mt-4 grid gap-3 text-xs leading-relaxed text-muted-foreground sm:grid-cols-2">
+          <div>Processados: <span className="font-semibold text-foreground">{state.result.processados ?? 0}</span></div>
+          <div>Total: <span className="font-semibold text-foreground">{state.result.total ?? 0}</span></div>
+          <div>Inseridos: <span className="font-semibold text-foreground">{state.result.inseridos ?? 0}</span></div>
+          <div>Atualizados: <span className="font-semibold text-foreground">{state.result.atualizados ?? 0}</span></div>
+          {state.result.tipo_detectado_label && (
+            <div>Tipo detectado: <span className="font-semibold text-foreground">{state.result.tipo_detectado_label}</span></div>
+          )}
+          {state.result.referencia_importada && (
+            <div>Referencia: <span className="font-semibold text-foreground">{state.result.referencia_importada}</span></div>
+          )}
+          {state.result.ordens_encerradas !== undefined && (
+            <div>Encerrados: <span className="font-semibold text-foreground">{state.result.ordens_encerradas}</span></div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (state.status === "error") {
+    return (
+      <div className="mt-6 rounded-2xl border-0 bg-red-50/90 p-5 text-sm shadow-md shadow-red-900/10 ring-1 ring-red-500/15 dark:bg-red-950/30 dark:shadow-red-950/40 dark:ring-red-500/20">
+        <div className="flex items-start gap-2 text-red-800 dark:text-red-300">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            <div className="font-semibold">Erro no upload</div>
+            <div className="mt-2 text-xs leading-relaxed">{state.error}</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}
+
+function HistoryBlock({
+  title,
+  overview,
+  expanded,
+  onToggle,
+}: {
+  title: string;
+  overview?: LastUploadInfo;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const history = overview?.history ?? [];
+
+  return (
+    <div className="mt-6 rounded-2xl border-0 bg-muted/30 p-5 text-xs leading-relaxed text-muted-foreground shadow-sm shadow-black/5 ring-1 ring-black/5 dark:bg-muted/20 dark:shadow-black/30 dark:ring-white/10">
+      <div className="text-sm font-semibold tracking-tight text-foreground">{title}</div>
+      <div className="mt-4 space-y-2.5">
+        <div>Ultima atualizacao: <span className="font-semibold text-foreground">{formatDateTime(overview?.ultimo_import)}</span></div>
+        <div>Arquivo: <span className="font-semibold text-foreground">{overview?.source_file || "—"}</span></div>
+      {overview?.tipo_detectado_label && (
+        <div>Tipo detectado: <span className="font-semibold text-foreground">{overview.tipo_detectado_label}</span></div>
+      )}
+      {overview?.ultima_referencia && (
+        <div>Ultima referencia: <span className="font-semibold text-foreground">{overview.ultima_referencia}</span></div>
+      )}
+      {overview?.referencia_importada && !overview?.ultima_referencia && (
+        <div>Referencia: <span className="font-semibold text-foreground">{overview.referencia_importada}</span></div>
+      )}
+      <div>Registros atuais: <span className="font-semibold text-foreground">{overview?.total_registros ?? 0}</span></div>
+      {overview?.total_encerradas !== undefined && (
+        <div>Encerrados acumulados: <span className="font-semibold text-foreground">{overview.total_encerradas ?? 0}</span></div>
+      )}
+      </div>
+
+      {history.length > 0 && (
+        <>
+          <Button variant="ghost" type="button" className="mt-5 h-9 px-3 text-xs" onClick={onToggle}>
+            {expanded ? <ChevronUp className="mr-1 h-4 w-4" /> : <ChevronDown className="mr-1 h-4 w-4" />}
+            {expanded ? "Ocultar historico" : "Mostrar mais"}
+          </Button>
+
+          {expanded && (
+            <div className="mt-4 space-y-3">
+              {history.slice(0, 10).map((entry, index) => (
+                <div
+                  key={`${entry.created_at}-${entry.source_file}-${index}`}
+                  className="rounded-xl border-0 bg-background/80 p-4 shadow-sm shadow-black/5 ring-1 ring-black/5 dark:shadow-black/40 dark:ring-white/10"
+                >
+                  <div className="font-medium text-foreground">{entry.tipo_label || "Importacao"}</div>
+                  <div className="mt-2 space-y-1.5">
+                  <div>Data: <span className="text-foreground">{formatDateTime(entry.created_at)}</span></div>
+                  <div>Arquivo: <span className="text-foreground">{entry.source_file || "—"}</span></div>
+                  <div>Processados: <span className="text-foreground">{entry.processados ?? 0}</span></div>
+                  {entry.referencia_importada && (
+                    <div>Referencia: <span className="text-foreground">{entry.referencia_importada}</span></div>
+                  )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function UploadDropzone({
+  inputId,
+  accept,
+  loading,
+  helperText,
+  onFilesSelected,
+}: {
+  inputId: string;
+  accept: string;
+  loading: boolean;
+  helperText: string;
+  onFilesSelected: (files: FileList | null) => void;
+}) {
+  const [dragActive, setDragActive] = useState(false);
+
+  return (
+    <div
+      className={`rounded-2xl border-0 bg-linear-to-b from-muted/60 to-muted/30 p-8 text-center shadow-md shadow-black/5 ring-1 ring-black/6 transition-all duration-200 dark:from-muted/40 dark:to-muted/15 dark:shadow-black/40 dark:ring-white/10 ${
+        dragActive
+          ? "scale-[1.01] bg-primary/8 shadow-lg shadow-primary/15 ring-2 ring-primary/25 dark:bg-primary/15"
+          : "hover:shadow-lg hover:shadow-black/8 dark:hover:shadow-black/50"
+      } ${loading ? "pointer-events-none opacity-70" : ""}`}
+      onDragOver={(event) => {
+        event.preventDefault();
+        setDragActive(true);
+      }}
+      onDragLeave={() => setDragActive(false)}
+      onDrop={(event) => {
+        event.preventDefault();
+        setDragActive(false);
+        onFilesSelected(event.dataTransfer.files);
+      }}
+    >
+      <input
+        id={inputId}
+        type="file"
+        accept={accept}
+        multiple={inputId === "iptCronograma"}
+        className="hidden"
+        onChange={(event) => onFilesSelected(event.target.files)}
+        disabled={loading}
+      />
+      <label htmlFor={inputId} className="block cursor-pointer">
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-background/90 shadow-inner shadow-black/5 ring-1 ring-black/5 dark:bg-background/50 dark:ring-white/10">
+          <FileSpreadsheet className="h-6 w-6 text-primary" />
+        </div>
+        <div className="mt-5 text-sm font-semibold tracking-tight text-foreground">
+          {loading ? "Processando arquivo..." : "Clique ou arraste o arquivo aqui"}
+        </div>
+        <div className="mt-2 max-w-md mx-auto text-xs leading-relaxed text-muted-foreground">{helperText}</div>
+      </label>
+    </div>
+  );
+}
+
+export default function UploadPage() {
+  const iptReferenceOptions = useMemo(() => buildIptReferenceOptions(), []);
+  const defaultIptReferenceMode: IptReferenceMode = new Date().getDay() === 1 ? "fim_de_semana" : "d_minus_1";
+  const [states, setStates] = useState<Record<UploadKey, UploadState>>(createInitialStates());
+  const [overview, setOverview] = useState<UploadOverviewResponse>({});
+  const [iptReferenceMode, setIptReferenceMode] = useState<IptReferenceMode>(defaultIptReferenceMode);
+  const [cronogramaModalOpen, setCronogramaModalOpen] = useState(false);
+  const [expandedHistory, setExpandedHistory] = useState<Record<string, boolean>>({});
+
+  const loadOverview = async () => {
     try {
       const data = await apiService.getUploadLastUpdates();
-      setLastUpdates(data || {});
-    } catch (err) {
-      console.error("Erro ao carregar últimas atualizações:", err);
+      setOverview((data || {}) as UploadOverviewResponse);
+    } catch (error) {
+      console.error("Erro ao carregar resumo de uploads:", error);
     }
   };
 
   useEffect(() => {
-    carregarUltimasAtualizacoes();
+    loadOverview();
   }, []);
 
-  const handleUpload = async (type: string, file: File | null) => {
+  const setUploadState = (key: UploadKey, next: UploadState) => {
+    setStates((prev) => ({ ...prev, [key]: next }));
+  };
+
+  const validateSessionFile = (session: SessionKey, file: File): string | null => {
+    const lowerName = file.name.toLowerCase();
+    if (session === "flip") {
+      if (!lowerName.endsWith(".csv")) {
+        return "A sessao FLIP aceita apenas CSV. Arquivos IPT/Report serao bloqueados aqui.";
+      }
+      return null;
+    }
+    if (session === "ddmx") {
+      if (!lowerName.endsWith(".xlsx") && !lowerName.endsWith(".xls")) {
+        return "A sessao DDMX aceita apenas planilhas XLSX.";
+      }
+      return null;
+    }
+    return null;
+  };
+
+  const handleSessionUpload = async (session: "flip" | "ddmx", files: FileList | null) => {
+    const file = files?.[0];
     if (!file) return;
 
-    setUploadStates((prev) => ({
-      ...prev,
-      [type]: { status: "uploading", progress: 0 },
-    }));
+    const validationError = validateSessionFile(session, file);
+    if (validationError) {
+      toast.error(validationError);
+      setUploadState(session, { status: "error", error: validationError });
+      return;
+    }
 
+    setUploadState(session, { status: "uploading" });
     try {
-      let data;
-      switch (type) {
-        case "sacs":
-          data = await apiService.uploadSACsCSV(file);
-          break;
-        case "cnc":
-          data = await apiService.uploadCNCsCSV(file);
-          break;
-        case "cncsDetalhes":
-          data = await apiService.uploadCncDetalhesCSV(file);
-          break;
-        case "acic":
-          data = await apiService.uploadACICsCSV(file);
-          break;
-        case "ouvidoria":
-          data = await apiService.uploadOuvidoriaCSV(file);
-          break;
-        case "iptHistoricoOs":
-          data = await apiService.uploadIptHistoricoOsXlsx(file);
-          break;
-        case "iptHistoricoOsVarricao":
-          data = await apiService.uploadIptHistoricoOsVarricaoXlsx(file);
-          break;
-        case "iptHistoricoOsCompactadores":
-          data = await apiService.uploadIptHistoricoOsCompactadoresXlsx(file);
-          break;
-        case "iptReport":
-          {
-            const selectedReference =
-              iptReferenceOptions.find((option) => option.value === iptReferenceMode) ?? iptReferenceOptions[0];
-            data = await apiService.uploadIptReportXlsx(file, {
-              modoReferencia: selectedReference.value,
-              periodoInicial: selectedReference.periodoInicial,
-              periodoFinal: selectedReference.periodoFinal,
-            });
-          }
-          break;
-        case "iptStatusBateria":
-          data = await apiService.uploadIptStatusBateriaXlsx(file);
-          break;
-        case "iptCronograma":
-          data = await apiService.uploadIptCronogramaXlsx(file);
-          break;
-        default:
-          return;
-      }
-
-      setUploadStates((prev) => ({
-        ...prev,
-        [type]: { status: "success", result: data },
-      }));
-      await carregarUltimasAtualizacoes();
-    } catch (error: unknown) {
-      setUploadStates((prev) => ({
-        ...prev,
-        [type]: {
-          status: "error",
-          error: getErrorMessage(error),
-        },
-      }));
+      const result = await apiService.uploadSessionFile(session, file);
+      setUploadState(session, { status: "success", result });
+      toast.success(`${result?.tipo_detectado_label || "Arquivo"} importado com sucesso.`);
+      await loadOverview();
+    } catch (error) {
+      const message = getErrorMessage(error);
+      setUploadState(session, { status: "error", error: message });
+      toast.error(message);
     }
   };
 
-  const handleCronogramaBatchUpload = async (files: FileList | File[]) => {
-    const list = Array.from(files);
+  const handleTypedUpload = async (key: "iptReport" | "iptStatusBateria", files: FileList | null) => {
+    const file = files?.[0];
+    if (!file) return;
+
+    if (!file.name.toLowerCase().endsWith(".xlsx")) {
+      const message = "Esse campo aceita apenas arquivos XLSX.";
+      setUploadState(key, { status: "error", error: message });
+      toast.error(message);
+      return;
+    }
+
+    setUploadState(key, { status: "uploading" });
+    try {
+      let result;
+      if (key === "iptReport") {
+        const selectedReference =
+          iptReferenceOptions.find((option) => option.value === iptReferenceMode) ?? iptReferenceOptions[0];
+        result = await apiService.uploadIptReportXlsx(file, {
+          modoReferencia: selectedReference.value,
+          periodoInicial: selectedReference.periodoInicial,
+          periodoFinal: selectedReference.periodoFinal,
+        });
+      } else {
+        result = await apiService.uploadIptStatusBateriaXlsx(file);
+      }
+
+      setUploadState(key, { status: "success", result });
+      toast.success("Upload concluido com sucesso.");
+      await loadOverview();
+    } catch (error) {
+      const message = getErrorMessage(error);
+      setUploadState(key, { status: "error", error: message });
+      toast.error(message);
+    }
+  };
+
+  const handleCronogramaUpload = async (files: FileList | null) => {
+    const list = Array.from(files ?? []);
     if (!list.length) return;
-    setUploadStates((prev) => ({
-      ...prev,
-      iptCronograma: { status: "uploading", progress: 0 },
-    }));
+
+    const invalidFile = list.find((file) => !file.name.toLowerCase().endsWith(".xlsx"));
+    if (invalidFile) {
+      const message = "Cronograma aceita apenas arquivos XLSX.";
+      setUploadState("iptCronograma", { status: "error", error: message });
+      toast.error(message);
+      return;
+    }
+
+    setUploadState("iptCronograma", { status: "uploading" });
     try {
       let processados = 0;
       let total = 0;
       let inseridos = 0;
       let atualizados = 0;
+
       for (const file of list) {
         const result = await apiService.uploadIptCronogramaXlsx(file);
         processados += Number(result?.processados ?? 0);
@@ -308,384 +471,230 @@ export default function UploadPage() {
         inseridos += Number(result?.inseridos ?? 0);
         atualizados += Number(result?.atualizados ?? 0);
       }
-      setUploadStates((prev) => ({
-        ...prev,
-        iptCronograma: {
-          status: "success",
-          result: {
-            processados,
-            total,
-            inseridos,
-            atualizados,
-            duplicados: 0,
-            erros: 0,
-          },
-        },
-      }));
-      await carregarUltimasAtualizacoes();
-    } catch (error: unknown) {
-      setUploadStates((prev) => ({
-        ...prev,
-        iptCronograma: {
-          status: "error",
-          error: getErrorMessage(error),
-        },
-      }));
+
+      setUploadState("iptCronograma", {
+        status: "success",
+        result: { processados, total, inseridos, atualizados, duplicados: 0, erros: 0 },
+      });
+      toast.success("Cronograma importado com sucesso.");
+      await loadOverview();
+    } catch (error) {
+      const message = getErrorMessage(error);
+      setUploadState("iptCronograma", { status: "error", error: message });
+      toast.error(message);
     }
   };
 
-  const handleDragOver = (e: React.DragEvent, type: string) => {
-    e.preventDefault();
-    setDraggedOver(type);
-  };
-
-  const handleDragLeave = () => {
-    setDraggedOver(null);
-  };
-
-  const handleDrop = (e: React.DragEvent, type: string) => {
-    e.preventDefault();
-    setDraggedOver(null);
-    const file = e.dataTransfer.files[0];
-    const lowerName = file?.name?.toLowerCase() || "";
-    const isIptType = type.startsWith("ipt");
-    const isValid = isIptType ? lowerName.endsWith(".xlsx") : lowerName.endsWith(".csv");
-    if (file && isValid) {
-      handleUpload(type, file);
-    }
-  };
-
-  const UploadCard = ({
-    title,
-    type,
-    description,
-  }: {
-    title: string;
-    type: string;
-    description: string;
-  }) => {
-    const state = uploadStates[type];
-    const isDragged = draggedOver === type;
-    const isUploading = state.status === "uploading";
-    const lastUpdate = lastUpdates[type];
-    const colors = cardColors[type as keyof typeof cardColors];
-    const isIptType = type.startsWith("ipt");
-    const accept = isIptType ? ".xlsx" : ".csv";
-    const fileLabel = isIptType ? "XLSX" : "CSV";
-    const multiple = type === "iptCronograma";
-    const formatDateTime = (value?: string | null) => {
-      if (!value) return "Sem importação ainda";
-      const d = new Date(value);
-      if (isNaN(d.getTime())) return "Sem importação ainda";
-      return d.toLocaleString("pt-BR");
-    };
-
-    return (
-      <div
-        className={`relative group overflow-hidden bg-card border rounded-xl transition-all duration-300 ${
-          isDragged
-            ? `ring-2 ring-offset-2 ring-${colors.border.split("-")[1]}-500 scale-[1.02] shadow-xl`
-            : "border-border hover:border-primary/30 hover:shadow-lg hover:-translate-y-1"
-        } ${isUploading ? "pointer-events-none" : ""}`}
-        onDragOver={(e) => handleDragOver(e, type)}
-        onDragLeave={handleDragLeave}
-        onDrop={(e) => handleDrop(e, type)}
-      >
-        {/* Barra de status superior */}
-        <div className={`h-1.5 w-full bg-linear-to-r ${colors.gradient}`} />
-        
-        <div className="p-6">
-          {type === "iptReport" && (
-            <div className="mb-4 p-4 rounded-xl bg-fuchsia-50/80 dark:bg-fuchsia-950/30 shadow-lg shadow-fuchsia-500/10 dark:shadow-fuchsia-900/20">
-              <Label className="block font-bold text-fuchsia-800 dark:text-fuchsia-200 mb-2">
-                Referência da importação (OBRIGATÓRIO – selecione ANTES de enviar)
-              </Label>
-              <Select
-                value={iptReferenceMode}
-                onValueChange={(v) => setIptReferenceMode(v as IptReferenceMode)}
-                disabled={isUploading}
-              >
-                <SelectTrigger className="w-full bg-white dark:bg-background/90 text-fuchsia-700 dark:text-fuchsia-300 font-semibold border-fuchsia-200/60 dark:border-fuchsia-700/50">
-                  <SelectValue placeholder="Selecione a referência" />
-                </SelectTrigger>
-                <SelectContent>
-                  {iptReferenceOptions.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
-          <div className="flex items-start justify-between mb-6">
-            <div className="space-y-1">
-              <h3 className={`text-xl font-bold ${colors.text} group-hover:scale-105 transition-transform origin-left`}>{title}</h3>
-              <p className="text-sm text-muted-foreground leading-relaxed">{description}</p>
-            </div>
-            <div className="h-10 w-10 rounded-full bg-muted/50 flex items-center justify-center shadow-sm">
-              {state.status === "success" ? (
-                <div className="text-lg animate-bounce">✅</div>
-              ) : state.status === "error" ? (
-                <div className="text-lg animate-pulse">❌</div>
-              ) : (
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`lucide lucide-upload-cloud ${colors.text} opacity-50 group-hover:opacity-100 transition-opacity`}><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"/><path d="M12 12v9"/><path d="m16 16-4-4-4 4"/></svg>
-              )}
-            </div>
-          </div>
-
-          {/* Drag and Drop Area */}
-          <div
-            className={`relative border-2 border-dashed rounded-xl p-8 text-center transition-all duration-300 ${
-              isDragged
-                ? `${colors.border} bg-muted/50`
-                : "border-muted-foreground/20 hover:border-muted-foreground/40 hover:bg-muted/10"
-            }`}
-          >
-            {isUploading ? (
-              <div className="space-y-4 py-2">
-                <div className="relative">
-                  <div className={`h-12 w-12 rounded-full border-2 border-t-transparent ${colors.border} animate-spin mx-auto`} />
-                  <div className="absolute inset-0 flex items-center justify-center text-xs font-bold">
-                    ...
-                  </div>
-                </div>
-                <div>
-                  <p className={`text-sm font-medium ${colors.text} animate-pulse`}>
-                    Processando arquivo...
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Isso pode levar alguns segundos
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <>
-                <input
-                  type="file"
-                  accept={accept}
-                  onChange={(e) => {
-                    const files = e.target.files;
-                    if (!files || files.length === 0) return;
-                    if (type === "iptCronograma" && files.length > 1) {
-                      handleCronogramaBatchUpload(files);
-                      return;
-                    }
-                    const file = files[0];
-                    if (file) handleUpload(type, file);
-                  }}
-                  disabled={isUploading}
-                  multiple={multiple}
-                  className="hidden"
-                  id={`file-input-${type}`}
-                />
-                <label
-                  htmlFor={`file-input-${type}`}
-                  className="cursor-pointer block space-y-3 py-2"
-                >
-                  <div className={`mx-auto w-12 h-12 rounded-full bg-muted/50 flex items-center justify-center group-hover:scale-110 transition-transform duration-300 ${isDragged ? 'scale-125' : ''}`}>
-                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`lucide lucide-file-spreadsheet ${colors.text}`}><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M8 13h2"/><path d="M14 13h2"/><path d="M8 17h2"/><path d="M14 17h2"/></svg>
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-foreground mb-1 group-hover:text-primary transition-colors">
-                      {`Clique ou arraste o ${fileLabel} aqui`}
-                    </p>
-                    <p className="text-xs text-muted-foreground/70">
-                      {isDragged
-                        ? "Solte para iniciar o upload!"
-                        : type === "iptCronograma"
-                        ? "Suporta 1 ou mais XLSX (BL, MT, NH, LM, GO)"
-                        : `Suporta arquivos ${accept}`}
-                    </p>
-                  </div>
-                </label>
-              </>
-            )}
-          </div>
-
-          <div className="mt-3 rounded-lg border border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-            <div className="font-medium">
-              Última atualização:{" "}
-              <span className="text-foreground">{formatDateTime(lastUpdate?.ultimo_import)}</span>
-            </div>
-            <div className="mt-1">
-              Arquivo: <span className="text-foreground">{lastUpdate?.source_file || "—"}</span>
-            </div>
-            {type === "iptReport" && (
-              <div className="mt-1">
-                Última referência: <span className="text-foreground">{lastUpdate?.ultima_referencia || "—"}</span>
-              </div>
-            )}
-            <div className="mt-1">
-              Registros atuais: <span className="text-foreground">{lastUpdate?.total_registros ?? 0}</span>
-            </div>
-            {type === "iptReport" && (
-              <div className="mt-1">
-                Encerrados acumulados: <span className="text-foreground">{lastUpdate?.total_encerradas ?? 0}</span>
-              </div>
-            )}
-          </div>
-
-          {/* Resultado - só mostra para este card específico */}
-          {state.status === "success" && state.result && (
-            <div className="mt-4 p-4 bg-green-50/50 dark:bg-green-900/10 border border-green-200/50 dark:border-green-800/30 rounded-lg animate-fadeIn backdrop-blur-sm">
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse"></span>
-                  <p className="text-sm font-semibold text-green-800 dark:text-green-200">
-                    Upload concluído
-                    {type === "iptReport" && state.result.referencia_importada && (
-                      <span className="ml-2 font-bold text-green-900 dark:text-green-100">
-                        → {state.result.referencia_importada}
-                      </span>
-                    )}
-                  </p>
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div className="p-2 bg-background/50 rounded border border-green-100 dark:border-green-900">
-                    <span className="text-muted-foreground block">Processados</span>
-                    <strong className="text-green-700 dark:text-green-300 text-lg">{state.result.processados}</strong>
-                  </div>
-                  <div className="p-2 bg-background/50 rounded border border-green-100 dark:border-green-900">
-                    <span className="text-muted-foreground block">Total</span>
-                    <strong className="text-foreground text-lg">{state.result.total}</strong>
-                  </div>
-                </div>
-                {((state.result.duplicados ?? 0) > 0 || (state.result.erros ?? 0) > 0) && (
-                  <div className="text-xs pt-2 flex gap-3 border-t border-green-200/50 dark:border-green-800/30">
-                    {(state.result.duplicados ?? 0) > 0 && (
-                      <span className="text-muted-foreground">
-                        Ignorados: <strong>{state.result.duplicados ?? 0}</strong>
-                      </span>
-                    )}
-                    {(state.result.erros ?? 0) > 0 && (
-                      <span className="text-yellow-700 dark:text-yellow-400">
-                        ⚠️ Erros: <strong>{state.result.erros ?? 0}</strong>
-                      </span>
-                    )}
-                  </div>
-                )}
-                {(state.result.inseridos !== undefined || state.result.atualizados !== undefined) && (
-                  <div className="text-xs pt-2 flex gap-3 border-t border-green-200/50 dark:border-green-800/30">
-                    <span className="text-muted-foreground">
-                      Inseridos: <strong>{state.result.inseridos ?? 0}</strong>
-                    </span>
-                    <span className="text-muted-foreground">
-                      Atualizados: <strong>{state.result.atualizados ?? 0}</strong>
-                    </span>
-                  </div>
-                )}
-                {type === "iptReport" && (
-                  <div className="text-xs pt-2 flex gap-3 border-t border-green-200/50 dark:border-green-800/30">
-                    <span className="text-muted-foreground">
-                      Encerrados: <strong>{state.result.ordens_encerradas ?? 0}</strong>
-                    </span>
-                    <span className="text-muted-foreground">
-                      Período: <strong>{state.result.periodo_inicial ?? "—"}{state.result.periodo_final && state.result.periodo_final !== state.result.periodo_inicial ? ` a ${state.result.periodo_final}` : ""}</strong>
-                    </span>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {state.status === "error" && (
-            <div className="mt-4 p-4 bg-red-50/50 dark:bg-red-900/10 border border-red-200/50 dark:border-red-800/30 rounded-lg animate-fadeIn backdrop-blur-sm">
-              <div className="flex items-start gap-2">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-alert-circle text-red-600 mt-0.5 shrink-0"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
-                <div>
-                  <p className="text-sm font-semibold text-red-800 dark:text-red-200 mb-1">
-                    Erro no upload
-                  </p>
-                  <p className="text-xs text-red-700 dark:text-red-300 wrap-break-word leading-relaxed">
-                    {state.error}
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    );
+  const toggleHistory = (key: string) => {
+    setExpandedHistory((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
   return (
     <MainLayout>
-      <div className="space-y-8">
-        <div className="relative overflow-hidden rounded-2xl bg-linear-to-br from-indigo-600 via-indigo-700 to-purple-900 p-8 shadow-xl shadow-indigo-900/35 dark:bg-linear-to-br dark:from-indigo-800 dark:via-purple-900 dark:to-indigo-950 dark:shadow-2xl dark:shadow-black/45">
-          <div className="relative flex flex-col gap-4 sm:flex-row sm:items-start sm:gap-6">
-            <div
-              className="flex h-22 w-22 shrink-0 items-center justify-center rounded-2xl bg-indigo-950 shadow-lg dark:bg-indigo-950"
-              aria-hidden
-            >
-              <Upload className="h-11 w-11 text-white" strokeWidth={1.5} />
+      <div className="space-y-10">
+        <div className="rounded-3xl bg-linear-to-br from-indigo-600 via-indigo-700 to-purple-900 p-8 text-white shadow-2xl shadow-indigo-950/40 ring-1 ring-white/10">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+            <div className="flex items-start gap-5">
+              <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-indigo-950/70 shadow-lg shadow-black/25">
+                <Upload className="h-8 w-8" strokeWidth={1.8} />
+              </div>
+              <div>
+                <h1 className="text-4xl font-bold tracking-tight">Upload de Dados</h1>
+                <p className="mt-4 max-w-3xl text-sm leading-relaxed text-indigo-50/95 sm:text-base">
+                  Agora as importacoes principais ficam concentradas por sessao. O sistema detecta o tipo do arquivo,
+                  bloqueia arquivos fora da sessao e mantem historico recente das ultimas importacoes.
+                </p>
+              </div>
             </div>
-            <div className="min-w-0 flex-1">
-              <h1 className="text-4xl font-bold tracking-tight text-white">Upload de Dados</h1>
-              <p className="mt-3 max-w-2xl text-lg text-indigo-50">
-                Importação de arquivos CSV (ADC) e XLSX (IPT) para atualização da base de dados.
-              </p>
+
+            <Button
+              type="button"
+              variant="secondary"
+              size="icon"
+              className="h-11 w-11 rounded-xl border-0 bg-white/15 text-white shadow-lg shadow-black/20 ring-1 ring-white/20 hover:bg-white/25 hover:text-white"
+              title="Cronograma anual"
+              onClick={() => setCronogramaModalOpen(true)}
+            >
+              <Settings className="h-5 w-5" />
+              <span className="sr-only">Abrir cronograma</span>
+            </Button>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border-0 bg-amber-50/90 p-5 text-sm text-amber-950 shadow-md shadow-amber-900/10 ring-1 ring-amber-500/20 dark:bg-amber-950/35 dark:text-amber-50 dark:shadow-amber-950/50 dark:ring-amber-500/25">
+          <div className="flex items-start gap-4">
+            <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 opacity-90" />
+            <div>
+              <div className="font-semibold tracking-tight">Protecao extra para imports sensiveis</div>
+              <div className="mt-2 text-xs leading-relaxed opacity-95">
+                `FLIP` aceita apenas CSV e `DDMX` apenas XLSX. O tipo real do arquivo e validado no backend antes da importacao.
+                `SELIMP` continua separado em `Report` e `Status de Bateria` para reduzir risco operacional.
+              </div>
             </div>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <UploadCard
-            title="SACs"
-            type="sacs"
-            description="Upload do arquivo FLIP_CONSULTA_SAC_*.csv"
-          />
-          <UploadCard
-            title="BFS"
-            type="cnc"
-            description="Upload do arquivo FLIP_CONSULTA_BFS_*.csv"
-          />
-          <UploadCard
-            title="CNC (Detalhes)"
-            type="cncsDetalhes"
-            description="Upload do arquivo FLIP_CONSULTA_CNC_*.csv - cruza com BFS para relatórios de Defesa/Contestação"
-          />
-          <UploadCard
-            title="ACICs"
-            type="acic"
-            description="Upload do arquivo FLIP_CONSULTA_ACIC_*.csv"
-          />
-          <UploadCard
-            title="Ouvidorias"
-            type="ouvidoria"
-            description="Upload do arquivo FLIP_CONSULTA_OUVIDORIA_*.csv"
-          />
-          <UploadCard
-            title="IPT - Histórico OS (Garbage Veículos)"
-            type="iptHistoricoOs"
-            description="Upload do arquivo historico_os.xlsx"
-          />
-          <UploadCard
-            title="IPT - Histórico OS (Varrição)"
-            type="iptHistoricoOsVarricao"
-            description="Upload do arquivo historico_os (1).xlsx"
-          />
-          <UploadCard
-            title="IPT - Histórico de Operações (Compactadores CV)"
-            type="iptHistoricoOsCompactadores"
-            description="Upload da planilha Histórico de operações - Compactadores que fazem serviço CV"
-          />
-          <UploadCard
-            title="IPT - Report SELIMP"
-            type="iptReport"
-            description="Upload do arquivo report.xlsx"
-          />
-          <UploadCard
-            title="IPT - Status de Bateria"
-            type="iptStatusBateria"
-            description="Upload do arquivo Status de Bateria.xlsx"
-          />
-          <UploadCard
-            title="IPT - Cronograma (BL, MT, NH, LM, GO)"
-            type="iptCronograma"
-            description="Upload dos arquivos BL.xlsx, MT.xlsx, NH.xlsx, LM.xlsx ou GO.xlsx da pasta docs/ipt/cronograma"
-          />
-        </div>
+        <Accordion type="multiple" defaultValue={["flip", "ddmx", "selimp"]} className="space-y-5">
+          <AccordionItem value="flip" className="overflow-hidden rounded-2xl border-0 bg-card px-6 shadow-lg shadow-black/5 ring-1 ring-black/5 dark:shadow-black/40 dark:ring-white/10">
+            <AccordionTrigger className="hover:no-underline py-5">
+              <div className="text-left">
+                <div className="text-base font-semibold tracking-tight">FLIP</div>
+                <div className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+                  Um unico input para SAC, BFS, CNC, Ouvidoria e ACIC. O tipo e detectado pela estrutura do CSV.
+                </div>
+              </div>
+            </AccordionTrigger>
+            <AccordionContent className="space-y-0 pb-6 pt-0">
+              <UploadDropzone
+                inputId="flip"
+                accept=".csv"
+                loading={states.flip.status === "uploading"}
+                helperText="Solte aqui qualquer CSV do FLIP. Se vier arquivo fora da sessao, o upload sera bloqueado."
+                onFilesSelected={(files) => handleSessionUpload("flip", files)}
+              />
+              <HistoryBlock
+                title="Resumo da sessao FLIP"
+                overview={overview.sessions?.flip}
+                expanded={Boolean(expandedHistory.flip)}
+                onToggle={() => toggleHistory("flip")}
+              />
+              <SummaryBox state={states.flip} />
+            </AccordionContent>
+          </AccordionItem>
+
+          <AccordionItem value="ddmx" className="overflow-hidden rounded-2xl border-0 bg-card px-6 shadow-lg shadow-black/5 ring-1 ring-black/5 dark:shadow-black/40 dark:ring-white/10">
+            <AccordionTrigger className="hover:no-underline py-5">
+              <div className="text-left">
+                <div className="text-base font-semibold tracking-tight">DDMX</div>
+                <div className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+                  Um unico input para Historico OS, Varricao e Compactadores. O backend tenta identificar a planilha com seguranca.
+                </div>
+              </div>
+            </AccordionTrigger>
+            <AccordionContent className="space-y-0 pb-6 pt-0">
+              <UploadDropzone
+                inputId="ddmx"
+                accept=".xlsx,.xls"
+                loading={states.ddmx.status === "uploading"}
+                helperText="Aceita planilhas XLSX da sessao DDMX. Se a estrutura nao bater, a importacao sera recusada."
+                onFilesSelected={(files) => handleSessionUpload("ddmx", files)}
+              />
+              <HistoryBlock
+                title="Resumo da sessao DDMX"
+                overview={overview.sessions?.ddmx}
+                expanded={Boolean(expandedHistory.ddmx)}
+                onToggle={() => toggleHistory("ddmx")}
+              />
+              <SummaryBox state={states.ddmx} />
+            </AccordionContent>
+          </AccordionItem>
+
+          <AccordionItem value="selimp" className="overflow-hidden rounded-2xl border-0 bg-card px-6 shadow-lg shadow-black/5 ring-1 ring-black/5 dark:shadow-black/40 dark:ring-white/10">
+            <AccordionTrigger className="hover:no-underline py-5">
+              <div className="text-left">
+                <div className="text-base font-semibold tracking-tight">SELIMP</div>
+                <div className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+                  Mantido em dois inputs separados: `Report` e `Status de Bateria`.
+                </div>
+              </div>
+            </AccordionTrigger>
+            <AccordionContent className="grid gap-6 pb-6 pt-0 md:grid-cols-2">
+              <div className="rounded-2xl border-0 bg-muted/20 p-6 shadow-md shadow-black/5 ring-1 ring-black/5 dark:bg-muted/10 dark:shadow-black/30 dark:ring-white/10">
+                <div className="mb-5">
+                  <div className="text-lg font-semibold tracking-tight">IPT - Report SELIMP</div>
+                  <div className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                    Continua separado por ser o fluxo mais sensivel. A referencia deve ser escolhida antes do envio.
+                  </div>
+                </div>
+
+                <div className="mb-5 rounded-2xl border-0 bg-fuchsia-50/90 p-4 shadow-sm shadow-fuchsia-900/10 ring-1 ring-fuchsia-500/20 dark:bg-fuchsia-950/25 dark:shadow-fuchsia-950/30 dark:ring-fuchsia-500/25">
+                  <Label className="mb-3 block text-sm font-semibold text-fuchsia-900 dark:text-fuchsia-200">
+                    Referencia da importacao
+                  </Label>
+                  <Select value={iptReferenceMode} onValueChange={(value) => setIptReferenceMode(value as IptReferenceMode)}>
+                    <SelectTrigger className="w-full border-0 bg-background/90 shadow-sm ring-1 ring-black/5 dark:bg-background/50 dark:ring-white/10">
+                      <SelectValue placeholder="Selecione a referencia" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {iptReferenceOptions.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <UploadDropzone
+                  inputId="iptReport"
+                  accept=".xlsx"
+                  loading={states.iptReport.status === "uploading"}
+                  helperText="Use somente o report.xlsx da SELIMP."
+                  onFilesSelected={(files) => handleTypedUpload("iptReport", files)}
+                />
+                <HistoryBlock
+                  title="Ultimo report importado"
+                  overview={overview.iptReport}
+                  expanded={Boolean(expandedHistory.iptReport)}
+                  onToggle={() => toggleHistory("iptReport")}
+                />
+                <SummaryBox state={states.iptReport} />
+              </div>
+
+              <div className="rounded-2xl border-0 bg-muted/20 p-6 shadow-md shadow-black/5 ring-1 ring-black/5 dark:bg-muted/10 dark:shadow-black/30 dark:ring-white/10">
+                <div className="mb-5">
+                  <div className="text-lg font-semibold tracking-tight">IPT - Status de Bateria</div>
+                  <div className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                    Importacao isolada para proteger o fluxo do report.
+                  </div>
+                </div>
+
+                <UploadDropzone
+                  inputId="iptStatusBateria"
+                  accept=".xlsx"
+                  loading={states.iptStatusBateria.status === "uploading"}
+                  helperText="Use somente a planilha Status de Bateria."
+                  onFilesSelected={(files) => handleTypedUpload("iptStatusBateria", files)}
+                />
+                <HistoryBlock
+                  title="Ultimo status importado"
+                  overview={overview.iptStatusBateria}
+                  expanded={Boolean(expandedHistory.iptStatusBateria)}
+                  onToggle={() => toggleHistory("iptStatusBateria")}
+                />
+                <SummaryBox state={states.iptStatusBateria} />
+              </div>
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
+
+        <Dialog open={cronogramaModalOpen} onOpenChange={setCronogramaModalOpen}>
+          <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto border-0 shadow-2xl shadow-black/20 ring-1 ring-black/5 dark:shadow-black/60 dark:ring-white/10">
+            <DialogHeader>
+              <DialogTitle>Cronograma - importacao anual</DialogTitle>
+              <DialogDescription>
+                Fluxo especial para BL, MT, NH, LM e GO. Voce pode importar um ou varios XLSX de uma vez.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="rounded-2xl border-0 bg-muted/15 p-6 shadow-inner shadow-black/5 ring-1 ring-black/5 dark:bg-muted/10 dark:ring-white/10">
+              <UploadDropzone
+                inputId="iptCronograma"
+                accept=".xlsx"
+                loading={states.iptCronograma.status === "uploading"}
+                helperText="Aceita BL.xlsx, MT.xlsx, NH.xlsx, LM.xlsx e GO.xlsx."
+                onFilesSelected={handleCronogramaUpload}
+              />
+              <HistoryBlock
+                title="Ultimo cronograma importado"
+                overview={overview.iptCronograma}
+                expanded={Boolean(expandedHistory.iptCronograma)}
+                onToggle={() => toggleHistory("iptCronograma")}
+              />
+              <SummaryBox state={states.iptCronograma} />
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     </MainLayout>
   );

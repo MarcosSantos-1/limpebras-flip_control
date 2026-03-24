@@ -1,8 +1,15 @@
 import { FastifyPluginAsync, FastifyRequest } from "fastify";
 import { pool } from "../db.js";
 import { invalidatePrefix } from "../cache.js";
-import { parseSacCsv, parseBfsCsv, parseOuvidoriaCsv, parseAcicCsv, parseCncDetalhesCsv } from "../services/parseCsv.js";
-import { parseIptWorkbook, type IptFileType } from "../services/parseIptXlsx.js";
+import {
+  detectFlipCsvType,
+  parseSacCsv,
+  parseBfsCsv,
+  parseOuvidoriaCsv,
+  parseAcicCsv,
+  parseCncDetalhesCsv,
+} from "../services/parseCsv.js";
+import { detectDdmxWorkbookType, parseIptWorkbook, type IptFileType } from "../services/parseIptXlsx.js";
 import { parseCronogramaWorkbook } from "../services/parseCronogramaIpt.js";
 import { normalizarSetor } from "../constants/ipt.js";
 
@@ -36,6 +43,79 @@ function extractOrdensFromReportRows(rows: { raw?: Record<string, string> }[]): 
 }
 
 type ReportReferenceMode = "d_minus_1" | "fim_de_semana" | "mensal";
+type SessionUploadType =
+  | "sacs"
+  | "cnc"
+  | "cncsDetalhes"
+  | "acic"
+  | "ouvidoria"
+  | "iptHistoricoOs"
+  | "iptHistoricoOsVarricao"
+  | "iptHistoricoOsCompactadores"
+  | "iptReport"
+  | "iptStatusBateria"
+  | "iptCronograma";
+type SessionKey = "flip" | "ddmx" | "selimp";
+
+interface UploadSummary {
+  processados: number;
+  total: number;
+  inseridos: number;
+  atualizados: number;
+  duplicados: number;
+  erros: number;
+  ultimo_import: string;
+  referencia_importada?: string;
+  modo_referencia?: string;
+  periodo_inicial?: string;
+  periodo_final?: string;
+  ordens_encerradas?: number;
+  tipo_detectado?: SessionUploadType;
+  sessao?: SessionKey;
+  source_file?: string;
+}
+
+function mapIptTypeToSessionType(fileType: IptFileType): SessionUploadType {
+  switch (fileType) {
+    case "ipt_historico_os":
+      return "iptHistoricoOs";
+    case "ipt_historico_os_varricao":
+      return "iptHistoricoOsVarricao";
+    case "ipt_historico_os_compactadores":
+      return "iptHistoricoOsCompactadores";
+    case "ipt_report_selimp":
+      return "iptReport";
+    case "ipt_status_bateria":
+      return "iptStatusBateria";
+  }
+}
+
+function mapSessionTypeToLabel(type: SessionUploadType): string {
+  switch (type) {
+    case "sacs":
+      return "SACs";
+    case "cnc":
+      return "BFS";
+    case "cncsDetalhes":
+      return "CNC";
+    case "acic":
+      return "ACIC";
+    case "ouvidoria":
+      return "Ouvidoria";
+    case "iptHistoricoOs":
+      return "IPT - Historico OS";
+    case "iptHistoricoOsVarricao":
+      return "IPT - Historico OS Varricao";
+    case "iptHistoricoOsCompactadores":
+      return "IPT - Historico Operacoes Compactadores";
+    case "iptReport":
+      return "IPT - Report SELIMP";
+    case "iptStatusBateria":
+      return "IPT - Status de Bateria";
+    case "iptCronograma":
+      return "IPT - Cronograma";
+  }
+}
 
 function isDateKey(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value);
@@ -117,17 +197,368 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
     };
   };
 
-  const importIptFile = async (
+  const recordUploadEvent = async (
+    session: SessionKey,
+    uploadType: SessionUploadType,
+    sourceFile: string,
+    summary: UploadSummary
+  ) => {
+    await pool.query(
+      `INSERT INTO upload_events (
+        session_key, upload_type, source_file, processados, total, inseridos, atualizados, duplicados, erros,
+        referencia_importada, metadata, created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, NOW())`,
+      [
+        session,
+        uploadType,
+        sourceFile,
+        summary.processados ?? 0,
+        summary.total ?? 0,
+        summary.inseridos ?? 0,
+        summary.atualizados ?? 0,
+        summary.duplicados ?? 0,
+        summary.erros ?? 0,
+        summary.referencia_importada ?? null,
+        JSON.stringify({
+          modo_referencia: summary.modo_referencia ?? null,
+          periodo_inicial: summary.periodo_inicial ?? null,
+          periodo_final: summary.periodo_final ?? null,
+          ordens_encerradas: summary.ordens_encerradas ?? null,
+        }),
+      ]
+    );
+  };
+
+  const getSessionHistory = async (session: SessionKey) => {
+    const result = await pool.query(
+      `SELECT
+         upload_type,
+         source_file,
+         processados,
+         total,
+         inseridos,
+         atualizados,
+         duplicados,
+         erros,
+         referencia_importada,
+         metadata,
+         created_at
+       FROM upload_events
+       WHERE session_key = $1
+       ORDER BY created_at DESC, id DESC
+       LIMIT 10`,
+      [session]
+    );
+    return result.rows.map((row) => ({
+      tipo: row.upload_type,
+      tipo_label: mapSessionTypeToLabel(row.upload_type as SessionUploadType),
+      source_file: row.source_file,
+      processados: Number(row.processados ?? 0),
+      total: Number(row.total ?? 0),
+      inseridos: Number(row.inseridos ?? 0),
+      atualizados: Number(row.atualizados ?? 0),
+      duplicados: Number(row.duplicados ?? 0),
+      erros: Number(row.erros ?? 0),
+      referencia_importada: row.referencia_importada ?? null,
+      periodo_inicial: row.metadata?.periodo_inicial ?? null,
+      periodo_final: row.metadata?.periodo_final ?? null,
+      ordens_encerradas: row.metadata?.ordens_encerradas ?? null,
+      created_at: row.created_at,
+    }));
+  };
+
+  const getSessionOverview = async (
+    session: SessionKey,
+    fallback: { ultimo_import?: string | null; source_file?: string | null; total_registros?: number }
+  ) => {
+    const history = await getSessionHistory(session);
+    const latest = history[0];
+    return {
+      ultimo_import: latest?.created_at ?? fallback.ultimo_import ?? null,
+      source_file: latest?.source_file ?? fallback.source_file ?? null,
+      total_registros: latest?.processados ?? fallback.total_registros ?? 0,
+      tipo_detectado: latest?.tipo ?? null,
+      tipo_detectado_label: latest?.tipo_label ?? null,
+      referencia_importada: latest?.referencia_importada ?? null,
+      history,
+    };
+  };
+
+  const importFileByDetectedType = async (
+    uploadType: SessionUploadType,
+    buffer: Buffer,
+    sourceFile: string
+  ): Promise<UploadSummary> => {
+    if (uploadType === "sacs") {
+      const rows = parseSacCsv(buffer, sourceFile);
+      const client = await pool.connect();
+      try {
+        let inserted = 0;
+        let updated = 0;
+        for (const r of rows) {
+          const updatedResult = await client.query(
+            `UPDATE sacs SET
+              data_registro = $2,
+              finalizado_fora_de_escopo = $3,
+              classificacao_do_servico = $4,
+              responsividade_execucao = $5,
+              procedente_por_status = $6,
+              regional = $7,
+              servico = $8,
+              endereco = $9,
+              data_execucao = $10,
+              raw = $11,
+              source_file = $12,
+              updated_at = NOW()
+            WHERE numero_chamado = $1`,
+            [
+              r.numero_chamado || null,
+              r.data_registro,
+              r.finalizado_fora_de_escopo || null,
+              r.classificacao_do_servico || null,
+              r.responsividade_execucao || null,
+              r.procedente_por_status || null,
+              r.regional || null,
+              r.servico || null,
+              r.endereco || null,
+              r.data_execucao,
+              JSON.stringify(r.raw),
+              sourceFile,
+            ]
+          );
+          if ((updatedResult.rowCount ?? 0) > 0) {
+            updated += updatedResult.rowCount ?? 0;
+            continue;
+          }
+          await client.query(
+            `INSERT INTO sacs (
+              numero_chamado, data_registro, finalizado_fora_de_escopo, classificacao_do_servico,
+              responsividade_execucao, procedente_por_status, regional, servico, endereco, data_execucao, raw, source_file, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())`,
+            [
+              r.numero_chamado || null,
+              r.data_registro,
+              r.finalizado_fora_de_escopo || null,
+              r.classificacao_do_servico || null,
+              r.responsividade_execucao || null,
+              r.procedente_por_status || null,
+              r.regional || null,
+              r.servico || null,
+              r.endereco || null,
+              r.data_execucao,
+              JSON.stringify(r.raw),
+              sourceFile,
+            ]
+          );
+          inserted += 1;
+        }
+        invalidatePrefix("sacs");
+        invalidatePrefix("kpis");
+        return {
+          processados: inserted + updated,
+          total: rows.length,
+          inseridos: inserted,
+          atualizados: updated,
+          duplicados: 0,
+          erros: 0,
+          ultimo_import: new Date().toISOString(),
+        };
+      } finally {
+        client.release();
+      }
+    }
+
+    if (uploadType === "cnc") {
+      const rows = parseBfsCsv(buffer, sourceFile);
+      const client = await pool.connect();
+      try {
+        let inserted = 0;
+        let updated = 0;
+        for (const r of rows) {
+          const updatedResult = await client.query(
+            `UPDATE bfs SET
+              data_fiscalizacao = $2,
+              data_vistoria = $3,
+              status = $4,
+              tipo_servico = $5,
+              regional = $6,
+              endereco = $7,
+              fiscal = $8,
+              raw = $9,
+              source_file = $10,
+              updated_at = NOW()
+            WHERE numero_bfs = $1`,
+            [
+              r.numero_bfs || null,
+              r.data_fiscalizacao,
+              r.data_vistoria,
+              r.status || null,
+              r.tipo_servico || null,
+              r.regional || null,
+              r.endereco || null,
+              r.fiscal || null,
+              JSON.stringify(r.raw),
+              sourceFile,
+            ]
+          );
+          if ((updatedResult.rowCount ?? 0) > 0) {
+            updated += updatedResult.rowCount ?? 0;
+            continue;
+          }
+          await client.query(
+            `INSERT INTO bfs (
+              numero_bfs, data_fiscalizacao, data_vistoria, status, tipo_servico, regional, endereco, fiscal, raw, source_file, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
+            [
+              r.numero_bfs || null,
+              r.data_fiscalizacao,
+              r.data_vistoria,
+              r.status || null,
+              r.tipo_servico || null,
+              r.regional || null,
+              r.endereco || null,
+              r.fiscal || null,
+              JSON.stringify(r.raw),
+              sourceFile,
+            ]
+          );
+          inserted += 1;
+        }
+        invalidatePrefix("cnc");
+        invalidatePrefix("cnc_defesa");
+        invalidatePrefix("kpis");
+        return {
+          processados: inserted + updated,
+          total: rows.length,
+          inseridos: inserted,
+          atualizados: updated,
+          duplicados: 0,
+          erros: 0,
+          ultimo_import: new Date().toISOString(),
+        };
+      } finally {
+        client.release();
+      }
+    }
+
+    if (uploadType === "cncsDetalhes") {
+      const rows = parseCncDetalhesCsv(buffer, sourceFile);
+      const client = await pool.connect();
+      try {
+        await client.query("TRUNCATE TABLE cncs RESTART IDENTITY");
+        let inserted = 0;
+        for (const r of rows) {
+          if (!r.numero_bfs?.trim()) continue;
+          const raw = (r.raw && typeof r.raw === "object") ? { ...r.raw } : {};
+          const dataSync = r.data_sincronizacao instanceof Date ? r.data_sincronizacao : null;
+          const dataFisc = r.data_fiscalizacao instanceof Date ? r.data_fiscalizacao : null;
+          const dataExec = r.data_execucao instanceof Date ? r.data_execucao : null;
+          await client.query(
+            `INSERT INTO cncs (
+              numero_bfs, numero_cnc, situacao_cnc, data_sincronizacao, data_fiscalizacao, data_execucao,
+              fiscal, regional, area, setor, turno, servico, responsividade, endereco, coordenada,
+              fiscal_contratada, raw, source_file, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18, NOW())`,
+            [
+              r.numero_bfs || null,
+              r.numero_cnc || null,
+              r.situacao_cnc || null,
+              dataSync,
+              dataFisc,
+              dataExec,
+              r.fiscal || null,
+              r.regional || null,
+              r.area || null,
+              r.setor || null,
+              r.turno || null,
+              r.servico || null,
+              r.responsividade || null,
+              r.endereco || null,
+              r.coordenada || null,
+              r.fiscal_contratada || null,
+              JSON.stringify(raw),
+              sourceFile,
+            ]
+          );
+          inserted += 1;
+        }
+        invalidatePrefix("cnc");
+        invalidatePrefix("cnc_defesa");
+        return {
+          processados: inserted,
+          total: rows.length,
+          inseridos: inserted,
+          atualizados: 0,
+          duplicados: 0,
+          erros: 0,
+          ultimo_import: new Date().toISOString(),
+        };
+      } finally {
+        client.release();
+      }
+    }
+
+    if (uploadType === "ouvidoria") {
+      const rows = parseOuvidoriaCsv(buffer);
+      const client = await pool.connect();
+      try {
+        let inserted = 0;
+        for (const row of rows) {
+          await client.query(`INSERT INTO ouvidoria (raw, source_file, updated_at) VALUES ($1, $2, NOW())`, [
+            JSON.stringify(row),
+            sourceFile,
+          ]);
+          inserted += 1;
+        }
+        return {
+          processados: inserted,
+          total: rows.length,
+          inseridos: inserted,
+          atualizados: 0,
+          duplicados: 0,
+          erros: 0,
+          ultimo_import: new Date().toISOString(),
+        };
+      } finally {
+        client.release();
+      }
+    }
+
+    if (uploadType === "acic") {
+      const rows = parseAcicCsv(buffer);
+      const client = await pool.connect();
+      try {
+        let inserted = 0;
+        for (const row of rows) {
+          await client.query(`INSERT INTO acic (raw, source_file, updated_at) VALUES ($1, $2, NOW())`, [
+            JSON.stringify(row),
+            sourceFile,
+          ]);
+          inserted += 1;
+        }
+        return {
+          processados: inserted,
+          total: rows.length,
+          inseridos: inserted,
+          atualizados: 0,
+          duplicados: 0,
+          erros: 0,
+          ultimo_import: new Date().toISOString(),
+        };
+      } finally {
+        client.release();
+      }
+    }
+
+    throw new Error(`Tipo de importacao nao suportado: ${uploadType}`);
+  };
+
+  const importIptBuffer = async (
     fileType: IptFileType,
-    request: FastifyRequest,
+    buffer: Buffer,
+    sourceFile: string,
     opts?: { mesReferencia?: string }
   ) => {
-    const data = await request.file();
-    if (!data) {
-      throw new Error("Arquivo XLSX obrigatório");
-    }
-    const buffer = await data.toBuffer();
-    const sourceFile = data.filename;
     const rows = parseIptWorkbook(buffer, fileType);
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
@@ -228,11 +659,88 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         duplicados: 0,
         erros: 0,
         ultimo_import: new Date().toISOString(),
+        source_file: sourceFile,
       };
     } finally {
       client.release();
     }
   };
+
+  const importIptFile = async (
+    fileType: IptFileType,
+    request: FastifyRequest,
+    opts?: { mesReferencia?: string }
+  ) => {
+    const data = await request.file();
+    if (!data) {
+      throw new Error("Arquivo XLSX obrigatório");
+    }
+    const buffer = await data.toBuffer();
+    const sourceFile = data.filename;
+    return importIptBuffer(fileType, buffer, sourceFile, opts);
+  };
+
+  fastify.post<{ Params: { session: SessionKey } }>("/upload/session/:session", async (request, reply) => {
+    const session = request.params.session;
+    if (session !== "flip" && session !== "ddmx") {
+      return reply.code(400).send({ detail: "Sessao invalida. Use flip ou ddmx." });
+    }
+
+    const data = await request.file();
+    if (!data) {
+      return reply.code(400).send({ detail: session === "flip" ? "Arquivo CSV obrigatorio" : "Arquivo XLSX obrigatorio" });
+    }
+
+    const buffer = await data.toBuffer();
+    const sourceFile = data.filename;
+    const lowerName = sourceFile.toLowerCase();
+
+    try {
+      if (session === "flip") {
+        if (!lowerName.endsWith(".csv")) {
+          return reply.code(400).send({ detail: "A sessao FLIP aceita apenas arquivos CSV." });
+        }
+        const detectedType = detectFlipCsvType(buffer, sourceFile);
+        if (!detectedType) {
+          return reply.code(400).send({
+            detail: "Nao foi possivel identificar o tipo do CSV do FLIP. Verifique a estrutura ou a coluna Origem.",
+          });
+        }
+        const summary = await importFileByDetectedType(detectedType, buffer, sourceFile);
+        await recordUploadEvent("flip", detectedType, sourceFile, summary);
+        return {
+          ...summary,
+          tipo_detectado: detectedType,
+          tipo_detectado_label: mapSessionTypeToLabel(detectedType),
+          sessao: "flip",
+          source_file: sourceFile,
+        };
+      }
+
+      if (!lowerName.endsWith(".xlsx") && !lowerName.endsWith(".xls")) {
+        return reply.code(400).send({ detail: "A sessao DDMX aceita apenas arquivos XLSX." });
+      }
+      const detectedIptType = detectDdmxWorkbookType(buffer, sourceFile);
+      if (!detectedIptType) {
+        return reply.code(400).send({
+          detail: "Nao foi possivel identificar o tipo da planilha DDMX. Use um arquivo de Historico OS, Varricao ou Compactadores.",
+        });
+      }
+      const summary = await importIptBuffer(detectedIptType, buffer, sourceFile);
+      const sessionType = mapIptTypeToSessionType(detectedIptType);
+      await recordUploadEvent("ddmx", sessionType, sourceFile, summary);
+      return {
+        ...summary,
+        tipo_detectado: sessionType,
+        tipo_detectado_label: mapSessionTypeToLabel(sessionType),
+        sessao: "ddmx",
+        source_file: sourceFile,
+      };
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : "Falha no upload";
+      return reply.code(400).send({ detail });
+    }
+  });
 
   fastify.post("/upload/sacs-csv", async (request, reply) => {
     const data = await request.file();
@@ -695,7 +1203,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         await client.query("COMMIT");
         invalidatePrefix("ipt_preview");
         invalidatePrefix("kpis");
-        return {
+        const result = {
           processados: rows.length,
           total: rows.length,
           inseridos: rows.length,
@@ -708,7 +1216,10 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
           periodo_inicial: inicio,
           periodo_final: fim,
           ordens_encerradas: ordens.length,
+          source_file: sourceFile,
         };
+        await recordUploadEvent("selimp", "iptReport", sourceFile, result);
+        return result;
       } catch (error) {
         await client.query("ROLLBACK");
         throw error;
@@ -723,7 +1234,9 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
 
   fastify.post("/upload/ipt-status-bateria", async (request, reply) => {
     try {
-      return await importIptFile("ipt_status_bateria", request);
+      const result = await importIptFile("ipt_status_bateria", request);
+      await recordUploadEvent("selimp", "iptStatusBateria", String(result.source_file ?? ""), result);
+      return result;
     } catch (error: unknown) {
       const detail = error instanceof Error ? error.message : "Falha no upload IPT";
       return reply.code(400).send({ detail });
@@ -809,6 +1322,51 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       getLastIptUpdate("ipt_status_bateria"),
       getLastCronogramaUpdate(),
       ]);
+    const [flipSession, ddmxSession, selimpSession] = await Promise.all([
+      getSessionOverview("flip", {
+        ultimo_import:
+          cncsDetalhes.ultimo_import ??
+          cnc.ultimo_import ??
+          sacs.ultimo_import ??
+          ouvidoria.ultimo_import ??
+          acic.ultimo_import ??
+          null,
+        source_file:
+          cncsDetalhes.source_file ??
+          cnc.source_file ??
+          sacs.source_file ??
+          ouvidoria.source_file ??
+          acic.source_file ??
+          null,
+        total_registros:
+          Number(cncsDetalhes.total_registros ?? 0) +
+          Number(cnc.total_registros ?? 0) +
+          Number(sacs.total_registros ?? 0) +
+          Number(ouvidoria.total_registros ?? 0) +
+          Number(acic.total_registros ?? 0),
+      }),
+      getSessionOverview("ddmx", {
+        ultimo_import:
+          iptHistoricoOsCompactadores.ultimo_import ??
+          iptHistoricoOsVarricao.ultimo_import ??
+          iptHistoricoOs.ultimo_import ??
+          null,
+        source_file:
+          iptHistoricoOsCompactadores.source_file ??
+          iptHistoricoOsVarricao.source_file ??
+          iptHistoricoOs.source_file ??
+          null,
+        total_registros:
+          Number(iptHistoricoOs.total_registros ?? 0) +
+          Number(iptHistoricoOsVarricao.total_registros ?? 0) +
+          Number(iptHistoricoOsCompactadores.total_registros ?? 0),
+      }),
+      getSessionOverview("selimp", {
+        ultimo_import: iptReport.ultimo_import ?? iptStatusBateria.ultimo_import ?? null,
+        source_file: iptReport.source_file ?? iptStatusBateria.source_file ?? null,
+        total_registros: Number(iptReport.total_registros ?? 0) + Number(iptStatusBateria.total_registros ?? 0),
+      }),
+    ]);
     return {
       sacs,
       cnc,
@@ -821,6 +1379,11 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       iptReport,
       iptStatusBateria,
       iptCronograma,
+      sessions: {
+        flip: flipSession,
+        ddmx: ddmxSession,
+        selimp: selimpSession,
+      },
     };
   });
 

@@ -3,6 +3,7 @@ import { parseFlipDate } from "../utils/date.js";
 import { isBfsNaoDemandante } from "../constants/bfs.js";
 
 const SEP = ";";
+export type FlipCsvType = "sacs" | "cnc" | "cncsDetalhes" | "acic" | "ouvidoria";
 const SAC_REQUIRED_CANONICAL = [
   "data_registro",
   "finalizado_como_fora_de_escopo",
@@ -24,6 +25,14 @@ function canonicalKey(h: string): string {
     .replace(/^_+|_+$/g, "");
 }
 
+function normalizeText(value: string): string {
+  return String(value ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+}
+
 function headerScore(text: string, expected: string[]): number {
   const firstLine = text.split(/\r?\n/)[0] ?? "";
   const headers = firstLine.split(SEP).map(canonicalKey);
@@ -43,6 +52,59 @@ function decodeCsvBuffer(buffer: Buffer): string {
 
   // FLIP costuma vir em ANSI/Latin1; se UTF-8 não reconhecer colunas acentuadas, usa Latin1.
   return latin1Score > utf8Score ? latin1 : utf8;
+}
+
+function readSampleRecords(text: string): Record<string, string>[] {
+  return parse(text, {
+    delimiter: SEP,
+    columns: (headers) => headers.map((h: string) => normalizeHeader(h)),
+    relax_column_count: true,
+    skip_empty_lines: true,
+    trim: true,
+    to_line: 8,
+  }) as Record<string, string>[];
+}
+
+function getSampleColumnValues(records: Record<string, string>[], aliases: string[]): string[] {
+  return records
+    .map((row) => getCanonical(row, aliases))
+    .filter(Boolean)
+    .slice(0, 6);
+}
+
+export function detectFlipCsvType(buffer: Buffer, sourceFile: string): FlipCsvType | null {
+  const text = decodeCsvBuffer(buffer);
+  const headers = (text.split(/\r?\n/)[0] ?? "").split(SEP).map(canonicalKey);
+  const name = normalizeText(sourceFile);
+
+  if (headers.includes("n_bfs") || headers.includes("n_cnc") || headers.includes("situacao_cnc")) {
+    return "cncsDetalhes";
+  }
+
+  if (headerScore(text, SAC_REQUIRED_CANONICAL) >= 4 || headers.includes("numero_chamado")) {
+    return "sacs";
+  }
+
+  if ((headers.includes("numero_bfs") || headers.includes("n_bfs")) && headers.includes("data_fiscalizacao")) {
+    return "cnc";
+  }
+
+  const records = readSampleRecords(text);
+  const origemValues = getSampleColumnValues(records, ["origem"]).map(normalizeText);
+  if (origemValues.some((value) => value.includes("ouvid"))) {
+    return "ouvidoria";
+  }
+  if (origemValues.some((value) => value.includes("acic"))) {
+    return "acic";
+  }
+
+  if (name.includes("ouvid")) return "ouvidoria";
+  if (name.includes("acic")) return "acic";
+  if (name.includes("sac")) return "sacs";
+  if (name.includes("bfs")) return "cnc";
+  if (name.includes("cnc")) return "cncsDetalhes";
+
+  return null;
 }
 
 function parseDelimitedRecords(buffer: Buffer): Record<string, string>[] {
