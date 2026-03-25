@@ -5,6 +5,7 @@ import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { apiService } from "@/lib/api";
+import { formatFlipDateTimeUtc } from "@/lib/flip-datetime";
 import { format, startOfMonth, endOfMonth } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
@@ -361,7 +362,7 @@ export default function BFSPage() {
                             {bfs.subprefeitura || "—"}
                           </td>
                           <td className="px-6 py-4 text-muted-foreground">
-                            {bfs.data_abertura ? format(new Date(bfs.data_abertura), "dd/MM/yyyy HH:mm") : "—"}
+                            {bfs.data_abertura ? formatFlipDateTimeUtc(bfs.data_abertura) : "—"}
                           </td>
                         </tr>
                         {expandedIds[bfs.id] && (
@@ -371,8 +372,8 @@ export default function BFSPage() {
                                 <div><strong>BFS:</strong> {bfs.bfs}</div>
                                 <div><strong>Fiscal:</strong> {bfs.fiscal || "—"}</div>
                                 <div><strong>Sem irregularidade:</strong> {bfs.sem_irregularidade ? "Sim" : "Não"}</div>
-                                <div><strong>Data fiscalização:</strong> {bfs.data_abertura ? format(new Date(bfs.data_abertura), "dd/MM/yyyy HH:mm") : "—"}</div>
-                                <div><strong>Data vistoria:</strong> {bfs.data_vistoria ? format(new Date(bfs.data_vistoria), "dd/MM/yyyy HH:mm") : "—"}</div>
+                                <div><strong>Data fiscalização:</strong> {bfs.data_abertura ? formatFlipDateTimeUtc(bfs.data_abertura) : "—"}</div>
+                                <div><strong>Data vistoria:</strong> {bfs.data_vistoria ? formatFlipDateTimeUtc(bfs.data_vistoria) : "—"}</div>
                                 <div><strong>Subprefeitura:</strong> {bfs.subprefeitura || "—"}</div>
                                 <div className="md:col-span-3"><strong>Endereço completo:</strong> {bfs.endereco || "—"}</div>
                               </div>
@@ -437,16 +438,16 @@ export default function BFSPage() {
                   <div>
                     <label className="text-sm font-medium text-muted-foreground">Data de Fiscalização</label>
                     <p className="text-sm">
-                      {selectedBFS.data_abertura 
-                        ? format(new Date(selectedBFS.data_abertura), "dd/MM/yyyy HH:mm")
+                      {selectedBFS.data_abertura
+                        ? formatFlipDateTimeUtc(selectedBFS.data_abertura)
                         : "—"}
                     </p>
                   </div>
                   <div>
                     <label className="text-sm font-medium text-muted-foreground">Data de Vistoria</label>
                     <p className="text-sm">
-                      {selectedBFS.data_vistoria 
-                        ? format(new Date(selectedBFS.data_vistoria), "dd/MM/yyyy HH:mm")
+                      {selectedBFS.data_vistoria
+                        ? formatFlipDateTimeUtc(selectedBFS.data_vistoria)
                         : "—"}
                     </p>
                   </div>

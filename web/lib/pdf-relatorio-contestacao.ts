@@ -5,7 +5,8 @@
  */
 
 import type { jsPDF } from "jspdf";
-import { format, isValid } from "date-fns";
+import { format, isValid, parseISO } from "date-fns";
+import { formatInTimeZone } from "date-fns-tz";
 import { ptBR } from "date-fns/locale";
 import { defesaStorageKey } from "./defesa-storage-key";
 import { getCronogramaTextoParaExibir } from "./defesa-cronograma";
@@ -113,9 +114,9 @@ function safeFormatDateTime(d: string | Date | undefined): string {
   if (!d) return "--";
   let date: Date | null = null;
   if (typeof d === "string") {
-    const m = d.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2})(?::(\d{2}))?)?/);
-    if (m) {
-      date = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4] ?? 0), Number(m[5] ?? 0), Number(m[6] ?? 0));
+    const t = d.trim();
+    if (/^\d{4}-\d{2}-\d{2}T/.test(t) || /Z$/.test(t)) {
+      date = parseISO(t);
     } else {
       date = new Date(d);
     }
@@ -123,8 +124,8 @@ function safeFormatDateTime(d: string | Date | undefined): string {
     date = d;
   }
   if (!date || !isValid(date)) return "--";
-  const dStr = format(date, "dd/MM/yyyy - HH:mm", { locale: ptBR });
-  const weekday = format(date, "EEEE", { locale: ptBR });
+  const dStr = formatInTimeZone(date, "UTC", "dd/MM/yyyy - HH:mm", { locale: ptBR });
+  const weekday = formatInTimeZone(date, "UTC", "EEEE", { locale: ptBR });
   return `${dStr} (${weekday.charAt(0).toUpperCase() + weekday.slice(1)})`;
 }
 
@@ -524,8 +525,10 @@ export async function gerarRelatorioContestacaoPDF(
           if_percentual: ifAjustado,
         };
       });
-      const mediaAjustada = rowsAjustado.length > 0
-        ? rowsAjustado.reduce((s, r) => s + r.if_percentual, 0) / rowsAjustado.length
+      /** Mesmo critério SELIMP: média só das subs com vistorias no período (ex.: sem IF em CV no mês → divide por 3, não por 4). */
+      const rowsAjustadoComVistoria = rowsAjustado.filter((r) => (r.vistorias_total ?? 0) > 0);
+      const mediaAjustada = rowsAjustadoComVistoria.length > 0
+        ? rowsAjustadoComVistoria.reduce((s, r) => s + r.if_percentual, 0) / rowsAjustadoComVistoria.length
         : 0;
       const pontuacaoAjustada = pontuacaoFromIF(mediaAjustada);
 

@@ -5,6 +5,7 @@ import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { apiService } from "@/lib/api";
+import { formatFlipDateTimeUtc } from "@/lib/flip-datetime";
 import { uploadFotosToStorage, deleteFotosFromStorage } from "@/lib/firebase-defesa-fotos";
 import { defesaStorageKey, firebaseDefesaFolderSegment } from "@/lib/defesa-storage-key";
 import { format, startOfMonth, endOfMonth } from "date-fns";
@@ -112,12 +113,6 @@ function getCronogramaParaExibir(
   const raw = getCronogramaBruto(bfs, fotos);
   if (!raw) return "";
   return getCronogramaTextoParaExibir(raw, bfs?.tipo_servico, bfs?.data_abertura ?? null);
-}
-
-function formatDefesaDateTime(iso?: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "—" : format(d, "dd/MM/yyyy HH:mm", { locale: ptBR });
 }
 
 /** True se há algo no rascunho de contestação que não deva ser perdido ao fechar sem salvar. */
@@ -908,7 +903,7 @@ export default function DefesaPage() {
           b.setor_resolvido || b.cnc_detalhes?.[0]?.setor || b.setor || "",
           b.tipo_servico || "",
           b.subprefeitura || "",
-          b.data_abertura ? format(new Date(b.data_abertura), "dd/MM/yyyy HH:mm") : "",
+          b.data_abertura ? formatFlipDateTimeUtc(b.data_abertura) : "",
           b.endereco || "",
           b.fiscal || "",
           cncsStr,
@@ -1221,7 +1216,7 @@ export default function DefesaPage() {
                             </td>
                             <td className="px-6 py-4 text-muted-foreground">
                               {bfs.data_abertura
-                                ? format(new Date(bfs.data_abertura), "dd/MM/yyyy HH:mm")
+                                ? formatFlipDateTimeUtc(bfs.data_abertura)
                                 : "—"}
                             </td>
                           </tr>
@@ -1231,8 +1226,8 @@ export default function DefesaPage() {
                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                                   <div><strong>BFS:</strong> {bfs.bfs}</div>
                                   <div><strong>Fiscal:</strong> {bfs.fiscal || "—"}</div>
-                                  <div><strong>Data Registro:</strong> {bfs.data_abertura ? format(new Date(bfs.data_abertura), "dd/MM/yyyy HH:mm") : "—"}</div>
-                                  <div><strong>Data vistoria:</strong> {bfs.data_vistoria ? format(new Date(bfs.data_vistoria), "dd/MM/yyyy HH:mm") : "—"}</div>
+                                  <div><strong>Data Registro:</strong> {bfs.data_abertura ? formatFlipDateTimeUtc(bfs.data_abertura) : "—"}</div>
+                                  <div><strong>Data vistoria:</strong> {bfs.data_vistoria ? formatFlipDateTimeUtc(bfs.data_vistoria) : "—"}</div>
                                   <div><strong>Subprefeitura:</strong> {bfs.subprefeitura || "—"}</div>
                                   <div><strong>Setor:</strong>{(() => {
                                     const s = getSetorParaExibir(bfs, getFotosDadosForRow(bfs));
@@ -1261,7 +1256,7 @@ export default function DefesaPage() {
                                               {c.situacao_cnc}
                                             </span>
                                           )}
-                                          <span className="text-muted-foreground ml-2">— Registro: {c.data_sincronizacao ? format(new Date(c.data_sincronizacao), "dd/MM/yyyy HH:mm") : "—"} — Execução: {c.data_execucao ? format(new Date(c.data_execucao), "dd/MM/yyyy HH:mm") : "—"}</span>
+                                          <span className="text-muted-foreground ml-2">— Registro CNC: {c.data_sincronizacao ? formatFlipDateTimeUtc(c.data_sincronizacao) : "—"} — Finalizado: {c.data_execucao ? formatFlipDateTimeUtc(c.data_execucao) : "—"}</span>
                                         </div>
                                       ))}
                                     </div>
@@ -1450,7 +1445,7 @@ export default function DefesaPage() {
                     </label>
                     <p className="text-sm">
                       {selectedBFS.data_abertura
-                        ? format(new Date(selectedBFS.data_abertura), "dd/MM/yyyy HH:mm")
+                        ? formatFlipDateTimeUtc(selectedBFS.data_abertura)
                         : "—"}
                     </p>
                   </div>
@@ -1513,12 +1508,12 @@ export default function DefesaPage() {
                               <span className="text-muted-foreground">Setor:</span> {c.setor || "—"}
                             </div>
                             <div>
-                              <span className="text-muted-foreground">Data Registro:</span>{" "}
-                              {c.data_sincronizacao ? format(new Date(c.data_sincronizacao), "dd/MM/yyyy HH:mm") : "—"}
+                              <span className="text-muted-foreground">Registro CNC</span>{" "}
+                              {c.data_sincronizacao ? formatFlipDateTimeUtc(c.data_sincronizacao) : "—"}
                             </div>
                             <div>
-                              <span className="text-muted-foreground">Data Execução:</span>{" "}
-                              {c.data_execucao ? format(new Date(c.data_execucao), "dd/MM/yyyy HH:mm") : "—"}
+                              <span className="text-muted-foreground">Finalizado</span>{" "}
+                              {c.data_execucao ? formatFlipDateTimeUtc(c.data_execucao) : "—"}
                             </div>
                             <div>
                               <span className="text-muted-foreground">Fiscal Contratada:</span> {c.fiscal_contratada || "—"}
@@ -1622,13 +1617,13 @@ export default function DefesaPage() {
                             <span className="text-muted-foreground text-xs flex items-center gap-1 mb-0.5">
                               <Calendar className="h-3 w-3" /> Data registro (BFS)
                             </span>
-                            <span>{formatDefesaDateTime(contestarRow.data_abertura)}</span>
+                            <span>{formatFlipDateTimeUtc(contestarRow.data_abertura)}</span>
                           </div>
                           <div>
                             <span className="text-muted-foreground text-xs flex items-center gap-1 mb-0.5">
                               <Clock className="h-3 w-3" /> Data vistoria
                             </span>
-                            <span>{formatDefesaDateTime(contestarRow.data_vistoria)}</span>
+                            <span>{formatFlipDateTimeUtc(contestarRow.data_vistoria)}</span>
                           </div>
                           <div className="sm:col-span-2">
                             <span className="text-muted-foreground text-xs flex items-center gap-1 mb-0.5">
@@ -1692,12 +1687,12 @@ export default function DefesaPage() {
                                 </div>
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2.5 text-sm">
                                   <div>
-                                    <span className="text-muted-foreground text-xs block mb-0.5">Dia / horário regist. CNC</span>
-                                    <span>{formatDefesaDateTime(c.data_sincronizacao)}</span>
+                                    <span className="text-muted-foreground text-xs block mb-0.5">Registro CNC</span>
+                                    <span>{formatFlipDateTimeUtc(c.data_sincronizacao)}</span>
                                   </div>
                                   <div>
-                                    <span className="text-muted-foreground text-xs block mb-0.5">Dia / horário finalização (execução)</span>
-                                    <span className="font-medium">{formatDefesaDateTime(c.data_execucao)}</span>
+                                    <span className="text-muted-foreground text-xs block mb-0.5">Finalizado</span>
+                                    <span className="font-medium">{formatFlipDateTimeUtc(c.data_execucao)}</span>
                                   </div>
                                   <div className="sm:col-span-2">
                                     <span className="text-muted-foreground text-xs block mb-0.5">Fiscal (contratada / resposta)</span>
@@ -1955,8 +1950,8 @@ export default function DefesaPage() {
                   value={fotosContestarDraft.justificativa ?? ""}
                   onChange={(e) => setFotosContestarDraft((p) => ({ ...p, justificativa: e.target.value }))}
                   placeholder="Descreva a justificativa técnica para contestação desta BFS..."
-                  className="w-full min-h-[128px] px-3 py-2.5 rounded-lg border border-input bg-background text-sm resize-y leading-relaxed"
-                  rows={5}
+                  className="w-full min-h-[320px] px-3 py-2.5 rounded-lg border border-input bg-background text-sm resize-y leading-relaxed"
+                  rows={14}
                 />
               </div>
             </div>

@@ -213,7 +213,6 @@ export function filterBfsNaoDemandantes(rows: BfsRow[]): BfsRow[] {
 
 /**
  * Parser para FLIP_CONSULTA_CNC (CSV de CNCs com detalhes).
- * Colunas: N_BFS;N_CNC;Situacao_CNC;Data_Sincronizacao;Data_Fiscalizacao;Data_Execução;Fiscal;Regional;Area;Setor;Turno;Servico;Responsividade;Endereco;Coordenada;Fiscal_Contratada
  */
 export interface CncDetalhesRow {
   numero_bfs: string;
@@ -253,9 +252,24 @@ function parseDelimitedRecordsCnc(buffer: Buffer): Record<string, string>[] {
 export function parseCncDetalhesCsv(buffer: Buffer, _sourceFile: string): CncDetalhesRow[] {
   const records = parseDelimitedRecordsCnc(buffer);
   return records.map((row) => {
-    const dataSyncStr = getCanonical(row, ["data_sincronizacao"]);
+    const dataSyncStr = getCanonical(row, [
+      "data_sincronizacao",
+      "data_sincronizacao_cnc",
+      "entrada_cnc",
+      "registro_cnc",
+    ]);
     const dataFiscStr = getCanonical(row, ["data_fiscalizacao"]);
-    const dataExecStr = getCanonical(row, ["data_execucao"]);
+    const dataExecStr = getCanonical(row, [
+      "data_execucao",
+      "data_execucao_cnc",
+      "finalizacao_do_registro",
+      "finalizacao_registro",
+      "data_finalizacao",
+      "data_finalizacao_registro",
+      "data_finalizacao_cnc",
+      "data_de_finalizacao",
+      "finalizacao",
+    ]);
     return {
       numero_bfs: getCanonical(row, ["n_bfs", "numero_bfs"]),
       numero_cnc: getCanonical(row, ["n_cnc", "numero_cnc"]),
