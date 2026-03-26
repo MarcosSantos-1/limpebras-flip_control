@@ -525,11 +525,15 @@ export async function gerarRelatorioContestacaoPDF(
           if_percentual: ifAjustado,
         };
       });
-      /** Mesmo critério SELIMP: média só das subs com vistorias no período (ex.: sem IF em CV no mês → divide por 3, não por 4). */
-      const rowsAjustadoComVistoria = rowsAjustado.filter((r) => (r.vistorias_total ?? 0) > 0);
-      const mediaAjustada = rowsAjustadoComVistoria.length > 0
-        ? rowsAjustadoComVistoria.reduce((s, r) => s + r.if_percentual, 0) / rowsAjustadoComVistoria.length
-        : 0;
+      /**
+       * Replica a lógica usada no IF oficial da tabela superior:
+       * quando alguma SUB fica com IF zerado, não dilui por 4 (usa divisor 3).
+       */
+      const percentuaisAjustados = rowsAjustado.map((r) => r.if_percentual ?? 0);
+      const somaAjustada = percentuaisAjustados.reduce((s, p) => s + p, 0);
+      const divisorAjustado =
+        percentuaisAjustados.some((p) => p <= 0) ? 3 : 4;
+      const mediaAjustada = divisorAjustado > 0 ? somaAjustada / divisorAjustado : 0;
       const pontuacaoAjustada = pontuacaoFromIF(mediaAjustada);
 
       let yAjust = y + 15; // espaço entre tabelas
@@ -887,17 +891,31 @@ export async function gerarRelatorioContestacaoPDF(
     addFaixaAzul(doc, y, "Justificativa Técnica:");
     y += 17; // espaço entre faixa azul e texto da justificativa
 
-    doc.setFontSize(12);
+    doc.setFontSize(11);
     doc.setFont("helvetica", "normal");
     doc.setTextColor(0, 0, 0);
     const justificativa = fotos?.justificativa ?? "Justificativa a ser preenchida.";
     const lineHeightFactor = 1.3;
-    const lines = doc.splitTextToSize(justificativa, CONTENT_W);
+    const bulletIndent = 4; // mm para alinhar continuações
+    const textoLimpo = justificativa
+      .split(/\r?\n/)
+      .map((p) => p.trim())
+      .filter(Boolean)
+      .join("\n");
+    const paragrafos = textoLimpo ? textoLimpo.split("\n") : ["Justificativa a ser preenchida."];
     const PT_TO_MM = 0.35278;
-    const lineHeight = 12 * PT_TO_MM * lineHeightFactor; // ~5.5mm por linha (font 12pt × 1.3)
-    for (let i = 0; i < lines.length; i++) {
-      doc.text(lines[i], MARGIN_LEFT, y);
+    const lineHeight = 11 * PT_TO_MM * lineHeightFactor;
+    for (const p of paragrafos) {
+      const semMarcador = p.replace(/^\-\s+/, "");
+      const lines = doc.splitTextToSize(semMarcador, CONTENT_W - bulletIndent);
+      if (lines.length === 0) continue;
+      doc.text(lines[0], MARGIN_LEFT, y);
       y += lineHeight;
+      for (let i = 1; i < lines.length; i++) {
+        doc.text(lines[i], MARGIN_LEFT + bulletIndent, y);
+        y += lineHeight;
+      }
+      y += 1.2; // respiro entre parágrafos
     }
   }
 

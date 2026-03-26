@@ -5,7 +5,7 @@ import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { apiService } from "@/lib/api";
-import { formatFlipDateTimeUtc } from "@/lib/flip-datetime";
+import { formatFlipDateTimeUtc, formatFlipDateTimeUtcWithWeekday } from "@/lib/flip-datetime";
 import { uploadFotosToStorage, deleteFotosFromStorage } from "@/lib/firebase-defesa-fotos";
 import { defesaStorageKey, firebaseDefesaFolderSegment } from "@/lib/defesa-storage-key";
 import { format, startOfMonth, endOfMonth } from "date-fns";
@@ -1216,7 +1216,7 @@ export default function DefesaPage() {
                             </td>
                             <td className="px-6 py-4 text-muted-foreground">
                               {bfs.data_abertura
-                                ? formatFlipDateTimeUtc(bfs.data_abertura)
+                                ? formatFlipDateTimeUtcWithWeekday(bfs.data_abertura)
                                 : "—"}
                             </td>
                           </tr>
@@ -1226,7 +1226,7 @@ export default function DefesaPage() {
                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                                   <div><strong>BFS:</strong> {bfs.bfs}</div>
                                   <div><strong>Fiscal:</strong> {bfs.fiscal || "—"}</div>
-                                  <div><strong>Data Registro:</strong> {bfs.data_abertura ? formatFlipDateTimeUtc(bfs.data_abertura) : "—"}</div>
+                                  <div><strong>Data Registro:</strong> {bfs.data_abertura ? formatFlipDateTimeUtcWithWeekday(bfs.data_abertura) : "—"}</div>
                                   <div><strong>Data vistoria:</strong> {bfs.data_vistoria ? formatFlipDateTimeUtc(bfs.data_vistoria) : "—"}</div>
                                   <div><strong>Subprefeitura:</strong> {bfs.subprefeitura || "—"}</div>
                                   <div><strong>Setor:</strong>{(() => {
@@ -1445,7 +1445,7 @@ export default function DefesaPage() {
                     </label>
                     <p className="text-sm">
                       {selectedBFS.data_abertura
-                        ? formatFlipDateTimeUtc(selectedBFS.data_abertura)
+                        ? formatFlipDateTimeUtcWithWeekday(selectedBFS.data_abertura)
                         : "—"}
                     </p>
                   </div>
@@ -1617,7 +1617,7 @@ export default function DefesaPage() {
                             <span className="text-muted-foreground text-xs flex items-center gap-1 mb-0.5">
                               <Calendar className="h-3 w-3" /> Data registro (BFS)
                             </span>
-                            <span>{formatFlipDateTimeUtc(contestarRow.data_abertura)}</span>
+                            <span>{formatFlipDateTimeUtcWithWeekday(contestarRow.data_abertura)}</span>
                           </div>
                           <div>
                             <span className="text-muted-foreground text-xs flex items-center gap-1 mb-0.5">
