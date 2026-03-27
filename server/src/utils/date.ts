@@ -1,7 +1,8 @@
 /**
  * Converte string de data do FLIP (dd/MM/yyyy HH:mm, HH:mm:ss ou só data) para Date (instante UTC).
- * Grava os componentes da planilha como calendário UTC (Date.UTC), sem deslocar BRT.
- * Na UI, use `formatFlipDateTimeUtc` (web) para exibir os mesmos dígitos do CSV / registro no FLIP.
+ * Os valores na planilha são horário de operação em São Paulo (BRT = UTC−3; sem horário de verão desde 2019).
+ * Converte para UTC somando 3 h às componentes antes de Date.UTC.
+ * Na web, formate com fuso America/Sao_Paulo para recuperar os mesmos dígitos da planilha.
  */
 export function parseFlipDate(value: string | undefined): Date | null {
   if (!value || typeof value !== "string") return null;
@@ -14,7 +15,7 @@ export function parseFlipDate(value: string | undefined): Date | null {
   const day = Number(d);
   const month = Number(m) - 1;
   const year = Number(y);
-  const hour = Number(hh);
+  const hour = Number(hh) + 3;
   const minute = Number(mm);
   const second = Number(ss);
   const t = Date.UTC(year, month, day, hour, minute, second);

@@ -49,6 +49,8 @@ const COLOR_TITLE = "#00215a";
 const COLOR_BAND = "#00306b";
 const COLOR_BAND_TEXT = "#edf4e3";
 const COLOR_DATE_ALERT = "#ff5757";
+/** Datas FLIP na API = instante UTC do horário de Brasília da planilha — exibir em BRT no PDF. */
+const TZ_FLIP_BR = "America/Sao_Paulo";
 
 export interface IfPorSub {
   subprefeitura: string;
@@ -151,8 +153,8 @@ function safeFormatDateTime(d: string | Date | undefined): string {
     date = d;
   }
   if (!date || !isValid(date)) return "--";
-  const dStr = formatInTimeZone(date, "UTC", "dd/MM/yyyy - HH:mm", { locale: ptBR });
-  const weekday = formatInTimeZone(date, "UTC", "EEEE", { locale: ptBR });
+  const dStr = formatInTimeZone(date, TZ_FLIP_BR, "dd/MM/yyyy - HH:mm", { locale: ptBR });
+  const weekday = formatInTimeZone(date, TZ_FLIP_BR, "EEEE", { locale: ptBR });
   return `${dStr} (${weekday.charAt(0).toUpperCase() + weekday.slice(1)})`;
 }
 
