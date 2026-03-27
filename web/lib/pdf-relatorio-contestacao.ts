@@ -9,7 +9,7 @@ import { format, isValid, parseISO } from "date-fns";
 import { formatInTimeZone } from "date-fns-tz";
 import { ptBR } from "date-fns/locale";
 import { defesaStorageKey } from "./defesa-storage-key";
-import { getCronogramaTextoParaExibir } from "./defesa-cronograma";
+import { getCronogramaTextoParaRelatorioPdf } from "./defesa-cronograma";
 
 const PAGE_W = 210;
 const PAGE_H = 297;
@@ -18,6 +18,33 @@ const MARGIN_LEFT = 15;
 const MARGIN_RIGHT = 20;
 const MARGIN_BOTTOM = 15;
 const CONTENT_W = PAGE_W - MARGIN_LEFT - MARGIN_RIGHT;
+
+/** Encurta endereço no PDF: remove sufixo após CEP e mantém até cidade/UF SP quando possível. */
+function enderecoParaPdf(raw: string | undefined | null): string {
+  let s = (raw ?? "").trim();
+  if (!s) return "--";
+  s = s.replace(/\s*,?\s*\d{5}-\d{3}\s*,.*$/i, "").trim();
+  if (!s) return "--";
+  const spCity = s.match(/^(.*?)(\s+São\s+Paulo\s*-\s*SP\b)/i);
+  if (spCity) return (spCity[1] + spCity[2]).trim();
+  const ufSp = s.match(/^(.*?)(\s+-\s*SP\b)/i);
+  if (ufSp) return (ufSp[1] + ufSp[2]).trim();
+  const commaSp = s.match(/^(.*?)(\s*,\s*SP\b)/i);
+  if (commaSp) return (commaSp[1] + commaSp[2]).trim();
+  return s;
+}
+
+function drawEnderecoPdf(doc: jsPDF, y: number, endereco: string | undefined): number {
+  const endTxt = enderecoParaPdf(endereco);
+  const prefix = "Endereço: ";
+  doc.setFontSize(12);
+  doc.setFont("helvetica", "normal");
+  const lines = doc.splitTextToSize(prefix + endTxt, CONTENT_W);
+  doc.text(lines, MARGIN, y);
+  const lineH = 6;
+  return y + lines.length * lineH;
+}
+
 const COLOR_TITLE = "#00215a";
 const COLOR_BAND = "#00306b";
 const COLOR_BAND_TEXT = "#edf4e3";
@@ -672,10 +699,12 @@ export async function gerarRelatorioContestacaoPDF(
       setorDisplay === "Sem Setor"
         ? "--"
         : (cronogramaBruto
-          ? getCronogramaTextoParaExibir(cronogramaBruto, bfs.tipo_servico, bfs.data_abertura)
+          ? getCronogramaTextoParaRelatorioPdf(cronogramaBruto, bfs.tipo_servico, bfs.data_abertura)
           : "--");
     const freqParaExibir =
-      (fotos?.frequencia_override !== undefined && fotos?.frequencia_override !== null && String(fotos.frequencia_override).trim() !== "")
+      setorDisplay === "Sem Setor"
+        ? ""
+        : (fotos?.frequencia_override !== undefined && fotos?.frequencia_override !== null && String(fotos.frequencia_override).trim() !== "")
         ? String(fotos.frequencia_override)
         : (bfs.frequencia_resolvida ?? "");
     if (setorDisplay === "Sem Setor") {
@@ -700,8 +729,8 @@ export async function gerarRelatorioContestacaoPDF(
     doc.text(`Data Registro: ${safeFormatDateTime(bfs.data_abertura)}`, MARGIN, y);
     y += 6;
     doc.setTextColor(0, 0, 0);
-    doc.text(`Endereço: ${bfs.endereco ?? "--"}`, MARGIN, y);
-    y += 6;
+    y = drawEnderecoPdf(doc, y, bfs.endereco);
+    y += 2;
     doc.text(`Fiscal: ${bfs.fiscal ?? "--"}`, MARGIN, y);
     y += 10;
 
@@ -853,8 +882,8 @@ export async function gerarRelatorioContestacaoPDF(
     doc.text(`Data Finalização: ${cnc?.data_execucao ? safeFormatDateTime(cnc.data_execucao) : "--"}`, MARGIN, y);
     y += 6;
     doc.setTextColor(0, 0, 0);
-    doc.text(`Endereço: ${bfs.endereco ?? "--"}`, MARGIN, y);
-    y += 10;
+    y = drawEnderecoPdf(doc, y, bfs.endereco);
+    y += 6;
 
     const fotosExec = fotos?.nosso_agente ?? [];
     if (fotosExec.length > 0) {

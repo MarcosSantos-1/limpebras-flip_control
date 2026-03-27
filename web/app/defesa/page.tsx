@@ -46,7 +46,7 @@ import {
   Info,
   Clock,
 } from "lucide-react";
-import { getCronogramaTextoParaExibir } from "@/lib/defesa-cronograma";
+import { getCronogramaTextoParaRelatorioPdf } from "@/lib/defesa-cronograma";
 
 export type StatusDefesa = "Analisar" | "Irregular" | "Contestar";
 
@@ -63,7 +63,7 @@ export interface FotosContestar {
   nosso_agente: string[];
   justificativa?: string;
   setor_override?: string | null;
-  /** Texto base do cronograma (planilha/índice ou editado). A exibição aplica 3 datas conforme o serviço. */
+  /** Texto base do cronograma (planilha/índice ou editado). A exibição compacta duas datas (antes | depois) nos serviços de cronograma reduzido. */
   cronograma_override?: string | null;
   frequencia_override?: string | null;
 }
@@ -88,15 +88,22 @@ function getCronogramaBruto(
 }
 
 function getFrequenciaParaExibir(
-  bfs: { frequencia_resolvida?: string | null } | undefined,
-  fotos: { frequencia_override?: string | null } | undefined
+  bfs: {
+    frequencia_resolvida?: string | null;
+    setor_resolvido?: string | null;
+    cnc_detalhes?: { setor?: string }[];
+    setor?: string;
+  } | undefined,
+  fotos: { frequencia_override?: string | null; setor_override?: string | null } | undefined
 ): string {
+  const setor = getSetorParaExibir(bfs, fotos);
+  if (setor === "Sem Setor" || !setor?.trim()) return "";
   const o = fotos?.frequencia_override;
   if (o !== undefined && o !== null && String(o).trim() !== "") return String(o).trim();
   return bfs?.frequencia_resolvida?.trim() ?? "";
 }
 
-/** Cronograma para UI/PDF: vazio se Sem Setor; serviços com muitas datas → 3 datas vs. data de registro. */
+/** Cronograma na UI: vazio se Sem Setor; serviços com cronograma reduzido → duas datas `dd/MM/yyyy | dd/MM/yyyy` (igual ao PDF). */
 function getCronogramaParaExibir(
   bfs: {
     setor_resolvido?: string | null;
@@ -112,7 +119,7 @@ function getCronogramaParaExibir(
   if (setor === "Sem Setor" || !setor?.trim()) return "";
   const raw = getCronogramaBruto(bfs, fotos);
   if (!raw) return "";
-  return getCronogramaTextoParaExibir(raw, bfs?.tipo_servico, bfs?.data_abertura ?? null);
+  return getCronogramaTextoParaRelatorioPdf(raw, bfs?.tipo_servico, bfs?.data_abertura ?? null);
 }
 
 /** True se há algo no rascunho de contestação que não deva ser perdido ao fechar sem salvar. */
@@ -1235,8 +1242,12 @@ export default function DefesaPage() {
                                   })()}</div>
                                   {(getFrequenciaParaExibir(bfs, getFotosDadosForRow(bfs)) || getCronogramaParaExibir(bfs, getFotosDadosForRow(bfs))) && (
                                     <>
-                                      <div><strong>Frequência:</strong> {getFrequenciaParaExibir(bfs, getFotosDadosForRow(bfs)) || "—"}</div>
-                                      <div className="md:col-span-2"><strong>Cronograma:</strong> {getCronogramaParaExibir(bfs, getFotosDadosForRow(bfs)) || "—"}</div>
+                                      {getFrequenciaParaExibir(bfs, getFotosDadosForRow(bfs)) ? (
+                                        <div><strong>Frequência:</strong> {getFrequenciaParaExibir(bfs, getFotosDadosForRow(bfs))}</div>
+                                      ) : null}
+                                      {getCronogramaParaExibir(bfs, getFotosDadosForRow(bfs)) ? (
+                                        <div className="md:col-span-2"><strong>Cronograma:</strong> {getCronogramaParaExibir(bfs, getFotosDadosForRow(bfs))}</div>
+                                      ) : null}
                                     </>
                                   )}
                                   <div className="md:col-span-3"><strong>Endereço:</strong> {bfs.endereco || "—"}</div>

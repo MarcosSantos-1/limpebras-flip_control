@@ -84,6 +84,16 @@ export function formatCronogramaTresDatas(c: TresDatasCronograma): string {
   return `Antes: ${a}; Mais próxima ao registro: ${m}; Depois: ${d}`;
 }
 
+/** PDF da contestação: só duas datas (antes | depois), sem rótulos longos. */
+export function formatCronogramaTresDatasRelatorioPdf(c: TresDatasCronograma): string {
+  const first = c.antes ?? c.maisProxima ?? "";
+  const second = c.depois ?? "";
+  if (first && second) return `${first} | ${second}`;
+  if (first) return first;
+  if (second) return second;
+  return c.maisProxima ?? "";
+}
+
 /**
  * Cronograma para exibição: string completa ou 3 datas (relativo ao registro) conforme o tipo de serviço.
  * `cronogramaBruto` já deve ser o texto base (resolvido ou override).
@@ -99,4 +109,18 @@ export function getCronogramaTextoParaExibir(
   const tres = cronogramaTresDatasRelativoRegistro(crono, dataRegistroIso);
   if (!tres) return crono;
   return formatCronogramaTresDatas(tres);
+}
+
+/** Mesma lógica de `getCronogramaTextoParaExibir`, mas cronograma reduzido em duas datas `dd/MM/yyyy | dd/MM/yyyy` (PDF e UI Defesa). */
+export function getCronogramaTextoParaRelatorioPdf(
+  cronogramaBruto: string | undefined | null,
+  tipoServico: string | undefined,
+  dataRegistroIso: string | undefined | null
+): string {
+  const crono = cronogramaBruto?.trim();
+  if (!crono) return "";
+  if (!isServicoCronogramaReduzido(tipoServico)) return crono;
+  const tres = cronogramaTresDatasRelativoRegistro(crono, dataRegistroIso);
+  if (!tres) return crono;
+  return formatCronogramaTresDatasRelatorioPdf(tres);
 }
