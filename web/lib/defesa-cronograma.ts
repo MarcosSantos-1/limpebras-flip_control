@@ -84,14 +84,17 @@ export function formatCronogramaTresDatas(c: TresDatasCronograma): string {
   return `Antes: ${a}; Mais próxima ao registro: ${m}; Depois: ${d}`;
 }
 
-/** PDF da contestação: só duas datas (antes | depois), sem rótulos longos. */
+/** PDF / UI Defesa: três papéis (antes | mais próxima ao registro | depois), sem rótulos longos; omite duplicatas consecutivas. */
 export function formatCronogramaTresDatasRelatorioPdf(c: TresDatasCronograma): string {
-  const first = c.antes ?? c.maisProxima ?? "";
-  const second = c.depois ?? "";
-  if (first && second) return `${first} | ${second}`;
-  if (first) return first;
-  if (second) return second;
-  return c.maisProxima ?? "";
+  const segments: string[] = [];
+  const push = (s: string | null) => {
+    if (!s) return;
+    if (segments.length === 0 || segments[segments.length - 1] !== s) segments.push(s);
+  };
+  push(c.antes);
+  push(c.maisProxima);
+  push(c.depois);
+  return segments.join(" | ");
 }
 
 /**
@@ -111,7 +114,7 @@ export function getCronogramaTextoParaExibir(
   return formatCronogramaTresDatas(tres);
 }
 
-/** Mesma lógica de `getCronogramaTextoParaExibir`, mas cronograma reduzido em duas datas `dd/MM/yyyy | dd/MM/yyyy` (PDF e UI Defesa). */
+/** Mesma lógica de `getCronogramaTextoParaExibir`, mas cronograma reduzido compacto `antes | mais próxima | depois` (PDF e UI Defesa). */
 export function getCronogramaTextoParaRelatorioPdf(
   cronogramaBruto: string | undefined | null,
   tipoServico: string | undefined,

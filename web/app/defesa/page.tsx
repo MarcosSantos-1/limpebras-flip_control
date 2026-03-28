@@ -5,7 +5,11 @@ import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { apiService } from "@/lib/api";
-import { formatFlipDateTimeUtc, formatFlipDateTimeUtcWithWeekday } from "@/lib/flip-datetime";
+import {
+  formatFlipDateTimeUtc,
+  formatFlipDateTimeUtcCnc,
+  formatFlipDateTimeUtcWithWeekday,
+} from "@/lib/flip-datetime";
 import { uploadFotosToStorage, deleteFotosFromStorage } from "@/lib/firebase-defesa-fotos";
 import { defesaStorageKey, firebaseDefesaFolderSegment } from "@/lib/defesa-storage-key";
 import { format, startOfMonth, endOfMonth } from "date-fns";
@@ -63,7 +67,7 @@ export interface FotosContestar {
   nosso_agente: string[];
   justificativa?: string;
   setor_override?: string | null;
-  /** Texto base do cronograma (planilha/índice ou editado). A exibição compacta duas datas (antes | depois) nos serviços de cronograma reduzido. */
+  /** Texto base do cronograma (planilha/índice ou editado). Nos serviços de cronograma reduzido, a exibição compacta usa antes | mais próxima | depois. */
   cronograma_override?: string | null;
   frequencia_override?: string | null;
 }
@@ -103,7 +107,7 @@ function getFrequenciaParaExibir(
   return bfs?.frequencia_resolvida?.trim() ?? "";
 }
 
-/** Cronograma na UI: vazio se Sem Setor; serviços com cronograma reduzido → duas datas `dd/MM/yyyy | dd/MM/yyyy` (igual ao PDF). */
+/** Cronograma na UI: vazio se Sem Setor; serviços com cronograma reduzido → três papéis `antes | mais próxima | depois` (igual ao PDF). */
 function getCronogramaParaExibir(
   bfs: {
     setor_resolvido?: string | null;
@@ -1246,7 +1250,12 @@ export default function DefesaPage() {
                                         <div><strong>Frequência:</strong> {getFrequenciaParaExibir(bfs, getFotosDadosForRow(bfs))}</div>
                                       ) : null}
                                       {getCronogramaParaExibir(bfs, getFotosDadosForRow(bfs)) ? (
-                                        <div className="md:col-span-2"><strong>Cronograma:</strong> {getCronogramaParaExibir(bfs, getFotosDadosForRow(bfs))}</div>
+                                        <div className="md:col-span-2 rounded-lg border-2 border-violet-400/90 dark:border-violet-500/80 bg-violet-100/95 dark:bg-violet-950/60 px-3 py-2 shadow-sm ring-1 ring-violet-300/50 dark:ring-violet-500/30">
+                                          <strong className="text-violet-800 dark:text-violet-200">Cronograma:</strong>{" "}
+                                          <span className="text-violet-950 dark:text-violet-50 font-medium">
+                                            {getCronogramaParaExibir(bfs, getFotosDadosForRow(bfs))}
+                                          </span>
+                                        </div>
                                       ) : null}
                                     </>
                                   )}
@@ -1267,7 +1276,7 @@ export default function DefesaPage() {
                                               {c.situacao_cnc}
                                             </span>
                                           )}
-                                          <span className="text-muted-foreground ml-2">— Registro CNC: {c.data_sincronizacao ? formatFlipDateTimeUtc(c.data_sincronizacao) : "—"} — Finalizado: {c.data_execucao ? formatFlipDateTimeUtc(c.data_execucao) : "—"}</span>
+                                          <span className="text-muted-foreground ml-2">— Registro CNC: {c.data_sincronizacao ? formatFlipDateTimeUtcCnc(c.data_sincronizacao, bfs.tipo_servico) : "—"} — Finalizado: {c.data_execucao ? formatFlipDateTimeUtcCnc(c.data_execucao, bfs.tipo_servico) : "—"}</span>
                                         </div>
                                       ))}
                                     </div>
@@ -1471,11 +1480,13 @@ export default function DefesaPage() {
                         </div>
                       ) : null}
                       {getCronogramaParaExibir(selectedBFS, selectedBFS ? getFotosDadosForRow(selectedBFS) : undefined) ? (
-                        <div className="col-span-2 space-y-1.5 md:col-span-3">
-                          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-                            <Route className="h-3.5 w-3.5" /> Cronograma (referência à data de registro do BFS)
+                        <div className="col-span-2 space-y-1.5 md:col-span-3 rounded-lg border-2 border-violet-400/90 dark:border-violet-500/80 bg-violet-100/95 dark:bg-violet-950/60 px-3 py-2.5 shadow-sm ring-1 ring-violet-300/50 dark:ring-violet-500/30">
+                          <label className="text-xs font-semibold text-violet-800 dark:text-violet-200 uppercase tracking-wider flex items-center gap-1.5">
+                            <Route className="h-3.5 w-3.5 shrink-0" /> Cronograma (referência à data de registro do BFS)
                           </label>
-                          <p className="text-sm leading-relaxed">{getCronogramaParaExibir(selectedBFS, selectedBFS ? getFotosDadosForRow(selectedBFS) : undefined)}</p>
+                          <p className="text-sm leading-relaxed text-violet-950 dark:text-violet-50 font-medium">
+                            {getCronogramaParaExibir(selectedBFS, selectedBFS ? getFotosDadosForRow(selectedBFS) : undefined)}
+                          </p>
                         </div>
                       ) : null}
                     </>
@@ -1520,11 +1531,11 @@ export default function DefesaPage() {
                             </div>
                             <div>
                               <span className="text-muted-foreground">Registro CNC</span>{" "}
-                              {c.data_sincronizacao ? formatFlipDateTimeUtc(c.data_sincronizacao) : "—"}
+                              {c.data_sincronizacao ? formatFlipDateTimeUtcCnc(c.data_sincronizacao, selectedBFS.tipo_servico) : "—"}
                             </div>
                             <div>
                               <span className="text-muted-foreground">Finalizado</span>{" "}
-                              {c.data_execucao ? formatFlipDateTimeUtc(c.data_execucao) : "—"}
+                              {c.data_execucao ? formatFlipDateTimeUtcCnc(c.data_execucao, selectedBFS.tipo_servico) : "—"}
                             </div>
                             <div>
                               <span className="text-muted-foreground">Fiscal Contratada:</span> {c.fiscal_contratada || "—"}
@@ -1657,9 +1668,13 @@ export default function DefesaPage() {
                                 </div>
                               ) : null}
                               {getCronogramaParaExibir(contestarRow, fotosContestarDraft) ? (
-                                <div className="sm:col-span-2">
-                                  <span className="text-muted-foreground text-xs block mb-0.5">Cronograma (vs. data de registro)</span>
-                                  <span className="leading-relaxed">{getCronogramaParaExibir(contestarRow, fotosContestarDraft)}</span>
+                                <div className="sm:col-span-2 rounded-lg border-2 border-violet-400/90 dark:border-violet-500/80 bg-violet-100/95 dark:bg-violet-950/60 px-3 py-2.5 shadow-sm ring-1 ring-violet-300/50 dark:ring-violet-500/30">
+                                  <span className="text-violet-800 dark:text-violet-200 text-xs font-semibold uppercase tracking-wide block mb-0.5">
+                                    Cronograma (vs. data de registro)
+                                  </span>
+                                  <span className="leading-relaxed text-violet-950 dark:text-violet-50 font-medium block">
+                                    {getCronogramaParaExibir(contestarRow, fotosContestarDraft)}
+                                  </span>
                                 </div>
                               ) : null}
                             </>
@@ -1699,11 +1714,11 @@ export default function DefesaPage() {
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2.5 text-sm">
                                   <div>
                                     <span className="text-muted-foreground text-xs block mb-0.5">Registro CNC</span>
-                                    <span>{formatFlipDateTimeUtc(c.data_sincronizacao)}</span>
+                                    <span>{formatFlipDateTimeUtcCnc(c.data_sincronizacao, contestarRow.tipo_servico)}</span>
                                   </div>
                                   <div>
                                     <span className="text-muted-foreground text-xs block mb-0.5">Finalizado</span>
-                                    <span className="font-medium">{formatFlipDateTimeUtc(c.data_execucao)}</span>
+                                    <span className="font-medium">{formatFlipDateTimeUtcCnc(c.data_execucao, contestarRow.tipo_servico)}</span>
                                   </div>
                                   <div className="sm:col-span-2">
                                     <span className="text-muted-foreground text-xs block mb-0.5">Fiscal (contratada / resposta)</span>

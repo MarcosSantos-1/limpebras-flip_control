@@ -10,6 +10,7 @@ import { formatInTimeZone } from "date-fns-tz";
 import { ptBR } from "date-fns/locale";
 import { defesaStorageKey } from "./defesa-storage-key";
 import { getCronogramaTextoParaRelatorioPdf } from "./defesa-cronograma";
+import { formatFlipDateTimeUtcCncRelatorioPdf } from "./flip-datetime";
 
 const PAGE_W = 210;
 const PAGE_H = 297;
@@ -881,7 +882,11 @@ export async function gerarRelatorioContestacaoPDF(
     doc.text(`Subprefeitura: ${bfs.subprefeitura ?? "--"}`, MARGIN, y);
     y += 6;
     doc.setTextColor(r3, g3, b3);
-    doc.text(`Data Finalização: ${cnc?.data_execucao ? safeFormatDateTime(cnc.data_execucao) : "--"}`, MARGIN, y);
+    doc.text(
+      `Data Finalização: ${cnc?.data_execucao ? formatFlipDateTimeUtcCncRelatorioPdf(cnc.data_execucao, bfs.tipo_servico) : "--"}`,
+      MARGIN,
+      y
+    );
     y += 6;
     doc.setTextColor(0, 0, 0);
     y = drawEnderecoPdf(doc, y, bfs.endereco);
