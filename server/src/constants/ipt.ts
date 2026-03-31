@@ -171,3 +171,115 @@ export function compareSetores(a: string, b: string, direction: "asc" | "desc" =
   cmp = ka.mapa.localeCompare(kb.mapa);
   return direction === "asc" ? cmp : -cmp;
 }
+
+export const CRONOGRAMA_SERVICOS = new Set(["BL", "MT", "NH", "LM", "GO", "LE"]);
+
+export function toDateKey(value: Date | string | null | undefined): string | null {
+  if (!value) return null;
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10);
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+export function parseDateKeyLocal(dateKey: string): Date {
+  return new Date(`${dateKey}T00:00:00`);
+}
+
+export function diffInDaysAbs(a: string, b: string): number {
+  const oneDay = 24 * 60 * 60 * 1000;
+  return Math.round(Math.abs(parseDateKeyLocal(a).getTime() - parseDateKeyLocal(b).getTime()) / oneDay);
+}
+
+export function isFrequencyDate(frequencia: string, dateKey: string): boolean {
+  const d = parseDateKeyLocal(dateKey);
+  const day = d.getDay();
+  const month = d.getMonth();
+  const monthDay = d.getDate();
+  switch (frequencia) {
+    case "0101": case "0102": case "0103": case "0104":
+    case "0105": case "0106": case "0108": case "0110":
+      return true;
+    case "0202": return day === 1 || day === 3 || day === 5;
+    case "0203": return day === 2 || day === 4 || day === 6;
+    case "0302": return day === 1 || day === 4;
+    case "0303": return day === 2 || day === 5;
+    case "0304": return day === 3 || day === 6;
+    case "0401": return day === 0;
+    case "0402": return day === 1;
+    case "0403": return day === 2;
+    case "0404": return day === 3;
+    case "0405": return day === 4;
+    case "0406": return day === 5;
+    case "0407": return day === 6;
+    case "0500": return monthDay === 1 || monthDay === 15;
+    case "0600": return monthDay === 1;
+    case "0700": return monthDay === 1 && [0, 3, 6, 9].includes(month);
+    case "0800": return monthDay === 1 && [0, 4, 8].includes(month);
+    case "0900": return monthDay === 1 && [0, 6].includes(month);
+    case "1000": return monthDay === 1 && month % 2 === 0;
+    default: return false;
+  }
+}
+
+/** Gera todas as datas dentro de [inicio, fim] que correspondem à frequência. */
+export function generateFrequencyDates(frequencia: string, inicio: string, fim: string): string[] {
+  const dates: string[] = [];
+  const startDate = parseDateKeyLocal(inicio);
+  const endDate = parseDateKeyLocal(fim);
+  const current = new Date(startDate);
+  while (current <= endDate) {
+    const key = toDateKey(current);
+    if (key && isFrequencyDate(frequencia, key)) {
+      dates.push(key);
+    }
+    current.setDate(current.getDate() + 1);
+  }
+  return dates;
+}
+
+export function findPreviousExpectedByFrequency(frequencia: string, referenceDateKey: string): string | null {
+  for (let i = 0; i <= 120; i += 1) {
+    const d = parseDateKeyLocal(referenceDateKey);
+    d.setDate(d.getDate() - i);
+    const key = toDateKey(d);
+    if (!key) continue;
+    if (isFrequencyDate(frequencia, key)) return key;
+  }
+  return null;
+}
+
+export function findNextExpectedByFrequency(frequencia: string, referenceDateKey: string): string | null {
+  for (let i = 1; i <= 120; i += 1) {
+    const d = parseDateKeyLocal(referenceDateKey);
+    d.setDate(d.getDate() + i);
+    const key = toDateKey(d);
+    if (!key) continue;
+    if (isFrequencyDate(frequencia, key)) return key;
+  }
+  return null;
+}
+
+export function findPreviousExpectedByFrequencyStrict(frequencia: string, referenceDateKey: string): string | null {
+  for (let i = 1; i <= 120; i += 1) {
+    const d = parseDateKeyLocal(referenceDateKey);
+    d.setDate(d.getDate() - i);
+    const key = toDateKey(d);
+    if (!key) continue;
+    if (isFrequencyDate(frequencia, key)) return key;
+  }
+  return null;
+}
+
+export function pickNearestDate(referenceDateKey: string, dates: string[], maxDistanceDays: number): string | null {
+  let best: { date: string; diff: number } | null = null;
+  for (const date of dates) {
+    const diff = diffInDaysAbs(referenceDateKey, date);
+    if (diff > maxDistanceDays) continue;
+    if (!best || diff < best.diff) best = { date, diff };
+  }
+  return best?.date ?? null;
+}

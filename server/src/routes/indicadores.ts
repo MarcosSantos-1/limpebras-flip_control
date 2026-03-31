@@ -20,9 +20,65 @@ import {
   parseSetor,
   getSubFromPlano,
   getTipoServicoFromPlano,
+  CRONOGRAMA_SERVICOS,
+  toDateKey,
+  parseDateKeyLocal,
+  diffInDaysAbs,
+  isFrequencyDate,
+  findPreviousExpectedByFrequency,
+  findNextExpectedByFrequency,
+  findPreviousExpectedByFrequencyStrict,
+  pickNearestDate,
 } from "../constants/ipt.js";
 import { config } from "../config.js";
+import { buildIptPreviewFromConsolidado } from "../services/ipt-consolidado-preview.js";
+import { percentDisplayToDecimal } from "../services/parseRelatorioConsolidado.js";
 
+/** Ordens SELIMP a partir das planilhas consolidadas (prioridade sobre Report oficial). */
+async function fetchOrdensConsolidadoNoPeriodo(
+  client: any,
+  inicio: string,
+  fim: string
+): Promise<{ ordens: Array<{ percentual: number }>; P: number; R: number; F: number }> {
+  const veicRes = await client.query(
+    `SELECT setor, percentual_selimp
+     FROM ipt_consolidado_veiculos_dados
+     WHERE data_referencia >= $1::date AND data_referencia <= $2::date
+       AND percentual_selimp IS NOT NULL`,
+    [inicio, fim]
+  );
+  const varrRes = await client.query(
+    `SELECT setor, percentual_selimp
+     FROM ipt_consolidado_varricao_dados
+     WHERE data_referencia >= $1::date AND data_referencia <= $2::date
+       AND percentual_selimp IS NOT NULL`,
+    [inicio, fim]
+  );
+  const allRows = [...(veicRes.rows ?? []), ...(varrRes.rows ?? [])];
+  const ordens: Array<{ percentual: number }> = [];
+  if (allRows.length === 0) {
+    return { ordens, P: 0, R: 0, F: 0 };
+  }
+  const porPlano = new Map<string, number[]>();
+  for (const row of allRows) {
+    const plano = normalizarSetor(String(row.setor ?? "").trim());
+    if (!plano) continue;
+    const s = Number(row.percentual_selimp);
+    if (!Number.isFinite(s)) continue;
+    const pctDecimal = percentDisplayToDecimal(s > 1 ? s : s * 100);
+    const arr = porPlano.get(plano) ?? [];
+    arr.push(pctDecimal);
+    porPlano.set(plano, arr);
+  }
+  for (const arr of porPlano.values()) {
+    const max = Math.max(...arr);
+    const media = arr.reduce((a, b) => a + b, 0) / arr.length;
+    const blend = 0.48 * max + 0.52 * media;
+    ordens.push({ percentual: Math.min(1, Math.max(0, blend)) });
+  }
+  const A = ordens.length;
+  return { ordens, P: A, R: 1, F: 1 };
+}
 
 /** Extrai data (yyyy-MM-dd) do raw. Checa chaves conhecidas e qualquer chave que contenha "data". */
 function extractRawDateForIpt(raw: IptRaw): string | null {
@@ -66,55 +122,37 @@ function parseDateToKey(value: string): string | null {
 
 /**
  * Extrai ordens da planilha SELIMP no período.
- * Filtro: Status = "Encerrado", coluna plano, coluna de_execucao (ou percentual_execucao).
+ * Prioriza consolidado; fallback para ipt_report_linhas.
  */
 async function fetchOrdensSelimpNoPeriodo(
   client: any,
   inicio: string,
   fim: string
 ): Promise<{ ordens: Array<{ percentual: number }>; P: number; R: number; F: number }> {
-  const importsRes = await client.query(
-    `SELECT raw
-     FROM ipt_imports
-     WHERE file_type = 'ipt_report_selimp'
-       AND data_referencia::date >= $1::date
-       AND data_referencia::date <= $2::date`,
+  const consolidado = await fetchOrdensConsolidadoNoPeriodo(client, inicio, fim);
+  if (consolidado.ordens.length > 0) {
+    return consolidado;
+  }
+
+  const reportRes = await client.query(
+    `SELECT plano, percentual_execucao, status
+     FROM ipt_report_linhas
+     WHERE data_estimada >= $1::date AND data_estimada <= $2::date`,
     [inicio, fim]
   );
 
-  // Extrai ano e mês do período (inicio = YYYY-MM-01, fim = YYYY-MM-DD)
-  const [y, m] = inicio.split("-").map(Number);
-  const ano = y;
-  const mes = m;
-  const fimParts = fim.split("-").map(Number);
-  const mesFim = fimParts[1];
-  const anoFim = fimParts[0];
-
   const ordens: Array<{ percentual: number }> = [];
 
-  if ((importsRes.rows?.length ?? 0) > 0) {
-    const importedRows = importsRes.rows as Array<{ raw: Record<string, unknown> }>;
-    const rowsParaCalculo = selectBestReferenceRows(importedRows, inicio, fim);
-    // Calibração: consolida por plano (uma ordem por setor no mês).
-    // A SELIMP conta ordens únicas por plano; múltiplas linhas inflam A e derrubam o PF.
-    // Blend max + média (0.48×max + 0.52×média) aproxima do fechamento oficial (~97,6%).
+  if ((reportRes.rows?.length ?? 0) > 0) {
     const porPlano = new Map<string, number[]>();
-    for (const row of rowsParaCalculo) {
-      const raw = (row.raw ?? {}) as IptRaw;
-      if (!isStatusEncerrado(raw)) continue;
-      const plano = normalizarSetor(String(raw.plano ?? "").trim());
+    for (const row of reportRes.rows) {
+      const statusNorm = normalizeMatchText(String(row.status ?? ""));
+      if (!statusNorm.includes("encerrado")) continue;
+      const plano = normalizarSetor(String(row.plano ?? "").trim());
       if (!plano) continue;
-      let pctDecimal: number | null = null;
-      const pct = row.raw?.percentual;
-      if (typeof pct === "number" && !Number.isNaN(pct)) {
-        pctDecimal = Math.min(1, Math.max(0, pct));
-      } else {
-        const percentual = getPercentualFromRaw(raw);
-        if (percentual != null) {
-          pctDecimal = Math.min(1, Math.max(0, percentual > 1 ? percentual / 100 : percentual));
-        }
-      }
-      if (pctDecimal == null) continue;
+      const pctRaw = Number(row.percentual_execucao);
+      if (!Number.isFinite(pctRaw)) continue;
+      const pctDecimal = Math.min(1, Math.max(0, pctRaw > 1 ? pctRaw / 100 : pctRaw));
       const arr = porPlano.get(plano) ?? [];
       arr.push(pctDecimal);
       porPlano.set(plano, arr);
@@ -129,44 +167,7 @@ async function fetchOrdensSelimpNoPeriodo(
     return { ordens, P: A, R: 1, F: 1 };
   }
 
-  if (ano === anoFim && mes === mesFim) {
-    const r = await client.query(
-      `SELECT ordens FROM ipt_selimp_mensal WHERE ano = $1 AND mes = $2`,
-      [ano, mes]
-    );
-    if (r.rows[0]?.ordens) {
-      const arr = Array.isArray(r.rows[0].ordens) ? r.rows[0].ordens : (r.rows[0].ordens as any)?.items ?? [];
-      for (const o of arr) {
-        const pct = o?.percentual ?? o?.percentualDecimal;
-        if (typeof pct === "number" && !Number.isNaN(pct)) {
-          ordens.push({ percentual: Math.min(1, Math.max(0, pct)) });
-        }
-      }
-    }
-  } else {
-    for (let a = ano; a <= anoFim; a++) {
-      const mesIni = a === ano ? mes : 1;
-      const mesEnd = a === anoFim ? mesFim : 12;
-      for (let m = mesIni; m <= mesEnd; m++) {
-        const rr = await client.query(
-          `SELECT ordens FROM ipt_selimp_mensal WHERE ano = $1 AND mes = $2`,
-          [a, m]
-        );
-        if (rr.rows[0]?.ordens) {
-          const arr = Array.isArray(rr.rows[0].ordens) ? rr.rows[0].ordens : [];
-          for (const o of arr) {
-            const pct = o?.percentual ?? o?.percentualDecimal;
-            if (typeof pct === "number" && !Number.isNaN(pct)) {
-              ordens.push({ percentual: Math.min(1, Math.max(0, pct)) });
-            }
-          }
-        }
-      }
-    }
-  }
-
-  const A = ordens.length;
-  return { ordens, P: A, R: 1, F: 1 };
+  return { ordens, P: 0, R: 0, F: 0 };
 }
 
 /**
@@ -332,125 +333,10 @@ const parseDias = (value: string): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
-const CRONOGRAMA_SERVICOS = new Set(["BL", "MT", "NH", "LM", "GO", "LE"]);
-
-const toDateKey = (value: Date | string | null | undefined): string | null => {
-  if (!value) return null;
-  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10);
-  const d = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(d.getTime())) return null;
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-};
-
-const parseDateKeyLocal = (dateKey: string): Date => new Date(`${dateKey}T00:00:00`);
-
-const diffInDaysAbs = (a: string, b: string): number => {
-  const oneDay = 24 * 60 * 60 * 1000;
-  return Math.round(Math.abs(parseDateKeyLocal(a).getTime() - parseDateKeyLocal(b).getTime()) / oneDay);
-};
-
-const isFrequencyDate = (frequencia: string, dateKey: string): boolean => {
-  const d = parseDateKeyLocal(dateKey);
-  const day = d.getDay(); // 0..6 (dom..sab)
-  const month = d.getMonth(); // 0..11
-  const monthDay = d.getDate(); // 1..31
-  switch (frequencia) {
-    case "0101":
-    case "0102":
-    case "0103":
-    case "0104":
-    case "0105":
-    case "0106":
-    case "0108":
-    case "0110":
-      return true;
-    case "0202":
-      return day === 1 || day === 3 || day === 5;
-    case "0203":
-      return day === 2 || day === 4 || day === 6;
-    case "0302":
-      return day === 1 || day === 4;
-    case "0303":
-      return day === 2 || day === 5;
-    case "0304":
-      return day === 3 || day === 6;
-    case "0401":
-      return day === 0;
-    case "0402":
-      return day === 1;
-    case "0403":
-      return day === 2;
-    case "0404":
-      return day === 3;
-    case "0405":
-      return day === 4;
-    case "0406":
-      return day === 5;
-    case "0407":
-      return day === 6;
-    case "0500":
-      return monthDay === 1 || monthDay === 15;
-    case "0600":
-      return monthDay === 1;
-    case "0700":
-      return monthDay === 1 && [0, 3, 6, 9].includes(month);
-    case "0800":
-      return monthDay === 1 && [0, 4, 8].includes(month);
-    case "0900":
-      return monthDay === 1 && [0, 6].includes(month);
-    case "1000":
-      return monthDay === 1 && month % 2 === 0;
-    default:
-      return false;
-  }
-};
-
-const findPreviousExpectedByFrequency = (frequencia: string, referenceDateKey: string): string | null => {
-  for (let i = 0; i <= 120; i += 1) {
-    const d = parseDateKeyLocal(referenceDateKey);
-    d.setDate(d.getDate() - i);
-    const key = toDateKey(d);
-    if (!key) continue;
-    if (isFrequencyDate(frequencia, key)) return key;
-  }
-  return null;
-};
-
-const findNextExpectedByFrequency = (frequencia: string, referenceDateKey: string): string | null => {
-  for (let i = 1; i <= 120; i += 1) {
-    const d = parseDateKeyLocal(referenceDateKey);
-    d.setDate(d.getDate() + i);
-    const key = toDateKey(d);
-    if (!key) continue;
-    if (isFrequencyDate(frequencia, key)) return key;
-  }
-  return null;
-};
-
-/** Anterior estrito: exclui a data de referência (evita duplicatas em frequência diária). */
-const findPreviousExpectedByFrequencyStrict = (frequencia: string, referenceDateKey: string): string | null => {
-  for (let i = 1; i <= 120; i += 1) {
-    const d = parseDateKeyLocal(referenceDateKey);
-    d.setDate(d.getDate() - i);
-    const key = toDateKey(d);
-    if (!key) continue;
-    if (isFrequencyDate(frequencia, key)) return key;
-  }
-  return null;
-};
-
-const pickNearestDate = (referenceDateKey: string, dates: string[], maxDistanceDays: number): string | null => {
-  let best: { date: string; diff: number } | null = null;
-  for (const date of dates) {
-    const diff = diffInDaysAbs(referenceDateKey, date);
-    if (diff > maxDistanceDays) continue;
-    if (!best || diff < best.diff) best = { date, diff };
-  }
-  return best?.date ?? null;
-};
+// isFrequencyDate, toDateKey, parseDateKeyLocal, diffInDaysAbs,
+// findPreviousExpectedByFrequency, findNextExpectedByFrequency,
+// findPreviousExpectedByFrequencyStrict, pickNearestDate, CRONOGRAMA_SERVICOS
+// -> imported from ../constants/ipt.js
 
 const normalizeServiceName = (service: string, plano: string): string => {
   const raw = String(service ?? "").trim();
@@ -1061,13 +947,13 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
               ipt_detalhes: autoIptDetalhes?.detalhes,
               filtros_aplicados: autoIptDetalhes
                 ? [
-                    "Planilha: ipt_report_selimp (Report SELIMP)",
-                    "Filtro Status: Encerrado (coluna status)",
-                    "Período: data_referencia ou data/data_planejado/data_execucao no intervalo",
-                    "Coluna plano: identificador do setor",
-                    "Coluna de_execucao (ou percentual_execucao): percentual 0–100 ou decimal 0–1",
+                    "Prioridade: ipt_consolidado_veiculos / ipt_consolidado_varricao (datas e percentuais na planilha)",
+                    "Se nao houver consolidado no periodo: ipt_report_selimp (Status Encerrado, plano, de_execucao)",
+                    "Algoritmo PF SELIMP (qualidade + cobertura) sobre as ordens obtidas acima",
                   ]
-                : ["Sem dados da planilha SELIMP para este período"],
+                : [
+                    "Sem dados IPT no periodo — importe as planilhas consolidadas (Upload, secao prioritaria) ou o Report SELIMP",
+                  ],
             }
           : undefined;
 
@@ -1191,626 +1077,13 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
     const payload = await getOrSet(key, async () => {
       const client = await pool.connect();
       try {
-      const [reportRows, nossoRows, cronogramaRows, bateriaRows] = await Promise.all([
-        client.query(
-          `SELECT raw, data_referencia, updated_at
-           FROM ipt_imports
-           WHERE file_type = 'ipt_report_selimp'
-           ORDER BY updated_at DESC`
-        ),
-        client.query(
-          `SELECT raw, data_referencia, updated_at
-           FROM ipt_imports
-           WHERE file_type IN ('ipt_historico_os', 'ipt_historico_os_varricao', 'ipt_historico_os_compactadores')
-           ORDER BY updated_at DESC`
-        ),
-        client.query(
-          `SELECT servico, setor, data_esperada
-           FROM ipt_cronograma`
-        ),
-        client.query(
-          `SELECT raw, updated_at
-           FROM ipt_imports
-           WHERE file_type = 'ipt_status_bateria'
-           ORDER BY updated_at DESC`
-        ),
-      ]);
-
-      const cronogramaBySetor = new Map<string, string[]>();
-      const cronogramaSet = new Set<string>();
-      for (const row of cronogramaRows.rows as Array<{ servico: string; setor: string; data_esperada: string | Date }>) {
-        const setor = normalizarSetor(String(row.setor ?? "").trim());
-        const dateKey = toDateKey(row.data_esperada);
-        if (!setor || !dateKey) continue;
-        const current = cronogramaBySetor.get(setor) ?? [];
-        current.push(dateKey);
-        cronogramaBySetor.set(setor, current);
-        cronogramaSet.add(`${setor}|${dateKey}`);
-      }
-      for (const [setor, dates] of cronogramaBySetor.entries()) {
-        dates.sort((a, b) => a.localeCompare(b));
-        cronogramaBySetor.set(setor, Array.from(new Set(dates)));
-      }
-
-      const nossoDatesByPlano = new Map<string, string[]>();
-      const extractRawDate = (raw: IptRaw): string | null => {
-        const d =
-          String(raw.data ?? "").trim() ||
-          String(raw.data_planejado ?? "").trim() ||
-          String(raw.data_execucao ?? "").trim() ||
-          String(raw.data_criacao ?? "").trim() ||
-          String(raw.data_liberacao ?? "").trim() ||
-          String(raw.data_inicio ?? "").trim() ||
-          String(raw.data_final ?? "").trim();
-        if (!d) return null;
-        const parsed = new Date(d);
-        if (!Number.isNaN(parsed.getTime())) return toDateKey(parsed);
-        const match = d.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
-        if (!match) return null;
-        const year = match[3].length === 2 ? `20${match[3]}` : match[3];
-        return `${year}-${match[2].padStart(2, "0")}-${match[1].padStart(2, "0")}`;
-      };
-
-      for (const row of nossoRows.rows as Array<{ raw: IptRaw; data_referencia: string | Date | null }>) {
-        const raw = (row.raw ?? {}) as IptRaw;
-        const plano = normalizarSetor(String(raw.rota ?? raw.plano ?? "").trim());
-        if (!plano) continue;
-        const percent = getPercentualFromRaw(raw);
-        if (percent == null) continue;
-        const dateKey = toDateKey(row.data_referencia) ?? extractRawDate(raw);
-        if (!dateKey) continue;
-        const dates = nossoDatesByPlano.get(plano) ?? [];
-        dates.push(dateKey);
-        nossoDatesByPlano.set(plano, dates);
-      }
-      for (const [plano, dates] of nossoDatesByPlano.entries()) {
-        nossoDatesByPlano.set(plano, Array.from(new Set(dates)).sort((a, b) => a.localeCompare(b)));
-      }
-
-      /** Mapa codigo_normalizado -> { status_bateria, bateria, data_ultima_comunicacao, dias } da planilha Baterias (PORTATEIS/LUTOCAR) */
-      const bateriaMap = new Map<
-        string,
-        { status_bateria: string; bateria?: string; data_ultima_comunicacao?: string; dias?: string }
-      >();
-      const bateriaResumoModulos: Array<{
-        codigo: string;
-        status_bateria: string;
-        bateria?: string;
-        data_ultima_comunicacao?: string;
-        dias?: string;
-        nivel: "critico" | "alerta" | "ok" | "desconhecido";
-      }> = [];
-      for (const row of (bateriaRows.rows ?? []) as Array<{ raw: Record<string, string> }>) {
-        const raw = row.raw ?? {};
-        const codigoOriginal = String(raw.placa ?? raw.nome ?? "").trim();
-        const codigo = normalizeModuleCode(codigoOriginal);
-        if (!codigo) continue;
-        const statusBateria = String(raw.status_de_bateria ?? raw.status_bateria ?? raw.bateria ?? "").trim();
-        const bateriaPct = String(raw.bateria ?? raw.percentual ?? raw.percentual_bateria ?? "").trim();
-        const dataUltima = String(raw.data_de_ultima_comunicacao ?? raw.data_ultima_recarga ?? "").trim();
-        const dias = String(raw.dias ?? "").trim();
-        const info = {
-          status_bateria: statusBateria || "—",
-          bateria: bateriaPct || undefined,
-          data_ultima_comunicacao: dataUltima || undefined,
-          dias: dias || undefined,
-        };
-        bateriaMap.set(codigo, info);
-        const pctNum = parseFloat(bateriaPct.replace(",", ".").replace("%", ""));
-        let nivel: "critico" | "alerta" | "ok" | "desconhecido" = "desconhecido";
-        if (!Number.isNaN(pctNum)) {
-          if (pctNum < 20) nivel = "critico";
-          else if (pctNum < 60) nivel = "alerta";
-          else nivel = "ok";
-        } else if (/critico|baixo|descarregad/i.test(statusBateria)) nivel = "critico";
-        else if (/alerta|medio|aten/i.test(statusBateria)) nivel = "alerta";
-        bateriaResumoModulos.push({
-          codigo: codigoOriginal || codigo,
-          status_bateria: info.status_bateria,
-          bateria: info.bateria,
-          data_ultima_comunicacao: info.data_ultima_comunicacao,
-          dias: info.dias,
-          nivel,
-        });
-      }
-
-      const byPlano = new Map<
-        string,
-        {
-          plano: string;
-          subprefeitura: string;
-          tipo_servico: string;
-          servico_sigla: string | null;
-          turno: string | null;
-          frequencia_codigo: string | null;
-          frequencia: string | null;
-          mapa: string | null;
-          equipamentos: Set<string>;
-          diario: Map<
-            string,
-            {
-              selimp_sum: number;
-              selimp_count: number;
-              nosso_sum: number;
-              nosso_count: number;
-              despachos_selimp: number;
-              despachos_nosso: number;
-              estimados: number;
-            }
-          >;
-        }
-      >();
-
-      const getOrCreatePlano = (plano: string) => {
-        const parsed = parseSetor(plano);
-        const existing = byPlano.get(plano);
-        if (existing) return existing;
-        const subFromPlano = parsed?.sub ?? getSubFromPlano(plano);
-        const created = {
-          plano,
-          subprefeitura: subFromPlano,
-          tipo_servico: "",
-          servico_sigla: parsed?.servico ?? null,
-          turno: parsed?.turno ?? null,
-          frequencia_codigo: parsed?.frequencia ?? null,
-          frequencia: parsed ? getFrequenciaDescricao(parsed.frequencia) : null,
-          mapa: parsed?.mapa ?? null,
-          equipamentos: new Set<string>(),
-          diario: new Map<string, { selimp_sum: number; selimp_count: number; nosso_sum: number; nosso_count: number; despachos_selimp: number; despachos_nosso: number; estimados: number }>(),
-        };
-        byPlano.set(plano, created);
-        return created;
-      };
-
-      const ensureBucket = (planoEntry: ReturnType<typeof getOrCreatePlano>, dateKey: string) => {
-        const current = planoEntry.diario.get(dateKey) ?? {
-          selimp_sum: 0,
-          selimp_count: 0,
-          nosso_sum: 0,
-          nosso_count: 0,
-          despachos_selimp: 0,
-          despachos_nosso: 0,
-          estimados: 0,
-        };
-        planoEntry.diario.set(dateKey, current);
-        return current;
-      };
-
-      /** Agrupa SELIMP por (plano, dateKey): 1 despacho por dia por setor, percentual = max do dia.
-       * Linhas sem data: distribuir pelas datas do DDMX (nossoDatesByPlano) para não colapsar múltiplos despachos em 1. */
-      const selimpByPlanoDate = new Map<string, { percentual: number | null; estimado: boolean }>();
-      const selimpSemDataPorPlano = new Map<string, Array<{ raw: IptRaw; row: { raw: IptRaw; data_referencia: string | Date | null; updated_at: string | Date } }>>();
-      for (const row of reportRows.rows as Array<{ raw: IptRaw; data_referencia: string | Date | null; updated_at: string | Date }>) {
-        const raw = (row.raw ?? {}) as IptRaw;
-        const plano = normalizarSetor(String(raw.plano ?? "").trim());
-        if (!plano) continue;
-        const planoEntry = getOrCreatePlano(plano);
-        const subFromRaw = String(raw.subprefeitura ?? "").trim();
-        if (!planoEntry.subprefeitura && subFromRaw) planoEntry.subprefeitura = subFromRaw;
-        const tipoServico = normalizeServiceName(String(raw.tipo_de_servico ?? raw.tipo_servico ?? "").trim(), plano);
-        if (!planoEntry.tipo_servico && tipoServico) planoEntry.tipo_servico = tipoServico;
-        extractModuleCodes(String(raw.equipamentos ?? "")).forEach((code) => planoEntry.equipamentos.add(code));
-
-        const percentual = toExecPercent(String(raw.de_execucao ?? raw.percentual_execucao ?? "").trim());
-        const dataArquivo = toDateKey(row.data_referencia) ?? extractRawDate(raw);
-        const flagEstimado = String((raw as Record<string, unknown>)._data_referencia_estimada ?? "") === "true" || Boolean((raw as Record<string, unknown>)._data_referencia_estimada);
-        let dateKey = dataArquivo;
-        let estimado = false;
-        if (!dateKey || flagEstimado) {
-          estimado = true;
-          const arr = selimpSemDataPorPlano.get(plano) ?? [];
-          arr.push({ raw, row });
-          selimpSemDataPorPlano.set(plano, arr);
-          continue;
-        }
-        if (!dateKey) continue;
-        const key = `${plano}|${dateKey}`;
-        const existing = selimpByPlanoDate.get(key);
-        const pct = percentual ?? null;
-        if (!existing) {
-          selimpByPlanoDate.set(key, { percentual: pct, estimado: flagEstimado });
-        } else {
-          const maxPct = existing.percentual != null && pct != null ? Math.max(existing.percentual, pct) : existing.percentual ?? pct;
-          selimpByPlanoDate.set(key, { percentual: maxPct, estimado: existing.estimado || flagEstimado });
-        }
-      }
-      for (const [plano, rows] of selimpSemDataPorPlano) {
-        const nossoDates = (nossoDatesByPlano.get(plano) ?? []).slice().sort((a, b) => b.localeCompare(a));
-        const parsed = parseSetor(plano);
-        const refDate = scopeEnd ?? yesterdayKey;
-        const usedDates = new Set<string>();
-        let chainBase = refDate;
-        for (let i = 0; i < rows.length; i += 1) {
-          const { raw } = rows[i];
-          const pct = toExecPercent(String(raw.de_execucao ?? raw.percentual_execucao ?? "").trim()) ?? null;
-          let dateKey: string | null = null;
-          const candidatos = nossoDates.filter((d) => !usedDates.has(d));
-          if (candidatos.length > 0) {
-            const nearest = pickNearestDate(refDate, candidatos, 90);
-            if (nearest) {
-              dateKey = nearest;
-              usedDates.add(nearest);
-            }
-          }
-          if (!dateKey && parsed?.frequencia) {
-            dateKey = findPreviousExpectedByFrequency(parsed.frequencia, chainBase);
-            if (dateKey) {
-              usedDates.add(dateKey);
-              chainBase = dateKey;
-            }
-          }
-          if (!dateKey) dateKey = yesterdayKey;
-          const key = `${plano}|${dateKey}`;
-          const existing = selimpByPlanoDate.get(key);
-          if (!existing) {
-            selimpByPlanoDate.set(key, { percentual: pct, estimado: true });
-          } else {
-            const maxPct = existing.percentual != null && pct != null ? Math.max(existing.percentual, pct) : existing.percentual ?? pct;
-            selimpByPlanoDate.set(key, { percentual: maxPct, estimado: true });
-          }
-        }
-      }
-      for (const [key, { percentual, estimado }] of selimpByPlanoDate) {
-        const [plano, dateKey] = key.split("|");
-        const planoEntry = byPlano.get(plano);
-        if (!planoEntry) continue;
-        const bucket = ensureBucket(planoEntry, dateKey);
-        if (percentual != null) {
-          bucket.selimp_sum += percentual;
-          bucket.selimp_count += 1;
-        }
-        bucket.despachos_selimp += 1;
-        if (estimado) bucket.estimados += 1;
-      }
-
-      for (const row of nossoRows.rows as Array<{ raw: IptRaw; data_referencia: string | Date | null }>) {
-        const raw = (row.raw ?? {}) as IptRaw;
-        const plano = normalizarSetor(String(raw.rota ?? raw.plano ?? "").trim());
-        if (!plano) continue;
-        const planoEntry = getOrCreatePlano(plano);
-        const tipoServico = normalizeServiceName(String(raw.tipo_de_servico ?? raw.tipo_servico ?? "").trim(), plano);
-        if (!planoEntry.tipo_servico && tipoServico) planoEntry.tipo_servico = tipoServico;
-        const percentual = getPercentualFromRaw(raw);
-        const dateKey = toDateKey(row.data_referencia) ?? extractRawDate(raw);
-        if (!dateKey) continue;
-        const bucket = ensureBucket(planoEntry, dateKey);
-        if (percentual != null) {
-          bucket.nosso_sum += percentual;
-          bucket.nosso_count += 1;
-        }
-        bucket.despachos_nosso += 1;
-      }
-
-      for (const setor of cronogramaBySetor.keys()) getOrCreatePlano(setor);
-
-      const getCronogramaDates = (plano: string): string[] =>
-        cronogramaBySetor.get(plano) ?? cronogramaBySetor.get(normalizarSetor(plano)) ?? [];
-
-      const isExpectedOnDate = (plano: string, dateKey: string): boolean => {
-        const parsed = parseSetor(plano);
-        if (!parsed) return false;
-        if (CRONOGRAMA_SERVICOS.has(parsed.servico)) {
-          const dates = getCronogramaDates(plano);
-          if (dates.length > 0) return dates.includes(dateKey);
-        }
-        return isFrequencyDate(parsed.frequencia, dateKey);
-      };
-
-      const nextProgramacao = (plano: string, baseDateKey: string): string | null => {
-        const parsed = parseSetor(plano);
-        if (!parsed) return null;
-        if (CRONOGRAMA_SERVICOS.has(parsed.servico)) {
-          const dates = getCronogramaDates(plano);
-          const next = dates.find((d) => d > baseDateKey);
-          if (next) return next;
-        }
-        return findNextExpectedByFrequency(parsed.frequencia, baseDateKey);
-      };
-
-      /** Retorna 5 datas: 2 anteriores, atual (mais próxima/do dia), 2 posteriores. Evita duplicatas. */
-      const getCronogramaPreview = (plano: string, referenciaKey: string): string[] => {
-        const parsed = parseSetor(plano);
-        if (!parsed) return [];
-        const out: string[] = [];
-        if (CRONOGRAMA_SERVICOS.has(parsed.servico)) {
-          const dates = getCronogramaDates(plano);
-          if (dates.length === 0) return [];
-          // Centro = data mais próxima de referenciaKey (passada ou futura) para ter 2 anteriores + atual + 2 futuras
-          let centerIdx = 0;
-          let bestDiff = diffInDaysAbs(dates[0], referenciaKey);
-          for (let i = 1; i < dates.length; i += 1) {
-            const diff = diffInDaysAbs(dates[i], referenciaKey);
-            if (diff < bestDiff) {
-              bestDiff = diff;
-              centerIdx = i;
-            }
-          }
-          for (let i = -2; i <= 2; i += 1) {
-            const j = centerIdx + i;
-            if (j >= 0 && j < dates.length) out.push(dates[j]);
-          }
-          return out;
-        }
-        const centerDate =
-          (isFrequencyDate(parsed.frequencia, referenciaKey) ? referenciaKey : null) ??
-          findNextExpectedByFrequency(parsed.frequencia, referenciaKey) ??
-          findPreviousExpectedByFrequency(parsed.frequencia, referenciaKey) ??
-          referenciaKey;
-        let curr = centerDate;
-        const prevs: string[] = [];
-        for (let i = 0; i < 2; i += 1) {
-          const p = findPreviousExpectedByFrequencyStrict(parsed.frequencia, curr);
-          if (!p) break;
-          prevs.unshift(p);
-          curr = p;
-        }
-        out.push(...prevs);
-        if (isFrequencyDate(parsed.frequencia, centerDate)) out.push(centerDate);
-        curr = centerDate;
-        for (let i = 0; i < 2; i += 1) {
-          const n = findNextExpectedByFrequency(parsed.frequencia, curr);
-          if (!n) break;
-          out.push(n);
-          curr = n;
-        }
-        return out;
-      };
-
-      const rows = Array.from(byPlano.values())
-        .map((item) => {
-          const dates = Array.from(item.diario.keys()).sort((a, b) => a.localeCompare(b));
-          const inScopeDates = dates.filter((dateKey) => {
-            if (escopo === "todos") return true;
-            return dateKey >= (scopeStart as string) && dateKey <= (scopeEnd as string);
-          });
-          const considerDates = escopo === "todos" ? dates : inScopeDates;
-
-          let sumSelimp = 0;
-          let countSelimp = 0;
-          let despachosSelimp = 0;
-          let sumNosso = 0;
-          let countNosso = 0;
-          let despachosNosso = 0;
-          let estimados = 0;
-          const detalhes = considerDates
-            .map((dateKey) => {
-              const bucket = item.diario.get(dateKey);
-              if (!bucket) return null;
-              const percentualSelimp = bucket.selimp_count > 0 ? Number((bucket.selimp_sum / bucket.selimp_count).toFixed(2)) : null;
-              const percentualNosso = bucket.nosso_count > 0 ? Number((bucket.nosso_sum / bucket.nosso_count).toFixed(2)) : null;
-              sumSelimp += bucket.selimp_sum;
-              countSelimp += bucket.selimp_count;
-              despachosSelimp += bucket.despachos_selimp;
-              sumNosso += bucket.nosso_sum;
-              countNosso += bucket.nosso_count;
-              despachosNosso += bucket.despachos_nosso;
-              estimados += bucket.estimados;
-              return {
-                data: dateKey,
-                esperado: isExpectedOnDate(item.plano, dateKey),
-                percentual_selimp: percentualSelimp,
-                percentual_nosso: percentualNosso,
-                despachos_selimp: bucket.despachos_selimp,
-                despachos_nosso: bucket.despachos_nosso,
-                data_estimada: bucket.estimados > 0,
-              };
-            })
-            .filter((d): d is NonNullable<typeof d> => d != null)
-            .sort((a, b) => b.data.localeCompare(a.data));
-
-          /* Mapa diário: percentual = soma(percentuais) / total_despachos (ex: 4 dias 100% + 1 dia 0% = 80%) */
-          const percentualSelimp = despachosSelimp > 0 ? Number((sumSelimp / despachosSelimp).toFixed(2)) : null;
-          const percentualNosso = despachosNosso > 0 ? Number((sumNosso / despachosNosso).toFixed(2)) : null;
-          const origem =
-            countSelimp > 0 && countNosso > 0 ? "ambos" : countSelimp > 0 ? "somente_selimp" : "somente_nosso";
-
-          let mostrar = true;
-          if (escopo === "dia_anterior") {
-            // Mostrar APENAS: esperados no dia (cronograma) OU com despacho no período
-            const temDespachoNoPeriodo = despachosSelimp > 0 || despachosNosso > 0;
-            const esperadoNoDia = isExpectedOnDate(item.plano, scopeStart as string);
-            mostrar = esperadoNoDia || temDespachoNoPeriodo;
-          } else if (escopo === "periodo") {
-            // Mostrar APENAS: com despacho no período OU esperados em algum dia do período
-            const hasDispatch = despachosSelimp > 0 || despachosNosso > 0;
-            const hasExpected = (() => {
-              for (let d = parseDateKeyLocal(scopeStart as string); toDateKey(d)! <= (scopeEnd as string); d.setDate(d.getDate() + 1)) {
-                const key = toDateKey(d)!;
-                if (isExpectedOnDate(item.plano, key)) return true;
-              }
-              return false;
-            })();
-            mostrar = hasDispatch || hasExpected;
-          }
-          if (!mostrar) return null;
-
-          const baseProxima = escopo === "periodo" ? (scopeEnd as string) : yesterdayKey;
-          const nextDate = nextProgramacao(item.plano, baseProxima);
-          const refCronograma = nextDate ?? baseProxima;
-          const cronogramaPreview = getCronogramaPreview(item.plano, refCronograma);
-          const tipoServicoFinal =
-            item.tipo_servico && !/n[aã]o\s*informado/i.test(item.tipo_servico)
-              ? item.tipo_servico
-              : getTipoServicoFromPlano(item.plano) || "—";
-          return {
-            plano: item.plano,
-            subprefeitura: item.subprefeitura || "—",
-            tipo_servico: tipoServicoFinal,
-            servico_sigla: item.servico_sigla,
-            turno: item.turno,
-            frequencia_codigo: item.frequencia_codigo,
-            frequencia: item.frequencia,
-            mapa: item.mapa,
-            percentual_selimp: percentualSelimp,
-            percentual_nosso: percentualNosso,
-            despachos_selimp: despachosSelimp,
-            despachos_nosso: despachosNosso,
-            origem,
-            equipamentos: Array.from(item.equipamentos),
-            bateria_por_equipamento: Object.fromEntries(
-              Array.from(item.equipamentos)
-                .map((codigo) => {
-                  const info = bateriaMap.get(normalizeModuleCode(codigo));
-                  return info ? [codigo, info] : null;
-                })
-                .filter((x): x is [string, { status_bateria: string; bateria?: string }] => x != null)
-            ),
-            proxima_programacao: nextDate,
-            cronograma_preview: cronogramaPreview,
-            data_estimativa_count: estimados,
-            detalhes_diarios: detalhes,
-          };
-        })
-        .filter((r): r is NonNullable<typeof r> => r != null)
-        .sort((a, b) => compareSetores(a.plano, b.plano, "asc"));
-
-      let rowsFiltered = rows;
-      if (subFilter && subFilter.trim() !== "" && subFilter.toLowerCase() !== "all") {
-        const subFilterNorm = normalizeText(subFilter).replace(/[^a-z]/g, "");
-        rowsFiltered = rows.filter((r) => {
-          const subNorm = normalizeText(r.subprefeitura || "").replace(/[^a-z]/g, "");
-          const sigla = getSubFromPlano(r.plano);
-          return (
-            subNorm === subFilterNorm ||
-            subNorm.includes(subFilterNorm) ||
-            subFilterNorm.includes(subNorm) ||
-            sigla.toUpperCase() === subFilter.toUpperCase() ||
-            r.subprefeitura === subFilter
-          );
-        });
-      }
-
-      const totalDespachosSelimp = rowsFiltered.reduce((acc, r) => acc + r.despachos_selimp, 0);
-      const totalDespachosNosso = rowsFiltered.reduce((acc, r) => acc + r.despachos_nosso, 0);
-      const iptSomaSelimp = rowsFiltered.reduce((acc, r) => acc + (r.percentual_selimp ?? 0), 0);
-      const iptMedioSelimp = rowsFiltered.length > 0 ? Number((iptSomaSelimp / rowsFiltered.length).toFixed(2)) : null;
-      const planosDespachadosSelimp = rowsFiltered.filter((r) => r.despachos_selimp > 0).length;
-      const ddmxSumPond = rowsFiltered.reduce((acc, r) => {
-        if (r.percentual_nosso != null && r.despachos_nosso > 0)
-          return acc + r.percentual_nosso * r.despachos_nosso;
-        return acc;
-      }, 0);
-      const ddmxCountPond = rowsFiltered.reduce(
-        (acc, r) => (r.percentual_nosso != null && r.despachos_nosso > 0 ? acc + r.despachos_nosso : acc),
-        0
-      );
-      const percentualMedioDdmx =
-        ddmxCountPond > 0 ? Number((ddmxSumPond / ddmxCountPond).toFixed(2)) : null;
-
-      const legacySubMap = new Map<string, { quantidade: number; sum: number; count: number }>();
-      const legacyServMap = new Map<string, { quantidade: number; sum: number; count: number }>();
-      for (const r of rowsFiltered) {
-        const subKey = r.subprefeitura || "Não informado";
-        const subAgg = legacySubMap.get(subKey) ?? { quantidade: 0, sum: 0, count: 0 };
-        subAgg.quantidade += 1;
-        if (r.percentual_selimp != null) {
-          subAgg.sum += r.percentual_selimp;
-          subAgg.count += 1;
-        }
-        legacySubMap.set(subKey, subAgg);
-
-        const srvKey = r.tipo_servico || "Não informado";
-        const srvAgg = legacyServMap.get(srvKey) ?? { quantidade: 0, sum: 0, count: 0 };
-        srvAgg.quantidade += 1;
-        if (r.percentual_selimp != null) {
-          srvAgg.sum += r.percentual_selimp;
-          srvAgg.count += 1;
-        }
-        legacyServMap.set(srvKey, srvAgg);
-      }
-      const subprefeituras = Array.from(legacySubMap.entries()).map(([subprefeitura, v]) => ({
-        subprefeitura,
-        quantidade_planos: v.quantidade,
-        media_execucao: v.count > 0 ? Number((v.sum / v.count).toFixed(2)) : null,
-      }));
-      const servicos = Array.from(legacyServMap.entries()).map(([tipo_servico, v]) => ({
-        tipo_servico,
-        quantidade_planos: v.quantidade,
-        media_execucao: v.count > 0 ? Number((v.sum / v.count).toFixed(2)) : null,
-      }));
-      const mesclados = rowsFiltered.map((r) => ({
-        plano: r.plano,
-        subprefeitura: r.subprefeitura,
-        tipo_servico: r.tipo_servico,
-        status_execucao: r.despachos_selimp > 0 ? "Despachado" : "Não despachado",
-        percentual_execucao: r.percentual_selimp,
-        equipamentos: r.equipamentos,
-        modulos_status: [] as Array<{
-          codigo: string;
-          status_bateria: string;
-          status_comunicacao: string;
-          bateria: string;
-          dias_sem_comunicacao: number | null;
-          data_ultima_comunicacao: string;
-          ativo: boolean;
-        }>,
-        plano_ativo: r.despachos_selimp > 0 || r.despachos_nosso > 0,
-        sem_status_bateria: false,
-        atualizado_em: new Date().toISOString(),
-      }));
-      const comparativoItens = rowsFiltered.map((r) => ({
-        plano: r.plano,
-        subprefeitura: r.subprefeitura,
-        tipo_servico: r.tipo_servico,
-        percentual_selimp: r.percentual_selimp,
-        percentual_nosso: r.percentual_nosso,
-        diferenca_percentual:
-          r.percentual_selimp != null && r.percentual_nosso != null
-            ? Number((r.percentual_selimp - r.percentual_nosso).toFixed(2))
-            : null,
-        origem: r.origem,
-        turno: r.turno,
-        frequencia: r.frequencia,
-      }));
-      const divergencias = comparativoItens.filter((r) => Math.abs((r.percentual_selimp ?? 0) - (r.percentual_nosso ?? 0)) >= 5).length;
-      const somenteSelimp = comparativoItens.filter((r) => r.origem === "somente_selimp").length;
-      const somenteNosso = comparativoItens.filter((r) => r.origem === "somente_nosso").length;
-
-      return {
-        periodo: {
-          inicial: escopo === "todos" ? null : scopeStart,
-          final: escopo === "todos" ? null : scopeEnd,
+        return await buildIptPreviewFromConsolidado(client, {
           escopo,
-          data_referencia_padrao: yesterdayKey,
-        },
-        resumo: {
-          total_planos: rowsFiltered.length,
-          total_planos_despachados: planosDespachadosSelimp,
-          total_planos_ativos: rowsFiltered.filter((r) => r.despachos_selimp > 0 || r.despachos_nosso > 0).length,
-          media_execucao_planos_ativos: iptMedioSelimp,
-          percentual_medio_ddmx: percentualMedioDdmx,
-          total_modulos_relacionados: rowsFiltered.reduce((acc, r) => acc + r.equipamentos.length, 0),
-          total_modulos_ativos: rowsFiltered.reduce((acc, r) => acc + r.equipamentos.length, 0),
-          total_modulos_inativos: 0,
-          sem_status_bateria: rowsFiltered.filter((r) => r.equipamentos.length === 0).length,
-          comunicacao_off: 0,
-          bateria_critica: 0,
-          bateria_alerta: 0,
-          total_setores: rowsFiltered.length,
-          total_despachos_selimp: totalDespachosSelimp,
-          total_despachos_nosso: totalDespachosNosso,
-          ipt_soma_percentuais: Number(iptSomaSelimp.toFixed(2)),
-          ipt_media_percentual: iptMedioSelimp,
-        },
-        subprefeituras,
-        servicos,
-        mesclados,
-        comparativo: {
-          total_linhas: comparativoItens.length,
-          divergencias,
-          somente_selimp: somenteSelimp,
-          somente_nosso: somenteNosso,
-          itens: comparativoItens,
-        },
-        itens: rowsFiltered,
-        bateria_resumo: {
-          total: bateriaResumoModulos.length,
-          criticos: bateriaResumoModulos.filter((m) => m.nivel === "critico").length,
-          alerta: bateriaResumoModulos.filter((m) => m.nivel === "alerta").length,
-          ok: bateriaResumoModulos.filter((m) => m.nivel === "ok").length,
-          modulos: bateriaResumoModulos,
-        },
-      };
+          scopeStart,
+          scopeEnd,
+          subFilter: subFilter ?? "",
+          yesterdayKey,
+        });
       } finally {
         client.release();
       }
@@ -1960,6 +1233,62 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
       );
       invalidatePrefix("ipt_preview");
       return r.rows[0];
+    } finally {
+      client.release();
+    }
+  });
+
+  fastify.get<{
+    Querystring: { inicio: string; fim: string };
+  }>("/ipt/report-diario", async (request, reply) => {
+    const { inicio, fim } = request.query;
+    if (!inicio || !fim) {
+      return reply.code(400).send({ detail: "Informe inicio e fim (YYYY-MM-DD)." });
+    }
+
+    const client = await pool.connect();
+    try {
+      const res = await client.query(
+        `SELECT
+           data_estimada::text AS data,
+           COUNT(*)::int AS total_linhas,
+           COUNT(*) FILTER (WHERE LOWER(COALESCE(status, '')) LIKE '%encerrado%')::int AS encerradas,
+           ROUND(AVG(percentual_execucao) FILTER (WHERE LOWER(COALESCE(status, '')) LIKE '%encerrado%'), 2) AS media_percentual,
+           COUNT(DISTINCT plano) FILTER (WHERE LOWER(COALESCE(status, '')) LIKE '%encerrado%')::int AS planos_distintos,
+           jsonb_object_agg(
+             COALESCE(confianca_estimativa, 'desconhecida'),
+             (SELECT COUNT(*) FROM ipt_report_linhas r2
+              WHERE r2.data_estimada = ipt_report_linhas.data_estimada
+                AND r2.confianca_estimativa = ipt_report_linhas.confianca_estimativa
+                AND r2.periodo_inicial >= $1::date AND r2.periodo_final <= $2::date)
+           ) FILTER (WHERE confianca_estimativa IS NOT NULL) AS confianca_dist
+         FROM ipt_report_linhas
+         WHERE data_estimada >= $1::date AND data_estimada <= $2::date
+         GROUP BY data_estimada
+         ORDER BY data_estimada`,
+        [inicio, fim]
+      );
+
+      const dias = res.rows.map((row: any) => {
+        const encerradas = Number(row.encerradas ?? 0);
+        const total = Number(row.total_linhas ?? 0);
+        return {
+          data: row.data,
+          total_linhas: total,
+          encerradas,
+          media_percentual: row.media_percentual != null ? Number(row.media_percentual) : null,
+          planos_distintos: Number(row.planos_distintos ?? 0),
+          taxa_encerramento: total > 0 ? Number(((encerradas / total) * 100).toFixed(2)) : 0,
+        };
+      });
+
+      return {
+        periodo: { inicio, fim },
+        dias,
+        total_dias: dias.length,
+        total_linhas: dias.reduce((s: number, d: any) => s + d.total_linhas, 0),
+        total_encerradas: dias.reduce((s: number, d: any) => s + d.encerradas, 0),
+      };
     } finally {
       client.release();
     }

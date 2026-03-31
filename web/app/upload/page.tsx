@@ -9,6 +9,7 @@ import {
   FileSpreadsheet,
   Settings,
   ShieldAlert,
+  Trash2,
   Upload,
 } from "lucide-react";
 import { toast } from "react-toastify";
@@ -33,8 +34,15 @@ import {
 import { apiService } from "@/lib/api";
 
 type SessionKey = "flip" | "ddmx" | "selimp";
-type UploadKey = "flip" | "ddmx" | "iptReport" | "iptStatusBateria" | "iptCronograma";
-type IptReferenceMode = "d_minus_1" | "fim_de_semana";
+type UploadKey =
+  | "flip"
+  | "ddmx"
+  | "iptReport"
+  | "iptStatusBateria"
+  | "iptCronograma"
+  | "iptConsolidadoVeiculos"
+  | "iptConsolidadoVarricao";
+type IptReferenceMode = "d_minus_1" | "fim_de_semana" | "mensal" | "personalizado";
 
 interface UploadApiError {
   response?: {
@@ -59,6 +67,19 @@ interface UploadResult {
   tipo_detectado?: string;
   tipo_detectado_label?: string;
   source_file?: string;
+  /** Só importação consolidada veículos — explica diferença linhas Excel vs inseridas */
+  parse_stats?: {
+    linhas_na_planilha?: number;
+    linhas_importadas?: number;
+    ignoradas_linha_vazia?: number;
+    ignoradas_sem_setor?: number;
+    ignoradas_sem_data?: number;
+  };
+  estimativa?: {
+    alta_confianca?: number;
+    media_confianca?: number;
+    baixa_confianca?: number;
+  };
 }
 
 interface UploadState {
@@ -98,6 +119,8 @@ interface UploadOverviewResponse {
   iptReport?: LastUploadInfo;
   iptStatusBateria?: LastUploadInfo;
   iptCronograma?: LastUploadInfo;
+  iptConsolidadoVeiculos?: LastUploadInfo;
+  iptConsolidadoVarricao?: LastUploadInfo;
   sessions?: Record<SessionKey, LastUploadInfo>;
 }
 
@@ -106,6 +129,7 @@ interface IptReferenceOption {
   label: string;
   periodoInicial: string;
   periodoFinal: string;
+  mesReferencia?: string;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -150,6 +174,18 @@ function buildIptReferenceOptions(now = new Date()): IptReferenceOption[] {
   const sextaKey = toDateKey(sextaAnterior);
   const domingoKey = toDateKey(domingoAnterior);
 
+  const mesAtual = now.getMonth();
+  const anoAtual = now.getFullYear();
+  const mesAnterior = mesAtual === 0 ? 11 : mesAtual - 1;
+  const anoMesAnterior = mesAtual === 0 ? anoAtual - 1 : anoAtual;
+  const mesAnteriorStr = `${anoMesAnterior}-${String(mesAnterior + 1).padStart(2, "0")}`;
+  const mesAtualStr = `${anoAtual}-${String(mesAtual + 1).padStart(2, "0")}`;
+  const ultimoDiaMesAnterior = new Date(anoMesAnterior, mesAnterior + 1, 0).getDate();
+  const ultimoDiaMesAtual = new Date(anoAtual, mesAtual + 1, 0).getDate();
+
+  const nomeMesAnterior = new Date(anoMesAnterior, mesAnterior, 1).toLocaleDateString("pt-BR", { month: "long" });
+  const nomeMesAtual = new Date(anoAtual, mesAtual, 1).toLocaleDateString("pt-BR", { month: "long" });
+
   return [
     {
       value: "d_minus_1",
@@ -163,6 +199,26 @@ function buildIptReferenceOptions(now = new Date()): IptReferenceOption[] {
       periodoInicial: sextaKey,
       periodoFinal: domingoKey,
     },
+    {
+      value: "mensal",
+      label: `Mensal - ${nomeMesAnterior} ${anoMesAnterior}`,
+      periodoInicial: `${anoMesAnterior}-${String(mesAnterior + 1).padStart(2, "0")}-01`,
+      periodoFinal: `${anoMesAnterior}-${String(mesAnterior + 1).padStart(2, "0")}-${String(ultimoDiaMesAnterior).padStart(2, "0")}`,
+      mesReferencia: mesAnteriorStr,
+    },
+    {
+      value: "mensal",
+      label: `Mensal - ${nomeMesAtual} ${anoAtual} (ate D-1)`,
+      periodoInicial: `${anoAtual}-${String(mesAtual + 1).padStart(2, "0")}-01`,
+      periodoFinal: dMinus1Key,
+      mesReferencia: mesAtualStr,
+    },
+    {
+      value: "personalizado",
+      label: "Personalizado (datas manuais)",
+      periodoInicial: "",
+      periodoFinal: "",
+    },
   ];
 }
 
@@ -173,6 +229,8 @@ function createInitialStates(): Record<UploadKey, UploadState> {
     iptReport: { status: "idle" },
     iptStatusBateria: { status: "idle" },
     iptCronograma: { status: "idle" },
+    iptConsolidadoVeiculos: { status: "idle" },
+    iptConsolidadoVarricao: { status: "idle" },
   };
 }
 
@@ -199,6 +257,52 @@ function SummaryBox({ state }: { state: UploadState }) {
             <div>Encerrados: <span className="font-semibold text-foreground">{state.result.ordens_encerradas}</span></div>
           )}
         </div>
+        {state.result.estimativa && (
+          <div className="mt-4 border-t border-emerald-500/20 pt-4 text-xs leading-relaxed text-muted-foreground dark:border-emerald-500/15">
+            <div className="font-semibold text-emerald-900 dark:text-emerald-200">Estimativa de datas</div>
+            <div className="mt-2 grid gap-1.5 sm:grid-cols-3">
+              <div>
+                Alta confianca:{" "}
+                <span className="font-semibold text-emerald-700 dark:text-emerald-400">{state.result.estimativa.alta_confianca ?? 0}</span>
+              </div>
+              <div>
+                Media:{" "}
+                <span className="font-semibold text-amber-700 dark:text-amber-400">{state.result.estimativa.media_confianca ?? 0}</span>
+              </div>
+              <div>
+                Baixa:{" "}
+                <span className="font-semibold text-red-700 dark:text-red-400">{state.result.estimativa.baixa_confianca ?? 0}</span>
+              </div>
+            </div>
+          </div>
+        )}
+        {state.result.parse_stats && (
+          <div className="mt-4 border-t border-emerald-500/20 pt-4 text-xs leading-relaxed text-muted-foreground dark:border-emerald-500/15">
+            <div className="font-semibold text-emerald-900 dark:text-emerald-200">Leitura da planilha (veiculos)</div>
+            <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
+              <div>
+                Linhas de dados na aba:{" "}
+                <span className="font-semibold text-foreground">{state.result.parse_stats.linhas_na_planilha ?? "—"}</span>
+              </div>
+              <div>
+                Importadas:{" "}
+                <span className="font-semibold text-foreground">{state.result.parse_stats.linhas_importadas ?? "—"}</span>
+              </div>
+              <div>
+                Ignoradas (linha vazia):{" "}
+                <span className="font-semibold text-foreground">{state.result.parse_stats.ignoradas_linha_vazia ?? 0}</span>
+              </div>
+              <div>
+                Ignoradas (sem setor):{" "}
+                <span className="font-semibold text-foreground">{state.result.parse_stats.ignoradas_sem_setor ?? 0}</span>
+              </div>
+              <div className="sm:col-span-2">
+                Ignoradas (data invalida):{" "}
+                <span className="font-semibold text-foreground">{state.result.parse_stats.ignoradas_sem_data ?? 0}</span>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -344,10 +448,12 @@ function UploadDropzone({
 
 export default function UploadPage() {
   const iptReferenceOptions = useMemo(() => buildIptReferenceOptions(), []);
-  const defaultIptReferenceMode: IptReferenceMode = new Date().getDay() === 1 ? "fim_de_semana" : "d_minus_1";
+  const defaultIdx = new Date().getDay() === 1 ? 1 : 0;
   const [states, setStates] = useState<Record<UploadKey, UploadState>>(createInitialStates());
   const [overview, setOverview] = useState<UploadOverviewResponse>({});
-  const [iptReferenceMode, setIptReferenceMode] = useState<IptReferenceMode>(defaultIptReferenceMode);
+  const [iptRefIdx, setIptRefIdx] = useState(defaultIdx);
+  const [customPeriodoInicial, setCustomPeriodoInicial] = useState("");
+  const [customPeriodoFinal, setCustomPeriodoFinal] = useState("");
   const [cronogramaModalOpen, setCronogramaModalOpen] = useState(false);
   const [expandedHistory, setExpandedHistory] = useState<Record<string, boolean>>({});
 
@@ -424,12 +530,20 @@ export default function UploadPage() {
     try {
       let result;
       if (key === "iptReport") {
-        const selectedReference =
-          iptReferenceOptions.find((option) => option.value === iptReferenceMode) ?? iptReferenceOptions[0];
+        const selectedReference = iptReferenceOptions[iptRefIdx] ?? iptReferenceOptions[0];
+        const isCustom = selectedReference.value === "personalizado";
+        const pi = isCustom ? customPeriodoInicial : selectedReference.periodoInicial;
+        const pf = isCustom ? customPeriodoFinal : selectedReference.periodoFinal;
+        if (!pi || !pf) {
+          setUploadState(key, { status: "error", error: "Informe periodo inicial e final." });
+          toast.error("Informe periodo inicial e final.");
+          return;
+        }
         result = await apiService.uploadIptReportXlsx(file, {
-          modoReferencia: selectedReference.value,
-          periodoInicial: selectedReference.periodoInicial,
-          periodoFinal: selectedReference.periodoFinal,
+          modoReferencia: selectedReference.value === "personalizado" ? "d_minus_1" : selectedReference.value as any,
+          periodoInicial: pi,
+          periodoFinal: pf,
+          mesReferencia: selectedReference.mesReferencia,
         });
       } else {
         result = await apiService.uploadIptStatusBateriaXlsx(file);
@@ -442,6 +556,98 @@ export default function UploadPage() {
       const message = getErrorMessage(error);
       setUploadState(key, { status: "error", error: message });
       toast.error(message);
+    }
+  };
+
+  const handleConsolidadoVeiculos = async (files: FileList | null) => {
+    const file = files?.[0];
+    if (!file) return;
+    const lower = file.name.toLowerCase();
+    if (!lower.endsWith(".xls") && !lower.endsWith(".xlsx")) {
+      const message = "Aceite apenas XLS ou XLSX.";
+      setUploadState("iptConsolidadoVeiculos", { status: "error", error: message });
+      toast.error(message);
+      return;
+    }
+    setUploadState("iptConsolidadoVeiculos", { status: "uploading" });
+    try {
+      const result = await apiService.uploadIptConsolidadoVeiculos(file);
+      setUploadState("iptConsolidadoVeiculos", { status: "success", result });
+      toast.success("Planilha de veiculos importada.");
+      await loadOverview();
+    } catch (error) {
+      const message = getErrorMessage(error);
+      setUploadState("iptConsolidadoVeiculos", { status: "error", error: message });
+      toast.error(message);
+    }
+  };
+
+  const handleConsolidadoVarricao = async (files: FileList | null) => {
+    const file = files?.[0];
+    if (!file) return;
+    const lower = file.name.toLowerCase();
+    if (!lower.endsWith(".xls") && !lower.endsWith(".xlsx")) {
+      const message = "Aceite apenas XLS ou XLSX.";
+      setUploadState("iptConsolidadoVarricao", { status: "error", error: message });
+      toast.error(message);
+      return;
+    }
+    setUploadState("iptConsolidadoVarricao", { status: "uploading" });
+    try {
+      const result = await apiService.uploadIptConsolidadoVarricao(file);
+      setUploadState("iptConsolidadoVarricao", { status: "success", result });
+      toast.success("Planilha de varricao importada.");
+      await loadOverview();
+    } catch (error) {
+      const message = getErrorMessage(error);
+      setUploadState("iptConsolidadoVarricao", { status: "error", error: message });
+      toast.error(message);
+    }
+  };
+
+  const handleClearIptReport = async () => {
+    if (!window.confirm("Apagar todos os dados do Report SELIMP (ipt_imports + cache mensal)?")) return;
+    try {
+      const r = await apiService.clearIptReportImportados();
+      toast.success(`Removidos: ${(r as { deleted?: number })?.deleted ?? 0} registros.`);
+      await loadOverview();
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
+
+  const handleClearIptDdmx = async () => {
+    if (!window.confirm("Apagar todos os Historicos OS DDMX em ipt_imports?")) return;
+    try {
+      const r = await apiService.clearIptDdmxImportados();
+      toast.success(`Removidos: ${(r as { deleted?: number })?.deleted ?? 0} registros.`);
+      await loadOverview();
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
+
+  const handleClearConsolidadoVeiculos = async () => {
+    if (!window.confirm("Apagar todos os registros importados de Veiculos (planilha consolidada)?")) return;
+    try {
+      const r = await apiService.clearIptConsolidadoVeiculos();
+      toast.success(`Removidos: ${(r as { deleted?: number })?.deleted ?? 0} registros.`);
+      setUploadState("iptConsolidadoVeiculos", { status: "idle" });
+      await loadOverview();
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
+
+  const handleClearConsolidadoVarricao = async () => {
+    if (!window.confirm("Apagar todos os registros importados de Varricao (planilha consolidada)?")) return;
+    try {
+      const r = await apiService.clearIptConsolidadoVarricao();
+      toast.success(`Removidos: ${(r as { deleted?: number })?.deleted ?? 0} registros.`);
+      setUploadState("iptConsolidadoVarricao", { status: "idle" });
+      await loadOverview();
+    } catch (error) {
+      toast.error(getErrorMessage(error));
     }
   };
 
@@ -521,14 +727,110 @@ export default function UploadPage() {
           </div>
         </div>
 
+        <div className="rounded-2xl border-0 bg-violet-50/95 p-6 shadow-lg shadow-violet-900/10 ring-1 ring-violet-500/20 dark:bg-violet-950/30 dark:shadow-violet-950/40 dark:ring-violet-500/25">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <div className="text-lg font-semibold tracking-tight text-violet-950 dark:text-violet-100">
+                IPT — Planilhas consolidadas (prioridade)
+              </div>
+              <p className="mt-2 max-w-3xl text-xs leading-relaxed text-violet-900/90 dark:text-violet-100/85">
+                Importe aqui os relatorios com percentuais SELIMP e DDMX (Limpebras) e data de execucao. O painel IPT e o
+                preview usam somente esses dados — sem cruzar com cronograma ou &quot;adivinhar&quot; datas. Aceita XLS ou XLSX.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="border-red-300/80 text-red-800 hover:bg-red-50 dark:border-red-500/40 dark:text-red-200 dark:hover:bg-red-950/40"
+                onClick={handleClearIptReport}
+              >
+                <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                Limpar Report SELIMP
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="border-red-300/80 text-red-800 hover:bg-red-50 dark:border-red-500/40 dark:text-red-200 dark:hover:bg-red-950/40"
+                onClick={handleClearIptDdmx}
+              >
+                <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                Limpar DDMX
+              </Button>
+            </div>
+          </div>
+          <div className="mt-6 grid gap-6 md:grid-cols-2">
+            <div className="rounded-2xl border-0 bg-background/80 p-5 shadow-inner shadow-black/5 ring-1 ring-black/5 dark:bg-background/40 dark:ring-white/10">
+              <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+                <div className="text-sm font-semibold text-foreground">Veiculos (ex.: relatorio-*-1437)</div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0 border-red-300/80 text-red-800 hover:bg-red-50 dark:border-red-500/40 dark:text-red-200 dark:hover:bg-red-950/40"
+                  onClick={handleClearConsolidadoVeiculos}
+                >
+                  <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                  Apagar dados
+                </Button>
+              </div>
+              <UploadDropzone
+                inputId="iptConsolidadoVeiculos"
+                accept=".xls,.xlsx"
+                loading={states.iptConsolidadoVeiculos.status === "uploading"}
+                helperText="Placa, setor, data, % Limpebras e % SELIMP por linha."
+                onFilesSelected={handleConsolidadoVeiculos}
+              />
+              <HistoryBlock
+                title="Ultima importacao — Veiculos"
+                overview={overview.iptConsolidadoVeiculos}
+                expanded={Boolean(expandedHistory.iptConsolidadoVeiculos)}
+                onToggle={() => toggleHistory("iptConsolidadoVeiculos")}
+              />
+              <SummaryBox state={states.iptConsolidadoVeiculos} />
+            </div>
+            <div className="rounded-2xl border-0 bg-background/80 p-5 shadow-inner shadow-black/5 ring-1 ring-black/5 dark:bg-background/40 dark:ring-white/10">
+              <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+                <div className="text-sm font-semibold text-foreground">Varricao matriz (ex.: relatorio-*-1533)</div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0 border-red-300/80 text-red-800 hover:bg-red-50 dark:border-red-500/40 dark:text-red-200 dark:hover:bg-red-950/40"
+                  onClick={handleClearConsolidadoVarricao}
+                >
+                  <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                  Apagar dados
+                </Button>
+              </div>
+              <UploadDropzone
+                inputId="iptConsolidadoVarricao"
+                accept=".xls,.xlsx"
+                loading={states.iptConsolidadoVarricao.status === "uploading"}
+                helperText="Setor em linhas, dias em colunas, celulas no formato XX% - YYv."
+                onFilesSelected={handleConsolidadoVarricao}
+              />
+              <HistoryBlock
+                title="Ultima importacao — Varricao"
+                overview={overview.iptConsolidadoVarricao}
+                expanded={Boolean(expandedHistory.iptConsolidadoVarricao)}
+                onToggle={() => toggleHistory("iptConsolidadoVarricao")}
+              />
+              <SummaryBox state={states.iptConsolidadoVarricao} />
+            </div>
+          </div>
+        </div>
+
         <div className="rounded-2xl border-0 bg-amber-50/90 p-5 text-sm text-amber-950 shadow-md shadow-amber-900/10 ring-1 ring-amber-500/20 dark:bg-amber-950/35 dark:text-amber-50 dark:shadow-amber-950/50 dark:ring-amber-500/25">
           <div className="flex items-start gap-4">
             <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 opacity-90" />
             <div>
               <div className="font-semibold tracking-tight">Protecao extra para imports sensiveis</div>
               <div className="mt-2 text-xs leading-relaxed opacity-95">
-                `FLIP` aceita apenas CSV e `DDMX` apenas XLSX. O tipo real do arquivo e validado no backend antes da importacao.
-                `SELIMP` continua separado em `Report` e `Status de Bateria` para reduzir risco operacional.
+                `FLIP` aceita apenas CSV e `DDMX` apenas planilhas. O tipo real do arquivo e validado no backend antes da importacao.
+                IPT consolidado fica acima; Report SELIMP e DDMX abaixo sao opcionais para conferencia ou outros fluxos.
               </div>
             </div>
           </div>
@@ -611,18 +913,45 @@ export default function UploadPage() {
                   <Label className="mb-3 block text-sm font-semibold text-fuchsia-900 dark:text-fuchsia-200">
                     Referencia da importacao
                   </Label>
-                  <Select value={iptReferenceMode} onValueChange={(value) => setIptReferenceMode(value as IptReferenceMode)}>
+                  <Select value={String(iptRefIdx)} onValueChange={(value) => setIptRefIdx(Number(value))}>
                     <SelectTrigger className="w-full border-0 bg-background/90 shadow-sm ring-1 ring-black/5 dark:bg-background/50 dark:ring-white/10">
                       <SelectValue placeholder="Selecione a referencia" />
                     </SelectTrigger>
                     <SelectContent>
-                      {iptReferenceOptions.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
+                      {iptReferenceOptions.map((option, idx) => (
+                        <SelectItem key={idx} value={String(idx)}>
                           {option.label}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
+                  {iptReferenceOptions[iptRefIdx]?.value === "personalizado" && (
+                    <div className="mt-3 grid grid-cols-2 gap-3">
+                      <div>
+                        <Label className="mb-1 block text-xs text-fuchsia-800 dark:text-fuchsia-300">Periodo Inicial</Label>
+                        <input
+                          type="date"
+                          className="w-full rounded-lg border-0 bg-background/90 px-3 py-2 text-sm shadow-sm ring-1 ring-black/5 dark:bg-background/50 dark:ring-white/10"
+                          value={customPeriodoInicial}
+                          onChange={(e) => setCustomPeriodoInicial(e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <Label className="mb-1 block text-xs text-fuchsia-800 dark:text-fuchsia-300">Periodo Final</Label>
+                        <input
+                          type="date"
+                          className="w-full rounded-lg border-0 bg-background/90 px-3 py-2 text-sm shadow-sm ring-1 ring-black/5 dark:bg-background/50 dark:ring-white/10"
+                          value={customPeriodoFinal}
+                          onChange={(e) => setCustomPeriodoFinal(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  )}
+                  {iptReferenceOptions[iptRefIdx]?.periodoInicial && iptReferenceOptions[iptRefIdx]?.value !== "personalizado" && (
+                    <div className="mt-2 text-xs text-fuchsia-700 dark:text-fuchsia-400">
+                      Periodo: {formatPtDate(iptReferenceOptions[iptRefIdx].periodoInicial)} a {formatPtDate(iptReferenceOptions[iptRefIdx].periodoFinal)}
+                    </div>
+                  )}
                 </div>
 
                 <UploadDropzone

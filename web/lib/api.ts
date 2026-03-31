@@ -318,15 +318,23 @@ export const apiService = {
   uploadIptReportXlsx: async (
     file: File,
     referencia: {
-      modoReferencia: "d_minus_1" | "fim_de_semana";
+      modoReferencia: "d_minus_1" | "fim_de_semana" | "mensal";
       periodoInicial: string;
       periodoFinal: string;
+      mesReferencia?: string;
     }
   ) => {
     const formData = new FormData();
     formData.append('file', file);
-    const url = `/upload/ipt-report?modo_referencia=${encodeURIComponent(referencia.modoReferencia)}&periodo_inicial=${encodeURIComponent(referencia.periodoInicial)}&periodo_final=${encodeURIComponent(referencia.periodoFinal)}`;
-    const { data } = await api.post(url, formData, {
+    const params = new URLSearchParams();
+    if (referencia.mesReferencia) {
+      params.set('mes_referencia', referencia.mesReferencia);
+    } else {
+      params.set('modo_referencia', referencia.modoReferencia);
+      params.set('periodo_inicial', referencia.periodoInicial);
+      params.set('periodo_final', referencia.periodoFinal);
+    }
+    const { data } = await api.post(`/upload/ipt-report?${params.toString()}`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
     return data;
@@ -380,6 +388,39 @@ export const apiService = {
     const { data } = await api.post('/upload/clear-ipt-report');
     return data;
   },
+  clearIptReportPeriodo: async (periodoInicial: string, periodoFinal: string) => {
+    const { data } = await api.post(`/upload/clear-ipt-report-periodo?periodo_inicial=${encodeURIComponent(periodoInicial)}&periodo_final=${encodeURIComponent(periodoFinal)}`);
+    return data;
+  },
+  /** Remove Historico OS DDMX (ipt_imports). */
+  clearIptDdmxImportados: async () => {
+    const { data } = await api.post('/upload/clear-ipt-ddmx');
+    return data;
+  },
+  uploadIptConsolidadoVeiculos: async (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const { data } = await api.post('/upload/ipt-consolidado-veiculos', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return data;
+  },
+  uploadIptConsolidadoVarricao: async (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const { data } = await api.post('/upload/ipt-consolidado-varricao', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return data;
+  },
+  clearIptConsolidadoVeiculos: async () => {
+    const { data } = await api.post('/upload/clear-ipt-consolidado-veiculos');
+    return data;
+  },
+  clearIptConsolidadoVarricao: async () => {
+    const { data } = await api.post('/upload/clear-ipt-consolidado-varricao');
+    return data;
+  },
   /** Remove registros manuais de IPT. */
   clearIptRegistros: async () => {
     const { data } = await api.post('/upload/clear-ipt-registros');
@@ -394,6 +435,11 @@ export const apiService = {
   getIptPorMes: async (ano?: number) => {
     const params = ano != null ? { ano } : {};
     const { data } = await api.get('/indicadores/ipt-por-mes', { params });
+    return data;
+  },
+  /** IPT Report diário: percentual por dia estimado a partir do report SELIMP. */
+  getIptReportDiario: async (inicio: string, fim: string) => {
+    const { data } = await api.get('/ipt/report-diario', { params: { inicio, fim } });
     return data;
   },
   

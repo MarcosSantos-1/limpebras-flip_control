@@ -270,6 +270,77 @@ export async function runMigrations() {
       );
     `);
     await client.query("CREATE INDEX IF NOT EXISTS idx_ipt_obs_diarias_setor_data ON ipt_observacoes_diarias(setor, data)").catch(() => {});
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS ipt_report_linhas (
+        id SERIAL PRIMARY KEY,
+        plano TEXT NOT NULL,
+        subprefeitura TEXT,
+        tipo_servico TEXT,
+        status TEXT,
+        percentual_execucao NUMERIC(8,4),
+        equipamentos TEXT,
+        data_estimada DATE,
+        metodo_estimativa TEXT,
+        confianca_estimativa TEXT,
+        periodo_inicial DATE NOT NULL,
+        periodo_final DATE NOT NULL,
+        periodo_tipo TEXT,
+        posicao_original INTEGER,
+        frequencia TEXT,
+        servico_codigo TEXT,
+        raw JSONB NOT NULL,
+        source_file TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client.query("CREATE INDEX IF NOT EXISTS idx_report_linhas_plano ON ipt_report_linhas(plano)").catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_report_linhas_data ON ipt_report_linhas(data_estimada)").catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_report_linhas_periodo ON ipt_report_linhas(periodo_inicial, periodo_final)").catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_report_linhas_status ON ipt_report_linhas(status)").catch(() => {});
+    await client.query("CREATE UNIQUE INDEX IF NOT EXISTS ux_report_linhas_plano_periodo_pos ON ipt_report_linhas(plano, periodo_inicial, periodo_final, posicao_original)").catch(() => {});
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS ipt_consolidado_veiculos_dados (
+        id SERIAL PRIMARY KEY,
+        placa TEXT,
+        operacao TEXT,
+        motorista TEXT,
+        setor TEXT NOT NULL,
+        data_referencia DATE NOT NULL,
+        liberacao TEXT,
+        saida TEXT,
+        status TEXT,
+        retorno TEXT,
+        tempo_trabalho TEXT,
+        percentual_limpebras NUMERIC(8,4),
+        percentual_selimp NUMERIC(8,4),
+        raw JSONB NOT NULL,
+        source_file TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client.query("CREATE INDEX IF NOT EXISTS idx_consol_veic_setor ON ipt_consolidado_veiculos_dados(setor)").catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_consol_veic_data ON ipt_consolidado_veiculos_dados(data_referencia)").catch(() => {});
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS ipt_consolidado_varricao_dados (
+        id SERIAL PRIMARY KEY,
+        setor TEXT NOT NULL,
+        frequencia_rotulo TEXT,
+        data_referencia DATE NOT NULL,
+        percentual_selimp NUMERIC(8,4),
+        percentual_ddmx NUMERIC(8,4),
+        raw JSONB NOT NULL,
+        source_file TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client.query("CREATE INDEX IF NOT EXISTS idx_consol_varr_setor ON ipt_consolidado_varricao_dados(setor)").catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_consol_varr_data ON ipt_consolidado_varricao_dados(data_referencia)").catch(() => {});
   } finally {
     client.release();
   }

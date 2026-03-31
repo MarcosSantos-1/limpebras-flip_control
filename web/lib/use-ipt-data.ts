@@ -4,6 +4,23 @@ import { format, startOfMonth, endOfMonth, subDays } from "date-fns";
 
 const DEDUP_INTERVAL_MS = 30 * 1000; // 30s
 
+export interface ReportDiarioDia {
+  data: string;
+  total_linhas: number;
+  encerradas: number;
+  media_percentual: number | null;
+  planos_distintos: number;
+  taxa_encerramento: number;
+}
+
+export interface ReportDiarioResponse {
+  periodo: { inicio: string; fim: string };
+  dias: ReportDiarioDia[];
+  total_dias: number;
+  total_linhas: number;
+  total_encerradas: number;
+}
+
 export function useIptData(
   selectedMonth: Date,
   tableScope: "dia_anterior" | "periodo" | "todos",
@@ -25,6 +42,7 @@ export function useIptData(
 
   const cardsKey = `ipt:cards:${periodoKpisInicio}:${periodoKpisFim}:${subprefeituraFilter}`;
   const kpisKey = `kpis:${periodoKpisInicio}:${periodoKpisFim}`;
+  const reportDiarioKey = `ipt:report-diario:${periodoKpisInicio}:${periodoKpisFim}`;
 
   let obsScopeStart: string | undefined;
   let obsScopeEnd: string | undefined;
@@ -67,7 +85,6 @@ export function useIptData(
           subprefeituraFilter
         );
       }
-      // dia_anterior: server usa ontem quando periodo não informado
       return apiService.getIptPreview(undefined, undefined, false, subprefeituraFilter);
     },
     { revalidateOnFocus: false, dedupingInterval: DEDUP_INTERVAL_MS }
@@ -78,7 +95,12 @@ export function useIptData(
     dedupingInterval: DEDUP_INTERVAL_MS,
   });
 
-  /** Enquanto cards ou tabela estão no primeiro fetch (SWR) para a chave atual — overlay e estados vazios. */
+  const reportDiarioSwr = useSWR<ReportDiarioResponse>(
+    reportDiarioKey,
+    () => apiService.getIptReportDiario(periodoKpisInicio, periodoKpisFim),
+    { revalidateOnFocus: false, dedupingInterval: DEDUP_INTERVAL_MS }
+  );
+
   const isLoading = previewCardsSwr.isLoading || previewTableSwr.isLoading;
   const isValidating = previewCardsSwr.isValidating || previewTableSwr.isValidating || kpisSwr.isValidating;
 
@@ -88,6 +110,7 @@ export function useIptData(
       previewTableSwr.mutate(),
       kpisSwr.mutate(),
       observacoesSwr.mutate(),
+      reportDiarioSwr.mutate(),
     ]);
   };
 
@@ -95,6 +118,7 @@ export function useIptData(
     previewCards: previewCardsSwr.data ?? null,
     previewTable: previewTableSwr.data ?? previewCardsSwr.data ?? null,
     observacoes: observacoesSwr.data ?? { globais: {}, diarias: {} },
+    reportDiario: reportDiarioSwr.data ?? null,
     mutate,
     kpis: kpisSwr.data ?? null,
     isLoading,
