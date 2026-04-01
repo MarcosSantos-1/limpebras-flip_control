@@ -37,6 +37,20 @@ export const acicRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
 
+    // Uma linha por N_ACIC: importações repetidas geram duplicatas; mantém o registro mais recente (query já vem DESC).
+    const seenNAcic = new Set<string>();
+    const deduped: typeof rows = [];
+    for (const row of rows) {
+      const raw = (row.raw ?? {}) as Record<string, unknown>;
+      const n = getNAcic(raw);
+      if (n) {
+        if (seenNAcic.has(n)) continue;
+        seenNAcic.add(n);
+      }
+      deduped.push(row);
+    }
+    rows = deduped;
+
     const overridesRes = await pool.query("SELECT n_acic, defesa, sem_recurso, valor FROM acic_overrides");
     const overridesMap = new Map<string, { defesa: boolean; sem_recurso: boolean; valor: number | null }>();
     for (const o of overridesRes.rows) {
