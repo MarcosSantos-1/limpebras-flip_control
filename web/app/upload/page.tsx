@@ -9,7 +9,6 @@ import {
   FileSpreadsheet,
   Settings,
   ShieldAlert,
-  Trash2,
   Upload,
 } from "lucide-react";
 import { toast } from "react-toastify";
@@ -39,9 +38,7 @@ type UploadKey =
   | "ddmx"
   | "iptReport"
   | "iptStatusBateria"
-  | "iptCronograma"
-  | "iptConsolidadoVeiculos"
-  | "iptConsolidadoVarricao";
+  | "iptCronograma";
 type IptReferenceMode = "d_minus_1" | "fim_de_semana" | "mensal" | "personalizado";
 
 interface UploadApiError {
@@ -119,8 +116,6 @@ interface UploadOverviewResponse {
   iptReport?: LastUploadInfo;
   iptStatusBateria?: LastUploadInfo;
   iptCronograma?: LastUploadInfo;
-  iptConsolidadoVeiculos?: LastUploadInfo;
-  iptConsolidadoVarricao?: LastUploadInfo;
   sessions?: Record<SessionKey, LastUploadInfo>;
 }
 
@@ -229,8 +224,6 @@ function createInitialStates(): Record<UploadKey, UploadState> {
     iptReport: { status: "idle" },
     iptStatusBateria: { status: "idle" },
     iptCronograma: { status: "idle" },
-    iptConsolidadoVeiculos: { status: "idle" },
-    iptConsolidadoVarricao: { status: "idle" },
   };
 }
 
@@ -559,98 +552,6 @@ export default function UploadPage() {
     }
   };
 
-  const handleConsolidadoVeiculos = async (files: FileList | null) => {
-    const file = files?.[0];
-    if (!file) return;
-    const lower = file.name.toLowerCase();
-    if (!lower.endsWith(".xls") && !lower.endsWith(".xlsx")) {
-      const message = "Aceite apenas XLS ou XLSX.";
-      setUploadState("iptConsolidadoVeiculos", { status: "error", error: message });
-      toast.error(message);
-      return;
-    }
-    setUploadState("iptConsolidadoVeiculos", { status: "uploading" });
-    try {
-      const result = await apiService.uploadIptConsolidadoVeiculos(file);
-      setUploadState("iptConsolidadoVeiculos", { status: "success", result });
-      toast.success("Planilha de veiculos importada.");
-      await loadOverview();
-    } catch (error) {
-      const message = getErrorMessage(error);
-      setUploadState("iptConsolidadoVeiculos", { status: "error", error: message });
-      toast.error(message);
-    }
-  };
-
-  const handleConsolidadoVarricao = async (files: FileList | null) => {
-    const file = files?.[0];
-    if (!file) return;
-    const lower = file.name.toLowerCase();
-    if (!lower.endsWith(".xls") && !lower.endsWith(".xlsx")) {
-      const message = "Aceite apenas XLS ou XLSX.";
-      setUploadState("iptConsolidadoVarricao", { status: "error", error: message });
-      toast.error(message);
-      return;
-    }
-    setUploadState("iptConsolidadoVarricao", { status: "uploading" });
-    try {
-      const result = await apiService.uploadIptConsolidadoVarricao(file);
-      setUploadState("iptConsolidadoVarricao", { status: "success", result });
-      toast.success("Planilha de varricao importada.");
-      await loadOverview();
-    } catch (error) {
-      const message = getErrorMessage(error);
-      setUploadState("iptConsolidadoVarricao", { status: "error", error: message });
-      toast.error(message);
-    }
-  };
-
-  const handleClearIptReport = async () => {
-    if (!window.confirm("Apagar todos os dados do Report SELIMP (ipt_imports + cache mensal)?")) return;
-    try {
-      const r = await apiService.clearIptReportImportados();
-      toast.success(`Removidos: ${(r as { deleted?: number })?.deleted ?? 0} registros.`);
-      await loadOverview();
-    } catch (error) {
-      toast.error(getErrorMessage(error));
-    }
-  };
-
-  const handleClearIptDdmx = async () => {
-    if (!window.confirm("Apagar todos os Historicos OS DDMX em ipt_imports?")) return;
-    try {
-      const r = await apiService.clearIptDdmxImportados();
-      toast.success(`Removidos: ${(r as { deleted?: number })?.deleted ?? 0} registros.`);
-      await loadOverview();
-    } catch (error) {
-      toast.error(getErrorMessage(error));
-    }
-  };
-
-  const handleClearConsolidadoVeiculos = async () => {
-    if (!window.confirm("Apagar todos os registros importados de Veiculos (planilha consolidada)?")) return;
-    try {
-      const r = await apiService.clearIptConsolidadoVeiculos();
-      toast.success(`Removidos: ${(r as { deleted?: number })?.deleted ?? 0} registros.`);
-      setUploadState("iptConsolidadoVeiculos", { status: "idle" });
-      await loadOverview();
-    } catch (error) {
-      toast.error(getErrorMessage(error));
-    }
-  };
-
-  const handleClearConsolidadoVarricao = async () => {
-    if (!window.confirm("Apagar todos os registros importados de Varricao (planilha consolidada)?")) return;
-    try {
-      const r = await apiService.clearIptConsolidadoVarricao();
-      toast.success(`Removidos: ${(r as { deleted?: number })?.deleted ?? 0} registros.`);
-      setUploadState("iptConsolidadoVarricao", { status: "idle" });
-      await loadOverview();
-    } catch (error) {
-      toast.error(getErrorMessage(error));
-    }
-  };
-
   const handleCronogramaUpload = async (files: FileList | null) => {
     const list = Array.from(files ?? []);
     if (!list.length) return;
@@ -727,102 +628,6 @@ export default function UploadPage() {
           </div>
         </div>
 
-        <div className="rounded-2xl border-0 bg-violet-50/95 p-6 shadow-lg shadow-violet-900/10 ring-1 ring-violet-500/20 dark:bg-violet-950/30 dark:shadow-violet-950/40 dark:ring-violet-500/25">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-              <div className="text-lg font-semibold tracking-tight text-violet-950 dark:text-violet-100">
-                IPT — Planilhas consolidadas (prioridade)
-              </div>
-              <p className="mt-2 max-w-3xl text-xs leading-relaxed text-violet-900/90 dark:text-violet-100/85">
-                Importe aqui os relatorios com percentuais SELIMP e DDMX (Limpebras) e data de execucao. O painel IPT e o
-                preview usam somente esses dados — sem cruzar com cronograma ou &quot;adivinhar&quot; datas. Aceita XLS ou XLSX.
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="border-red-300/80 text-red-800 hover:bg-red-50 dark:border-red-500/40 dark:text-red-200 dark:hover:bg-red-950/40"
-                onClick={handleClearIptReport}
-              >
-                <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-                Limpar Report SELIMP
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="border-red-300/80 text-red-800 hover:bg-red-50 dark:border-red-500/40 dark:text-red-200 dark:hover:bg-red-950/40"
-                onClick={handleClearIptDdmx}
-              >
-                <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-                Limpar DDMX
-              </Button>
-            </div>
-          </div>
-          <div className="mt-6 grid gap-6 md:grid-cols-2">
-            <div className="rounded-2xl border-0 bg-background/80 p-5 shadow-inner shadow-black/5 ring-1 ring-black/5 dark:bg-background/40 dark:ring-white/10">
-              <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
-                <div className="text-sm font-semibold text-foreground">Veiculos (ex.: relatorio-*-1437)</div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="shrink-0 border-red-300/80 text-red-800 hover:bg-red-50 dark:border-red-500/40 dark:text-red-200 dark:hover:bg-red-950/40"
-                  onClick={handleClearConsolidadoVeiculos}
-                >
-                  <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-                  Apagar dados
-                </Button>
-              </div>
-              <UploadDropzone
-                inputId="iptConsolidadoVeiculos"
-                accept=".xls,.xlsx"
-                loading={states.iptConsolidadoVeiculos.status === "uploading"}
-                helperText="Placa, setor, data, % Limpebras e % SELIMP por linha."
-                onFilesSelected={handleConsolidadoVeiculos}
-              />
-              <HistoryBlock
-                title="Ultima importacao — Veiculos"
-                overview={overview.iptConsolidadoVeiculos}
-                expanded={Boolean(expandedHistory.iptConsolidadoVeiculos)}
-                onToggle={() => toggleHistory("iptConsolidadoVeiculos")}
-              />
-              <SummaryBox state={states.iptConsolidadoVeiculos} />
-            </div>
-            <div className="rounded-2xl border-0 bg-background/80 p-5 shadow-inner shadow-black/5 ring-1 ring-black/5 dark:bg-background/40 dark:ring-white/10">
-              <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
-                <div className="text-sm font-semibold text-foreground">Varricao matriz (ex.: relatorio-*-1533)</div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="shrink-0 border-red-300/80 text-red-800 hover:bg-red-50 dark:border-red-500/40 dark:text-red-200 dark:hover:bg-red-950/40"
-                  onClick={handleClearConsolidadoVarricao}
-                >
-                  <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-                  Apagar dados
-                </Button>
-              </div>
-              <UploadDropzone
-                inputId="iptConsolidadoVarricao"
-                accept=".xls,.xlsx"
-                loading={states.iptConsolidadoVarricao.status === "uploading"}
-                helperText="Setor em linhas, dias em colunas, celulas no formato XX% - YYv."
-                onFilesSelected={handleConsolidadoVarricao}
-              />
-              <HistoryBlock
-                title="Ultima importacao — Varricao"
-                overview={overview.iptConsolidadoVarricao}
-                expanded={Boolean(expandedHistory.iptConsolidadoVarricao)}
-                onToggle={() => toggleHistory("iptConsolidadoVarricao")}
-              />
-              <SummaryBox state={states.iptConsolidadoVarricao} />
-            </div>
-          </div>
-        </div>
-
         <div className="rounded-2xl border-0 bg-amber-50/90 p-5 text-sm text-amber-950 shadow-md shadow-amber-900/10 ring-1 ring-amber-500/20 dark:bg-amber-950/35 dark:text-amber-50 dark:shadow-amber-950/50 dark:ring-amber-500/25">
           <div className="flex items-start gap-4">
             <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 opacity-90" />
@@ -830,7 +635,7 @@ export default function UploadPage() {
               <div className="font-semibold tracking-tight">Protecao extra para imports sensiveis</div>
               <div className="mt-2 text-xs leading-relaxed opacity-95">
                 `FLIP` aceita apenas CSV e `DDMX` apenas planilhas. O tipo real do arquivo e validado no backend antes da importacao.
-                IPT consolidado fica acima; Report SELIMP e DDMX abaixo sao opcionais para conferencia ou outros fluxos.
+                O Report SELIMP e o historico DDMX na secao SELIMP sao opcionais para conferencia ou outros fluxos.
               </div>
             </div>
           </div>

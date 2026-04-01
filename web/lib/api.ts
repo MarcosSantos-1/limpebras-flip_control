@@ -92,7 +92,10 @@ export interface IptPreviewResponse {
     total_planos_despachados?: number;
     total_planos_ativos: number;
     total_despachos_selimp?: number;
+    total_despachos_zerados?: number;
     media_execucao_planos_ativos: number | null;
+    media_com_zerados?: number | null;
+    media_sem_zerados?: number | null;
     percentual_medio_ddmx?: number | null;
     total_modulos_relacionados: number;
     total_modulos_ativos: number;
@@ -106,11 +109,17 @@ export interface IptPreviewResponse {
     subprefeitura: string;
     quantidade_planos: number;
     media_execucao: number | null;
+    media_sem_zerados?: number | null;
+    total_despachos?: number;
+    despachos_zerados?: number;
   }>;
   servicos: Array<{
     tipo_servico: string;
     quantidade_planos: number;
     media_execucao: number | null;
+    media_sem_zerados?: number | null;
+    total_despachos?: number;
+    despachos_zerados?: number;
   }>;
   mesclados: IptPreviewRow[];
   comparativo: {
@@ -126,6 +135,10 @@ export interface IptPreviewResponse {
       percentual_nosso: number | null;
       diferenca_percentual: number | null;
       origem: "ambos" | "somente_selimp" | "somente_nosso";
+      despachos_selimp?: number;
+      raw_selimp_sum?: number;
+      raw_selimp_count?: number;
+      raw_selimp_nonzero_count?: number;
     }>;
   };
   /** Itens completos com detalhes diários, equipamentos, frequência e próxima programação */

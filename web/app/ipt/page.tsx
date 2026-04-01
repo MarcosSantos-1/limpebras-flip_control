@@ -491,35 +491,30 @@ export default function IPTPage() {
       subprefeitura: string;
       percentual_selimp: number | null;
       percentual_nosso: number | null;
+      despachos_selimp?: number;
+      raw_selimp_sum?: number;
+      raw_selimp_count?: number;
+      raw_selimp_nonzero_count?: number;
     }>,
     [iptPreviewCards]
   );
 
-  /** Percentual de execução por plano (nosso primeiro, selimp fallback) */
-  const getPercentualExecucao = (row: { percentual_nosso?: number | null; percentual_selimp?: number | null }) => {
-    const v = row.percentual_nosso ?? row.percentual_selimp ?? null;
-    return v != null && !Number.isNaN(v) ? v : null;
-  };
-
-  /** Média de execução sem zerados e com zerados (global e por sub) - para o card Subprefeituras */
+  /** Média de execução sem zerados e com zerados ponderada por despacho (SELIMP) */
   const subprefeituraInsights = useMemo(() => {
     const bySub = new Map<
       string,
-      { comZerados: number[]; semZerados: number[]; totalPlanos: number; zerados: number }
+      { despachoSum: number; despachoCount: number; despachoNonzeroCount: number; totalPlanos: number }
     >();
     for (const row of cardsComparativoItens) {
       const sub = row.subprefeitura || "Não informado";
       if (!bySub.has(sub)) {
-        bySub.set(sub, { comZerados: [], semZerados: [], totalPlanos: 0, zerados: 0 });
+        bySub.set(sub, { despachoSum: 0, despachoCount: 0, despachoNonzeroCount: 0, totalPlanos: 0 });
       }
       const entry = bySub.get(sub)!;
-      const pct = getPercentualExecucao(row);
       entry.totalPlanos += 1;
-      if (pct != null) {
-        entry.comZerados.push(pct);
-        if (pct > 0) entry.semZerados.push(pct);
-        else entry.zerados += 1;
-      }
+      entry.despachoSum += row.raw_selimp_sum ?? 0;
+      entry.despachoCount += row.raw_selimp_count ?? 0;
+      entry.despachoNonzeroCount += row.raw_selimp_nonzero_count ?? (row.raw_selimp_count ?? 0);
     }
     const result: Array<{
       subprefeitura: string;
@@ -529,43 +524,32 @@ export default function IPTPage() {
       zerados: number;
     }> = [];
     bySub.forEach((val, sub) => {
-      const mediaCom =
-        val.comZerados.length > 0
-          ? val.comZerados.reduce((a, b) => a + b, 0) / val.comZerados.length
-          : null;
-      const mediaSem =
-        val.semZerados.length > 0
-          ? val.semZerados.reduce((a, b) => a + b, 0) / val.semZerados.length
-          : null;
       result.push({
         subprefeitura: sub,
-        mediaComZerados: mediaCom,
-        mediaSemZerados: mediaSem,
+        mediaComZerados: val.despachoCount > 0 ? val.despachoSum / val.despachoCount : null,
+        mediaSemZerados: val.despachoNonzeroCount > 0 ? val.despachoSum / val.despachoNonzeroCount : null,
         totalPlanos: val.totalPlanos,
-        zerados: val.zerados,
+        zerados: val.despachoCount - val.despachoNonzeroCount,
       });
     });
     return result.sort((a, b) => (b.mediaSemZerados ?? -1) - (a.mediaSemZerados ?? -1));
   }, [cardsComparativoItens]);
 
-  /** Médias globais (considerando filtro de subprefeitura já aplicado no backend) */
+  /** Médias globais ponderadas por despacho (SELIMP) */
   const globalInsights = useMemo(() => {
-    const comZerados: number[] = [];
-    const semZerados: number[] = [];
+    let totalSum = 0;
+    let totalCount = 0;
+    let totalNonzeroCount = 0;
     for (const row of cardsComparativoItens) {
-      const pct = getPercentualExecucao(row);
-      if (pct != null) {
-        comZerados.push(pct);
-        if (pct > 0) semZerados.push(pct);
-      }
+      totalSum += row.raw_selimp_sum ?? 0;
+      totalCount += row.raw_selimp_count ?? 0;
+      totalNonzeroCount += row.raw_selimp_nonzero_count ?? (row.raw_selimp_count ?? 0);
     }
     return {
-      mediaComZerados:
-        comZerados.length > 0 ? comZerados.reduce((a, b) => a + b, 0) / comZerados.length : null,
-      mediaSemZerados:
-        semZerados.length > 0 ? semZerados.reduce((a, b) => a + b, 0) / semZerados.length : null,
+      mediaComZerados: totalCount > 0 ? totalSum / totalCount : null,
+      mediaSemZerados: totalNonzeroCount > 0 ? totalSum / totalNonzeroCount : null,
       totalPlanos: cardsComparativoItens.length,
-      zerados: comZerados.filter((x) => x <= 0).length,
+      zerados: totalCount - totalNonzeroCount,
     };
   }, [cardsComparativoItens]);
 
@@ -1066,7 +1050,7 @@ export default function IPTPage() {
                   <div
                     key={item.subprefeitura}
                     className="group rounded-xl bg-background/60 p-3 shadow-sm transition-all hover:shadow-md hover:bg-emerald-500/5 hover:ring-1 hover:ring-emerald-500/20 cursor-default"
-                    title={`${item.subprefeitura || "Não informado"}: ${pct(item.media_execucao)} de execução média | ${item.quantidade_planos} planos`}
+                    title={`${item.subprefeitura || "Não informado"}: ${pct(item.media_execucao)} com zerados | ${pct(item.media_sem_zerados)} sem zerados | ${item.total_despachos ?? 0} despachos`}
                   >
                     <div className="mb-2 flex items-center justify-between gap-2">
                       <span className="truncate font-semibold text-sm group-hover:text-emerald-700 dark:group-hover:text-emerald-300">
@@ -1083,8 +1067,8 @@ export default function IPTPage() {
                           style={{ width: `${clamp(item.media_execucao ?? 0)}%` }}
                         />
                       </div>
-                      <span className="text-xs text-muted-foreground shrink-0 w-16 text-right">
-                        {item.quantidade_planos} planos
+                      <span className="text-xs text-muted-foreground shrink-0 min-w-[5.5rem] text-right whitespace-nowrap">
+                        {item.total_despachos ?? 0} despachos
                       </span>
                     </div>
                   </div>
@@ -1121,7 +1105,7 @@ export default function IPTPage() {
                     </div>
                     <div className="rounded-xl bg-amber-500/10 dark:bg-amber-500/15 p-4 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg border border-amber-500/20 hover:border-amber-500/40">
                       <p className="text-xs font-medium text-amber-700 dark:text-amber-400 mb-2 uppercase tracking-wider">
-                        Planos zerados
+                        Despachos zerados
                       </p>
                       <p className="text-2xl font-bold text-amber-700 dark:text-amber-300 tabular-nums">
                         {globalInsights.zerados}
@@ -1199,7 +1183,7 @@ export default function IPTPage() {
                   {/* Gráfico de planos zerados por sub */}
                   {subprefeituraInsights.some((s) => s.zerados > 0) && (
                     <div className="rounded-xl bg-background/60 p-5 shadow-sm border border-border space-y-4">
-                      <p className="text-sm font-semibold text-foreground">Planos com execução zerada por sub</p>
+                      <p className="text-sm font-semibold text-foreground">Despachos com execução zerada por sub</p>
                       <div className="h-52 min-h-[160px]">
                         <IptBar
                           data={{
@@ -1208,7 +1192,7 @@ export default function IPTPage() {
                             ),
                             datasets: [
                               {
-                                label: "Planos zerados",
+                                label: "Despachos zerados",
                                 data: subprefeituraInsights.map((s) => s.zerados),
                                 backgroundColor: "rgba(245, 158, 11, 0.6)",
                                 borderColor: "rgb(245, 158, 11)",
@@ -1295,7 +1279,7 @@ export default function IPTPage() {
                   <div
                     key={item.tipo_servico}
                     className="group rounded-xl bg-background/60 p-3 shadow-sm transition-all hover:shadow-md hover:bg-cyan-500/5 hover:ring-1 hover:ring-cyan-500/20 cursor-default"
-                    title={`${item.tipo_servico || "Não informado"}: ${pct(item.media_execucao)} de execução média | ${item.quantidade_planos} planos`}
+                    title={`${item.tipo_servico || "Não informado"}: ${pct(item.media_execucao)} com zerados | ${pct(item.media_sem_zerados)} sem zerados | ${item.total_despachos ?? 0} despachos`}
                   >
                     <div className="mb-2 flex items-center justify-between gap-2">
                       <span className="truncate font-semibold text-sm group-hover:text-cyan-700 dark:group-hover:text-cyan-300">
@@ -1312,8 +1296,8 @@ export default function IPTPage() {
                           style={{ width: `${clamp(item.media_execucao ?? 0)}%` }}
                         />
                       </div>
-                      <span className="text-xs text-muted-foreground shrink-0 w-16 text-right">
-                        {item.quantidade_planos} planos
+                      <span className="text-xs text-muted-foreground shrink-0 min-w-[5.5rem] text-right whitespace-nowrap">
+                        {item.total_despachos ?? 0} despachos
                       </span>
                     </div>
                   </div>

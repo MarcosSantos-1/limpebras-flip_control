@@ -4,7 +4,7 @@ import {
   compareSetores,
   parseSetor,
   getSubFromPlano,
-  getTipoServicoFromPlano,
+  getTipoServicoCanonicoPlano,
   getFrequenciaDescricao,
 } from "../constants/ipt.js";
 
@@ -68,7 +68,9 @@ export async function buildIptPreviewFromConsolidado(
   }
   const reportQuery = `SELECT plano, data_estimada, percentual_execucao, status, tipo_servico, frequencia, metodo_estimativa
      FROM ipt_report_linhas
-     WHERE data_estimada IS NOT NULL ${reportDateFilter}
+     WHERE data_estimada IS NOT NULL
+       AND LOWER(COALESCE(status, '')) LIKE '%encerrad%'
+       ${reportDateFilter}
      ORDER BY plano, data_estimada`;
 
   // --- DDMX (ipt_imports historico_os*) ---
@@ -150,6 +152,7 @@ export async function buildIptPreviewFromConsolidado(
   type Bucket = {
     selimp_sum: number;
     selimp_count: number;
+    selimp_zero_count: number;
     nosso_sum: number;
     nosso_count: number;
     despachos_selimp: number;
@@ -197,6 +200,7 @@ export async function buildIptPreviewFromConsolidado(
     const current = planoEntry.diario.get(dateKey) ?? {
       selimp_sum: 0,
       selimp_count: 0,
+      selimp_zero_count: 0,
       nosso_sum: 0,
       nosso_count: 0,
       despachos_selimp: 0,
@@ -232,6 +236,7 @@ export async function buildIptPreviewFromConsolidado(
       bucket.selimp_sum += pctVal;
       bucket.selimp_count += 1;
       bucket.despachos_selimp += 1;
+      if (pctVal === 0) bucket.selimp_zero_count += 1;
     }
     if (row.metodo_estimativa && row.metodo_estimativa !== "cronograma" && row.metodo_estimativa !== "cronograma+cross_ref") {
       bucket.estimados += 1;
@@ -313,6 +318,7 @@ export async function buildIptPreviewFromConsolidado(
       let sumSelimp = 0;
       let countSelimp = 0;
       let despachosSelimp = 0;
+      let zeroCountSelimp = 0;
       let sumNosso = 0;
       let countNosso = 0;
       let despachosNosso = 0;
@@ -329,6 +335,7 @@ export async function buildIptPreviewFromConsolidado(
           sumSelimp += bucket.selimp_sum;
           countSelimp += bucket.selimp_count;
           despachosSelimp += bucket.despachos_selimp;
+          zeroCountSelimp += bucket.selimp_zero_count;
           sumNosso += bucket.nosso_sum;
           countNosso += bucket.nosso_count;
           despachosNosso += bucket.despachos_nosso;
@@ -364,10 +371,10 @@ export async function buildIptPreviewFromConsolidado(
 
       if (!mostrar) return null;
 
+      const fromPlano = getTipoServicoCanonicoPlano(item.plano);
       const tipoServicoFinal =
-        item.tipo_servico && !/n[aã]o\s*informado/i.test(item.tipo_servico)
-          ? item.tipo_servico
-          : getTipoServicoFromPlano(item.plano) || "—";
+        fromPlano ||
+        (item.tipo_servico && !/n[aã]o\s*informado/i.test(item.tipo_servico) ? item.tipo_servico : "—");
 
       return {
         plano: item.plano,
@@ -383,6 +390,9 @@ export async function buildIptPreviewFromConsolidado(
         despachos_selimp: despachosSelimp,
         despachos_nosso: despachosNosso,
         origem,
+        raw_selimp_sum: sumSelimp,
+        raw_selimp_count: countSelimp,
+        raw_selimp_nonzero_count: countSelimp - zeroCountSelimp,
         equipamentos: Array.from(item.equipamentos),
         bateria_por_equipamento: Object.fromEntries(
           Array.from(item.equipamentos)
@@ -420,9 +430,13 @@ export async function buildIptPreviewFromConsolidado(
 
   const totalDespachosSelimp = rowsFiltered.reduce((acc, r) => acc + r.despachos_selimp, 0);
   const totalDespachosNosso = rowsFiltered.reduce((acc, r) => acc + r.despachos_nosso, 0);
-  const iptSomaSelimp = rowsFiltered.reduce((acc, r) => acc + (r.percentual_selimp ?? 0), 0);
+  const totalRawSelimpSum = rowsFiltered.reduce((acc, r) => acc + r.raw_selimp_sum, 0);
+  const totalRawSelimpCount = rowsFiltered.reduce((acc, r) => acc + r.raw_selimp_count, 0);
+  const totalRawSelimpNonzeroCount = rowsFiltered.reduce((acc, r) => acc + r.raw_selimp_nonzero_count, 0);
   const iptMedioSelimp =
-    rowsFiltered.length > 0 ? Number((iptSomaSelimp / rowsFiltered.length).toFixed(2)) : null;
+    totalRawSelimpCount > 0 ? Number((totalRawSelimpSum / totalRawSelimpCount).toFixed(2)) : null;
+  const iptMedioSelimpSemZerados =
+    totalRawSelimpNonzeroCount > 0 ? Number((totalRawSelimpSum / totalRawSelimpNonzeroCount).toFixed(2)) : null;
   const planosDespachadosSelimp = rowsFiltered.filter((r) => r.despachos_selimp > 0).length;
   const ddmxSumPond = rowsFiltered.reduce((acc, r) => {
     if (r.percentual_nosso != null && r.despachos_nosso > 0)
@@ -436,36 +450,40 @@ export async function buildIptPreviewFromConsolidado(
   const percentualMedioDdmx =
     ddmxCountPond > 0 ? Number((ddmxSumPond / ddmxCountPond).toFixed(2)) : null;
 
-  const legacySubMap = new Map<string, { quantidade: number; sum: number; count: number }>();
-  const legacyServMap = new Map<string, { quantidade: number; sum: number; count: number }>();
+  const legacySubMap = new Map<string, { quantidade: number; despachoSum: number; despachoCount: number; despachoNonzeroCount: number }>();
+  const legacyServMap = new Map<string, { quantidade: number; despachoSum: number; despachoCount: number; despachoNonzeroCount: number }>();
   for (const r of rowsFiltered) {
     const subKey = r.subprefeitura || "Não informado";
-    const subAgg = legacySubMap.get(subKey) ?? { quantidade: 0, sum: 0, count: 0 };
+    const subAgg = legacySubMap.get(subKey) ?? { quantidade: 0, despachoSum: 0, despachoCount: 0, despachoNonzeroCount: 0 };
     subAgg.quantidade += 1;
-    if (r.percentual_selimp != null) {
-      subAgg.sum += r.percentual_selimp;
-      subAgg.count += 1;
-    }
+    subAgg.despachoSum += r.raw_selimp_sum;
+    subAgg.despachoCount += r.raw_selimp_count;
+    subAgg.despachoNonzeroCount += r.raw_selimp_nonzero_count;
     legacySubMap.set(subKey, subAgg);
 
     const srvKey = r.tipo_servico || "Não informado";
-    const srvAgg = legacyServMap.get(srvKey) ?? { quantidade: 0, sum: 0, count: 0 };
+    const srvAgg = legacyServMap.get(srvKey) ?? { quantidade: 0, despachoSum: 0, despachoCount: 0, despachoNonzeroCount: 0 };
     srvAgg.quantidade += 1;
-    if (r.percentual_selimp != null) {
-      srvAgg.sum += r.percentual_selimp;
-      srvAgg.count += 1;
-    }
+    srvAgg.despachoSum += r.raw_selimp_sum;
+    srvAgg.despachoCount += r.raw_selimp_count;
+    srvAgg.despachoNonzeroCount += r.raw_selimp_nonzero_count;
     legacyServMap.set(srvKey, srvAgg);
   }
   const subprefeituras = Array.from(legacySubMap.entries()).map(([subprefeitura, v]) => ({
     subprefeitura,
     quantidade_planos: v.quantidade,
-    media_execucao: v.count > 0 ? Number((v.sum / v.count).toFixed(2)) : null,
+    media_execucao: v.despachoCount > 0 ? Number((v.despachoSum / v.despachoCount).toFixed(2)) : null,
+    media_sem_zerados: v.despachoNonzeroCount > 0 ? Number((v.despachoSum / v.despachoNonzeroCount).toFixed(2)) : null,
+    total_despachos: v.despachoCount,
+    despachos_zerados: v.despachoCount - v.despachoNonzeroCount,
   }));
   const servicos = Array.from(legacyServMap.entries()).map(([tipo_servico, v]) => ({
     tipo_servico,
     quantidade_planos: v.quantidade,
-    media_execucao: v.count > 0 ? Number((v.sum / v.count).toFixed(2)) : null,
+    media_execucao: v.despachoCount > 0 ? Number((v.despachoSum / v.despachoCount).toFixed(2)) : null,
+    media_sem_zerados: v.despachoNonzeroCount > 0 ? Number((v.despachoSum / v.despachoNonzeroCount).toFixed(2)) : null,
+    total_despachos: v.despachoCount,
+    despachos_zerados: v.despachoCount - v.despachoNonzeroCount,
   }));
 
   const mesclados = rowsFiltered.map((r) => ({
@@ -494,6 +512,10 @@ export async function buildIptPreviewFromConsolidado(
     origem: r.origem,
     turno: r.turno,
     frequencia: r.frequencia,
+    despachos_selimp: r.despachos_selimp,
+    raw_selimp_sum: r.raw_selimp_sum,
+    raw_selimp_count: r.raw_selimp_count,
+    raw_selimp_nonzero_count: r.raw_selimp_nonzero_count,
   }));
   const divergencias = comparativoItens.filter(
     (r) => Math.abs((r.percentual_selimp ?? 0) - (r.percentual_nosso ?? 0)) >= 5
@@ -513,6 +535,8 @@ export async function buildIptPreviewFromConsolidado(
       total_planos_despachados: planosDespachadosSelimp,
       total_planos_ativos: rowsFiltered.filter((r) => r.despachos_selimp > 0 || r.despachos_nosso > 0).length,
       media_execucao_planos_ativos: iptMedioSelimp,
+      media_com_zerados: iptMedioSelimp,
+      media_sem_zerados: iptMedioSelimpSemZerados,
       percentual_medio_ddmx: percentualMedioDdmx,
       total_modulos_relacionados: rowsFiltered.reduce((acc, r) => acc + r.equipamentos.length, 0),
       total_modulos_ativos: rowsFiltered.reduce((acc, r) => acc + r.equipamentos.length, 0),
@@ -524,7 +548,8 @@ export async function buildIptPreviewFromConsolidado(
       total_setores: rowsFiltered.length,
       total_despachos_selimp: totalDespachosSelimp,
       total_despachos_nosso: totalDespachosNosso,
-      ipt_soma_percentuais: Number(iptSomaSelimp.toFixed(2)),
+      total_despachos_zerados: totalRawSelimpCount - totalRawSelimpNonzeroCount,
+      ipt_soma_percentuais: Number(totalRawSelimpSum.toFixed(2)),
       ipt_media_percentual: iptMedioSelimp,
     },
     subprefeituras,

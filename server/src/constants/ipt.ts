@@ -109,13 +109,22 @@ export const SERVICO_POR_CODIGO: Record<string, string> = {
 };
 
 /**
+ * Nome canônico do serviço a partir do plano (BL, VP, MT, VJ, VL, GO, etc.).
+ * Usa a sigla da nomenclatura → `SERVICO_POR_CODIGO` (VJ e VL permanecem distintos).
+ * Use para exibição e agregação (evita rótulos curtos da planilha duplicando o nome oficial).
+ */
+export function getTipoServicoCanonicoPlano(plano: string): string {
+  const parsed = parseSetor(plano);
+  if (!parsed) return "";
+  return SERVICO_POR_CODIGO[parsed.servico] ?? "";
+}
+
+/**
  * Retorna o tipo de serviço conforme o codinome do setor (MT, BL, NH, etc.).
  * Nunca retorna "Não informado".
  */
 export function getTipoServicoFromPlano(plano: string): string {
-  const parsed = parseSetor(plano);
-  const codigo = parsed?.servico ?? "";
-  return SERVICO_POR_CODIGO[codigo] ?? "";
+  return getTipoServicoCanonicoPlano(plano);
 }
 
 /**
