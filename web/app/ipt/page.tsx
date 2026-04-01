@@ -2,7 +2,8 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import { format, startOfMonth, subDays } from "date-fns";
+import { format, startOfDay, startOfMonth, subDays } from "date-fns";
+import type { DateRange } from "react-day-picker";
 import { ptBR } from "date-fns/locale";
 import {
   Activity,
@@ -30,7 +31,8 @@ import {
 import Lottie from "lottie-react";
 import loadingAnimation from "@/public/Loading.json";
 import { Label } from "@/components/ui/label";
-import { DatePicker } from "@/components/ui/date-picker";
+import { Button as UiButton } from "@/components/ui/button";
+import { DateRangePicker, getEsteMesRange } from "@/components/ui/date-range-picker";
 import { MainLayout } from "@/components/layout/main-layout";
 import {
   Select,
@@ -253,10 +255,6 @@ export default function IPTPage() {
   const [modalObsDiariaData, setModalObsDiariaData] = useState<string | null>(null);
   const [modalObsDiariaTitulo, setModalObsDiariaTitulo] = useState("");
   const [modalObsDiariaDescricao, setModalObsDiariaDescricao] = useState("");
-  const [obsGlobalFilter, setObsGlobalFilter] = useState<"all" | "com" | "sem">("all");
-  const [obsDiariaFilter, setObsDiariaFilter] = useState<"all" | "com" | "sem">("all");
-  const [bateriaAlertaFilter, setBateriaAlertaFilter] = useState<"all" | "com" | "sem">("all");
-
   const { previewCards: iptPreviewCards, previewTable: iptPreviewTable, observacoes, kpis: kpisData, isLoading: loading, mutate: loadData } = useIptData(
     selectedMonth,
     tableScope,
@@ -378,18 +376,6 @@ export default function IPTPage() {
       if (baseDadosCardFilter === "obs_diaria") {
         if (!observacoes.diarias[row.plano] || Object.keys(observacoes.diarias[row.plano]).length === 0) return false;
       }
-      const temObsGlobal = Boolean(observacoes.globais[row.plano]);
-      if (obsGlobalFilter === "com" && !temObsGlobal) return false;
-      if (obsGlobalFilter === "sem" && temObsGlobal) return false;
-      const temObsDiaria = Boolean(observacoes.diarias[row.plano] && Object.keys(observacoes.diarias[row.plano]).length > 0);
-      if (obsDiariaFilter === "com" && !temObsDiaria) return false;
-      if (obsDiariaFilter === "sem" && temObsDiaria) return false;
-      const temBateriaAlerta = Boolean(
-        row.bateria_por_equipamento &&
-        Object.values(row.bateria_por_equipamento).some((b) => /critico|baixo|descarregad|alerta|medio|aten/i.test(b.status_bateria))
-      );
-      if (bateriaAlertaFilter === "com" && !temBateriaAlerta) return false;
-      if (bateriaAlertaFilter === "sem" && temBateriaAlerta) return false;
       return true;
     });
 
@@ -427,9 +413,6 @@ export default function IPTPage() {
     serviceFilterValues,
     observacoes.globais,
     observacoes.diarias,
-    obsGlobalFilter,
-    obsDiariaFilter,
-    bateriaAlertaFilter,
   ]);
 
   const comparativoInsights = useMemo(() => {
@@ -599,9 +582,6 @@ export default function IPTPage() {
     setSubSiglaFilter([...SUB_SIGLAS]);
     setServiceFilterValues(serviceOptions);
     setOrigemFilterValues([...ORIGEM_VALUES]);
-    setObsGlobalFilter("all");
-    setObsDiariaFilter("all");
-    setBateriaAlertaFilter("all");
     setHeaderMenuOpen(null);
   };
 
@@ -626,17 +606,32 @@ export default function IPTPage() {
     return raw.charAt(0).toUpperCase() + raw.slice(1);
   }, [selectedMonth]);
 
-  const tablePeriodInicioStr = useMemo(() => {
-    if (tableScope === "periodo" && tablePeriodRange) return format(tablePeriodRange.inicio, "yyyy-MM-dd");
-    if (tableScope === "todos") return format(startOfMonth(new Date()), "yyyy-MM-dd");
-    return format(subDays(new Date(), 1), "yyyy-MM-dd");
+  const tableRangeCalendarValue = useMemo((): DateRange | undefined => {
+    if (tableScope === "todos") return undefined;
+    if (tableScope === "dia_anterior") {
+      const y = startOfDay(subDays(new Date(), 1));
+      return { from: y, to: y };
+    }
+    if (tableScope === "periodo" && tablePeriodRange) {
+      return {
+        from: startOfDay(tablePeriodRange.inicio),
+        to: startOfDay(tablePeriodRange.fim),
+      };
+    }
+    return undefined;
   }, [tableScope, tablePeriodRange]);
 
-  const tablePeriodFimStr = useMemo(() => {
-    if (tableScope === "periodo" && tablePeriodRange) return format(tablePeriodRange.fim, "yyyy-MM-dd");
-    if (tableScope === "todos") return format(new Date(), "yyyy-MM-dd");
-    return format(subDays(new Date(), 1), "yyyy-MM-dd");
-  }, [tableScope, tablePeriodRange]);
+  const periodModeLabel = tableScope === "todos" ? "" : tableScope === "dia_anterior" ? "D-1" : "Período";
+
+  const handleTableRangeChange = (r: DateRange | undefined) => {
+    if (!r?.from || !r?.to) {
+      setTableScope("todos");
+      setTablePeriodRange(null);
+      return;
+    }
+    setTableScope("periodo");
+    setTablePeriodRange({ inicio: r.from, fim: r.to });
+  };
 
   const clampDateNotFuture = (d: Date) => {
     const today = new Date();
@@ -1401,83 +1396,48 @@ export default function IPTPage() {
                   <SelectItem value="nao_zerados" className="focus:bg-slate-600 focus:text-white">Sem zerados</SelectItem>
                 </SelectContent>
               </Select>
-              <Select value={obsGlobalFilter} onValueChange={(v) => setObsGlobalFilter(v as "all" | "com" | "sem")}>
-                <SelectTrigger className="h-10 w-auto min-w-[160px] rounded-lg border-0 bg-red-600 text-white font-bold shadow-lg hover:bg-red-500 [&>svg]:text-white">
-                  <AlertTriangle className="h-4 w-4 shrink-0 mr-2" />
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="border-slate-600" style={{ backgroundColor: "#1e293b", color: "#f8fafc" }}>
-                  <SelectItem value="all" className="focus:bg-slate-600 focus:text-white">Obs. global: todos</SelectItem>
-                  <SelectItem value="com" className="focus:bg-slate-600 focus:text-white">Com obs. global</SelectItem>
-                  <SelectItem value="sem" className="focus:bg-slate-600 focus:text-white">Sem obs. global</SelectItem>
-                </SelectContent>
-              </Select>
-              <Select value={obsDiariaFilter} onValueChange={(v) => setObsDiariaFilter(v as "all" | "com" | "sem")}>
-                <SelectTrigger className="h-10 w-auto min-w-[160px] rounded-lg border-0 bg-amber-500 text-white font-bold shadow-lg hover:bg-amber-400 [&>svg]:text-white">
-                  <Calendar className="h-4 w-4 shrink-0 mr-2" />
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="border-slate-600" style={{ backgroundColor: "#1e293b", color: "#f8fafc" }}>
-                  <SelectItem value="all" className="focus:bg-slate-600 focus:text-white">Obs. diária: todos</SelectItem>
-                  <SelectItem value="com" className="focus:bg-slate-600 focus:text-white">Com obs. diária</SelectItem>
-                  <SelectItem value="sem" className="focus:bg-slate-600 focus:text-white">Sem obs. diária</SelectItem>
-                </SelectContent>
-              </Select>
-              <Select value={bateriaAlertaFilter} onValueChange={(v) => setBateriaAlertaFilter(v as "all" | "com" | "sem")}>
-                <SelectTrigger className="h-10 w-auto min-w-[140px] rounded-lg border-0 bg-amber-600 text-white font-bold shadow-lg hover:bg-amber-500 [&>svg]:text-white">
-                  <Battery className="h-4 w-4 shrink-0 mr-2" />
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="border-slate-600" style={{ backgroundColor: "#1e293b", color: "#f8fafc" }}>
-                  <SelectItem value="all" className="focus:bg-slate-600 focus:text-white">Bateria: todos</SelectItem>
-                  <SelectItem value="com" className="focus:bg-slate-600 focus:text-white">Com alerta</SelectItem>
-                  <SelectItem value="sem" className="focus:bg-slate-600 focus:text-white">Sem alerta</SelectItem>
-                </SelectContent>
-              </Select>
-              <div className="flex max-w-full shrink-0 items-center gap-2 rounded-lg bg-emerald-600 px-2.5 py-1.5 shadow-lg text-white">
-                <Calendar className="h-4 w-4 shrink-0" />
-                <div className="flex min-w-0 flex-nowrap items-center gap-1.5">
-                  <DatePicker
-                    compact
-                    value={tablePeriodInicioStr}
-                    onChange={(v) => {
-                      if (!v) return;
-                      const [y, m, day] = v.split("-").map(Number);
-                      let date = new Date(y, m - 1, day);
-                      date = clampDateNotFuture(date);
-                      setTableScope("periodo");
-                      setTablePeriodRange((prev) => ({
-                        inicio: date,
-                        fim: prev?.fim && prev.fim >= date ? prev.fim : date,
-                      }));
-                    }}
-                    placeholder="Início"
-                    className="border-white/40 bg-white/95 text-slate-800 shadow-sm hover:bg-white [&_svg]:text-emerald-600"
-                  />
-                  <span className="shrink-0 text-emerald-100 text-xs font-bold">até</span>
-                  <DatePicker
-                    compact
-                    value={tablePeriodFimStr}
-                    onChange={(v) => {
-                      if (!v) return;
-                      const [y, m, day] = v.split("-").map(Number);
-                      let date = new Date(y, m - 1, day);
-                      date = clampDateNotFuture(date);
-                      setTableScope("periodo");
-                      setTablePeriodRange((prev) => ({
-                        inicio: prev?.inicio && prev.inicio <= date ? prev.inicio : date,
-                        fim: date,
-                      }));
-                    }}
-                    placeholder="Fim"
-                    className="border-white/40 bg-white/95 text-slate-800 shadow-sm hover:bg-white [&_svg]:text-emerald-600"
-                  />
-                  <span className="text-xs font-bold text-white">
-                    {tableScope === "dia_anterior" && "Dia anterior"}
-                    {tableScope === "periodo" && "Período"}
-                    {tableScope === "todos" && "Todos"}
-                  </span>
-                </div>
+              <div className="flex max-w-full min-w-0 shrink-0 items-center gap-2 rounded-lg bg-emerald-600 px-2.5 py-1.5 shadow-lg text-white">
+                <Calendar className="h-4 w-4 shrink-0" aria-hidden />
+                <DateRangePicker
+                  value={tableRangeCalendarValue}
+                  onChange={handleTableRangeChange}
+                  maxDate={new Date()}
+                  modeLabel={periodModeLabel}
+                  emptyLabel="Todos"
+                  className="max-w-[min(100vw-8rem,22rem)]"
+                  footer={(close) => (
+                    <>
+                      <UiButton
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        className="h-8 text-xs"
+                        onClick={() => {
+                          setTableScope("dia_anterior");
+                          setTablePeriodRange(null);
+                          close();
+                        }}
+                      >
+                        Ontem (D-1)
+                      </UiButton>
+                      <UiButton
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        className="h-8 text-xs"
+                        onClick={() => {
+                          const cap = clampDateNotFuture(new Date());
+                          const { from, to } = getEsteMesRange(new Date(), cap);
+                          setTableScope("periodo");
+                          setTablePeriodRange({ inicio: from, fim: to });
+                          close();
+                        }}
+                      >
+                        Este mês
+                      </UiButton>
+                    </>
+                  )}
+                />
               </div>
 
               {tableScope !== "dia_anterior" && (

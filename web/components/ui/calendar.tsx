@@ -46,8 +46,16 @@ function Calendar({
         day: "h-9 w-9 p-0 text-center text-sm",
         day_button: cn(
           buttonVariants({ variant: "ghost", size: "icon" }),
-          "h-9 w-9 rounded-md p-0 font-normal"
+          "h-9 w-9 rounded-md p-0 font-normal aria-selected:opacity-100"
         ),
+        /** Intervalo completo (modo range) — cores distintas início / meio / fim */
+        range_start:
+          "rounded-l-md bg-primary text-primary-foreground [&>button]:rounded-l-md [&>button]:bg-primary [&>button]:text-primary-foreground",
+        range_middle:
+          "rounded-none bg-accent/60 text-accent-foreground [&>button]:rounded-none [&>button]:bg-transparent [&>button]:text-foreground",
+        range_end:
+          "rounded-r-md bg-primary text-primary-foreground [&>button]:rounded-r-md [&>button]:bg-primary [&>button]:text-primary-foreground",
+        /** Dia único ou seleção ainda sem intervalo visual da lib */
         selected:
           "rounded-md bg-primary text-primary-foreground [&>button]:bg-primary [&>button]:text-primary-foreground",
         today: "rounded-md bg-accent text-accent-foreground",
