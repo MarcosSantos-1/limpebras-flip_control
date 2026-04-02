@@ -239,8 +239,19 @@ export const apiService = {
     return data;
   },
 
-  /** Atualiza override (defesa, sem_recurso, valor) de um ACIC. Persiste no backend - não é perdido ao reimportar. */
-  updateACICOverride: async (nAcic: string, payload: { defesa?: boolean; sem_recurso?: boolean; valor?: number | null }) => {
+  /** Atualiza override (defesa, sem_recurso, valor, entendimento) de um ACIC. Persiste no backend - não é perdido ao reimportar. */
+  updateACICOverride: async (
+    nAcic: string,
+    payload: {
+      defesa?: boolean;
+      sem_recurso?: boolean;
+      valor?: number | null;
+      valor_estimativa?: number | null;
+      entendimento_defesa_previa?: string | null;
+      multa_clausula_texto?: string | null;
+      multa_valor_estimativa?: boolean;
+    }
+  ) => {
     const { data } = await api.patch(`/acic/overrides/${encodeURIComponent(nAcic)}`, payload);
     return data;
   },

@@ -1,0 +1,302 @@
+{
+  "source": "docs/VALORES MULTAS.xlsx",
+  "sheet": "R$ PENALIDADES",
+  "clausulas": [
+    {
+      "item": "7.6.5.1",
+      "descricao": "Utilização de veículos, contêineres ou equipamentos, sem padronização visual, sem cadastro, cadastro irregular, falta de identificação (prefixo operacional) ou acima da idade máxima de 05 (cinco) anos, após os prazos contratualmente previstos.",
+      "grau": 3,
+      "incidencia": "Por ocorrência e por dia",
+      "valor": 4371.98,
+      "searchText": "7.6.5.1 utilização de veículos, contêineres ou equipamentos, sem padronização visual, sem cadastro, cadastro irregular, falta de identificação (prefixo operacional) ou acima da idade máxima de 05 (cinco) anos, após os prazos contratualmente previstos. por ocorrência e por dia"
+    },
+    {
+      "item": "7.6.5.2",
+      "descricao": "Uso de veículos sem condições de limpeza e conservação, ou veículos que causem o derramamento de detritos no trajeto.",
+      "grau": 4,
+      "incidencia": "Por ocorrência e por dia",
+      "valor": 13115.95,
+      "searchText": "7.6.5.2 uso de veículos sem condições de limpeza e conservação, ou veículos que causem o derramamento de detritos no trajeto. por ocorrência e por dia"
+    },
+    {
+      "item": "7.6.5.3",
+      "descricao": "Recebimento/solicitação de vantagens indevidas, uso de bebidas alcoólicas ou drogas, falta de urbanidade do pessoal em serviço.",
+      "grau": 2,
+      "incidencia": "Por ocorrência",
+      "valor": 2185.99,
+      "searchText": "7.6.5.3 recebimento/solicitação de vantagens indevidas, uso de bebidas alcoólicas ou drogas, falta de urbanidade do pessoal em serviço. por ocorrência"
+    },
+    {
+      "item": "7.6.5.4",
+      "descricao": "Pela execução de serviços ou recolhimento de resíduos que não constem no objeto do presente Contrato.",
+      "grau": 4,
+      "incidencia": "Por ocorrência",
+      "valor": 13115.95,
+      "searchText": "7.6.5.4 pela execução de serviços ou recolhimento de resíduos que não constem no objeto do presente contrato. por ocorrência"
+    },
+    {
+      "item": "7.6.5.5",
+      "descricao": "Impedimento do acesso da fiscalização às oficinas e a outras dependências utilizadas pela CONTRATADA.",
+      "grau": 4,
+      "incidencia": "Por ocorrência",
+      "valor": 13115.95,
+      "searchText": "7.6.5.5 impedimento do acesso da fiscalização às oficinas e a outras dependências utilizadas pela contratada. por ocorrência"
+    },
+    {
+      "item": "7.6.5.6",
+      "descricao": "Não atendimento de adequação, reparo das instalações, equipamentos e veículos da CONTRATADA após determinação pela Fiscalização.",
+      "grau": 3,
+      "incidencia": "Por ocorrência",
+      "valor": 4371.98,
+      "searchText": "7.6.5.6 não atendimento de adequação, reparo das instalações, equipamentos e veículos da contratada após determinação pela fiscalização. por ocorrência"
+    },
+    {
+      "item": "7.6.5.7",
+      "descricao": "Pelo não fornecimento de informações, relatórios mensais e planilhas dentro do prazo estabelecido pela CONTRATANTE.",
+      "grau": 2,
+      "incidencia": "Por ocorrência e por dia de atraso",
+      "valor": 2185.99,
+      "searchText": "7.6.5.7 pelo não fornecimento de informações, relatórios mensais e planilhas dentro do prazo estabelecido pela contratante. por ocorrência e por dia de atraso"
+    },
+    {
+      "item": "7.6.5.8",
+      "descricao": "Funcionamento do ECOPONTO/PATIO DE COMPOSTAGEM com equipe ou guarnição incompleta.",
+      "grau": 2,
+      "incidencia": "Por ocorrência e por dia",
+      "valor": 2185.99,
+      "searchText": "7.6.5.8 funcionamento do ecoponto/patio de compostagem com equipe ou guarnição incompleta. por ocorrência e por dia"
+    },
+    {
+      "item": "7.6.5.9",
+      "descricao": "Não cumprimento dos horários estabelecidos para funcionamento do ECOPONTO/PATIO DE COMPOSTAGEM.",
+      "grau": 4,
+      "incidencia": "Por ocorrência e por dia",
+      "valor": 13115.95,
+      "searchText": "7.6.5.9 não cumprimento dos horários estabelecidos para funcionamento do ecoponto/patio de compostagem. por ocorrência e por dia"
+    },
+    {
+      "item": "7.6.5.10",
+      "descricao": "Por serviços de limpeza e manutenção do ECOPONTO/PATIO DE COMPOSTAGEM não realizados ou incompletos.",
+      "grau": 3,
+      "incidencia": "Por ocorrência e por dia",
+      "valor": 4371.98,
+      "searchText": "7.6.5.10 por serviços de limpeza e manutenção do ecoponto/patio de compostagem não realizados ou incompletos. por ocorrência e por dia"
+    },
+    {
+      "item": "7.6.5.11",
+      "descricao": "Não disponibilizar os veículos e/ou equipamentos para instalação do rastreador de monitoramento",
+      "grau": 1,
+      "incidencia": "Por veículo ou equipamento por dia",
+      "valor": 728.66,
+      "searchText": "7.6.5.11 não disponibilizar os veículos e/ou equipamentos para instalação do rastreador de monitoramento por veículo ou equipamento por dia"
+    },
+    {
+      "item": "7.6.5.12",
+      "descricao": "Uso de sacos plásticos para recolhimento de detritos de varrição sem a cor determinada pela CONTRATANTE e/ou sem logotipo de identificação da CONTRATADA.",
+      "grau": 1,
+      "incidencia": "Por ocorrência",
+      "valor": 728.66,
+      "searchText": "7.6.5.12 uso de sacos plásticos para recolhimento de detritos de varrição sem a cor determinada pela contratante e/ou sem logotipo de identificação da contratada. por ocorrência"
+    },
+    {
+      "item": "7.6.5.13",
+      "descricao": "Não ensacar os resíduos coletados",
+      "grau": 2,
+      "incidencia": "Por ocorrência",
+      "valor": 2185.99,
+      "searchText": "7.6.5.13 não ensacar os resíduos coletados por ocorrência"
+    },
+    {
+      "item": "7.6.5.14",
+      "descricao": "Não recolhimento dos sacos provenientes da varrição até o término do respectivo turno em que foram executados os serviços.",
+      "grau": 4,
+      "incidencia": "Por ocorrência e por setor",
+      "valor": 13115.95,
+      "searchText": "7.6.5.14 não recolhimento dos sacos provenientes da varrição até o término do respectivo turno em que foram executados os serviços. por ocorrência e por setor"
+    },
+    {
+      "item": "7.6.5.15",
+      "descricao": "Execução de serviços objeto do Contrato com equipe incompleta ou guarnição em desacordo com o Plano de Trabalho em vigor.",
+      "grau": 2,
+      "incidencia": "Por pessoa faltante",
+      "valor": 2185.99,
+      "searchText": "7.6.5.15 execução de serviços objeto do contrato com equipe incompleta ou guarnição em desacordo com o plano de trabalho em vigor. por pessoa faltante"
+    },
+    {
+      "item": "7.6.5.16",
+      "descricao": "Execução parcial ou inexecução de serviço solicitado pela fiscalização",
+      "grau": 2,
+      "incidencia": "Por ocorrência",
+      "valor": 2185.99,
+      "searchText": "7.6.5.16 execução parcial ou inexecução de serviço solicitado pela fiscalização por ocorrência"
+    },
+    {
+      "item": "7.6.5.17",
+      "descricao": "Não cumprimento de solicitações para execução de serviços de Eventos Especiais e Operações de Emergência, emitida pela Contratante",
+      "grau": 4,
+      "incidencia": "Por ocorrência",
+      "valor": 13115.95,
+      "searchText": "7.6.5.17 não cumprimento de solicitações para execução de serviços de eventos especiais e operações de emergência, emitida pela contratante por ocorrência"
+    },
+    {
+      "item": "7.6.5.18",
+      "descricao": "Por atraso na entrega do plano de trabalho, nos termos da Cláusula 4 do Anexo I - Termo de Referência",
+      "grau": 4,
+      "incidencia": "Por ocorrência e dia de atraso",
+      "valor": 13115.95,
+      "searchText": "7.6.5.18 por atraso na entrega do plano de trabalho, nos termos da cláusula 4 do anexo i - termo de referência por ocorrência e dia de atraso"
+    },
+    {
+      "item": "7.6.5.19",
+      "descricao": "Alteração do plano de trabalho sem prévia aprovação da CONTRATANTE e/ou sem prévia comunicação aos munícipes dos serviços e horários em que serão realizados ou da alteração dos mesmos.",
+      "grau": 4,
+      "incidencia": "Por ocorrência",
+      "valor": 13115.95,
+      "searchText": "7.6.5.19 alteração do plano de trabalho sem prévia aprovação da contratante e/ou sem prévia comunicação aos munícipes dos serviços e horários em que serão realizados ou da alteração dos mesmos. por ocorrência"
+    },
+    {
+      "item": "7.6.5.20",
+      "descricao": "Falta de cumprimento de determinação para controle de tara de veículos.",
+      "grau": 1,
+      "incidencia": "Por ocorrência",
+      "valor": 728.66,
+      "searchText": "7.6.5.20 falta de cumprimento de determinação para controle de tara de veículos. por ocorrência"
+    },
+    {
+      "item": "7.6.5.21",
+      "descricao": "Por estacionamento de veículo em local impróprio, por obstrução desnecessária ao trânsito e outras infrações graves no trânsito, que comprometam a imagem da Prefeitura.",
+      "grau": 1,
+      "incidencia": "Por veículo e por ocorrência",
+      "valor": 728.66,
+      "searchText": "7.6.5.21 por estacionamento de veículo em local impróprio, por obstrução desnecessária ao trânsito e outras infrações graves no trânsito, que comprometam a imagem da prefeitura. por veículo e por ocorrência"
+    },
+    {
+      "item": "7.6.5.22",
+      "descricao": "Falta de uniforme, equipamentos de segurança e utensílios de trabalho.",
+      "grau": 3,
+      "incidencia": "Por ocorrência",
+      "valor": 4371.98,
+      "searchText": "7.6.5.22 falta de uniforme, equipamentos de segurança e utensílios de trabalho. por ocorrência"
+    },
+    {
+      "item": "7.6.5.23",
+      "descricao": "Por dia de atraso na implantação de qualquer um dos serviços.",
+      "grau": 2,
+      "incidencia": "Por ocorrência",
+      "valor": 2185.99,
+      "searchText": "7.6.5.23 por dia de atraso na implantação de qualquer um dos serviços. por ocorrência"
+    },
+    {
+      "item": "7.6.5.24",
+      "descricao": "Por serviços de varrição não realizados, incompletos, falta total ou parcial dos números de varrição determinadas em vias ou logradouros públicos, não cumprimento dos horários determinados nos Planos de Varrição.",
+      "grau": 2,
+      "incidencia": "Por ocorrência",
+      "valor": 2185.99,
+      "searchText": "7.6.5.24 por serviços de varrição não realizados, incompletos, falta total ou parcial dos números de varrição determinadas em vias ou logradouros públicos, não cumprimento dos horários determinados nos planos de varrição. por ocorrência"
+    },
+    {
+      "item": "7.6.5.25",
+      "descricao": "Não comparecimento nos horários e locais estipulados.",
+      "grau": 1,
+      "incidencia": "Por ocorrência",
+      "valor": 728.66,
+      "searchText": "7.6.5.25 não comparecimento nos horários e locais estipulados. por ocorrência"
+    },
+    {
+      "item": "7.6.5.26",
+      "descricao": "Por fraude ou tentativa na pesagem dos resíduos ou pela descarga em local não licenciado.",
+      "grau": 4,
+      "incidencia": "Por ocorrência",
+      "valor": 13115.95,
+      "searchText": "7.6.5.26 por fraude ou tentativa na pesagem dos resíduos ou pela descarga em local não licenciado. por ocorrência"
+    },
+    {
+      "item": "7.6.5.27",
+      "descricao": "Por não apresentar no prazo documentos/garantia estipulado em Contrato e/ou exigidor pela Portaria SF nº 275/2024",
+      "grau": 4,
+      "incidencia": "Por ocorrência",
+      "valor": 13115.95,
+      "searchText": "7.6.5.27 por não apresentar no prazo documentos/garantia estipulado em contrato e/ou exigidor pela portaria sf nº 275/2024 por ocorrência"
+    },
+    {
+      "item": "7.6.5.28",
+      "descricao": "Por reiterada pontuação inferior ou igual a 28  relativa ao Plano de Trabalho, nos termos do item 10.4.1 do Anexo I - Termo de Referência do Edital de Pregão Eletrônico nº 48/SMSUB/COGEL/2023",
+      "grau": 4,
+      "incidencia": "Por ocorrência",
+      "valor": 13115.95,
+      "searchText": "7.6.5.28 por reiterada pontuação inferior ou igual a 28  relativa ao plano de trabalho, nos termos do item 10.4.1 do anexo i - termo de referência do edital de pregão eletrônico nº 48/smsub/cogel/2023 por ocorrência"
+    },
+    {
+      "item": "7.6.5.29",
+      "descricao": "Por serviços não realizados, ou quando da execução do plano de trabalho houve impacto negativo em outros planos sem a devida correção, bem como pela falta total ou parcial em determinadas vias ou logradouros públicos ou não cumprimento dos horários determinados no Plano de Trabalho",
+      "grau": null,
+      "incidencia": "ausência da ocorrência",
+      "valor": 0,
+      "searchText": "7.6.5.29 por serviços não realizados, ou quando da execução do plano de trabalho houve impacto negativo em outros planos sem a devida correção, bem como pela falta total ou parcial em determinadas vias ou logradouros públicos ou não cumprimento dos horários determinados no plano de trabalho ausência da ocorrência"
+    },
+    {
+      "item": "7.6.5.30",
+      "descricao": "Quando da inexecução ou execução falha do plano de trabalho houver grave dano à administração, ao funcionamento de serviços públicos ou ao interesse público",
+      "grau": 4,
+      "incidencia": "Por ocorrência",
+      "valor": 13115.95,
+      "searchText": "7.6.5.30 quando da inexecução ou execução falha do plano de trabalho houver grave dano à administração, ao funcionamento de serviços públicos ou ao interesse público por ocorrência"
+    },
+    {
+      "item": "7.6.5.31",
+      "descricao": "Por falta de higienização, esvaziamento e reposição de sacos nas papeleiras",
+      "grau": 3,
+      "incidencia": "Por ocorrência",
+      "valor": 4371.98,
+      "searchText": "7.6.5.31 por falta de higienização, esvaziamento e reposição de sacos nas papeleiras por ocorrência"
+    },
+    {
+      "item": "7.6.5.32",
+      "descricao": "Por falta de higienização e esvaziamento nos PEV’s",
+      "grau": 2,
+      "incidencia": "Por ocorrência",
+      "valor": 2185.99,
+      "searchText": "7.6.5.32 por falta de higienização e esvaziamento nos pev’s por ocorrência"
+    },
+    {
+      "item": "7.6.5.33",
+      "descricao": "Não providenciar a troca de equipamentos e utensílios de trabalho determinada pela fiscalização",
+      "grau": 1,
+      "incidencia": "Por ocorrência",
+      "valor": 728.66,
+      "searchText": "7.6.5.33 não providenciar a troca de equipamentos e utensílios de trabalho determinada pela fiscalização por ocorrência"
+    },
+    {
+      "item": "7.6.5.34",
+      "descricao": "No caso de não atendimento, dentro do prazo de 48 (quarenta e oito) horas, da determinação de substituição de empregado",
+      "grau": 1,
+      "incidencia": "Por ocorrência",
+      "valor": 728.66,
+      "searchText": "7.6.5.34 no caso de não atendimento, dentro do prazo de 48 (quarenta e oito) horas, da determinação de substituição de empregado por ocorrência"
+    },
+    {
+      "item": "7.6.5.35",
+      "descricao": "Falta de cumprimento de determinação de renovação da frota, observada a idade máxima estabelecida no Anexo I - Termo de Referência",
+      "grau": 4,
+      "incidencia": "Por mês até a regularização",
+      "valor": 13115.95,
+      "searchText": "7.6.5.35 falta de cumprimento de determinação de renovação da frota, observada a idade máxima estabelecida no anexo i - termo de referência por mês até a regularização"
+    },
+    {
+      "item": "7.6.5.36",
+      "descricao": "Por não atendimento a exigências da fiscalização",
+      "grau": 1,
+      "incidencia": "Por ocorrência",
+      "valor": 728.66,
+      "searchText": "7.6.5.36 por não atendimento a exigências da fiscalização por ocorrência"
+    },
+    {
+      "item": "GRAU  PENALIDADE",
+      "descricao": "Valor mensal contratual",
+      "grau": null,
+      "incidencia": "14573274.23",
+      "valor": 0,
+      "searchText": "grau  penalidade valor mensal contratual 14573274.23"
+    }
+  ]
+}

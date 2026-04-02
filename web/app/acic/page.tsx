@@ -5,10 +5,12 @@ import type { DateRange } from "react-day-picker";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { AcicEntendimentoDialog, AcicValorMultaDialog } from "@/app/acic/acic-dialogs";
 import { apiService } from "@/lib/api";
 import { format, isValid, startOfDay } from "date-fns";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { DateRangePicker, getEsteMesRange } from "@/components/ui/date-range-picker";
 import {
   Select,
@@ -25,8 +27,21 @@ import {
   Ban,
   FileWarning,
   Calendar,
+  CalendarDays,
+  MapPin,
+  MapMinus,
+  ClipboardList,
+  User,
+  Hash,
+  Link2,
+  Layers,
+  Coins,
   AlertTriangle,
   CheckCircle2,
+  MessageSquare,
+  Pencil,
+  Calculator,
+  CircleDollarSign,
 } from "lucide-react";
 
 /** Formata número no padrão BR: R$ 1.234,56 */
@@ -35,14 +50,6 @@ function formatBr(valor: number): string {
   const [int, dec] = valor.toFixed(2).split(".");
   const intFormatted = int.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
   return `R$ ${intFormatted},${dec}`;
-}
-
-/** Parse input BR (R$ 1.234,56 / 1.234,56 / 1234,56) para número */
-function parseBrInput(s: string): number {
-  const t = String(s ?? "").trim().replace(/\s/g, "").replace(/R\$/gi, "");
-  const normalized = t.replace(/\./g, "").replace(",", ".");
-  const n = parseFloat(normalized);
-  return isNaN(n) ? 0 : Math.max(0, n);
 }
 
 /** Normaliza campos do ACIC (CSV pode vir com N_ACIC, N_BFS, etc.) */
@@ -184,11 +191,96 @@ function getValorMultaDoCsv(acic: Record<string, unknown>): number {
   return parseValorMultaFromObservacao(rawT);
 }
 
-function valorResolvido(acic: Record<string, unknown>, nAcic: string, map: Record<string, number>): number {
-  if (Object.prototype.hasOwnProperty.call(map, nAcic)) {
-    return map[nAcic] ?? 0;
+/** Valor homologado / importado (CSV) ou ajuste manual não-estimativa — campo "Valor da multa". */
+function getValorMultaOficial(
+  acic: Record<string, unknown>,
+  nAcic: string,
+  valorOficialMap: Record<string, number>
+): number {
+  const csv = getValorMultaDoCsv(acic);
+  if (csv > 0) return csv;
+  if (Object.prototype.hasOwnProperty.call(valorOficialMap, nAcic)) {
+    return valorOficialMap[nAcic] ?? 0;
   }
-  return getValorMultaDoCsv(acic);
+  return 0;
+}
+
+/** Estimativa manual (campo amarelo); some no total geral; não aparece em ACIC confirmada (valor homologado vem do CSV). */
+function getValorEstimativaAtiva(
+  acic: Record<string, unknown>,
+  nAcic: string,
+  valorEstimativaMap: Record<string, number>,
+  estimativaMap: Record<string, boolean>
+): number {
+  if (acicStatusLower(acic).includes("confirmado")) return 0;
+  if (!estimativaMap[nAcic]) return 0;
+  return valorEstimativaMap[nAcic] ?? 0;
+}
+
+/** Mesmas cores de subprefeitura da página Defesa / IPT. */
+const ACIC_AREA_SUB_BADGES: Record<string, { sigla: string; className: string }> = {
+  "Santana/Tucuruvi": {
+    sigla: "ST",
+    className:
+      "bg-yellow-500/20 text-yellow-800 dark:bg-yellow-500/25 dark:text-yellow-200 border border-yellow-400/50",
+  },
+  "Casa Verde/Cachoeirinha": {
+    sigla: "CV",
+    className:
+      "bg-green-500/20 text-green-800 dark:bg-green-500/25 dark:text-green-200 border border-green-400/50",
+  },
+  "Jaçanã/Tremembé": {
+    sigla: "JT",
+    className:
+      "bg-blue-800/20 text-blue-900 dark:bg-blue-800/30 dark:text-blue-200 border border-blue-700/50",
+  },
+  "Vila Maria/Vila Guilherme": {
+    sigla: "MG",
+    className: "bg-cyan-500/20 text-cyan-800 dark:bg-cyan-500/25 dark:text-cyan-200 border border-cyan-400/50",
+  },
+};
+
+function getAcicAreaSubBadge(area: string | undefined): { sigla: string; className: string } {
+  const t = (area ?? "").trim();
+  if (!t) return { sigla: "—", className: "bg-muted/70 text-muted-foreground border border-border" };
+  const exact = ACIC_AREA_SUB_BADGES[t];
+  if (exact) return exact;
+  const norm = t.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  for (const [key, val] of Object.entries(ACIC_AREA_SUB_BADGES)) {
+    const kn = key.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    if (norm.includes(kn) || kn.includes(norm)) return val;
+  }
+  return { sigla: t.slice(0, 2).toUpperCase(), className: "bg-muted/70 text-muted-foreground border border-border" };
+}
+
+const ACIC_SUBPREFEITURA_ORDER = [
+  "Santana/Tucuruvi",
+  "Casa Verde/Cachoeirinha",
+  "Jaçanã/Tremembé",
+  "Vila Maria/Vila Guilherme",
+] as const;
+
+function acicAreaMatchesSubFilter(area: string | undefined, subKey: string): boolean {
+  if (subKey === "todas") return true;
+  const target = ACIC_AREA_SUB_BADGES[subKey];
+  if (!target) return true;
+  return getAcicAreaSubBadge(area).sigla === target.sigla;
+}
+
+function flipDateSortMs(s: string | undefined): number {
+  if (!s?.trim()) return 0;
+  const m = s
+    .trim()
+    .match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+  if (!m) return 0;
+  return new Date(
+    Number(m[3]),
+    Number(m[2]) - 1,
+    Number(m[1]),
+    m[4] ? Number(m[4]) : 0,
+    m[5] ? Number(m[5]) : 0,
+    m[6] ? Number(m[6]) : 0
+  ).getTime();
 }
 
 /** Formata data FLIP (dd/MM/yyyy HH:mm or dd/MM/yyyy) de forma segura. */
@@ -229,10 +321,24 @@ export default function ACICPage() {
   const [total, setTotal] = useState(0);
   const [defesaMap, setDefesaMap] = useState<Record<string, boolean>>({});
   const [semRecursoMap, setSemRecursoMap] = useState<Record<string, boolean>>({});
-  const [valorMap, setValorMap] = useState<Record<string, number>>({});
+  const [valorOficialMap, setValorOficialMap] = useState<Record<string, number>>({});
+  const [valorEstimativaMap, setValorEstimativaMap] = useState<Record<string, number>>({});
+  const [entendimentoMap, setEntendimentoMap] = useState<Record<string, string>>({});
+  const [clausulaMap, setClausulaMap] = useState<Record<string, string>>({});
+  const [estimativaMap, setEstimativaMap] = useState<Record<string, boolean>>({});
+  const [entModalNAcic, setEntModalNAcic] = useState<string | null>(null);
+  const [valorModalCtx, setValorModalCtx] = useState<{
+    nAcic: string;
+    valorAtOpen: number;
+    isSolicitacao: boolean;
+    clausulaAtOpen: string | null;
+    estimativaAtOpen: boolean;
+  } | null>(null);
   const [periodRange, setPeriodRange] = useState<DateRange | undefined>(undefined);
   const [filters, setFilters] = useState({
     registro: "todos" as FiltroRegistro,
+    subprefeitura: "todas",
+    somenteBfsMultipla: false,
   });
 
   const periodQueryKey = useMemo(() => {
@@ -263,19 +369,38 @@ export default function ACICPage() {
 
       const defesa: Record<string, boolean> = {};
       const semRecurso: Record<string, boolean> = {};
-      const valor: Record<string, number> = {};
+      const valorOficial: Record<string, number> = {};
+      const valorEstimativa: Record<string, number> = {};
+      const entendimento: Record<string, string> = {};
+      const clausulas: Record<string, string> = {};
+      const est: Record<string, boolean> = {};
       for (const a of items) {
         const n = getAcicField(a, "N_ACIC", "n_acic") ?? "";
         if (n) {
+          const st = acicStatusLower(a);
+          const confirmado = st.includes("confirmado");
           defesa[n] = Boolean((a as { _defesa?: boolean })._defesa);
           semRecurso[n] = Boolean((a as { _sem_recurso?: boolean })._sem_recurso);
           const v = (a as { _valor_override?: number | null })._valor_override;
-          if (v != null && Number(v) > 0) valor[n] = Number(v);
+          if (v != null && Number(v) > 0) valorOficial[n] = Number(v);
+          const ve = (a as { _valor_estimativa_override?: number | null })._valor_estimativa_override;
+          if (!confirmado && ve != null && Number(ve) > 0) valorEstimativa[n] = Number(ve);
+          if (!confirmado && Boolean((a as { _multa_valor_estimativa?: boolean })._multa_valor_estimativa)) {
+            est[n] = true;
+          }
+          const ent = (a as { _entendimento_defesa_previa?: string | null })._entendimento_defesa_previa;
+          if (ent != null && String(ent).length > 0) entendimento[n] = String(ent);
+          const cl = (a as { _multa_clausula_texto?: string | null })._multa_clausula_texto;
+          if (cl != null && String(cl).trim()) clausulas[n] = String(cl);
         }
       }
       setDefesaMap(defesa);
       setSemRecursoMap(semRecurso);
-      setValorMap(valor);
+      setValorOficialMap(valorOficial);
+      setValorEstimativaMap(valorEstimativa);
+      setEntendimentoMap(entendimento);
+      setClausulaMap(clausulas);
+      setEstimativaMap(est);
     } catch (error) {
       console.error("Erro ao carregar ACICs:", error);
       setAcics([]);
@@ -307,18 +432,115 @@ export default function ACICPage() {
     }
   };
 
-  const getValorForAcic = (acic: ACIC, nAcic: string): number => valorResolvido(acic, nAcic, valorMap);
-
-  const setValorForAcic = async (nAcic: string, valor: number) => {
-    setValorMap((prev) => ({ ...prev, [nAcic]: valor }));
+  const persistEntendimentoDefesaPrevia = async (nAcic: string, value: string) => {
+    const trimmed = value.trim();
+    setEntendimentoMap((prev) => {
+      const next = { ...prev };
+      if (trimmed === "") delete next[nAcic];
+      else next[nAcic] = value;
+      return next;
+    });
     try {
-      await apiService.updateACICOverride(nAcic, { valor: valor > 0 ? valor : null });
+      await apiService.updateACICOverride(nAcic, {
+        entendimento_defesa_previa: trimmed === "" ? null : value,
+      });
     } catch (e) {
-      console.error("Erro ao salvar valor:", e);
+      console.error("Erro ao salvar entendimento para defesa prévia:", e);
+      await loadACICs();
     }
   };
 
-  const acicsFiltered = useMemo(() => {
+  const saveMultaFromModal = async (
+    nAcic: string,
+    payload: { valor: number; clausulaTexto: string | null; estimativa: boolean }
+  ) => {
+    if (payload.valor <= 0) return;
+    setClausulaMap((prev) => {
+      const next = { ...prev };
+      if (payload.clausulaTexto?.trim()) next[nAcic] = payload.clausulaTexto.trim();
+      else delete next[nAcic];
+      return next;
+    });
+    if (payload.estimativa) {
+      setValorEstimativaMap((prev) => ({ ...prev, [nAcic]: payload.valor }));
+      setValorOficialMap((prev) => {
+        const next = { ...prev };
+        delete next[nAcic];
+        return next;
+      });
+      setEstimativaMap((prev) => ({ ...prev, [nAcic]: true }));
+      try {
+        await apiService.updateACICOverride(nAcic, {
+          valor: null,
+          valor_estimativa: payload.valor,
+          multa_clausula_texto: payload.clausulaTexto?.trim() ? payload.clausulaTexto.trim() : null,
+          multa_valor_estimativa: true,
+        });
+      } catch (e) {
+        console.error("Erro ao salvar valor/cláusula:", e);
+        await loadACICs();
+      }
+    } else {
+      setValorOficialMap((prev) => ({ ...prev, [nAcic]: payload.valor }));
+      setValorEstimativaMap((prev) => {
+        const next = { ...prev };
+        delete next[nAcic];
+        return next;
+      });
+      setEstimativaMap((prev) => {
+        const next = { ...prev };
+        delete next[nAcic];
+        return next;
+      });
+      try {
+        await apiService.updateACICOverride(nAcic, {
+          valor: payload.valor,
+          valor_estimativa: null,
+          multa_clausula_texto: payload.clausulaTexto?.trim() ? payload.clausulaTexto.trim() : null,
+          multa_valor_estimativa: false,
+        });
+      } catch (e) {
+        console.error("Erro ao salvar valor/cláusula:", e);
+        await loadACICs();
+      }
+    }
+  };
+
+  const clearMultaOverride = async (nAcic: string) => {
+    setValorOficialMap((prev) => {
+      const next = { ...prev };
+      delete next[nAcic];
+      return next;
+    });
+    setValorEstimativaMap((prev) => {
+      const next = { ...prev };
+      delete next[nAcic];
+      return next;
+    });
+    setClausulaMap((prev) => {
+      const next = { ...prev };
+      delete next[nAcic];
+      return next;
+    });
+    setEstimativaMap((prev) => {
+      const next = { ...prev };
+      delete next[nAcic];
+      return next;
+    });
+    try {
+      await apiService.updateACICOverride(nAcic, {
+        valor: null,
+        valor_estimativa: null,
+        multa_clausula_texto: null,
+        multa_valor_estimativa: false,
+      });
+    } catch (e) {
+      console.error("Erro ao limpar multa:", e);
+      await loadACICs();
+    }
+  };
+
+  const acicsBaseFiltered = useMemo(() => {
     return acics.filter((acic) => {
       const nAcic = getAcicField(acic, "N_ACIC", "n_acic") ?? "";
       const status = acicStatusLower(acic);
@@ -328,29 +550,84 @@ export default function ACICPage() {
       const arquivado = status.includes("arquivado");
       const confirmado = status.includes("confirmado");
 
+      let ok = false;
       switch (filters.registro) {
         case "defesa":
-          return temDefesa;
+          ok = temDefesa;
+          break;
         case "em_aberto":
-          return emAberto;
+          ok = emAberto;
+          break;
         case "confirmado":
-          return confirmado;
+          ok = confirmado;
+          break;
         case "sem_recurso":
-          return temSemRecurso;
+          ok = temSemRecurso;
+          break;
         case "arquivado":
-          return arquivado;
+          ok = arquivado;
+          break;
         default:
-          return true;
+          ok = true;
       }
+      if (!ok) return false;
+      if (!acicAreaMatchesSubFilter(getAcicField(acic, "Area", "area"), filters.subprefeitura)) return false;
+      return true;
     });
-  }, [acics, filters.registro, defesaMap, semRecursoMap, valorMap]);
+  }, [acics, filters.registro, filters.subprefeitura, defesaMap, semRecursoMap]);
 
-  const totalMultas = useMemo(() => {
+  const bfsAcicCountInBase = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const a of acicsBaseFiltered) {
+      const b = getAcicField(a, "N_BFS", "n_bfs")?.trim();
+      if (b) m.set(b, (m.get(b) ?? 0) + 1);
+    }
+    return m;
+  }, [acicsBaseFiltered]);
+
+  const acicsFiltered = useMemo(() => {
+    if (!filters.somenteBfsMultipla) return acicsBaseFiltered;
+    return acicsBaseFiltered.filter((a) => {
+      const b = getAcicField(a, "N_BFS", "n_bfs")?.trim();
+      return Boolean(b && (bfsAcicCountInBase.get(b) ?? 0) > 1);
+    });
+  }, [acicsBaseFiltered, filters.somenteBfsMultipla, bfsAcicCountInBase]);
+
+  const bfsAcicCountInView = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const a of acicsFiltered) {
+      const b = getAcicField(a, "N_BFS", "n_bfs")?.trim();
+      if (b) m.set(b, (m.get(b) ?? 0) + 1);
+    }
+    return m;
+  }, [acicsFiltered]);
+
+  /** Mais recentes primeiro (Data_ACIC), depois id estável. */
+  const acicsDisplay = useMemo(() => {
+    return [...acicsFiltered].sort((a, b) => {
+      const db = flipDateSortMs(getAcicField(b, "Data_ACIC", "data_acic"));
+      const da = flipDateSortMs(getAcicField(a, "Data_ACIC", "data_acic"));
+      if (db !== da) return db - da;
+      return String(b.id).localeCompare(String(a.id), undefined, { numeric: true });
+    });
+  }, [acicsFiltered]);
+
+  const totalMultasComEstimativa = useMemo(() => {
     return acicsFiltered.reduce((sum, acic) => {
       const nAcic = getAcicField(acic, "N_ACIC", "n_acic") ?? "";
-      return sum + getValorForAcic(acic, nAcic);
+      const oficial = getValorMultaOficial(acic, nAcic, valorOficialMap);
+      const est = getValorEstimativaAtiva(acic, nAcic, valorEstimativaMap, estimativaMap);
+      return sum + oficial + est;
     }, 0);
-  }, [acicsFiltered, valorMap]);
+  }, [acicsFiltered, valorOficialMap, valorEstimativaMap, estimativaMap]);
+
+  const totalMultasConfirmadas = useMemo(() => {
+    return acicsFiltered.reduce((sum, acic) => {
+      if (!acicStatusLower(acic).includes("confirmado")) return sum;
+      const nAcic = getAcicField(acic, "N_ACIC", "n_acic") ?? "";
+      return sum + getValorMultaOficial(acic, nAcic, valorOficialMap);
+    }, 0);
+  }, [acicsFiltered, valorOficialMap]);
 
   const stats = useMemo(() => {
     let defesa = 0;
@@ -411,18 +688,45 @@ export default function ACICPage() {
           </div>
         </div>
 
-        {/* Total de multas (padrão BR) */}
-        <Card className="border-l-4 border-l-red-500 bg-red-50/50 dark:bg-red-950/20">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Total de multas (filtro atual)</p>
-                <p className="text-3xl font-bold text-red-700 dark:text-red-400 mt-1">{formatBr(totalMultas)}</p>
+        {/* Totais de multa: homologado + estimativas vs só confirmadas homologadas */}
+        <div className="grid gap-4 md:grid-cols-2">
+          <Card className="border-l-4 border-l-red-500 bg-red-50/50 dark:bg-red-950/20">
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">
+                    Total de multas + estimativas (filtro atual)
+                  </p>
+                  <p className="text-3xl font-bold text-red-700 dark:text-red-400 mt-1">
+                    {formatBr(totalMultasComEstimativa)}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Soma do valor da multa (CSV/homologado) e dos valores estimativos manuais em aberto.
+                  </p>
+                </div>
+                <DollarSign className="w-12 h-12 shrink-0 text-red-400/50" />
               </div>
-              <DollarSign className="w-12 h-12 text-red-400/50" />
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+          <Card className="border-l-4 border-l-orange-500 bg-orange-50/50 dark:bg-orange-950/20">
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">
+                    Multas confirmadas (homologadas)
+                  </p>
+                  <p className="text-3xl font-bold text-orange-700 dark:text-orange-400 mt-1">
+                    {formatBr(totalMultasConfirmadas)}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Apenas ACICs em status Confirmado, com valor do importado (sem estimativa manual).
+                  </p>
+                </div>
+                <CircleDollarSign className="w-12 h-12 shrink-0 text-orange-400/60" />
+              </div>
+            </CardContent>
+          </Card>
+        </div>
 
         {/* Cards de estatísticas por tipo de registro */}
         <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
@@ -531,12 +835,12 @@ export default function ACICPage() {
           <CardHeader className="pb-4">
             <CardTitle className="text-base font-medium">Período</CardTitle>
             <p className="text-sm font-normal text-muted-foreground">
-              Sem datas selecionadas, lista todos os ACICs (import mais recente primeiro). Opcionalmente restrinja por intervalo.
+              Sem período, lista todos os ACICs. A lista segue da <strong className="font-medium text-foreground">data da ACIC mais recente</strong> para a mais antiga. Use subprefeitura e BFS com várias ACICs para refinar.
             </p>
           </CardHeader>
           <CardContent>
-            <div className="flex flex-col gap-4 lg:flex-row lg:flex-wrap lg:items-end">
-              <div className="flex max-w-full min-w-0 shrink-0 items-center gap-2 rounded-lg bg-emerald-600 px-2.5 py-1.5 shadow-lg text-white">
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-12 xl:items-end">
+              <div className="flex max-w-full min-w-0 shrink-0 items-center gap-2 rounded-lg bg-emerald-600 px-2.5 py-1.5 shadow-lg text-white xl:col-span-4">
                 <Calendar className="h-4 w-4 shrink-0" aria-hidden />
                 <DateRangePicker
                   value={periodRange}
@@ -583,8 +887,8 @@ export default function ACICPage() {
                   )}
                 />
               </div>
-              <div className="min-w-[min(100%,220px)] flex-1 space-y-1">
-                <Label className="text-xs text-muted-foreground">Filtro por registro</Label>
+              <div className="min-w-0 space-y-1 xl:col-span-2">
+                <Label className="text-xs text-muted-foreground">Registro</Label>
                 <Select
                   value={filters.registro}
                   onValueChange={(value: FiltroRegistro) => setFilters({ ...filters, registro: value })}
@@ -602,6 +906,35 @@ export default function ACICPage() {
                   </SelectContent>
                 </Select>
               </div>
+              <div className="min-w-0 space-y-1 xl:col-span-3">
+                <Label className="text-xs text-muted-foreground">Subprefeitura</Label>
+                <Select
+                  value={filters.subprefeitura}
+                  onValueChange={(value) => setFilters({ ...filters, subprefeitura: value })}
+                >
+                  <SelectTrigger className="bg-background">
+                    <SelectValue placeholder="Todas" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todas">Todas as subs</SelectItem>
+                    {ACIC_SUBPREFEITURA_ORDER.map((sub) => (
+                      <SelectItem key={sub} value={sub}>
+                        {sub}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-center gap-2 pt-1 xl:col-span-3">
+                <Checkbox
+                  id="acic-only-multi-bfs"
+                  checked={filters.somenteBfsMultipla}
+                  onCheckedChange={(c) => setFilters({ ...filters, somenteBfsMultipla: c === true })}
+                />
+                <Label htmlFor="acic-only-multi-bfs" className="cursor-pointer text-sm font-normal leading-snug">
+                  Só BFS com mais de uma ACIC (no filtro atual)
+                </Label>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -616,12 +949,18 @@ export default function ACICPage() {
           </div>
         ) : (
           <div className="grid gap-4">
-            {acicsFiltered.map((acic) => {
+            {acicsDisplay.map((acic) => {
               const nAcic = getAcicField(acic, "N_ACIC", "n_acic") ?? "N/A";
-              const nBfs = getAcicField(acic, "N_BFS", "n_bfs");
+              const nBfs = getAcicField(acic, "N_BFS", "n_bfs")?.trim() ?? "";
               const nCnc = getAcicField(acic, "N_CNC", "n_cnc");
               const status = getAcicByCanonical(acic, "status") ?? getAcicField(acic, "Status", "status");
-              const valor = getValorForAcic(acic, nAcic);
+              const valorOficial = getValorMultaOficial(acic, nAcic, valorOficialMap);
+              const valorEstimativaLinha = getValorEstimativaAtiva(
+                acic,
+                nAcic,
+                valorEstimativaMap,
+                estimativaMap
+              );
               const temDefesa = defesaMap[nAcic];
               const temSemRecurso = semRecursoMap[nAcic];
               const endereco = getAcicField(acic, "Endereco", "endereco");
@@ -633,6 +972,11 @@ export default function ACICPage() {
               const stLower = (status ?? "").toLowerCase();
               const isConfirmadoRow = stLower.includes("confirmado");
               const isArquivadoRow = stLower.includes("arquivado");
+              const isSolicitacaoRow =
+                stLower.includes("solicitacao") || stLower.includes("solicitação");
+              const bfsGroupSize = nBfs ? (bfsAcicCountInView.get(nBfs) ?? 0) : 0;
+              const multiBfs = bfsGroupSize > 1;
+              const areaBadge = getAcicAreaSubBadge(area);
 
               return (
                 <Card
@@ -643,13 +987,16 @@ export default function ACICPage() {
                       : isArquivadoRow
                         ? "border-l-4 border-l-emerald-500 hover:border-emerald-400/90 dark:hover:border-emerald-600"
                         : "hover:border-red-200/60 dark:hover:border-red-900/45"
-                  }`}
+                  } ${multiBfs ? "ring-1 ring-amber-500/35 bg-amber-500/4 dark:bg-amber-950/20" : ""}`}
                 >
                   <CardContent className="p-6">
-                    <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 mb-4">
-                      <div className="flex-1">
+                    <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 mb-3">
+                      <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-3 mb-2 flex-wrap">
-                          <h3 className="text-lg font-bold font-mono text-primary">ACIC: {nAcic}</h3>
+                          <h3 className="text-lg font-bold font-mono text-primary inline-flex items-center gap-2">
+                            <span className="rounded bg-primary/10 px-1.5 py-0.5 text-sm">ACIC</span>
+                            {nAcic}
+                          </h3>
                           {status && (
                             <span
                               className={`inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-medium rounded-full border ${getStatusColor(status)}`}
@@ -663,116 +1010,331 @@ export default function ACICPage() {
                             </span>
                           )}
                           {temDefesa && (
-                            <span className="px-2.5 py-0.5 text-xs font-medium rounded-full border bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800">
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-medium rounded-full border bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800">
+                              <ShieldCheck className="h-3 w-3 shrink-0" aria-hidden />
                               Defesa
                             </span>
                           )}
                           {temSemRecurso && (
-                            <span className="px-2.5 py-0.5 text-xs font-medium rounded-full border bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300 border-red-200 dark:border-red-800">
-                              Sem Recurso
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-medium rounded-full border bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300 border-red-200 dark:border-red-800">
+                              <Ban className="h-3 w-3 shrink-0" aria-hidden />
+                              Sem recurso
                             </span>
                           )}
                         </div>
-                        <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
-                          {nBfs && (
-                            <span className="flex items-center gap-1 bg-muted/50 px-2 py-0.5 rounded">
-                              <span className="font-medium">BFS:</span> {nBfs}
+
+                        <div className="flex flex-wrap gap-2 text-sm">
+                          {nBfs ? (
+                            <span className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 bg-muted/35 px-2.5 py-1.5">
+                              <Hash className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                              <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">BFS</span>
+                              <span className="font-mono font-semibold text-foreground">{nBfs}</span>
+                              {multiBfs ? (
+                                <span
+                                  className="ml-0.5 inline-flex items-center gap-1 rounded-md border border-amber-500/55 bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-950 dark:text-amber-100"
+                                  title="Esta BFS aparece mais de uma vez no filtro atual — várias ACICs no mesmo BFS"
+                                >
+                                  <Layers className="h-3 w-3 shrink-0" aria-hidden />
+                                  {bfsGroupSize} ACICs
+                                </span>
+                              ) : null}
                             </span>
-                          )}
-                          {nCnc && (
-                            <span className="flex items-center gap-1 bg-muted/50 px-2 py-0.5 rounded">
-                              <span className="font-medium">CNC:</span> {nCnc}
+                          ) : null}
+                          {nCnc ? (
+                            <span className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 bg-muted/35 px-2.5 py-1.5">
+                              <Link2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                              <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">CNC</span>
+                              <span className="font-mono font-semibold text-foreground">{nCnc}</span>
                             </span>
-                          )}
+                          ) : null}
+                        </div>
+
+                        {dataAcic || (area ?? "").trim() ? (
+                          <div className="mt-2 flex flex-row flex-wrap items-center justify-between gap-x-4 gap-y-2">
+                            <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-sm">
+                              {dataAcic ? (
+                                <>
+                                  <CalendarDays className="h-4 w-4 shrink-0 text-primary/65" aria-hidden />
+                                  <span className="text-lg py-2 font-semibold">Data:</span>
+                                  <span className="text-lg text-foreground">{formatAcicDate(dataAcic)}</span>
+                                </>
+                              ) : null}
+                            </div>
+                            <div className="flex shrink-0 flex-col items-end sm:ml-auto">
+                              <div className="flex items-center gap-2">
+                                <MapMinus className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                                <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                                  Subprefeitura
+                                </p>
+                              </div>
+                              <div className="mt-0.5 flex flex-wrap justify-end gap-2">
+                                {(area ?? "").trim() ? (
+                                  <span
+                                    className={`inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-xs font-semibold ${areaBadge.className}`}
+                                  >
+                                    <span className="font-mono text-[10px] opacity-80">{areaBadge.sigla}</span>
+                                    {area}
+                                  </span>
+                                ) : (
+                                  <span className="text-sm text-muted-foreground">Não informado</span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                      {isArquivadoRow ? (
+                        <div className="shrink-0 max-w-44 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-center text-[11px] font-medium text-emerald-900 dark:text-emerald-200">
+                          Processo arquivado — registro encerrado no FLIP (sem edição)
+                        </div>
+                      ) : isSolicitacaoRow ? (
+                        <div className="shrink-0 max-w-44 rounded-lg border border-amber-500/45 bg-amber-500/10 px-3 py-2 text-center text-[11px] font-medium text-amber-950 dark:text-amber-100">
+                          Em solicitação
+                        </div>
+                      ) : (
+                        <div className="shrink-0 flex flex-col gap-2">
+                          <button
+                            type="button"
+                            onClick={() => toggleDefesa(nAcic)}
+                            className={`inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
+                              temDefesa
+                                ? "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-900/40 dark:text-emerald-300 dark:border-emerald-700"
+                                : "bg-muted/50 text-muted-foreground border-border hover:bg-muted"
+                            }`}
+                          >
+                            <ShieldCheck className="h-3.5 w-3.5" aria-hidden />
+                            {temDefesa ? "Defesa" : "+ Defesa"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => toggleSemRecurso(nAcic)}
+                            className={`inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
+                              temSemRecurso
+                                ? "bg-red-100 text-red-800 border-red-300 dark:bg-red-900/40 dark:text-red-300 dark:border-red-700"
+                                : "bg-muted/50 text-muted-foreground border-border hover:bg-muted hover:border-red-300"
+                            }`}
+                          >
+                            <Ban className="h-3.5 w-3.5" aria-hidden />
+                            {temSemRecurso ? "Sem recurso" : "+ Sem recurso"}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {endereco?.trim() ? (
+                      <div className="mt-3">
+                        <div className="flex min-h-11 items-start gap-2.5 rounded-lg border border-border/60 bg-muted/25 px-3 py-2.5 text-sm">
+                          <MapPin className="h-4 w-4 shrink-0 mt-0.5 text-red-500/85" aria-hidden />
+                          <span className="min-w-0 leading-snug text-foreground">{endereco}</span>
                         </div>
                       </div>
-                      <div className="shrink-0 flex flex-col gap-2">
-                        <button
-                          type="button"
-                          onClick={() => toggleDefesa(nAcic)}
-                          className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
-                            temDefesa
-                              ? "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-900/40 dark:text-emerald-300 dark:border-emerald-700"
-                              : "bg-muted/50 text-muted-foreground border-border hover:bg-muted"
-                          }`}
-                        >
-                          {temDefesa ? "✓ Defesa" : "+ Marcar defesa"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => toggleSemRecurso(nAcic)}
-                          className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
-                            temSemRecurso
-                              ? "bg-red-100 text-red-800 border-red-300 dark:bg-red-900/40 dark:text-red-300 dark:border-red-700"
-                              : "bg-muted/50 text-muted-foreground border-border hover:bg-muted hover:border-red-300"
-                          }`}
-                        >
-                          {temSemRecurso ? "✓ Sem Recurso" : "+ Sem Recurso"}
-                        </button>
+                    ) : null}
+
+                    <div className="mt-4 grid grid-cols-1 gap-6 border-t border-border/40 pt-4 text-sm lg:grid-cols-2 lg:gap-8">
+                      <div className="min-w-0 space-y-3">
+                        {servico ? (
+                          <div className="flex items-start gap-2">
+                            <ClipboardList className="h-4 w-4 shrink-0 text-muted-foreground mt-0.5" aria-hidden />
+                            <div className="min-w-0 flex-1">
+                              <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Serviço</p>
+                              <p className="font-medium leading-snug">{servico}</p>
+                            </div>
+                          </div>
+                        ) : null}
+                        {agente ? (
+                          <div className="flex items-start gap-2">
+                            <User className="h-4 w-4 shrink-0 text-muted-foreground mt-0.5" aria-hidden />
+                            <div className="min-w-0 flex-1">
+                              <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Agente fiscalizador</p>
+                              <p className="font-medium leading-snug">{agente}</p>
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="min-w-0 border-border/40 lg:border-l lg:pl-8">
+                        <div className="flex items-start gap-2">
+                          <MessageSquare className="h-4 w-4 shrink-0 text-muted-foreground mt-1" aria-hidden />
+                          <div className="min-w-0 flex-1 space-y-2">
+                            <div className="flex items-start justify-between gap-2">
+                              <Label className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                                Entendimento para defesa prévia
+                              </Label>
+                              {!isArquivadoRow && (entendimentoMap[nAcic] ?? "").trim() ? (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 shrink-0 text-emerald-700 hover:bg-emerald-600/10 hover:text-emerald-800 dark:text-emerald-400"
+                                  aria-label="Editar entendimento"
+                                  onClick={() => setEntModalNAcic(nAcic)}
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                              ) : null}
+                            </div>
+                            {!isArquivadoRow ? (
+                              (entendimentoMap[nAcic] ?? "").trim() ? (
+                                <div className="rounded-lg border-l-4 border-l-emerald-600 bg-emerald-50/95 px-4 py-3 text-sm font-medium leading-relaxed text-emerald-950 shadow-sm whitespace-pre-wrap dark:border-emerald-500 dark:bg-emerald-950/50 dark:text-emerald-50">
+                                  {entendimentoMap[nAcic]}
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="w-full rounded-lg border-0 bg-emerald-600 px-4 py-3 text-left text-sm font-semibold text-white shadow-md transition-colors hover:bg-emerald-700"
+                                  onClick={() => setEntModalNAcic(nAcic)}
+                                >
+                                  Registrar entendimento para defesa prévia
+                                </button>
+                              )
+                            ) : (entendimentoMap[nAcic] ?? "").trim() ? (
+                              <p className="whitespace-pre-wrap rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-sm leading-relaxed text-foreground">
+                                {entendimentoMap[nAcic]}
+                              </p>
+                            ) : (
+                              <p className="text-sm italic text-muted-foreground">Sem registro (processo arquivado)</p>
+                            )}
+                          </div>
+                        </div>
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2 text-sm">
-                      {endereco && (
-                        <div className="md:col-span-2 flex items-start gap-2 text-muted-foreground mb-2">
-                          <span className="shrink-0">📍</span>
-                          <span>{endereco}</span>
+                    {!isArquivadoRow ? (
+                      <div className="mt-4 flex items-start gap-2 border-t border-border/40 pt-3 text-sm">
+                        <Coins className="h-4 w-4 shrink-0 mt-1" aria-hidden />
+                        <div className="min-w-0 flex-1 space-y-2">
+                          <div className="flex flex-wrap items-end gap-3">
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                                Valor da multa
+                              </label>
+                              <Input
+                                type="text"
+                                readOnly
+                                disabled
+                                aria-readonly
+                                value={valorOficial > 0 ? formatBr(valorOficial) : "—"}
+                                className="max-w-[220px] cursor-not-allowed bg-muted/40 font-mono font-bold text-red-600 opacity-100 dark:text-red-400"
+                              />
+                              <p className="text-[10px] text-muted-foreground max-w-[240px] leading-snug">
+                                Valor do FLIP/importação; em Confirmado vem do upload.
+                              </p>
+                            </div>
+                            {valorEstimativaLinha > 0 ? (
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-bold uppercase tracking-wide text-amber-800 dark:text-amber-200">
+                                  Estimativa
+                                </label>
+                                <Input
+                                  type="text"
+                                  readOnly
+                                  disabled
+                                  aria-readonly
+                                  value={formatBr(valorEstimativaLinha)}
+                                  className="max-w-[220px] cursor-not-allowed border-amber-400/70 bg-amber-100 font-mono font-bold text-amber-950 opacity-100 dark:border-amber-600/60 dark:bg-amber-950/45 dark:text-amber-100"
+                                />
+                                <p className="text-[10px] text-amber-900/80 dark:text-amber-200/90 max-w-[240px] leading-snug">
+                                  Entra no total geral; deixa de aparecer quando a ACIC fica Confirmada (valor homologado no FLIP).
+                                </p>
+                              </div>
+                            ) : null}
+                            <Button
+                              type="button"
+                              className="border-0 bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 shrink-0"
+                              onClick={() => {
+                                const csv = getValorMultaDoCsv(acic);
+                                const of = valorOficialMap[nAcic];
+                                const ev = valorEstimativaMap[nAcic];
+                                const isEst = estimativaMap[nAcic];
+                                const openVal =
+                                  isEst && ev != null && ev > 0
+                                    ? ev
+                                    : csv > 0
+                                      ? csv
+                                      : of != null && of > 0
+                                        ? of
+                                        : 0;
+                                setValorModalCtx({
+                                  nAcic,
+                                  valorAtOpen: openVal,
+                                  isSolicitacao: isSolicitacaoRow,
+                                  clausulaAtOpen: clausulaMap[nAcic] ?? null,
+                                  estimativaAtOpen: Boolean(isEst),
+                                });
+                              }}
+                            >
+                              <Calculator className="mr-2 h-4 w-4" aria-hidden />
+                              Valor e cláusula
+                            </Button>
+                          </div>
                         </div>
-                      )}
-                      {servico && (
-                        <div className="flex justify-between border-b border-dashed border-border/50 py-1">
-                          <span className="text-muted-foreground">Serviço:</span>
-                          <span className="font-medium text-right">{servico}</span>
-                        </div>
-                      )}
-                      {area && (
-                        <div className="flex justify-between border-b border-dashed border-border/50 py-1">
-                          <span className="text-muted-foreground">Área:</span>
-                          <span className="font-medium text-right">{area}</span>
-                        </div>
-                      )}
-                      {agente && (
-                        <div className="flex justify-between border-b border-dashed border-border/50 py-1">
-                          <span className="text-muted-foreground">Fiscal:</span>
-                          <span className="font-medium text-right">{agente}</span>
-                        </div>
-                      )}
-                      <div className="flex flex-col gap-1 md:col-span-2">
-                        <label className="text-xs font-medium text-muted-foreground">Valor da multa</label>
-                        <Input
-                          type="text"
-                          inputMode="decimal"
-                          placeholder="0,00"
-                          value={valor > 0 ? formatBr(valor) : ""}
-                          onChange={(e) => {
-                            const n = parseBrInput(e.target.value);
-                            setValorForAcic(nAcic, n);
-                          }}
-                          className="bg-background max-w-[180px] font-mono font-bold text-red-600 dark:text-red-400"
-                        />
                       </div>
-                      {dataAcic && (
-                        <div className="flex justify-between border-b border-dashed border-border/50 py-1">
-                          <span className="text-muted-foreground">Data:</span>
-                          <span className="font-medium text-right">
-                            {formatAcicDate(dataAcic)}
-                          </span>
-                        </div>
-                      )}
-                    </div>
+                    ) : null}
 
-                    {descricao && (
-                      <div className="mt-4 p-3 bg-muted/30 rounded-md text-xs border border-border/50">
-                        <p className="font-medium mb-1 text-muted-foreground uppercase tracking-wider text-[10px]">Descrição</p>
-                        <p className="text-foreground whitespace-pre-wrap leading-relaxed">{descricao}</p>
+                    {descricao ? (
+                      <div className="mt-4 flex gap-2 rounded-lg border border-dashed border-border/70 bg-muted/20 p-3 text-xs">
+                        <FileWarning className="h-4 w-4 shrink-0 text-amber-600/80 mt-0.5" aria-hidden />
+                        <div className="min-w-0">
+                          <p className="font-bold text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Descrição</p>
+                          <p className="text-foreground whitespace-pre-wrap leading-relaxed">{descricao}</p>
+                        </div>
                       </div>
-                    )}
+                    ) : null}
+
+                    {clausulaMap[nAcic]?.trim() ? (
+                      <div className="mt-4 flex gap-2 rounded-lg border border-dashed border-border/70 bg-muted/20 p-3 text-xs">
+                        <ClipboardList className="h-4 w-4 shrink-0 text-emerald-700/90 dark:text-emerald-400 mt-0.5" aria-hidden />
+                        <div className="min-w-0">
+                          <p className="font-bold text-muted-foreground uppercase tracking-wider text-[10px] mb-1">
+                            Cláusula (multa)
+                          </p>
+                          <p className="text-foreground whitespace-pre-wrap leading-relaxed">{clausulaMap[nAcic]}</p>
+                        </div>
+                      </div>
+                    ) : null}
                   </CardContent>
                 </Card>
               );
             })}
           </div>
         )}
+
+        <AcicEntendimentoDialog
+          open={entModalNAcic !== null}
+          onOpenChange={(o) => {
+            if (!o) setEntModalNAcic(null);
+          }}
+          initialText={entModalNAcic ? entendimentoMap[entModalNAcic] ?? "" : ""}
+          onSave={async (text) => {
+            if (!entModalNAcic) return;
+            await persistEntendimentoDefesaPrevia(entModalNAcic, text);
+          }}
+        />
+
+        <AcicValorMultaDialog
+          open={valorModalCtx !== null}
+          onOpenChange={(o) => {
+            if (!o) setValorModalCtx(null);
+          }}
+          initialValorBr={
+            valorModalCtx && valorModalCtx.valorAtOpen > 0 ? formatBr(valorModalCtx.valorAtOpen) : ""
+          }
+          initialEstimativa={valorModalCtx ? valorModalCtx.estimativaAtOpen : false}
+          suggestEstimativa={valorModalCtx?.isSolicitacao ?? false}
+          hasSavedMulta={
+            valorModalCtx
+              ? valorModalCtx.valorAtOpen > 0 || Boolean(valorModalCtx.clausulaAtOpen?.trim())
+              : false
+          }
+          initialClausulaTexto={valorModalCtx?.clausulaAtOpen ?? null}
+          onSave={async (p) => {
+            if (!valorModalCtx) return;
+            await saveMultaFromModal(valorModalCtx.nAcic, p);
+          }}
+          onClear={async () => {
+            if (!valorModalCtx) return;
+            await clearMultaOverride(valorModalCtx.nAcic);
+          }}
+        />
       </div>
     </MainLayout>
   );
