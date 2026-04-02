@@ -108,11 +108,11 @@ function mapSessionTypeToLabel(type: SessionUploadType): string {
     case "ouvidoria":
       return "Ouvidoria";
     case "iptHistoricoOs":
-      return "IPT - Historico OS";
+      return "DDMX — Veículos (histórico OS)";
     case "iptHistoricoOsVarricao":
-      return "IPT - Historico OS Varricao";
+      return "DDMX — Varrição (histórico OS)";
     case "iptHistoricoOsCompactadores":
-      return "IPT - Historico Operacoes Compactadores";
+      return "DDMX — Compactadores (histórico OS)";
     case "iptReport":
       return "IPT - Report SELIMP";
     case "iptStatusBateria":
@@ -120,9 +120,9 @@ function mapSessionTypeToLabel(type: SessionUploadType): string {
     case "iptCronograma":
       return "IPT - Cronograma";
     case "iptConsolidadoVeiculos":
-      return "IPT - Consolidado (Veiculos)";
+      return "IPT — Consolidado (veículos)";
     case "iptConsolidadoVarricao":
-      return "IPT - Consolidado (Varricao)";
+      return "IPT — Consolidado (varrição)";
   }
 }
 

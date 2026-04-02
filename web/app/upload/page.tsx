@@ -1,15 +1,20 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   AlertCircle,
+  BatteryFull,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
   FileSpreadsheet,
+  FileText,
+  LayoutDashboard,
   Settings,
   ShieldAlert,
+  Table2,
   Upload,
+  type LucideIcon,
 } from "lucide-react";
 import { toast } from "react-toastify";
 import { MainLayout } from "@/components/layout/main-layout";
@@ -31,6 +36,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { apiService } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 type SessionKey = "flip" | "ddmx" | "selimp";
 type UploadKey =
@@ -112,10 +118,20 @@ interface LastUploadInfo {
   history?: UploadHistoryEntry[];
 }
 
+/** Última importação por tipo de planilha DDMX (vem solto no /upload/last-updates). */
+interface DdmxTipoSnapshot {
+  ultimo_import?: string | null;
+  source_file?: string | null;
+  total_registros?: number;
+}
+
 interface UploadOverviewResponse {
   iptReport?: LastUploadInfo;
   iptStatusBateria?: LastUploadInfo;
   iptCronograma?: LastUploadInfo;
+  iptHistoricoOs?: DdmxTipoSnapshot;
+  iptHistoricoOsVarricao?: DdmxTipoSnapshot;
+  iptHistoricoOsCompactadores?: DdmxTipoSnapshot;
   sessions?: Record<SessionKey, LastUploadInfo>;
 }
 
@@ -176,7 +192,6 @@ function buildIptReferenceOptions(now = new Date()): IptReferenceOption[] {
   const mesAnteriorStr = `${anoMesAnterior}-${String(mesAnterior + 1).padStart(2, "0")}`;
   const mesAtualStr = `${anoAtual}-${String(mesAtual + 1).padStart(2, "0")}`;
   const ultimoDiaMesAnterior = new Date(anoMesAnterior, mesAnterior + 1, 0).getDate();
-  const ultimoDiaMesAtual = new Date(anoAtual, mesAtual + 1, 0).getDate();
 
   const nomeMesAnterior = new Date(anoMesAnterior, mesAnterior, 1).toLocaleDateString("pt-BR", { month: "long" });
   const nomeMesAtual = new Date(anoAtual, mesAtual, 1).toLocaleDateString("pt-BR", { month: "long" });
@@ -227,15 +242,99 @@ function createInitialStates(): Record<UploadKey, UploadState> {
   };
 }
 
+type SessionAccent = "violet" | "sky" | "emerald";
+
+const SESSION_ACCENTS: Record<SessionAccent, { bar: string; icon: string }> = {
+  violet: {
+    bar: "border-l-[3px] border-l-violet-500",
+    icon: "bg-violet-100 text-violet-700 shadow-sm ring-1 ring-violet-200/80 dark:bg-violet-950/80 dark:text-violet-100 dark:ring-violet-400/35",
+  },
+  sky: {
+    bar: "border-l-[3px] border-l-sky-500",
+    icon: "bg-sky-100 text-sky-700 shadow-sm ring-1 ring-sky-200/80 dark:bg-sky-950/80 dark:text-sky-100 dark:ring-sky-400/35",
+  },
+  emerald: {
+    bar: "border-l-[3px] border-l-emerald-500",
+    icon: "bg-emerald-100 text-emerald-800 shadow-sm ring-1 ring-emerald-200/80 dark:bg-emerald-950/80 dark:text-emerald-100 dark:ring-emerald-400/35",
+  },
+};
+
+function SessionAccordionItem({
+  value,
+  accent,
+  icon: Icon,
+  title,
+  subtitle,
+  contentClassName,
+  children,
+}: {
+  value: string;
+  accent: SessionAccent;
+  icon: LucideIcon;
+  title: string;
+  subtitle: string;
+  contentClassName?: string;
+  children: ReactNode;
+}) {
+  const a = SESSION_ACCENTS[accent];
+  return (
+    <AccordionItem
+      value={value}
+      className={cn(
+        "overflow-hidden rounded-2xl border px-5 shadow-sm transition-shadow hover:shadow-md",
+        "border-slate-200/90 bg-white shadow-slate-900/[0.04]",
+        "dark:border-border dark:bg-card dark:shadow-lg dark:shadow-black/40 dark:hover:shadow-xl",
+        a.bar,
+      )}
+    >
+      <AccordionTrigger className="rounded-none py-5 hover:no-underline data-[state=open]:border-b data-[state=open]:border-slate-100 dark:data-[state=open]:border-border">
+        <div className="flex items-start gap-3.5 text-left">
+          <div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-xl", a.icon)}>
+            <Icon className="h-5 w-5" strokeWidth={2} />
+          </div>
+          <div className="min-w-0 flex-1 pr-2">
+            <div className="text-base font-semibold tracking-tight text-foreground">{title}</div>
+            <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{subtitle}</p>
+          </div>
+        </div>
+      </AccordionTrigger>
+      <AccordionContent className={cn("pb-6 pt-1", contentClassName ?? "space-y-0")}>{children}</AccordionContent>
+    </AccordionItem>
+  );
+}
+
+type DropzoneTone = "neutral" | "violet" | "sky" | "fuchsia" | "emerald";
+
+const DROPZONE_SURFACE: Record<DropzoneTone, string> = {
+  neutral:
+    "border-slate-200/90 from-slate-50/90 to-white hover:border-slate-300/90 dark:border-dashed dark:border-border dark:from-muted/50 dark:to-card dark:hover:border-muted-foreground/40",
+  violet:
+    "border-violet-200/75 from-violet-50/55 to-white hover:border-violet-300/80 dark:border-dashed dark:border-violet-500/35 dark:from-violet-950/40 dark:to-card dark:hover:border-violet-400/45",
+  sky:
+    "border-sky-200/75 from-sky-50/50 to-white hover:border-sky-300/80 dark:border-dashed dark:border-sky-500/35 dark:from-sky-950/35 dark:to-card dark:hover:border-sky-400/45",
+  fuchsia:
+    "border-fuchsia-200/70 from-fuchsia-50/45 to-white hover:border-fuchsia-300/80 dark:border-dashed dark:border-fuchsia-500/35 dark:from-fuchsia-950/35 dark:to-card dark:hover:border-fuchsia-400/45",
+  emerald:
+    "border-emerald-200/75 from-emerald-50/45 to-white hover:border-emerald-300/80 dark:border-dashed dark:border-emerald-500/35 dark:from-emerald-950/35 dark:to-card dark:hover:border-emerald-400/45",
+};
+
 function SummaryBox({ state }: { state: UploadState }) {
   if (state.status === "success" && state.result) {
     return (
-      <div className="mt-6 rounded-2xl border-0 bg-emerald-50/90 p-5 text-sm shadow-md shadow-emerald-900/10 ring-1 ring-emerald-500/15 dark:bg-emerald-950/30 dark:shadow-emerald-950/40 dark:ring-emerald-500/20">
-        <div className="flex items-center gap-2 font-semibold text-emerald-800 dark:text-emerald-300">
-          <CheckCircle2 className="h-4 w-4" />
-          Upload concluido
+      <div
+        className={cn(
+          "mt-6 rounded-2xl border p-5 text-sm shadow-sm",
+          "border-emerald-200/60 bg-gradient-to-br from-emerald-50/90 via-white to-white",
+          "shadow-emerald-900/[0.06] dark:border-emerald-800/50 dark:bg-gradient-to-br dark:from-emerald-950/50 dark:via-card dark:to-card dark:shadow-md dark:shadow-black/30",
+        )}
+      >
+        <div className="flex items-center gap-2.5 font-semibold text-emerald-900 dark:text-emerald-300">
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300">
+            <CheckCircle2 className="h-4 w-4" />
+          </span>
+          Upload concluído
         </div>
-        <div className="mt-4 grid gap-3 text-xs leading-relaxed text-muted-foreground sm:grid-cols-2">
+        <div className="mt-4 grid gap-2.5 text-xs leading-relaxed text-muted-foreground sm:grid-cols-2">
           <div>Processados: <span className="font-semibold text-foreground">{state.result.processados ?? 0}</span></div>
           <div>Total: <span className="font-semibold text-foreground">{state.result.total ?? 0}</span></div>
           <div>Inseridos: <span className="font-semibold text-foreground">{state.result.inseridos ?? 0}</span></div>
@@ -251,7 +350,7 @@ function SummaryBox({ state }: { state: UploadState }) {
           )}
         </div>
         {state.result.estimativa && (
-          <div className="mt-4 border-t border-emerald-500/20 pt-4 text-xs leading-relaxed text-muted-foreground dark:border-emerald-500/15">
+          <div className="mt-4 border-t border-emerald-200/70 pt-4 text-xs leading-relaxed text-muted-foreground dark:border-emerald-500/15">
             <div className="font-semibold text-emerald-900 dark:text-emerald-200">Estimativa de datas</div>
             <div className="mt-2 grid gap-1.5 sm:grid-cols-3">
               <div>
@@ -270,7 +369,7 @@ function SummaryBox({ state }: { state: UploadState }) {
           </div>
         )}
         {state.result.parse_stats && (
-          <div className="mt-4 border-t border-emerald-500/20 pt-4 text-xs leading-relaxed text-muted-foreground dark:border-emerald-500/15">
+          <div className="mt-4 border-t border-emerald-200/70 pt-4 text-xs leading-relaxed text-muted-foreground dark:border-emerald-500/15">
             <div className="font-semibold text-emerald-900 dark:text-emerald-200">Leitura da planilha (veiculos)</div>
             <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
               <div>
@@ -302,12 +401,20 @@ function SummaryBox({ state }: { state: UploadState }) {
 
   if (state.status === "error") {
     return (
-      <div className="mt-6 rounded-2xl border-0 bg-red-50/90 p-5 text-sm shadow-md shadow-red-900/10 ring-1 ring-red-500/15 dark:bg-red-950/30 dark:shadow-red-950/40 dark:ring-red-500/20">
-        <div className="flex items-start gap-2 text-red-800 dark:text-red-300">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-          <div>
+      <div
+        className={cn(
+          "mt-6 rounded-2xl border p-5 text-sm shadow-sm",
+          "border-red-200/70 bg-gradient-to-br from-red-50/90 via-white to-white shadow-red-900/[0.05]",
+          "dark:border-red-900/60 dark:bg-gradient-to-br dark:from-red-950/45 dark:via-card dark:to-card dark:shadow-md dark:shadow-black/30",
+        )}
+      >
+        <div className="flex items-start gap-3 text-red-900 dark:text-red-300">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300">
+            <AlertCircle className="h-4 w-4" />
+          </span>
+          <div className="min-w-0">
             <div className="font-semibold">Erro no upload</div>
-            <div className="mt-2 text-xs leading-relaxed">{state.error}</div>
+            <div className="mt-2 text-xs leading-relaxed text-red-900/85 dark:text-red-200/90">{state.error}</div>
           </div>
         </div>
       </div>
@@ -317,62 +424,213 @@ function SummaryBox({ state }: { state: UploadState }) {
   return null;
 }
 
+function DdmxSnapFields({ snap }: { snap?: DdmxTipoSnapshot }) {
+  const tem = Boolean(snap?.ultimo_import || snap?.source_file);
+  return (
+    <dl className="mt-2 space-y-2 text-[11px]">
+      <div className="rounded-lg border border-slate-100 bg-slate-50/50 px-2.5 py-2 dark:border-border dark:bg-muted/50">
+        <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Arquivo</dt>
+        <dd className="mt-0.5 break-all font-medium text-foreground">{tem ? snap?.source_file || "—" : "—"}</dd>
+      </div>
+      <div className="rounded-lg border border-slate-100 bg-slate-50/50 px-2.5 py-2 dark:border-border dark:bg-muted/50">
+        <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Atualizado</dt>
+        <dd className="mt-0.5 font-medium text-foreground">
+          {tem ? formatDateTime(snap?.ultimo_import) : "Ainda não importado"}
+        </dd>
+      </div>
+      <div className="rounded-lg border border-slate-100 bg-slate-50/50 px-2.5 py-2 dark:border-border dark:bg-muted/50">
+        <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Registros na base</dt>
+        <dd className="mt-0.5 font-medium tabular-nums text-foreground">{tem ? snap?.total_registros ?? 0 : "—"}</dd>
+      </div>
+    </dl>
+  );
+}
+
+function DdmxPorTipoBlock({ overview }: { overview?: UploadOverviewResponse }) {
+  const snapVeic = overview?.iptHistoricoOs;
+  const snapComp = overview?.iptHistoricoOsCompactadores;
+  const snapVarr = overview?.iptHistoricoOsVarricao;
+
+  return (
+    <div
+      className={cn(
+        "mt-6 rounded-2xl border p-5 text-xs leading-relaxed shadow-sm",
+        "border-sky-200/55 bg-gradient-to-br from-sky-50/80 via-white to-slate-50/50",
+        "shadow-sky-900/[0.04] dark:border-sky-800/45 dark:bg-gradient-to-br dark:from-sky-950/45 dark:via-card dark:to-card dark:text-foreground dark:shadow-md dark:shadow-black/25",
+      )}
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm font-semibold tracking-tight text-foreground">Última importação por linha DDMX</span>
+        <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-800 dark:bg-sky-900/60 dark:text-sky-100">
+          DDMX
+        </span>
+      </div>
+      <p className="mt-2 max-w-3xl text-[11px] leading-relaxed text-slate-600 dark:text-muted-foreground">
+        Frota geral e compactadores compartilham o mesmo cartão (dois históricos OS distintos na base). Varrição permanece separada — outro layout de planilha.
+      </p>
+      <div className="mt-4 grid gap-3 md:grid-cols-2">
+        <div
+          className={cn(
+            "relative overflow-hidden rounded-xl border p-4 shadow-sm",
+            "border-slate-200/90 bg-white/90 backdrop-blur-[2px]",
+            "dark:border-border dark:bg-muted/40",
+          )}
+        >
+          <div className="absolute left-0 top-0 h-full w-1 rounded-l-xl bg-violet-500" aria-hidden />
+          <div className="pl-2">
+            <div className="flex items-center gap-2">
+              <span className="h-2 w-2 shrink-0 rounded-full bg-violet-500" aria-hidden />
+              <div className="text-sm font-semibold text-foreground">Veículos e compactadores</div>
+            </div>
+            <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
+              Histórico OS da frota em geral e histórico OS de compactação — enviados pela mesma sessão DDMX, armazenados em conjuntos diferentes.
+            </p>
+
+            <div className="mt-4 border-t border-slate-100 pt-4 dark:border-border">
+              <div className="text-[10px] font-bold uppercase tracking-wide text-violet-800 dark:text-violet-300">Veículos (geral)</div>
+              <DdmxSnapFields snap={snapVeic} />
+            </div>
+            <div className="mt-4 border-t border-slate-100 pt-4 dark:border-border">
+              <div className="text-[10px] font-bold uppercase tracking-wide text-amber-800 dark:text-amber-300">Compactadores</div>
+              <DdmxSnapFields snap={snapComp} />
+            </div>
+          </div>
+        </div>
+
+        <div
+          className={cn(
+            "relative overflow-hidden rounded-xl border p-4 shadow-sm",
+            "border-slate-200/90 bg-white/90 backdrop-blur-[2px]",
+            "dark:border-border dark:bg-muted/40",
+          )}
+        >
+          <div className="absolute left-0 top-0 h-full w-1 rounded-l-xl bg-sky-500" aria-hidden />
+          <div className="pl-2">
+            <div className="flex items-center gap-2">
+              <span className="h-2 w-2 shrink-0 rounded-full bg-sky-500" aria-hidden />
+              <div className="text-sm font-semibold text-foreground">Varrição</div>
+            </div>
+            <p className="mt-1 text-[11px] leading-snug text-muted-foreground">Histórico OS específico de varrição.</p>
+            <DdmxSnapFields snap={snapVarr} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HistoryStat({
+  label,
+  value,
+  className,
+}: {
+  label: string;
+  value: string;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "rounded-lg border border-slate-100 bg-white px-3 py-2.5 shadow-[0_1px_0_0_rgba(15,23,42,0.03)]",
+        "dark:border-border dark:bg-muted/55 dark:shadow-none",
+        className,
+      )}
+    >
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="mt-1 text-sm font-medium leading-snug text-foreground">{value}</div>
+    </div>
+  );
+}
+
 function HistoryBlock({
   title,
   overview,
   expanded,
   onToggle,
+  hint,
 }: {
   title: string;
   overview?: LastUploadInfo;
   expanded: boolean;
   onToggle: () => void;
+  /** Texto curto abaixo do título (ex.: explicar que o bloco é só da última fila de upload). */
+  hint?: string;
 }) {
   const history = overview?.history ?? [];
 
+  const summaryCells: { label: string; value: string; span?: "full" }[] = [
+    { label: "Última atualização", value: formatDateTime(overview?.ultimo_import) },
+    { label: "Arquivo", value: overview?.source_file || "—", span: "full" },
+  ];
+  if (overview?.tipo_detectado_label) {
+    summaryCells.push({ label: "Tipo detectado", value: overview.tipo_detectado_label, span: "full" });
+  }
+  if (overview?.ultima_referencia) {
+    summaryCells.push({ label: "Última referência", value: overview.ultima_referencia, span: "full" });
+  } else if (overview?.referencia_importada) {
+    summaryCells.push({ label: "Referência", value: overview.referencia_importada, span: "full" });
+  }
+  summaryCells.push({ label: "Registros (visão resumida)", value: String(overview?.total_registros ?? 0) });
+  if (overview?.total_encerradas !== undefined) {
+    summaryCells.push({ label: "Encerrados acumulados", value: String(overview.total_encerradas ?? 0) });
+  }
+
   return (
-    <div className="mt-6 rounded-2xl border-0 bg-muted/30 p-5 text-xs leading-relaxed text-muted-foreground shadow-sm shadow-black/5 ring-1 ring-black/5 dark:bg-muted/20 dark:shadow-black/30 dark:ring-white/10">
+    <div
+      className={cn(
+        "mt-6 rounded-2xl border p-5 text-xs leading-relaxed shadow-sm",
+        "border-slate-200/80 bg-gradient-to-b from-slate-50/80 to-white",
+        "shadow-slate-900/[0.03] dark:border-border dark:bg-gradient-to-b dark:from-card dark:to-muted/30 dark:shadow-md dark:shadow-black/20",
+      )}
+    >
       <div className="text-sm font-semibold tracking-tight text-foreground">{title}</div>
-      <div className="mt-4 space-y-2.5">
-        <div>Ultima atualizacao: <span className="font-semibold text-foreground">{formatDateTime(overview?.ultimo_import)}</span></div>
-        <div>Arquivo: <span className="font-semibold text-foreground">{overview?.source_file || "—"}</span></div>
-      {overview?.tipo_detectado_label && (
-        <div>Tipo detectado: <span className="font-semibold text-foreground">{overview.tipo_detectado_label}</span></div>
-      )}
-      {overview?.ultima_referencia && (
-        <div>Ultima referencia: <span className="font-semibold text-foreground">{overview.ultima_referencia}</span></div>
-      )}
-      {overview?.referencia_importada && !overview?.ultima_referencia && (
-        <div>Referencia: <span className="font-semibold text-foreground">{overview.referencia_importada}</span></div>
-      )}
-      <div>Registros atuais: <span className="font-semibold text-foreground">{overview?.total_registros ?? 0}</span></div>
-      {overview?.total_encerradas !== undefined && (
-        <div>Encerrados acumulados: <span className="font-semibold text-foreground">{overview.total_encerradas ?? 0}</span></div>
-      )}
+      {hint ? (
+        <p className="mt-2 rounded-lg border border-slate-100 bg-white/60 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground dark:border-border dark:bg-muted/40">
+          {hint}
+        </p>
+      ) : null}
+      <div className="mt-4 grid gap-2.5 sm:grid-cols-2">
+        {summaryCells.map((cell) => (
+          <HistoryStat
+            key={cell.label}
+            label={cell.label}
+            value={cell.value}
+            className={cell.span === "full" ? "sm:col-span-2" : undefined}
+          />
+        ))}
       </div>
 
       {history.length > 0 && (
         <>
-          <Button variant="ghost" type="button" className="mt-5 h-9 px-3 text-xs" onClick={onToggle}>
+          <Button
+            variant="ghost"
+            type="button"
+            className="mt-5 h-9 border border-slate-200/80 bg-white px-3 text-xs shadow-sm hover:bg-slate-50 dark:border-border dark:bg-muted/40 dark:hover:bg-muted/70"
+            onClick={onToggle}
+          >
             {expanded ? <ChevronUp className="mr-1 h-4 w-4" /> : <ChevronDown className="mr-1 h-4 w-4" />}
-            {expanded ? "Ocultar historico" : "Mostrar mais"}
+            {expanded ? "Ocultar histórico" : `Ver histórico (${Math.min(history.length, 10)} recentes)`}
           </Button>
 
           {expanded && (
-            <div className="mt-4 space-y-3">
+            <div className="mt-4 space-y-3 border-t border-slate-100 pt-4 dark:border-border">
               {history.slice(0, 10).map((entry, index) => (
                 <div
                   key={`${entry.created_at}-${entry.source_file}-${index}`}
-                  className="rounded-xl border-0 bg-background/80 p-4 shadow-sm shadow-black/5 ring-1 ring-black/5 dark:shadow-black/40 dark:ring-white/10"
-                >
-                  <div className="font-medium text-foreground">{entry.tipo_label || "Importacao"}</div>
-                  <div className="mt-2 space-y-1.5">
-                  <div>Data: <span className="text-foreground">{formatDateTime(entry.created_at)}</span></div>
-                  <div>Arquivo: <span className="text-foreground">{entry.source_file || "—"}</span></div>
-                  <div>Processados: <span className="text-foreground">{entry.processados ?? 0}</span></div>
-                  {entry.referencia_importada && (
-                    <div>Referencia: <span className="text-foreground">{entry.referencia_importada}</span></div>
+                  className={cn(
+                    "rounded-xl border p-4 shadow-sm",
+                    "border-slate-200/70 bg-white",
+                    "dark:border-border dark:bg-muted/35",
                   )}
+                >
+                  <div className="text-xs font-semibold text-foreground">{entry.tipo_label || "Importação"}</div>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    <HistoryStat label="Data" value={formatDateTime(entry.created_at)} />
+                    <HistoryStat label="Processados" value={String(entry.processados ?? 0)} />
+                    <HistoryStat label="Arquivo" value={entry.source_file || "—"} className="sm:col-span-2" />
+                    {entry.referencia_importada ? (
+                      <HistoryStat label="Referência" value={entry.referencia_importada} className="sm:col-span-2" />
+                    ) : null}
                   </div>
                 </div>
               ))}
@@ -390,22 +648,27 @@ function UploadDropzone({
   loading,
   helperText,
   onFilesSelected,
+  tone = "neutral",
 }: {
   inputId: string;
   accept: string;
   loading: boolean;
   helperText: string;
   onFilesSelected: (files: FileList | null) => void;
+  tone?: DropzoneTone;
 }) {
   const [dragActive, setDragActive] = useState(false);
 
   return (
     <div
-      className={`rounded-2xl border-0 bg-linear-to-b from-muted/60 to-muted/30 p-8 text-center shadow-md shadow-black/5 ring-1 ring-black/6 transition-all duration-200 dark:from-muted/40 dark:to-muted/15 dark:shadow-black/40 dark:ring-white/10 ${
+      className={cn(
+        "rounded-2xl border border-dashed bg-gradient-to-b p-8 text-center shadow-sm transition-all duration-200",
+        DROPZONE_SURFACE[tone],
         dragActive
-          ? "scale-[1.01] bg-primary/8 shadow-lg shadow-primary/15 ring-2 ring-primary/25 dark:bg-primary/15"
-          : "hover:shadow-lg hover:shadow-black/8 dark:hover:shadow-black/50"
-      } ${loading ? "pointer-events-none opacity-70" : ""}`}
+          ? "scale-[1.01] border-primary/40 shadow-md shadow-primary/10 ring-2 ring-primary/20 dark:border-primary/30"
+          : "hover:shadow-md hover:shadow-slate-900/[0.04] dark:hover:shadow-black/40",
+        loading && "pointer-events-none opacity-70",
+      )}
       onDragOver={(event) => {
         event.preventDefault();
         setDragActive(true);
@@ -427,13 +690,21 @@ function UploadDropzone({
         disabled={loading}
       />
       <label htmlFor={inputId} className="block cursor-pointer">
-        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-background/90 shadow-inner shadow-black/5 ring-1 ring-black/5 dark:bg-background/50 dark:ring-white/10">
+        <div
+          className={cn(
+            "mx-auto flex h-14 w-14 items-center justify-center rounded-2xl shadow-inner",
+            "bg-white/90 ring-1 ring-slate-200/90 dark:bg-muted/60 dark:ring-border",
+          )}
+        >
           <FileSpreadsheet className="h-6 w-6 text-primary" />
         </div>
         <div className="mt-5 text-sm font-semibold tracking-tight text-foreground">
-          {loading ? "Processando arquivo..." : "Clique ou arraste o arquivo aqui"}
+          {loading ? "Processando arquivo…" : "Clique ou arraste o arquivo aqui"}
         </div>
-        <div className="mt-2 max-w-md mx-auto text-xs leading-relaxed text-muted-foreground">{helperText}</div>
+        <p className="mx-auto mt-2 max-w-lg text-xs leading-relaxed text-slate-600 dark:text-muted-foreground">{helperText}</p>
+        <p className="mt-3 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+          Formatos: <span className="font-semibold text-foreground/80">{accept.replace(/\./g, "").replace(/,/g, " · ")}</span>
+        </p>
       </label>
     </div>
   );
@@ -532,8 +803,10 @@ export default function UploadPage() {
           toast.error("Informe periodo inicial e final.");
           return;
         }
+        const modoRef: IptReferenceMode =
+          selectedReference.value === "personalizado" ? "d_minus_1" : selectedReference.value;
         result = await apiService.uploadIptReportXlsx(file, {
-          modoReferencia: selectedReference.value === "personalizado" ? "d_minus_1" : selectedReference.value as any,
+          modoReferencia: modoRef,
           periodoInicial: pi,
           periodoFinal: pf,
           mesReferencia: selectedReference.mesReferencia,
@@ -598,19 +871,34 @@ export default function UploadPage() {
 
   return (
     <MainLayout>
-      <div className="space-y-10">
-        <div className="rounded-3xl bg-linear-to-br from-indigo-600 via-indigo-700 to-purple-900 p-8 text-white shadow-2xl shadow-indigo-950/40 ring-1 ring-white/10">
-          <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+      <div
+        className={cn(
+          "relative space-y-10 pb-10",
+          "before:pointer-events-none before:absolute before:inset-x-0 before:top-0 before:h-72 before:-translate-y-8 before:bg-[radial-gradient(ellipse_90%_60%_at_50%_-10%,rgba(99,102,241,0.11),transparent)]",
+          "dark:before:bg-[radial-gradient(ellipse_90%_60%_at_50%_-10%,rgba(99,102,241,0.18),transparent)]",
+        )}
+      >
+        <div className="relative overflow-hidden rounded-3xl border border-indigo-400/20 bg-gradient-to-br from-indigo-600 via-indigo-700 to-purple-900 p-8 text-white shadow-2xl shadow-indigo-950/25 ring-1 ring-white/10 dark:border-white/10 dark:shadow-indigo-950/40">
+          <div
+            className="pointer-events-none absolute -right-20 -top-20 h-64 w-64 rounded-full bg-white/10 blur-3xl dark:bg-white/5"
+            aria-hidden
+          />
+          <div className="relative flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
             <div className="flex items-start gap-5">
-              <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-indigo-950/70 shadow-lg shadow-black/25">
+              <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-indigo-950/70 shadow-lg shadow-black/25 ring-1 ring-white/15">
                 <Upload className="h-8 w-8" strokeWidth={1.8} />
               </div>
               <div>
-                <h1 className="text-4xl font-bold tracking-tight">Upload de Dados</h1>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-indigo-200/90">Central de importação</p>
+                <h1 className="mt-1 text-4xl font-bold tracking-tight">Upload de dados</h1>
                 <p className="mt-4 max-w-3xl text-sm leading-relaxed text-indigo-50/95 sm:text-base">
-                  Agora as importacoes principais ficam concentradas por sessao. O sistema detecta o tipo do arquivo,
-                  bloqueia arquivos fora da sessao e mantem historico recente das ultimas importacoes.
+                  As importações principais ficam por sessão (FLIP, DDMX, SELIMP). 
                 </p>
+                <ul className="mt-4 flex flex-wrap gap-2 text-[11px] text-indigo-100/90">
+                  <li className="rounded-full bg-white/10 px-3 py-1 ring-1 ring-white/15">Detecção automática</li>
+                  <li className="rounded-full bg-white/10 px-3 py-1 ring-1 ring-white/15">Histórico por sessão</li>
+                  <li className="rounded-full bg-white/10 px-3 py-1 ring-1 ring-white/15">Referência SELIMP explícita</li>
+                </ul>
               </div>
             </div>
 
@@ -618,8 +906,8 @@ export default function UploadPage() {
               type="button"
               variant="secondary"
               size="icon"
-              className="h-11 w-11 rounded-xl border-0 bg-white/15 text-white shadow-lg shadow-black/20 ring-1 ring-white/20 hover:bg-white/25 hover:text-white"
-              title="Cronograma anual"
+              className="h-11 w-11 shrink-0 rounded-xl border-0 bg-white/15 text-white shadow-lg shadow-black/20 ring-1 ring-white/20 hover:bg-white/25 hover:text-white"
+              title="Cronograma anual (BL, MT, NH, LM, GO)"
               onClick={() => setCronogramaModalOpen(true)}
             >
               <Settings className="h-5 w-5" />
@@ -628,99 +916,122 @@ export default function UploadPage() {
           </div>
         </div>
 
-        <div className="rounded-2xl border-0 bg-amber-50/90 p-5 text-sm text-amber-950 shadow-md shadow-amber-900/10 ring-1 ring-amber-500/20 dark:bg-amber-950/35 dark:text-amber-50 dark:shadow-amber-950/50 dark:ring-amber-500/25">
+        <div
+          className={cn(
+            "rounded-2xl border p-5 text-sm shadow-sm",
+            "border-amber-200/70 bg-gradient-to-br from-amber-50/95 via-white to-orange-50/40 text-amber-950",
+            "shadow-amber-900/[0.06] dark:border-amber-800/50 dark:bg-gradient-to-br dark:from-amber-950/55 dark:via-card dark:to-card dark:text-amber-50 dark:shadow-md dark:shadow-black/25",
+          )}
+        >
           <div className="flex items-start gap-4">
-            <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 opacity-90" />
-            <div>
-              <div className="font-semibold tracking-tight">Protecao extra para imports sensiveis</div>
-              <div className="mt-2 text-xs leading-relaxed opacity-95">
-                `FLIP` aceita apenas CSV e `DDMX` apenas planilhas. O tipo real do arquivo e validado no backend antes da importacao.
-                O Report SELIMP e o historico DDMX na secao SELIMP sao opcionais para conferencia ou outros fluxos.
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-800 shadow-sm ring-1 ring-amber-200/80 dark:bg-amber-900/40 dark:text-amber-200 dark:ring-amber-500/30">
+              <ShieldAlert className="h-5 w-5" />
+            </span>
+            <div className="min-w-0">
+              <div className="font-semibold tracking-tight text-amber-950 dark:text-amber-50">Proteção extra nos envios</div>
+              <p className="mt-2 text-xs leading-relaxed text-amber-950/85 dark:text-amber-50/90">
+                Cada sessão aceita só formatos compatíveis. A validação final é no servidor (conteúdo + tipo real do arquivo).
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <span className="inline-flex items-center rounded-md bg-white/80 px-2 py-1 font-mono text-[11px] font-semibold text-amber-950 shadow-sm ring-1 ring-amber-200/60 dark:bg-muted/60 dark:text-amber-100 dark:ring-border">
+                  FLIP → .csv
+                </span>
+                <span className="inline-flex items-center rounded-md bg-white/80 px-2 py-1 font-mono text-[11px] font-semibold text-amber-950 shadow-sm ring-1 ring-amber-200/60 dark:bg-muted/60 dark:text-amber-100 dark:ring-border">
+                  DDMX → .xlsx / .xls
+                </span>
+                <span className="inline-flex items-center rounded-md bg-white/80 px-2 py-1 text-[11px] font-medium text-amber-950 shadow-sm ring-1 ring-amber-200/60 dark:bg-muted/60 dark:text-amber-100 dark:ring-border">
+                  Report SELIMP e status de bateria: fluxos à parte nesta página
+                </span>
               </div>
             </div>
           </div>
         </div>
 
-        <Accordion type="multiple" defaultValue={["flip", "ddmx", "selimp"]} className="space-y-5">
-          <AccordionItem value="flip" className="overflow-hidden rounded-2xl border-0 bg-card px-6 shadow-lg shadow-black/5 ring-1 ring-black/5 dark:shadow-black/40 dark:ring-white/10">
-            <AccordionTrigger className="hover:no-underline py-5">
-              <div className="text-left">
-                <div className="text-base font-semibold tracking-tight">FLIP</div>
-                <div className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-                  Um unico input para SAC, BFS, CNC, Ouvidoria e ACIC. O tipo e detectado pela estrutura do CSV.
+        <Accordion type="multiple" defaultValue={[]} className="space-y-5">
+          <SessionAccordionItem
+            value="flip"
+            accent="violet"
+            icon={FileText}
+            title="FLIP"
+            subtitle="Um único campo para SAC, BFS, CNC (detalhes), Ouvidoria e ACIC. O tipo de CSV é inferido pelas colunas e, em último caso, pelo nome do arquivo."
+          >
+            <UploadDropzone
+              inputId="flip"
+              accept=".csv"
+              tone="violet"
+              loading={states.flip.status === "uploading"}
+              helperText="Exportações do FLIP em CSV (delimitador padrão do sistema). Se o arquivo não for compatível com esta sessão, o upload é recusado."
+              onFilesSelected={(files) => handleSessionUpload("flip", files)}
+            />
+            <HistoryBlock
+              title="Resumo da sessão FLIP"
+              overview={overview.sessions?.flip}
+              expanded={Boolean(expandedHistory.flip)}
+              onToggle={() => toggleHistory("flip")}
+            />
+            <SummaryBox state={states.flip} />
+          </SessionAccordionItem>
+
+          <SessionAccordionItem
+            value="ddmx"
+            accent="sky"
+            icon={Table2}
+            title="DDMX"
+            subtitle="Um envio por vez: o backend detecta veículos (histórico geral), compactadores ou varrição. O resumo abaixo agrupa frota + compactadores num único cartão e deixa varrição à parte."
+          >
+            <UploadDropzone
+              inputId="ddmx"
+              accept=".xlsx,.xls"
+              tone="sky"
+              loading={states.ddmx.status === "uploading"}
+              helperText="Planilhas de histórico de OS do DDMX. A detecção usa o layout das abas e colunas — use o modelo habitual de cada operação."
+              onFilesSelected={(files) => handleSessionUpload("ddmx", files)}
+            />
+            <DdmxPorTipoBlock overview={overview} />
+            <HistoryBlock
+              title="Histórico recente da sessão DDMX"
+              hint="Os dados do topo deste quadro são só da última importação enviada (qualquer tipo). Para arquivo, data e volume por linha DDMX (frota, compactadores e varrição), use o bloco resumido acima."
+              overview={overview.sessions?.ddmx}
+              expanded={Boolean(expandedHistory.ddmx)}
+              onToggle={() => toggleHistory("ddmx")}
+            />
+            <SummaryBox state={states.ddmx} />
+          </SessionAccordionItem>
+
+          <SessionAccordionItem
+            value="selimp"
+            accent="emerald"
+            icon={LayoutDashboard}
+            title="SELIMP"
+            subtitle="Dois canais fixos: relatório de ordens (com período de referência obrigatório) e planilha de status de bateria, para não misturar com o DDMX."
+            contentClassName="grid gap-6 pb-6 pt-1 md:grid-cols-2"
+          >
+            <div
+              className={cn(
+                "rounded-2xl border p-6 shadow-sm",
+                "border-slate-200/85 bg-gradient-to-b from-white to-slate-50/40",
+                "dark:border-border dark:bg-gradient-to-b dark:from-card dark:to-muted/25 dark:shadow-md dark:shadow-black/20",
+              )}
+            >
+              <div className="mb-5 flex items-start gap-3">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-fuchsia-100 text-fuchsia-800 ring-1 ring-fuchsia-200/80 dark:bg-fuchsia-950/40 dark:text-fuchsia-200 dark:ring-fuchsia-500/25">
+                  <FileSpreadsheet className="h-4 w-4" />
+                </span>
+                <div>
+                  <div className="text-lg font-semibold tracking-tight">IPT — Report SELIMP</div>
+                  <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                    Fluxo mais sensível à referência: escolha o período antes de enviar para evitar sobrescrever ou duplicar leituras.
+                  </p>
                 </div>
               </div>
-            </AccordionTrigger>
-            <AccordionContent className="space-y-0 pb-6 pt-0">
-              <UploadDropzone
-                inputId="flip"
-                accept=".csv"
-                loading={states.flip.status === "uploading"}
-                helperText="Solte aqui qualquer CSV do FLIP. Se vier arquivo fora da sessao, o upload sera bloqueado."
-                onFilesSelected={(files) => handleSessionUpload("flip", files)}
-              />
-              <HistoryBlock
-                title="Resumo da sessao FLIP"
-                overview={overview.sessions?.flip}
-                expanded={Boolean(expandedHistory.flip)}
-                onToggle={() => toggleHistory("flip")}
-              />
-              <SummaryBox state={states.flip} />
-            </AccordionContent>
-          </AccordionItem>
 
-          <AccordionItem value="ddmx" className="overflow-hidden rounded-2xl border-0 bg-card px-6 shadow-lg shadow-black/5 ring-1 ring-black/5 dark:shadow-black/40 dark:ring-white/10">
-            <AccordionTrigger className="hover:no-underline py-5">
-              <div className="text-left">
-                <div className="text-base font-semibold tracking-tight">DDMX</div>
-                <div className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-                  Um unico input para Historico OS, Varricao e Compactadores. O backend tenta identificar a planilha com seguranca.
-                </div>
-              </div>
-            </AccordionTrigger>
-            <AccordionContent className="space-y-0 pb-6 pt-0">
-              <UploadDropzone
-                inputId="ddmx"
-                accept=".xlsx,.xls"
-                loading={states.ddmx.status === "uploading"}
-                helperText="Aceita planilhas XLSX da sessao DDMX. Se a estrutura nao bater, a importacao sera recusada."
-                onFilesSelected={(files) => handleSessionUpload("ddmx", files)}
-              />
-              <HistoryBlock
-                title="Resumo da sessao DDMX"
-                overview={overview.sessions?.ddmx}
-                expanded={Boolean(expandedHistory.ddmx)}
-                onToggle={() => toggleHistory("ddmx")}
-              />
-              <SummaryBox state={states.ddmx} />
-            </AccordionContent>
-          </AccordionItem>
-
-          <AccordionItem value="selimp" className="overflow-hidden rounded-2xl border-0 bg-card px-6 shadow-lg shadow-black/5 ring-1 ring-black/5 dark:shadow-black/40 dark:ring-white/10">
-            <AccordionTrigger className="hover:no-underline py-5">
-              <div className="text-left">
-                <div className="text-base font-semibold tracking-tight">SELIMP</div>
-                <div className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-                  Mantido em dois inputs separados: `Report` e `Status de Bateria`.
-                </div>
-              </div>
-            </AccordionTrigger>
-            <AccordionContent className="grid gap-6 pb-6 pt-0 md:grid-cols-2">
-              <div className="rounded-2xl border-0 bg-muted/20 p-6 shadow-md shadow-black/5 ring-1 ring-black/5 dark:bg-muted/10 dark:shadow-black/30 dark:ring-white/10">
-                <div className="mb-5">
-                  <div className="text-lg font-semibold tracking-tight">IPT - Report SELIMP</div>
-                  <div className="mt-2 text-xs leading-relaxed text-muted-foreground">
-                    Continua separado por ser o fluxo mais sensivel. A referencia deve ser escolhida antes do envio.
-                  </div>
-                </div>
-
-                <div className="mb-5 rounded-2xl border-0 bg-fuchsia-50/90 p-4 shadow-sm shadow-fuchsia-900/10 ring-1 ring-fuchsia-500/20 dark:bg-fuchsia-950/25 dark:shadow-fuchsia-950/30 dark:ring-fuchsia-500/25">
+              <div className="mb-5 rounded-2xl border border-fuchsia-200/70 bg-gradient-to-br from-fuchsia-50/90 to-white p-4 shadow-sm dark:border-fuchsia-700/40 dark:bg-gradient-to-br dark:from-fuchsia-950/40 dark:to-muted/30">
                   <Label className="mb-3 block text-sm font-semibold text-fuchsia-900 dark:text-fuchsia-200">
-                    Referencia da importacao
+                    Referência da importação
                   </Label>
                   <Select value={String(iptRefIdx)} onValueChange={(value) => setIptRefIdx(Number(value))}>
-                    <SelectTrigger className="w-full border-0 bg-background/90 shadow-sm ring-1 ring-black/5 dark:bg-background/50 dark:ring-white/10">
-                      <SelectValue placeholder="Selecione a referencia" />
+                    <SelectTrigger className="w-full border border-slate-200/80 bg-white shadow-sm dark:border-border dark:bg-card">
+                      <SelectValue placeholder="Selecione a referência" />
                     </SelectTrigger>
                     <SelectContent>
                       {iptReferenceOptions.map((option, idx) => (
@@ -736,7 +1047,7 @@ export default function UploadPage() {
                         <Label className="mb-1 block text-xs text-fuchsia-800 dark:text-fuchsia-300">Periodo Inicial</Label>
                         <input
                           type="date"
-                          className="w-full rounded-lg border-0 bg-background/90 px-3 py-2 text-sm shadow-sm ring-1 ring-black/5 dark:bg-background/50 dark:ring-white/10"
+                          className="w-full rounded-lg border border-slate-200/80 bg-white px-3 py-2 text-sm shadow-sm dark:border-border dark:bg-card"
                           value={customPeriodoInicial}
                           onChange={(e) => setCustomPeriodoInicial(e.target.value)}
                         />
@@ -745,7 +1056,7 @@ export default function UploadPage() {
                         <Label className="mb-1 block text-xs text-fuchsia-800 dark:text-fuchsia-300">Periodo Final</Label>
                         <input
                           type="date"
-                          className="w-full rounded-lg border-0 bg-background/90 px-3 py-2 text-sm shadow-sm ring-1 ring-black/5 dark:bg-background/50 dark:ring-white/10"
+                          className="w-full rounded-lg border border-slate-200/80 bg-white px-3 py-2 text-sm shadow-sm dark:border-border dark:bg-card"
                           value={customPeriodoFinal}
                           onChange={(e) => setCustomPeriodoFinal(e.target.value)}
                         />
@@ -762,12 +1073,13 @@ export default function UploadPage() {
                 <UploadDropzone
                   inputId="iptReport"
                   accept=".xlsx"
+                  tone="fuchsia"
                   loading={states.iptReport.status === "uploading"}
-                  helperText="Use somente o report.xlsx da SELIMP."
+                  helperText="Arquivo oficial do report SELIMP (XLSX). O período selecionado acima define como as linhas serão etiquetadas e substituídas."
                   onFilesSelected={(files) => handleTypedUpload("iptReport", files)}
                 />
                 <HistoryBlock
-                  title="Ultimo report importado"
+                  title="Último report importado"
                   overview={overview.iptReport}
                   expanded={Boolean(expandedHistory.iptReport)}
                   onToggle={() => toggleHistory("iptReport")}
@@ -775,52 +1087,76 @@ export default function UploadPage() {
                 <SummaryBox state={states.iptReport} />
               </div>
 
-              <div className="rounded-2xl border-0 bg-muted/20 p-6 shadow-md shadow-black/5 ring-1 ring-black/5 dark:bg-muted/10 dark:shadow-black/30 dark:ring-white/10">
-                <div className="mb-5">
-                  <div className="text-lg font-semibold tracking-tight">IPT - Status de Bateria</div>
-                  <div className="mt-2 text-xs leading-relaxed text-muted-foreground">
-                    Importacao isolada para proteger o fluxo do report.
+              <div
+                className={cn(
+                "rounded-2xl border p-6 shadow-sm",
+                "border-slate-200/85 bg-gradient-to-b from-white to-slate-50/40",
+                "dark:border-border dark:bg-gradient-to-b dark:from-card dark:to-muted/25 dark:shadow-md dark:shadow-black/20",
+              )}
+            >
+                <div className="mb-5 flex items-start gap-3">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200/80 dark:bg-emerald-950/40 dark:text-emerald-200 dark:ring-emerald-500/25">
+                    <BatteryFull className="h-4 w-4" />
+                  </span>
+                  <div>
+                    <div className="text-lg font-semibold tracking-tight">IPT — Status de bateria</div>
+                    <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                      Canal separado do report: importações não competem com o mesmo período de referência do relatório de ordens.
+                    </p>
                   </div>
                 </div>
 
                 <UploadDropzone
                   inputId="iptStatusBateria"
                   accept=".xlsx"
+                  tone="emerald"
                   loading={states.iptStatusBateria.status === "uploading"}
-                  helperText="Use somente a planilha Status de Bateria."
+                  helperText="Planilha dedicada ao acompanhamento de bateria / disponibilidade conforme modelo SELIMP."
                   onFilesSelected={(files) => handleTypedUpload("iptStatusBateria", files)}
                 />
                 <HistoryBlock
-                  title="Ultimo status importado"
+                  title="Último status importado"
                   overview={overview.iptStatusBateria}
                   expanded={Boolean(expandedHistory.iptStatusBateria)}
                   onToggle={() => toggleHistory("iptStatusBateria")}
                 />
                 <SummaryBox state={states.iptStatusBateria} />
               </div>
-            </AccordionContent>
-          </AccordionItem>
+          </SessionAccordionItem>
         </Accordion>
 
         <Dialog open={cronogramaModalOpen} onOpenChange={setCronogramaModalOpen}>
-          <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto border-0 shadow-2xl shadow-black/20 ring-1 ring-black/5 dark:shadow-black/60 dark:ring-white/10">
-            <DialogHeader>
-              <DialogTitle>Cronograma - importacao anual</DialogTitle>
-              <DialogDescription>
-                Fluxo especial para BL, MT, NH, LM e GO. Voce pode importar um ou varios XLSX de uma vez.
+          <DialogContent
+            className={cn(
+              "max-h-[90vh] max-w-3xl overflow-y-auto shadow-2xl",
+              "border border-slate-200/90 bg-white shadow-slate-900/10",
+              "dark:border-border dark:bg-card dark:shadow-black/60",
+            )}
+          >
+            <DialogHeader className="space-y-1 text-left">
+              <DialogTitle className="text-xl">Cronograma — importação anual</DialogTitle>
+              <DialogDescription className="text-xs leading-relaxed">
+                Uso para contratos BL, MT, NH, LM e GO. Você pode soltar vários XLSX de uma vez; cada arquivo é processado em sequência.
               </DialogDescription>
             </DialogHeader>
 
-            <div className="rounded-2xl border-0 bg-muted/15 p-6 shadow-inner shadow-black/5 ring-1 ring-black/5 dark:bg-muted/10 dark:ring-white/10">
+            <div
+              className={cn(
+                "rounded-2xl border p-6 shadow-inner",
+                "border-slate-200/80 bg-gradient-to-b from-slate-50/60 to-white",
+                "dark:border-border dark:bg-muted/25 dark:shadow-none",
+              )}
+            >
               <UploadDropzone
                 inputId="iptCronograma"
                 accept=".xlsx"
+                tone="neutral"
                 loading={states.iptCronograma.status === "uploading"}
-                helperText="Aceita BL.xlsx, MT.xlsx, NH.xlsx, LM.xlsx e GO.xlsx."
+                helperText="Um ou mais arquivos: BL, MT, NH, LM e GO no formato XLSX de cronograma já utilizado no fluxo IPT."
                 onFilesSelected={handleCronogramaUpload}
               />
               <HistoryBlock
-                title="Ultimo cronograma importado"
+                title="Último cronograma importado"
                 overview={overview.iptCronograma}
                 expanded={Boolean(expandedHistory.iptCronograma)}
                 onToggle={() => toggleHistory("iptCronograma")}

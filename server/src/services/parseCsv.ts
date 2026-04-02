@@ -77,6 +77,12 @@ export function detectFlipCsvType(buffer: Buffer, sourceFile: string): FlipCsvTy
   const headers = (text.split(/\r?\n/)[0] ?? "").split(SEP).map(canonicalKey);
   const name = normalizeText(sourceFile);
 
+  // ACIC tem identificador único por linha (N_ACIC). O CSV costuma repetir colunas de BFS/CNC (n_bfs, data_fiscalizacao),
+  // que antes faziam cair na detecção de CNC / consulta CNC antes de origem ou nome do arquivo.
+  if (headers.includes("n_acic") || headers.includes("numero_acic")) {
+    return "acic";
+  }
+
   if (headers.includes("n_bfs") || headers.includes("n_cnc") || headers.includes("situacao_cnc")) {
     return "cncsDetalhes";
   }
