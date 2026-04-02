@@ -14,6 +14,7 @@ import { parseCronogramaWorkbook } from "../services/parseCronogramaIpt.js";
 import { normalizarSetor, parseSetor } from "../constants/ipt.js";
 import { parseConsolidadoVeiculos, parseConsolidadoVarricao } from "../services/parseRelatorioConsolidado.js";
 import { estimarDatasReport, type ReportLinhaRaw } from "../services/estimarDataReport.js";
+import { mergeAcicOverridesAfterImportRow } from "../services/acicImportMerge.js";
 
 function toExecPercent(value: string): number | null {
   if (!value) return null;
@@ -568,6 +569,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
             JSON.stringify(row),
             sourceFile,
           ]);
+          await mergeAcicOverridesAfterImportRow(client, row as Record<string, unknown>);
           inserted += 1;
         }
         return {
@@ -1172,6 +1174,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
           JSON.stringify(row),
           sourceFile,
         ]);
+        await mergeAcicOverridesAfterImportRow(client, row as Record<string, unknown>);
         inserted++;
       }
       return {

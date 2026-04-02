@@ -5,7 +5,11 @@ import type { DateRange } from "react-day-picker";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { AcicEntendimentoDialog, AcicValorMultaDialog } from "@/app/acic/acic-dialogs";
+import {
+  AcicEntendimentoDialog,
+  AcicValorMultaDialog,
+  ClausulaMultaPersistDisplay,
+} from "@/app/acic/acic-dialogs";
 import { apiService } from "@/lib/api";
 import { format, isValid, startOfDay } from "date-fns";
 import { Input } from "@/components/ui/input";
@@ -1085,7 +1089,7 @@ export default function ACICPage() {
                       </div>
                       {isArquivadoRow ? (
                         <div className="shrink-0 max-w-44 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-center text-[11px] font-medium text-emerald-900 dark:text-emerald-200">
-                          Processo arquivado — registro encerrado no FLIP (sem edição)
+                          Processo arquivado
                         </div>
                       ) : isSolicitacaoRow ? (
                         <div className="shrink-0 max-w-44 rounded-lg border border-amber-500/45 bg-amber-500/10 px-3 py-2 text-center text-[11px] font-medium text-amber-950 dark:text-amber-100">
@@ -1281,13 +1285,18 @@ export default function ACICPage() {
                     ) : null}
 
                     {clausulaMap[nAcic]?.trim() ? (
-                      <div className="mt-4 flex gap-2 rounded-lg border border-dashed border-border/70 bg-muted/20 p-3 text-xs">
-                        <ClipboardList className="h-4 w-4 shrink-0 text-emerald-700/90 dark:text-emerald-400 mt-0.5" aria-hidden />
-                        <div className="min-w-0">
-                          <p className="font-bold text-muted-foreground uppercase tracking-wider text-[10px] mb-1">
-                            Cláusula (multa)
-                          </p>
-                          <p className="text-foreground whitespace-pre-wrap leading-relaxed">{clausulaMap[nAcic]}</p>
+                      <div className="mt-3 rounded-lg border border-emerald-500/35 bg-emerald-500/[0.07] p-3 shadow-sm dark:border-emerald-600/40 dark:bg-emerald-950/25">
+                        <div className="flex gap-2.5">
+                          <ClipboardList
+                            className="h-5 w-5 shrink-0 text-emerald-600 dark:text-emerald-400 mt-0.5"
+                            aria-hidden
+                          />
+                          <div className="min-w-0 flex-1">
+                            <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-300 mb-1.5">
+                              Cláusula aplicável à multa
+                            </p>
+                            <ClausulaMultaPersistDisplay text={clausulaMap[nAcic]} />
+                          </div>
                         </div>
                       </div>
                     ) : null}
