@@ -21,6 +21,7 @@ type OverrideRow = {
   sem_recurso: boolean;
   valor: number | null;
   entendimento_defesa_previa: string | null;
+  motivo_penalidade: string | null;
   multa_clausula_texto: string | null;
   multa_valor_estimativa: boolean;
   valor_estimativa: number | null;
@@ -61,7 +62,7 @@ export const acicRoutes: FastifyPluginAsync = async (fastify) => {
     rows = deduped;
 
     const overridesRes = await pool.query(
-      "SELECT n_acic, defesa, sem_recurso, valor, entendimento_defesa_previa, multa_clausula_texto, multa_valor_estimativa, valor_estimativa FROM acic_overrides"
+      "SELECT n_acic, defesa, sem_recurso, valor, entendimento_defesa_previa, motivo_penalidade, multa_clausula_texto, multa_valor_estimativa, valor_estimativa FROM acic_overrides"
     );
     const overridesMap = new Map<string, OverrideRow>();
     for (const o of overridesRes.rows) {
@@ -71,6 +72,7 @@ export const acicRoutes: FastifyPluginAsync = async (fastify) => {
         valor: o.valor != null ? Number(o.valor) : null,
         entendimento_defesa_previa:
           o.entendimento_defesa_previa != null ? String(o.entendimento_defesa_previa) : null,
+        motivo_penalidade: o.motivo_penalidade != null ? String(o.motivo_penalidade) : null,
         multa_clausula_texto: o.multa_clausula_texto != null ? String(o.multa_clausula_texto) : null,
         multa_valor_estimativa: Boolean(o.multa_valor_estimativa),
         valor_estimativa: o.valor_estimativa != null ? Number(o.valor_estimativa) : null,
@@ -90,6 +92,7 @@ export const acicRoutes: FastifyPluginAsync = async (fastify) => {
         _valor_override: over?.valor ?? null,
         _valor_estimativa_override: over?.valor_estimativa ?? null,
         _entendimento_defesa_previa: over?.entendimento_defesa_previa ?? null,
+        _motivo_penalidade: over?.motivo_penalidade ?? null,
         _multa_clausula_texto: over?.multa_clausula_texto ?? null,
         _multa_valor_estimativa: over?.multa_valor_estimativa ?? false,
       };
@@ -106,6 +109,7 @@ export const acicRoutes: FastifyPluginAsync = async (fastify) => {
       valor?: number | null;
       valor_estimativa?: number | null;
       entendimento_defesa_previa?: string | null;
+      motivo_penalidade?: string | null;
       multa_clausula_texto?: string | null;
       multa_valor_estimativa?: boolean;
     };
@@ -116,7 +120,7 @@ export const acicRoutes: FastifyPluginAsync = async (fastify) => {
     if (!nAcic) return reply.code(400).send({ detail: "n_acic obrigatório" });
 
     const existing = await pool.query(
-      "SELECT defesa, sem_recurso, valor, entendimento_defesa_previa, multa_clausula_texto, multa_valor_estimativa, valor_estimativa FROM acic_overrides WHERE n_acic = $1",
+      "SELECT defesa, sem_recurso, valor, entendimento_defesa_previa, motivo_penalidade, multa_clausula_texto, multa_valor_estimativa, valor_estimativa FROM acic_overrides WHERE n_acic = $1",
       [nAcic]
     );
     const old = existing.rows[0];
@@ -126,7 +130,9 @@ export const acicRoutes: FastifyPluginAsync = async (fastify) => {
       "valor" in body ? (body.valor != null ? Number(body.valor) : null) : (old?.valor != null ? Number(old.valor) : null);
     const finalValorEstimativa =
       "valor_estimativa" in body
-        ? body.valor_estimativa != null ? Number(body.valor_estimativa) : null
+        ? body.valor_estimativa != null
+          ? Number(body.valor_estimativa)
+          : null
         : old?.valor_estimativa != null
           ? Number(old.valor_estimativa)
           : null;
@@ -137,6 +143,14 @@ export const acicRoutes: FastifyPluginAsync = async (fastify) => {
           : String(body.entendimento_defesa_previa)
         : old?.entendimento_defesa_previa != null
           ? String(old.entendimento_defesa_previa)
+          : null;
+    const finalMotivo =
+      "motivo_penalidade" in body
+        ? body.motivo_penalidade == null || String(body.motivo_penalidade).trim() === ""
+          ? null
+          : String(body.motivo_penalidade)
+        : old?.motivo_penalidade != null
+          ? String(old.motivo_penalidade)
           : null;
     const finalClausula =
       "multa_clausula_texto" in body
@@ -150,22 +164,33 @@ export const acicRoutes: FastifyPluginAsync = async (fastify) => {
       "multa_valor_estimativa" in body ? Boolean(body.multa_valor_estimativa) : Boolean(old?.multa_valor_estimativa ?? false);
 
     await pool.query(
-      `INSERT INTO acic_overrides (n_acic, defesa, sem_recurso, valor, entendimento_defesa_previa, multa_clausula_texto, multa_valor_estimativa, valor_estimativa, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+      `INSERT INTO acic_overrides (n_acic, defesa, sem_recurso, valor, entendimento_defesa_previa, motivo_penalidade, multa_clausula_texto, multa_valor_estimativa, valor_estimativa, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
        ON CONFLICT (n_acic) DO UPDATE SET
          defesa = $2,
          sem_recurso = $3,
          valor = $4,
          entendimento_defesa_previa = $5,
-         multa_clausula_texto = $6,
-         multa_valor_estimativa = $7,
-         valor_estimativa = $8,
+         motivo_penalidade = $6,
+         multa_clausula_texto = $7,
+         multa_valor_estimativa = $8,
+         valor_estimativa = $9,
          updated_at = NOW()`,
-      [nAcic, newDefesa, newSemRecurso, finalValor, finalEntendimento, finalClausula, finalEstimativa, finalValorEstimativa]
+      [
+        nAcic,
+        newDefesa,
+        newSemRecurso,
+        finalValor,
+        finalEntendimento,
+        finalMotivo,
+        finalClausula,
+        finalEstimativa,
+        finalValorEstimativa,
+      ]
     );
 
     const r = await pool.query(
-      "SELECT n_acic, defesa, sem_recurso, valor, entendimento_defesa_previa, multa_clausula_texto, multa_valor_estimativa, valor_estimativa FROM acic_overrides WHERE n_acic = $1",
+      "SELECT n_acic, defesa, sem_recurso, valor, entendimento_defesa_previa, motivo_penalidade, multa_clausula_texto, multa_valor_estimativa, valor_estimativa FROM acic_overrides WHERE n_acic = $1",
       [nAcic]
     );
     const row = r.rows[0];
@@ -177,6 +202,7 @@ export const acicRoutes: FastifyPluginAsync = async (fastify) => {
       valor_estimativa: row.valor_estimativa != null ? Number(row.valor_estimativa) : null,
       entendimento_defesa_previa:
         row.entendimento_defesa_previa != null ? String(row.entendimento_defesa_previa) : null,
+      motivo_penalidade: row.motivo_penalidade != null ? String(row.motivo_penalidade) : null,
       multa_clausula_texto: row.multa_clausula_texto != null ? String(row.multa_clausula_texto) : null,
       multa_valor_estimativa: Boolean(row.multa_valor_estimativa),
     };

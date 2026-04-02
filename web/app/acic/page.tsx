@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
   AcicEntendimentoDialog,
+  AcicMotivoPenalidadeDialog,
   AcicValorMultaDialog,
   ClausulaMultaPersistDisplay,
 } from "@/app/acic/acic-dialogs";
@@ -46,6 +47,7 @@ import {
   Pencil,
   Calculator,
   CircleDollarSign,
+  Gavel,
 } from "lucide-react";
 
 /** Formata número no padrão BR: R$ 1.234,56 */
@@ -328,9 +330,11 @@ export default function ACICPage() {
   const [valorOficialMap, setValorOficialMap] = useState<Record<string, number>>({});
   const [valorEstimativaMap, setValorEstimativaMap] = useState<Record<string, number>>({});
   const [entendimentoMap, setEntendimentoMap] = useState<Record<string, string>>({});
+  const [motivoPenalidadeMap, setMotivoPenalidadeMap] = useState<Record<string, string>>({});
   const [clausulaMap, setClausulaMap] = useState<Record<string, string>>({});
   const [estimativaMap, setEstimativaMap] = useState<Record<string, boolean>>({});
   const [entModalNAcic, setEntModalNAcic] = useState<string | null>(null);
+  const [motivoModalNAcic, setMotivoModalNAcic] = useState<string | null>(null);
   const [valorModalCtx, setValorModalCtx] = useState<{
     nAcic: string;
     valorAtOpen: number;
@@ -343,6 +347,8 @@ export default function ACICPage() {
     registro: "todos" as FiltroRegistro,
     subprefeitura: "todas",
     somenteBfsMultipla: false,
+    somenteSemClausula: false,
+    somenteSemValor: false,
   });
 
   const periodQueryKey = useMemo(() => {
@@ -376,6 +382,7 @@ export default function ACICPage() {
       const valorOficial: Record<string, number> = {};
       const valorEstimativa: Record<string, number> = {};
       const entendimento: Record<string, string> = {};
+      const motivo: Record<string, string> = {};
       const clausulas: Record<string, string> = {};
       const est: Record<string, boolean> = {};
       for (const a of items) {
@@ -394,6 +401,8 @@ export default function ACICPage() {
           }
           const ent = (a as { _entendimento_defesa_previa?: string | null })._entendimento_defesa_previa;
           if (ent != null && String(ent).length > 0) entendimento[n] = String(ent);
+          const mot = (a as { _motivo_penalidade?: string | null })._motivo_penalidade;
+          if (mot != null && String(mot).trim()) motivo[n] = String(mot);
           const cl = (a as { _multa_clausula_texto?: string | null })._multa_clausula_texto;
           if (cl != null && String(cl).trim()) clausulas[n] = String(cl);
         }
@@ -403,6 +412,7 @@ export default function ACICPage() {
       setValorOficialMap(valorOficial);
       setValorEstimativaMap(valorEstimativa);
       setEntendimentoMap(entendimento);
+      setMotivoPenalidadeMap(motivo);
       setClausulaMap(clausulas);
       setEstimativaMap(est);
     } catch (error) {
@@ -450,6 +460,24 @@ export default function ACICPage() {
       });
     } catch (e) {
       console.error("Erro ao salvar entendimento para defesa prévia:", e);
+      await loadACICs();
+    }
+  };
+
+  const persistMotivoPenalidade = async (nAcic: string, value: string) => {
+    const trimmed = value.trim();
+    setMotivoPenalidadeMap((prev) => {
+      const next = { ...prev };
+      if (trimmed === "") delete next[nAcic];
+      else next[nAcic] = value;
+      return next;
+    });
+    try {
+      await apiService.updateACICOverride(nAcic, {
+        motivo_penalidade: trimmed === "" ? null : value,
+      });
+    } catch (e) {
+      console.error("Erro ao salvar motivo da penalidade:", e);
       await loadACICs();
     }
   };
@@ -576,9 +604,33 @@ export default function ACICPage() {
       }
       if (!ok) return false;
       if (!acicAreaMatchesSubFilter(getAcicField(acic, "Area", "area"), filters.subprefeitura)) return false;
+      if (filters.somenteSemClausula || filters.somenteSemValor) {
+        if (arquivado) return false;
+      }
+      if (filters.somenteSemClausula) {
+        const cl = clausulaMap[nAcic]?.trim();
+        if (cl) return false;
+      }
+      if (filters.somenteSemValor) {
+        const vo = getValorMultaOficial(acic, nAcic, valorOficialMap);
+        const ve = getValorEstimativaAtiva(acic, nAcic, valorEstimativaMap, estimativaMap);
+        if (vo > 0 || ve > 0) return false;
+      }
       return true;
     });
-  }, [acics, filters.registro, filters.subprefeitura, defesaMap, semRecursoMap]);
+  }, [
+    acics,
+    filters.registro,
+    filters.subprefeitura,
+    filters.somenteSemClausula,
+    filters.somenteSemValor,
+    defesaMap,
+    semRecursoMap,
+    clausulaMap,
+    valorOficialMap,
+    valorEstimativaMap,
+    estimativaMap,
+  ]);
 
   const bfsAcicCountInBase = useMemo(() => {
     const m = new Map<string, number>();
@@ -686,7 +738,9 @@ export default function ACICPage() {
             <div className="min-w-0 flex-1">
               <h1 className="text-4xl font-bold tracking-tight text-white">Histórico de ACICs</h1>
               <p className="mt-3 max-w-2xl text-lg text-rose-50/95">
-                Autos de Constatação de Irregularidade da Contratada — acompanhamento de defesa, recurso e status no FLIP 
+                Autos de Constatação de Irregularidade da Contratada 
+                <br />
+                Acompanhamento de defesa, recurso e status no FLIP.
               </p>
             </div>
           </div>
@@ -705,7 +759,7 @@ export default function ACICPage() {
                     {formatBr(totalMultasComEstimativa)}
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Soma do valor da multa (CSV/homologado) e dos valores estimativos manuais em aberto.
+                    Soma do valor da multa e dos valores estimativos em aberto.
                   </p>
                 </div>
                 <DollarSign className="w-12 h-12 shrink-0 text-red-400/50" />
@@ -723,7 +777,7 @@ export default function ACICPage() {
                     {formatBr(totalMultasConfirmadas)}
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Apenas ACICs em status Confirmado, com valor do importado (sem estimativa manual).
+                    Apenas ACICs em status Confirmado (sem estimativa manual).
                   </p>
                 </div>
                 <CircleDollarSign className="w-12 h-12 shrink-0 text-orange-400/60" />
@@ -937,6 +991,28 @@ export default function ACICPage() {
                 />
                 <Label htmlFor="acic-only-multi-bfs" className="cursor-pointer text-sm font-normal leading-snug">
                   Só BFS com mais de uma ACIC (no filtro atual)
+                </Label>
+              </div>
+            </div>
+            <div className="mt-4 flex flex-col gap-3 border-t border-border/50 pt-4 sm:flex-row sm:flex-wrap sm:items-center">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="acic-sem-clausula"
+                  checked={filters.somenteSemClausula}
+                  onCheckedChange={(c) => setFilters({ ...filters, somenteSemClausula: c === true })}
+                />
+                <Label htmlFor="acic-sem-clausula" className="cursor-pointer text-sm font-normal leading-snug">
+                  Só ACICs sem cláusula (multa) adicionada;
+                </Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="acic-sem-valor"
+                  checked={filters.somenteSemValor}
+                  onCheckedChange={(c) => setFilters({ ...filters, somenteSemValor: c === true })}
+                />
+                <Label htmlFor="acic-sem-valor" className="cursor-pointer text-sm font-normal leading-snug">
+                  Só ACICs sem valor (arquivadas ou estimativa);
                 </Label>
               </div>
             </div>
@@ -1155,8 +1231,52 @@ export default function ACICPage() {
                           </div>
                         ) : null}
                       </div>
-                      <div className="min-w-0 border-border/40 lg:border-l lg:pl-8">
+                      <div className="min-w-0 space-y-6 border-border/40 lg:border-l lg:pl-8">
                         <div className="flex items-start gap-2">
+                          <Gavel className="h-4 w-4 shrink-0 text-red-600/90 dark:text-red-400 mt-1" aria-hidden />
+                          <div className="min-w-0 flex-1 space-y-2">
+                            <div className="flex items-start justify-between gap-2">
+                              <Label className="text-[10px] font-bold uppercase tracking-wide text-red-800 dark:text-red-300">
+                                Motivo da penalidade
+                              </Label>
+                              {!isArquivadoRow && (motivoPenalidadeMap[nAcic] ?? "").trim() ? (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 shrink-0 text-red-700 hover:bg-red-600/10 hover:text-red-800 dark:text-red-400"
+                                  aria-label="Editar motivo da penalidade"
+                                  onClick={() => setMotivoModalNAcic(nAcic)}
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                              ) : null}
+                            </div>
+                            {!isArquivadoRow ? (
+                              (motivoPenalidadeMap[nAcic] ?? "").trim() ? (
+                                <div className="rounded-lg border-l-4 border-l-red-600 bg-red-50/95 px-4 py-3 text-sm font-medium leading-relaxed text-red-950 shadow-sm whitespace-pre-wrap dark:border-red-500 dark:bg-red-950/45 dark:text-red-50">
+                                  {motivoPenalidadeMap[nAcic]}
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="w-full rounded-lg border-0 bg-red-600 px-4 py-3 text-left text-sm font-semibold text-white shadow-md transition-colors hover:bg-red-700"
+                                  onClick={() => setMotivoModalNAcic(nAcic)}
+                                >
+                                  Registrar motivo da penalidade
+                                </button>
+                              )
+                            ) : (motivoPenalidadeMap[nAcic] ?? "").trim() ? (
+                              <p className="whitespace-pre-wrap rounded-md border border-red-200/60 bg-red-50/40 px-3 py-2 text-sm leading-relaxed text-foreground dark:border-red-900/40 dark:bg-red-950/25">
+                                {motivoPenalidadeMap[nAcic]}
+                              </p>
+                            ) : (
+                              <p className="text-sm italic text-muted-foreground">Sem registro (processo arquivado)</p>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-start gap-2 border-t border-border/30 pt-6">
                           <MessageSquare className="h-4 w-4 shrink-0 text-muted-foreground mt-1" aria-hidden />
                           <div className="min-w-0 flex-1 space-y-2">
                             <div className="flex items-start justify-between gap-2">
@@ -1316,6 +1436,18 @@ export default function ACICPage() {
           onSave={async (text) => {
             if (!entModalNAcic) return;
             await persistEntendimentoDefesaPrevia(entModalNAcic, text);
+          }}
+        />
+
+        <AcicMotivoPenalidadeDialog
+          open={motivoModalNAcic !== null}
+          onOpenChange={(o) => {
+            if (!o) setMotivoModalNAcic(null);
+          }}
+          initialText={motivoModalNAcic ? motivoPenalidadeMap[motivoModalNAcic] ?? "" : ""}
+          onSave={async (text) => {
+            if (!motivoModalNAcic) return;
+            await persistMotivoPenalidade(motivoModalNAcic, text);
           }}
         />
 

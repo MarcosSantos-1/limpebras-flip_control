@@ -148,10 +148,9 @@ export function AcicEntendimentoDialog({ open, onOpenChange, initialText, onSave
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Entendimento para defesa prévia</DialogTitle>
+          <DialogTitle className="text-lg font-semibold leading-none tracking-tight pb-2">Entendimento para defesa prévia</DialogTitle>
           <DialogDescription>
-            Registre a visão consolidada da ACIC para apoio à defesa prévia. Os dados são gravados no banco
-            (PostgreSQL / Neon) na tabela de overrides — importações de CSV não substituem este texto, mesmo com
+            Registre a visão consolidada da ACIC para apoio à defesa prévia. importações de CSV não substituem este texto, mesmo com
             mudança de status ou arquivamento.
           </DialogDescription>
         </DialogHeader>
@@ -173,6 +172,74 @@ export function AcicEntendimentoDialog({ open, onOpenChange, initialText, onSave
             type="button"
             disabled={saving}
             className="border-0 bg-emerald-600 text-white hover:bg-emerald-700"
+            onClick={handleSave}
+          >
+            {saving ? "Salvando…" : "Salvar"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+type MotivoPenalidadeDialogProps = {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  initialText: string;
+  onSave: (text: string) => Promise<void>;
+};
+
+export function AcicMotivoPenalidadeDialog({
+  open,
+  onOpenChange,
+  initialText,
+  onSave,
+}: MotivoPenalidadeDialogProps) {
+  const [draft, setDraft] = useState(initialText);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (open) setDraft(initialText);
+  }, [open, initialText]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await onSave(draft);
+      onOpenChange(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="text-lg font-semibold leading-none tracking-tight pb-2">Motivo da penalidade</DialogTitle>
+          <DialogDescription>
+            Descreva o fundamento da penalidade aplicável. Importações de CSV não
+            substituem este texto.
+          </DialogDescription>
+        </DialogHeader>
+        <textarea
+          rows={8}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder="Fundamento fático e normativo da penalidade…"
+          className={cn(
+            "flex min-h-[180px] w-full resize-y rounded-md border border-red-200/80 bg-red-50/30 px-3 py-2 text-sm shadow-sm dark:border-red-900/50 dark:bg-red-950/20",
+            "placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-500/50"
+          )}
+        />
+        <DialogFooter className="gap-2 sm:gap-0">
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            Cancelar
+          </Button>
+          <Button
+            type="button"
+            disabled={saving}
+            className="border-0 bg-red-600 text-white hover:bg-red-700"
             onClick={handleSave}
           >
             {saving ? "Salvando…" : "Salvar"}
@@ -272,9 +339,8 @@ export function AcicValorMultaDialog({
         <DialogHeader>
           <DialogTitle>Valor da multa e cláusula</DialogTitle>
           <DialogDescription>
-            Busque na planilha VALORES MULTAS. A lista mostra a descrição completa e a incidência (ex.: por veículo,
-            por dia). Ao selecionar, o valor de referência é preenchido; você pode ajustar manualmente. Alterações são
-            salvas no Neon. Em solicitação, use estimativa quando for o caso.
+            Busque dinâmica da planilha "VALORES MULTAS". A lista mostra a descrição completa e a incidência (ex.: por veículo,
+            por dia). Ao selecionar, o valor de referência é preenchido mas você pode ajustar manualmente se preferir. 
           </DialogDescription>
         </DialogHeader>
 

@@ -248,6 +248,7 @@ export const apiService = {
       valor?: number | null;
       valor_estimativa?: number | null;
       entendimento_defesa_previa?: string | null;
+      motivo_penalidade?: string | null;
       multa_clausula_texto?: string | null;
       multa_valor_estimativa?: boolean;
     }

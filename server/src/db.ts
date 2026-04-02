@@ -134,6 +134,9 @@ export async function runMigrations() {
       `UPDATE acic_overrides SET valor_estimativa = valor, valor = NULL
        WHERE multa_valor_estimativa = true AND valor IS NOT NULL AND valor_estimativa IS NULL`
     ).catch(() => {});
+    await client.query(
+      "ALTER TABLE acic_overrides ADD COLUMN IF NOT EXISTS motivo_penalidade TEXT DEFAULT NULL"
+    ).catch(() => {});
 
     /** Status Defesa / Contestação por número BFS — compartilhado entre usuários (não usa localStorage). */
     await client.query(`
