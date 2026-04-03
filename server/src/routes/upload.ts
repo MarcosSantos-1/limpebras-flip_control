@@ -1,4 +1,5 @@
 import { FastifyPluginAsync, FastifyRequest } from "fastify";
+import type { PoolClient } from "pg";
 import { pool } from "../db.js";
 import { invalidatePrefix } from "../cache.js";
 import {
@@ -8,6 +9,7 @@ import {
   parseOuvidoriaCsv,
   parseAcicCsv,
   parseCncDetalhesCsv,
+  type CncDetalhesRow,
 } from "../services/parseCsv.js";
 import { detectDdmxWorkbookType, parseIptWorkbook, type IptFileType } from "../services/parseIptXlsx.js";
 import { parseCronogramaWorkbook } from "../services/parseCronogramaIpt.js";
@@ -15,6 +17,109 @@ import { normalizarSetor, parseSetor } from "../constants/ipt.js";
 import { parseConsolidadoVeiculos, parseConsolidadoVarricao } from "../services/parseRelatorioConsolidado.js";
 import { estimarDatasReport, type ReportLinhaRaw } from "../services/estimarDataReport.js";
 import { mergeAcicOverridesAfterImportRow } from "../services/acicImportMerge.js";
+
+function normCncKeyForMerge(numeroCnc: string | null | undefined): string {
+  return (numeroCnc ?? "").trim();
+}
+
+type MergeCncDetalhesOpts = {
+  /** Apaga CNCs com data_fiscalizacao no intervalo [inicial, final] (datas YYYY-MM-DD), depois insere o CSV. Útil para trocar só o mês de apuração. */
+  periodoInicial?: string;
+  periodoFinal?: string;
+  /** Zera a tabela (comportamento legado: um CSV com todas as CNCs). */
+  substituirTudo?: boolean;
+};
+
+/**
+ * Importa detalhes CNC sem TRUNCATE: por padrão remove só linhas que batem com (numero_bfs, numero_cnc)
+ * presentes no arquivo e reinsere — importações parciais (ex.: um mês) não apagam o restante da base.
+ */
+async function mergeImportCncDetalhes(
+  client: PoolClient,
+  rows: CncDetalhesRow[],
+  sourceFile: string,
+  opts?: MergeCncDetalhesOpts
+): Promise<{ inseridos: number; total: number }> {
+  await client.query("BEGIN");
+  try {
+    if (opts?.substituirTudo) {
+      await client.query("TRUNCATE TABLE cncs RESTART IDENTITY");
+    } else if (
+      opts?.periodoInicial &&
+      opts?.periodoFinal &&
+      /^\d{4}-\d{2}-\d{2}$/.test(opts.periodoInicial) &&
+      /^\d{4}-\d{2}-\d{2}$/.test(opts.periodoFinal)
+    ) {
+      await client.query(
+        `DELETE FROM cncs
+         WHERE data_fiscalizacao IS NOT NULL
+           AND data_fiscalizacao >= $1::date
+           AND data_fiscalizacao < ($2::date + interval '1 day')`,
+        [opts.periodoInicial, opts.periodoFinal]
+      );
+    } else {
+      const bfsArr: string[] = [];
+      const cncArr: string[] = [];
+      for (const r of rows) {
+        const bfs = (r.numero_bfs || "").trim();
+        if (!bfs) continue;
+        bfsArr.push(bfs);
+        cncArr.push(normCncKeyForMerge(r.numero_cnc));
+      }
+      if (bfsArr.length > 0) {
+        await client.query(
+          `DELETE FROM cncs c
+           USING unnest($1::text[], $2::text[]) AS t(bfs, cnc_norm)
+           WHERE c.numero_bfs = t.bfs
+             AND COALESCE(NULLIF(TRIM(c.numero_cnc), ''), '') = t.cnc_norm`,
+          [bfsArr, cncArr]
+        );
+      }
+    }
+
+    let inseridos = 0;
+    for (const r of rows) {
+      if (!r.numero_bfs?.trim()) continue;
+      const raw = r.raw && typeof r.raw === "object" ? { ...r.raw } : {};
+      const dataSync = r.data_sincronizacao instanceof Date ? r.data_sincronizacao : null;
+      const dataFisc = r.data_fiscalizacao instanceof Date ? r.data_fiscalizacao : null;
+      const dataExec = r.data_execucao instanceof Date ? r.data_execucao : null;
+      await client.query(
+        `INSERT INTO cncs (
+          numero_bfs, numero_cnc, situacao_cnc, data_sincronizacao, data_fiscalizacao, data_execucao,
+          fiscal, regional, area, setor, turno, servico, responsividade, endereco, coordenada,
+          fiscal_contratada, raw, source_file, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18, NOW())`,
+        [
+          r.numero_bfs || null,
+          r.numero_cnc || null,
+          r.situacao_cnc || null,
+          dataSync,
+          dataFisc,
+          dataExec,
+          r.fiscal || null,
+          r.regional || null,
+          r.area || null,
+          r.setor || null,
+          r.turno || null,
+          r.servico || null,
+          r.responsividade || null,
+          r.endereco || null,
+          r.coordenada || null,
+          r.fiscal_contratada || null,
+          JSON.stringify(raw),
+          sourceFile,
+        ]
+      );
+      inseridos += 1;
+    }
+    await client.query("COMMIT");
+    return { inseridos, total: rows.length };
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  }
+}
 
 function toExecPercent(value: string): number | null {
   if (!value) return null;
@@ -480,49 +585,14 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       const rows = parseCncDetalhesCsv(buffer, sourceFile);
       const client = await pool.connect();
       try {
-        await client.query("TRUNCATE TABLE cncs RESTART IDENTITY");
-        let inserted = 0;
-        for (const r of rows) {
-          if (!r.numero_bfs?.trim()) continue;
-          const raw = (r.raw && typeof r.raw === "object") ? { ...r.raw } : {};
-          const dataSync = r.data_sincronizacao instanceof Date ? r.data_sincronizacao : null;
-          const dataFisc = r.data_fiscalizacao instanceof Date ? r.data_fiscalizacao : null;
-          const dataExec = r.data_execucao instanceof Date ? r.data_execucao : null;
-          await client.query(
-            `INSERT INTO cncs (
-              numero_bfs, numero_cnc, situacao_cnc, data_sincronizacao, data_fiscalizacao, data_execucao,
-              fiscal, regional, area, setor, turno, servico, responsividade, endereco, coordenada,
-              fiscal_contratada, raw, source_file, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18, NOW())`,
-            [
-              r.numero_bfs || null,
-              r.numero_cnc || null,
-              r.situacao_cnc || null,
-              dataSync,
-              dataFisc,
-              dataExec,
-              r.fiscal || null,
-              r.regional || null,
-              r.area || null,
-              r.setor || null,
-              r.turno || null,
-              r.servico || null,
-              r.responsividade || null,
-              r.endereco || null,
-              r.coordenada || null,
-              r.fiscal_contratada || null,
-              JSON.stringify(raw),
-              sourceFile,
-            ]
-          );
-          inserted += 1;
-        }
+        const { inseridos } = await mergeImportCncDetalhes(client, rows, sourceFile);
         invalidatePrefix("cnc");
         invalidatePrefix("cnc_defesa");
+        invalidatePrefix("kpis");
         return {
-          processados: inserted,
+          processados: inseridos,
           total: rows.length,
-          inseridos: inserted,
+          inseridos,
           atualizados: 0,
           duplicados: 0,
           erros: 0,
@@ -1049,8 +1119,20 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
-  /** Importa FLIP_CONSULTA_CNC - detalhes das CNCs (data execução, situacao, fiscal contratada, etc). Cruza com BFS via numero_bfs. */
-  fastify.post("/upload/cnc-detalhes-csv", async (request, reply) => {
+  /**
+   * Importa FLIP_CONSULTA_CNC — merge incremental (não zera a tabela inteira).
+   * Query opcional:
+   * - `periodo_inicial` + `periodo_final` (YYYY-MM-DD): apaga CNCs com data_fiscalizacao nesse intervalo e insere o CSV (troca só o mês de apuração).
+   * - `substituir_tudo=1`: TRUNCATE + CSV completo (legado).
+   * Sem parâmetros: apaga só pares (numero_bfs, numero_cnc) que aparecem no arquivo e reinsere essas linhas.
+   */
+  fastify.post<{
+    Querystring: {
+      periodo_inicial?: string;
+      periodo_final?: string;
+      substituir_tudo?: string;
+    };
+  }>("/upload/cnc-detalhes-csv", async (request, reply) => {
     const data = await request.file();
     if (!data) return reply.code(400).send({ detail: "Arquivo CSV obrigatório (FLIP_CONSULTA_CNC)" });
     let buffer: Buffer;
@@ -1069,51 +1151,23 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.code(400).send({ detail: `Erro ao interpretar CSV (formato FLIP_CONSULTA_CNC esperado): ${msg}` });
     }
 
+    const q = request.query;
+    const substituirTudo = q.substituir_tudo === "1" || q.substituir_tudo === "true";
+
     const client = await pool.connect();
     try {
-      await client.query("TRUNCATE TABLE cncs RESTART IDENTITY");
-      let inserted = 0;
-      for (const r of rows) {
-        if (!r.numero_bfs?.trim()) continue;
-        const raw = (r.raw && typeof r.raw === "object") ? { ...r.raw } : {};
-        const dataSync = r.data_sincronizacao instanceof Date ? r.data_sincronizacao : null;
-        const dataFisc = r.data_fiscalizacao instanceof Date ? r.data_fiscalizacao : null;
-        const dataExec = r.data_execucao instanceof Date ? r.data_execucao : null;
-        await client.query(
-          `INSERT INTO cncs (
-            numero_bfs, numero_cnc, situacao_cnc, data_sincronizacao, data_fiscalizacao, data_execucao,
-            fiscal, regional, area, setor, turno, servico, responsividade, endereco, coordenada,
-            fiscal_contratada, raw, source_file, updated_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18, NOW())`,
-          [
-            r.numero_bfs || null,
-            r.numero_cnc || null,
-            r.situacao_cnc || null,
-            dataSync,
-            dataFisc,
-            dataExec,
-            r.fiscal || null,
-            r.regional || null,
-            r.area || null,
-            r.setor || null,
-            r.turno || null,
-            r.servico || null,
-            r.responsividade || null,
-            r.endereco || null,
-            r.coordenada || null,
-            r.fiscal_contratada || null,
-            JSON.stringify(raw),
-            sourceFile,
-          ]
-        );
-        inserted += 1;
-      }
+      const { inseridos } = await mergeImportCncDetalhes(client, rows, sourceFile, {
+        substituirTudo,
+        periodoInicial: q.periodo_inicial,
+        periodoFinal: q.periodo_final,
+      });
       invalidatePrefix("cnc");
       invalidatePrefix("cnc_defesa");
+      invalidatePrefix("kpis");
       return {
-        processados: inserted,
+        processados: inseridos,
         total: rows.length,
-        inseridos: inserted,
+        inseridos,
         atualizados: 0,
         duplicados: 0,
         erros: 0,

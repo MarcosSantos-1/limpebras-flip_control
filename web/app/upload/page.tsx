@@ -960,7 +960,7 @@ export default function UploadPage() {
               accept=".csv"
               tone="violet"
               loading={states.flip.status === "uploading"}
-              helperText="Exportações do FLIP em CSV (delimitador padrão do sistema). Se o arquivo não for compatível com esta sessão, o upload é recusado."
+              helperText="Exportações do FLIP em CSV. A consulta CNC (detalhes) só substitui as linhas que vêm no arquivo — não zera CNCs de outros meses; dá para importar só o mês de apuração."
               onFilesSelected={(files) => handleSessionUpload("flip", files)}
             />
             <HistoryBlock

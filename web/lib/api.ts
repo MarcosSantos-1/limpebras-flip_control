@@ -276,12 +276,24 @@ export const apiService = {
     return data;
   },
 
-  /** FLIP_CONSULTA_CNC - detalhes das CNCs (data execução, situacao_CNC, fiscal_contratada). Cruza com BFS via numero_bfs. */
-  uploadCncDetalhesCSV: async (file: File) => {
+  /**
+   * FLIP_CONSULTA_CNC — merge incremental (não apaga CNCs de outros períodos).
+   * `periodoInicial`/`periodoFinal` (YYYY-MM-DD): remove só CNCs com data_fiscalizacao nesse intervalo antes de inserir.
+   * `substituirTudo`: zera a tabela (CSV completo do ano, legado).
+   */
+  uploadCncDetalhesCSV: async (
+    file: File,
+    opts?: { periodoInicial?: string; periodoFinal?: string; substituirTudo?: boolean }
+  ) => {
     const formData = new FormData();
     formData.append('file', file);
+    const params: Record<string, string> = {};
+    if (opts?.periodoInicial) params.periodo_inicial = opts.periodoInicial;
+    if (opts?.periodoFinal) params.periodo_final = opts.periodoFinal;
+    if (opts?.substituirTudo) params.substituir_tudo = "1";
     const { data } = await api.post('/upload/cnc-detalhes-csv', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
+      headers: { "Content-Type": "multipart/form-data" },
+      params: Object.keys(params).length ? params : undefined,
     });
     return data;
   },
