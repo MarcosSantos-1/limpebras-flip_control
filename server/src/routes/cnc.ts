@@ -319,10 +319,22 @@ export const cncRoutes: FastifyPluginAsync = async (fastify) => {
     }
 
     let dados: unknown = null;
-    if ("dados_contestacao" in body) {
-      dados = body.dados_contestacao === undefined ? null : body.dados_contestacao;
-    }
-    if (statusRaw !== "Contestar") {
+    if (statusRaw === "Contestar") {
+      if ("dados_contestacao" in body) {
+        dados = body.dados_contestacao === undefined ? null : body.dados_contestacao;
+      }
+    } else if (statusRaw === "Irregular") {
+      if ("dados_contestacao" in body) {
+        const raw = body.dados_contestacao;
+        if (raw != null && typeof raw === "object" && !Array.isArray(raw)) {
+          const o = raw as Record<string, unknown>;
+          const obs = typeof o.observacao_irregular === "string" ? o.observacao_irregular.trim() : "";
+          dados = { observacao_irregular: obs };
+        } else {
+          dados = null;
+        }
+      }
+    } else {
       dados = null;
     }
 

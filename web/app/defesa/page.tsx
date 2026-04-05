@@ -72,6 +72,15 @@ export interface FotosContestar {
   frequencia_override?: string | null;
 }
 
+/** JSON persistido em `dados_contestacao` quando status = Irregular. */
+export interface DadosIrregularDefesa {
+  observacao_irregular?: string;
+}
+
+function isDadosContestar(d: unknown): d is FotosContestar {
+  return !!d && typeof d === "object" && !Array.isArray(d) && Array.isArray((d as FotosContestar).agente_sub);
+}
+
 /** Retorna o setor efetivo: fotos.setor_override ou o setor do BFS. */
 function getSetorParaExibir(
   bfs: { setor_resolvido?: string | null; cnc_detalhes?: { setor?: string }[]; setor?: string } | undefined,
@@ -203,7 +212,7 @@ interface CncDetalhe {
 /** Defesa/contestação persistida no banco (tabela bfs_defesa_state). */
 export interface DefesaTrabalhoPersistido {
   status: StatusDefesa;
-  dados: FotosContestar | null;
+  dados: FotosContestar | DadosIrregularDefesa | null;
 }
 
 interface BFSDefesa {
@@ -233,8 +242,16 @@ function getStatusDefesaForRow(b: BFSDefesa): StatusDefesa {
 
 function getFotosDadosForRow(b: BFSDefesa): FotosContestar | undefined {
   const d = b.defesa_trabalho?.dados;
-  if (!d || typeof d !== "object") return undefined;
-  return d as FotosContestar;
+  if (!isDadosContestar(d)) return undefined;
+  return d;
+}
+
+function getObservacaoIrregularFromRow(b: BFSDefesa): string {
+  if (getStatusDefesaForRow(b) !== "Irregular") return "";
+  const d = b.defesa_trabalho?.dados;
+  if (!d || typeof d !== "object" || Array.isArray(d) || isDadosContestar(d)) return "";
+  const obs = (d as DadosIrregularDefesa).observacao_irregular;
+  return typeof obs === "string" ? obs.trim() : "";
 }
 
 function rowMatchesSituacaoCncFilter(b: BFSDefesa, filtro: string): boolean {
@@ -472,6 +489,10 @@ export default function DefesaPage() {
   /** Destaque na lista só na sessão atual (some ao recarregar a página). */
   const [recentDefesaHighlightKeys, setRecentDefesaHighlightKeys] = useState<Set<string>>(() => new Set());
   const [confirmFecharContestarOpen, setConfirmFecharContestarOpen] = useState(false);
+  const [modalIrregularObsOpen, setModalIrregularObsOpen] = useState(false);
+  const [irregularObsRow, setIrregularObsRow] = useState<BFSDefesa | null>(null);
+  const [irregularObsDraft, setIrregularObsDraft] = useState("");
+  const [irregularSalvando, setIrregularSalvando] = useState(false);
   const fotosContestarDraftRef = useRef(fotosContestarDraft);
   fotosContestarDraftRef.current = fotosContestarDraft;
   const setorPreviewTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -651,37 +672,54 @@ export default function DefesaPage() {
   }, []);
 
   const setStatusDefesaForRow = useCallback(
-    async (b: BFSDefesa, status: StatusDefesa, dados?: FotosContestar | null) => {
+    async (
+      b: BFSDefesa,
+      status: StatusDefesa,
+      dados?: FotosContestar | DadosIrregularDefesa | null
+    ): Promise<boolean> => {
       const numero = defesaStorageKey(b);
       const prevTrabalho = b.defesa_trabalho ?? null;
-      const payloadDados =
-        status === "Contestar"
-          ? dados !== undefined
-            ? dados
-            : ((prevTrabalho?.dados as FotosContestar | null) ?? null)
-          : null;
+      let payloadDados: FotosContestar | DadosIrregularDefesa | null = null;
+      if (status === "Contestar") {
+        payloadDados =
+          dados !== undefined
+            ? isDadosContestar(dados)
+              ? dados
+              : null
+            : prevTrabalho && isDadosContestar(prevTrabalho.dados)
+              ? prevTrabalho.dados
+              : null;
+      } else if (status === "Irregular") {
+        const inc = dados as DadosIrregularDefesa | null | undefined;
+        payloadDados = { observacao_irregular: String(inc?.observacao_irregular ?? "").trim() };
+      } else {
+        payloadDados = null;
+      }
       const optimistic: DefesaTrabalhoPersistido = { status, dados: payloadDados };
 
       applyDefesaTrabalhoToRow(b.id, optimistic);
       try {
         const data = await apiService.updateDefesaBfs(numero, {
           status_defesa: status,
-          dados_contestacao: status === "Contestar" ? payloadDados : null,
+          dados_contestacao:
+            status === "Contestar" || status === "Irregular" ? payloadDados : null,
         });
         const t = data.defesa_trabalho;
         if (t) {
           applyDefesaTrabalhoToRow(b.id, {
             status: t.status as StatusDefesa,
-            dados: (t.dados as FotosContestar) ?? null,
+            dados: (t.dados as DefesaTrabalhoPersistido["dados"]) ?? null,
           });
         }
         if (status === "Contestar" || status === "Irregular") {
           setRecentDefesaHighlightKeys((prev) => new Set([...prev, defesaStorageKey(b)]));
         }
+        return true;
       } catch (err) {
         console.error(err);
         applyDefesaTrabalhoToRow(b.id, prevTrabalho);
         alert("Não foi possível salvar no servidor. Tente novamente.");
+        return false;
       }
     },
     [applyDefesaTrabalhoToRow]
@@ -723,10 +761,37 @@ export default function DefesaPage() {
         setConfirmExcluirFotosOpen(true);
         return;
       }
+      if (newStatus === "Irregular") {
+        setIrregularObsRow(b);
+        setIrregularObsDraft(current === "Irregular" ? getObservacaoIrregularFromRow(b) : "");
+        setModalIrregularObsOpen(true);
+        return;
+      }
       void setStatusDefesaForRow(b, newStatus, null);
     },
     [setStatusDefesaForRow]
   );
+
+  const confirmIrregularObservacao = useCallback(async () => {
+    const row = irregularObsRow;
+    if (!row) return;
+    const text = irregularObsDraft.trim();
+    if (!text) {
+      alert("Informe a observação sobre a irregularidade.");
+      return;
+    }
+    setIrregularSalvando(true);
+    try {
+      const ok = await setStatusDefesaForRow(row, "Irregular", { observacao_irregular: text });
+      if (ok) {
+        setModalIrregularObsOpen(false);
+        setIrregularObsRow(null);
+        setIrregularObsDraft("");
+      }
+    } finally {
+      setIrregularSalvando(false);
+    }
+  }, [irregularObsRow, irregularObsDraft, setStatusDefesaForRow]);
 
   const confirmStatusChangeAndDeleteFotos = useCallback(async () => {
     const row =
@@ -739,6 +804,15 @@ export default function DefesaPage() {
       await deleteFotosFromStorage(...folderKeys);
     } catch (e) {
       console.warn("Erro ao excluir fotos do Firebase:", e);
+    }
+    if (pendingStatusChange === "Irregular") {
+      setConfirmExcluirFotosOpen(false);
+      setPendingBfsId(null);
+      setPendingStatusChange(null);
+      setIrregularObsRow(row);
+      setIrregularObsDraft("");
+      setModalIrregularObsOpen(true);
+      return;
     }
     await setStatusDefesaForRow(row, pendingStatusChange, null);
     setPendingStatusChange(null);
@@ -785,8 +859,8 @@ export default function DefesaPage() {
         cronograma_override: fotosContestarDraft.cronograma_override ?? undefined,
         frequencia_override: fotosContestarDraft.frequencia_override ?? undefined,
       };
-      await setStatusDefesaForRow(row, "Contestar", dados);
-      closeContestarModalAndClear();
+      const ok = await setStatusDefesaForRow(row, "Contestar", dados);
+      if (ok) closeContestarModalAndClear();
     } catch (err) {
       console.error("Erro ao enviar fotos para o Firebase:", err);
     } finally {
@@ -1344,6 +1418,31 @@ export default function DefesaPage() {
                     })}
                   </div>
                 </div>
+
+                {/* BFS Irregular — observação persistida */}
+                {getStatusDefesaForRow(selectedBFS) === "Irregular" && (() => {
+                  const obs = getObservacaoIrregularFromRow(selectedBFS);
+                  const temTexto = obs.length > 0;
+                  return (
+                    <div className="rounded-2xl border-2 border-red-500/45 bg-red-50/35 dark:bg-red-950/25 p-6 sm:p-8 space-y-3 shadow-md shadow-red-900/10">
+                      <p className="text-sm font-semibold text-red-800 dark:text-red-300 flex items-center gap-2">
+                        <AlertTriangle className="h-4 w-4 shrink-0" />
+                        Observação da irregularidade
+                      </p>
+                      <p
+                        className={
+                          temTexto
+                            ? "text-sm text-foreground leading-relaxed whitespace-pre-wrap"
+                            : "text-sm text-muted-foreground italic leading-relaxed"
+                        }
+                      >
+                        {temTexto
+                          ? obs
+                          : "Observação não registrada (cadastro anterior ou em branco)."}
+                      </p>
+                    </div>
+                  );
+                })()}
 
                 {/* BFS Contestado - fotos salvas */}
                 {getStatusDefesaForRow(selectedBFS) === "Contestar" && (() => {
@@ -1998,6 +2097,87 @@ export default function DefesaPage() {
                 {contestarSalvando ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCheck className="h-4 w-4" />}
                 {contestarSalvando ? "Enviando fotos..." : "Salvar contestação"}
               </button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Observação obrigatória ao marcar como Irregular */}
+        <Dialog
+          open={modalIrregularObsOpen}
+          onOpenChange={(open) => {
+            if (open) {
+              setModalIrregularObsOpen(true);
+              return;
+            }
+            if (irregularSalvando) return;
+            setModalIrregularObsOpen(false);
+            setIrregularObsRow(null);
+            setIrregularObsDraft("");
+          }}
+        >
+          <DialogContent
+            className="max-w-lg gap-4"
+            onPointerDownOutside={(e) => {
+              if (irregularSalvando) e.preventDefault();
+            }}
+            onEscapeKeyDown={(e) => {
+              if (irregularSalvando) e.preventDefault();
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400 shrink-0" />
+                Observação — Irregular
+              </DialogTitle>
+              <DialogDescription className="text-base leading-relaxed">
+                {irregularObsRow
+                  ? `Descreva o motivo da classificação como irregular para a BFS ${irregularObsRow.bfs}.`
+                  : "Descreva o motivo da classificação como irregular."}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2">
+              <Label htmlFor="defesa-obs-irregular" className="text-sm font-medium">
+                Observação
+              </Label>
+              <textarea
+                id="defesa-obs-irregular"
+                value={irregularObsDraft}
+                onChange={(e) => setIrregularObsDraft(e.target.value)}
+                placeholder="Ex.: Divergência no registro da fiscalização, inconsistência com o CNC, etc."
+                disabled={irregularSalvando}
+                className="w-full min-h-[140px] px-3 py-2.5 rounded-lg border border-input bg-background text-sm resize-y leading-relaxed disabled:opacity-60"
+                rows={5}
+              />
+            </div>
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-3 pt-1">
+              <Button
+                type="button"
+                variant="ghost"
+                className="w-full sm:w-auto"
+                disabled={irregularSalvando}
+                onClick={() => {
+                  setModalIrregularObsOpen(false);
+                  setIrregularObsRow(null);
+                  setIrregularObsDraft("");
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                className="w-full sm:w-auto bg-red-600 hover:bg-red-700 text-white"
+                disabled={irregularSalvando}
+                onClick={() => void confirmIrregularObservacao()}
+              >
+                {irregularSalvando ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    Salvando…
+                  </>
+                ) : (
+                  "Confirmar irregular"
+                )}
+              </Button>
             </div>
           </DialogContent>
         </Dialog>

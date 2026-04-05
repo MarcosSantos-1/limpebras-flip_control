@@ -213,7 +213,7 @@ export const apiService = {
     };
   },
 
-  /** Persiste status de defesa e dados da contestação no servidor (compartilhado entre usuários). */
+  /** Persiste status de defesa no servidor. Contestar: payload completo de fotos/texto. Irregular: `{ observacao_irregular: string }`. */
   updateDefesaBfs: async (
     numeroBfs: string,
     payload: { status_defesa: string; dados_contestacao?: unknown | null }
