@@ -31,6 +31,7 @@ import { SACsOverdueBySubChart, type SACOverdueBySubDatum } from "@/components/s
 import { SUBPREFEITURAS } from "@/constants/sacs";
 import { useDashboardData } from "@/lib/use-dashboard-data";
 import { LayoutDashboard } from "lucide-react";
+import { UploadReminderToast } from "@/components/upload-reminder-toast";
 
 const SUBPREF_LOOKUP = SUBPREFEITURAS.reduce<Record<string, string>>((acc, sub) => {
   acc[sub.code.toUpperCase()] = sub.code;
@@ -401,6 +402,10 @@ export default function DashboardPage() {
   const today = new Date();
   const disableNextMonth = isSameMonth(selectedMonth, startOfMonth(today));
   const monthLabel = formatMonthLabel(selectedMonth);
+  const monthNameExtenso = (() => {
+    const raw = format(selectedMonth, "MMMM", { locale: ptBR });
+    return raw.charAt(0).toUpperCase() + raw.slice(1);
+  })();
   const isCurrentMonth = disableNextMonth;
 
   const handlePrevMonth = () => {
@@ -423,6 +428,7 @@ export default function DashboardPage() {
 
   return (
     <MainLayout>
+      <UploadReminderToast />
       <div className="space-y-8">
         {isLoading && (
           <div className="fixed inset-0 z-90 bg-background/90 backdrop-blur-sm flex items-center justify-center">
@@ -447,13 +453,20 @@ export default function DashboardPage() {
                 Visão geral dos indicadores de desempenho.
               </p>
             </div>
-            <div className="flex shrink-0 justify-start sm:justify-end">
+            <div className="flex shrink-0 items-center justify-start gap-3 sm:justify-end sm:gap-4 md:gap-5">
+            <span
+                className="select-none text-xl pr-8 font-bold tracking-tight sm:text-2xl md:text-3xl bg-linear-to-br from-sky-500 via-cyan-500 to-emerald-500 bg-clip-text text-transparent dark:from-sky-400 dark:via-cyan-400 dark:to-emerald-400"
+                aria-hidden
+              >
+                {monthNameExtenso}
+              </span>
               <div
-                className="flex h-22 w-22 items-center justify-center rounded-2xl bg-linear-to-br from-primary/15 via-indigo-500/12 to-cyan-500/15 shadow-md shadow-slate-900/10 dark:from-primary/25 dark:via-indigo-500/20 dark:to-cyan-950/40 dark:shadow-lg dark:shadow-black/30"
+                className="flex h-22 w-22 shrink-0 items-center justify-center rounded-2xl bg-linear-to-br from-primary/15 via-indigo-500/12 to-cyan-500/15 shadow-md shadow-slate-900/10 dark:from-primary/25 dark:via-indigo-500/20 dark:to-cyan-950/40 dark:shadow-lg dark:shadow-black/30"
                 aria-hidden
               >
                 <LayoutDashboard className="h-11 w-11 text-primary dark:text-primary" strokeWidth={1.5} />
               </div>
+
             </div>
           </div>
         </div>

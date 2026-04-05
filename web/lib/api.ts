@@ -395,6 +395,7 @@ export const apiService = {
     return data;
   },
 
+  /** Inclui `dashboard_import_check` (FLIP + Report SELIMP cobrindo “ontem” BRT) para o aviso no Dashboard. */
   getUploadLastUpdates: async () => {
     const { data } = await api.get('/upload/last-updates');
     return data;

@@ -1579,8 +1579,22 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
   };
 
   fastify.get("/upload/last-updates", async () => {
-    const [sacs, cnc, acic, ouvidoria, cncsDetalhes, iptHistoricoOs, iptHistoricoOsVarricao, iptHistoricoOsCompactadores, iptReport, iptStatusBateria, iptCronograma, iptConsolidadoVeiculos, iptConsolidadoVarricao] =
-      await Promise.all([
+    const [
+      sacs,
+      cnc,
+      acic,
+      ouvidoria,
+      cncsDetalhes,
+      iptHistoricoOs,
+      iptHistoricoOsVarricao,
+      iptHistoricoOsCompactadores,
+      iptReport,
+      iptStatusBateria,
+      iptCronograma,
+      iptConsolidadoVeiculos,
+      iptConsolidadoVarricao,
+      dashboardOntemRow,
+    ] = await Promise.all([
       getLastUpdate("sacs"),
       getLastUpdate("bfs"),
       getLastUpdate("acic"),
@@ -1594,7 +1608,30 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       getLastCronogramaUpdate(),
       getLastIptUpdate("ipt_consolidado_veiculos"),
       getLastIptUpdate("ipt_consolidado_varricao"),
-      ]);
+      pool
+        .query<{
+          ontem_brt: string;
+          flip_cobre_ontem: boolean;
+        }>(
+          `SELECT
+             TO_CHAR((CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo')::date - 1, 'YYYY-MM-DD') AS ontem_brt,
+             (
+               EXISTS (
+                 SELECT 1 FROM bfs b
+                 WHERE b.data_fiscalizacao IS NOT NULL
+                   AND (b.data_fiscalizacao AT TIME ZONE 'America/Sao_Paulo')::date
+                       = (CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo')::date - 1
+               )
+               OR EXISTS (
+                 SELECT 1 FROM cncs c
+                 WHERE c.data_fiscalizacao IS NOT NULL
+                   AND (c.data_fiscalizacao AT TIME ZONE 'America/Sao_Paulo')::date
+                       = (CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo')::date - 1
+               )
+             ) AS flip_cobre_ontem`
+        )
+        .then((r) => r.rows[0]),
+    ]);
     const [flipSession, ddmxSession, selimpSession] = await Promise.all([
       getSessionOverview("flip", {
         ultimo_import:
@@ -1640,6 +1677,19 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         total_registros: Number(iptReport.total_registros ?? 0) + Number(iptStatusBateria.total_registros ?? 0),
       }),
     ]);
+
+    const ontemBrt = String(dashboardOntemRow?.ontem_brt ?? "").trim();
+    const flipCobreOntem = Boolean(dashboardOntemRow?.flip_cobre_ontem);
+    const repIni = iptReport.periodo_inicial ? String(iptReport.periodo_inicial).slice(0, 10) : "";
+    const repFim = iptReport.periodo_final ? String(iptReport.periodo_final).slice(0, 10) : "";
+    const iptReportCobreOntem =
+      !!ontemBrt &&
+      isDateKey(repIni) &&
+      isDateKey(repFim) &&
+      Number(iptReport.total_registros ?? 0) > 0 &&
+      ontemBrt >= repIni &&
+      ontemBrt <= repFim;
+
     return {
       sacs,
       cnc,
@@ -1658,6 +1708,12 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         flip: flipSession,
         ddmx: ddmxSession,
         selimp: selimpSession,
+      },
+      dashboard_import_check: {
+        data_referencia_ontem_brt: ontemBrt || null,
+        flip_cobre_ontem: flipCobreOntem,
+        ipt_report_cobre_ontem: iptReportCobreOntem,
+        precisa_upload: !(flipCobreOntem && iptReportCobreOntem),
       },
     };
   });
