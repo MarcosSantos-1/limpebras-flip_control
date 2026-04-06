@@ -157,6 +157,14 @@ export async function getRequestAuth(request: FastifyRequest): Promise<{ user: A
   return { user: mapSessionRowToAuthUser(row), sessionId };
 }
 
+/** Em produção (HTTPS), front e API em domínios diferentes precisam SameSite=None + Secure para o cookie ir no axios/fetch. */
+function sessionCookieFlags(): string[] {
+  if (process.env.NODE_ENV === "production") {
+    return ["SameSite=None", "Secure"];
+  }
+  return ["SameSite=Lax"];
+}
+
 export function applySessionCookies(
   reply: FastifyReply,
   session: { signedSessionId: string; expiresAt: Date; rememberMe: boolean }
@@ -165,7 +173,7 @@ export function applySessionCookies(
     `${SESSION_COOKIE_NAME}=${encodeURIComponent(session.signedSessionId)}`,
     "Path=/",
     "HttpOnly",
-    "SameSite=Lax",
+    ...sessionCookieFlags(),
   ];
   if (session.rememberMe) {
     cookieParts.push(`Expires=${session.expiresAt.toUTCString()}`);
@@ -175,9 +183,10 @@ export function applySessionCookies(
 }
 
 export function clearSessionCookie(reply: FastifyReply) {
+  const flags = sessionCookieFlags().join("; ");
   reply.header(
     "Set-Cookie",
-    `${SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0`
+    `${SESSION_COOKIE_NAME}=; Path=/; HttpOnly; ${flags}; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0`
   );
 }
 

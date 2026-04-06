@@ -2,6 +2,7 @@ import { FastifyPluginAsync } from "fastify";
 import { pool } from "../db.js";
 import { cacheKey, getOrSet, invalidatePrefix } from "../cache.js";
 import { BFS_DEFESA_EXCLUSAO_SQL, sqlBfsFiscalNaoEhSelimp } from "../constants/bfs.js";
+import { computeIfEstimadoAdc } from "../services/ifBfs.js";
 import { findSetorByCoords, parseCoordenada, findSetorByPlano } from "../services/setorLookup.js";
 import { parseSetor, FREQUENCIAS, normalizarSetor } from "../constants/ipt.js";
 import { requirePageAccess } from "../auth.js";
@@ -10,6 +11,59 @@ const STATUS_DEFESA_VALID = new Set(["Analisar", "Irregular", "Contestar"]);
 
 function normNumeroBfs(v: string | null | undefined): string {
   return (v ?? "").trim();
+}
+
+type CncListQuery = {
+  periodo_inicial?: string;
+  periodo_final?: string;
+  subprefeitura?: string;
+  status?: string;
+  tipo_servico?: string;
+  q?: string;
+};
+
+function buildCncListWhere(q: CncListQuery): { fragment: string; params: (string | number)[] } {
+  let fragment = "";
+  const params: (string | number)[] = [];
+  let i = 1;
+  if (q.periodo_inicial) {
+    fragment += ` AND data_fiscalizacao >= $${i}::date`;
+    params.push(q.periodo_inicial);
+    i++;
+  }
+  if (q.periodo_final) {
+    fragment += ` AND data_fiscalizacao < ($${i}::date + interval '1 day')`;
+    params.push(q.periodo_final);
+    i++;
+  }
+  if (q.subprefeitura && q.subprefeitura !== "todas") {
+    fragment += ` AND regional = $${i}`;
+    params.push(q.subprefeitura);
+    i++;
+  }
+  if (q.status && q.status !== "todos") {
+    if (q.status === "Sem Irregularidades") {
+      fragment += ` AND TRIM(COALESCE(status, '')) = 'Sem Irregularidades'`;
+    } else if (q.status === "Com Irregularidades") {
+      fragment += ` AND TRIM(COALESCE(status, '')) <> 'Sem Irregularidades'`;
+    } else {
+      fragment += ` AND status ILIKE $${i}`;
+      params.push(`%${q.status}%`);
+      i++;
+    }
+  }
+  if (q.tipo_servico && q.tipo_servico !== "todos") {
+    fragment += ` AND tipo_servico ILIKE $${i}`;
+    params.push(`%${q.tipo_servico}%`);
+    i++;
+  }
+  const search = (q.q ?? "").trim();
+  if (search) {
+    fragment += ` AND (numero_bfs ILIKE $${i} OR COALESCE(endereco, '') ILIKE $${i})`;
+    params.push(`%${search}%`);
+    i++;
+  }
+  return { fragment, params };
 }
 
 export const cncRoutes: FastifyPluginAsync = async (fastify) => {
@@ -22,64 +76,88 @@ export const cncRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   fastify.get<{
-    Querystring: {
-      periodo_inicial?: string;
-      periodo_final?: string;
-      subprefeitura?: string;
-      status?: string;
-      tipo_servico?: string;
+    Querystring: CncListQuery & {
+      page?: number | string;
+      page_size?: number | string;
     };
-  }>(
-    "/cnc",
-    async (request, reply) => {
-      const { periodo_inicial, periodo_final, subprefeitura, status, tipo_servico } = request.query;
-      let sql =
-        "SELECT id, numero_bfs, data_fiscalizacao, data_vistoria, status, tipo_servico, regional, endereco, raw FROM bfs WHERE 1=1";
-      const params: (string | number)[] = [];
-      let i = 1;
-      if (periodo_inicial) {
-        sql += ` AND data_fiscalizacao >= $${i}::date`;
-        params.push(periodo_inicial);
-        i++;
-      }
-      if (periodo_final) {
-        sql += ` AND data_fiscalizacao < ($${i}::date + interval '1 day')`;
-        params.push(periodo_final);
-        i++;
-      }
-      if (subprefeitura && subprefeitura !== "todas") {
-        sql += ` AND regional = $${i}`;
-        params.push(subprefeitura);
-        i++;
-      }
-      if (status && status !== "todos") {
-        if (status === "Sem Irregularidades") {
-          sql += ` AND TRIM(COALESCE(status, '')) = 'Sem Irregularidades'`;
-        } else if (status === "Com Irregularidades") {
-          sql += ` AND TRIM(COALESCE(status, '')) <> 'Sem Irregularidades'`;
-        } else {
-          sql += ` AND status ILIKE $${i}`;
-          params.push(`%${status}%`);
-          i++;
-        }
-      }
-      if (tipo_servico && tipo_servico !== "todos") {
-        sql += ` AND tipo_servico ILIKE $${i}`;
-        params.push(`%${tipo_servico}%`);
-        i++;
-      }
-      sql += " ORDER BY data_fiscalizacao DESC";
+  }>("/cnc", async (request, reply) => {
+    const {
+      periodo_inicial,
+      periodo_final,
+      subprefeitura,
+      status,
+      tipo_servico,
+      q,
+      page: pageRaw,
+      page_size: pageSizeRaw,
+    } = request.query;
 
-      const key = cacheKey("cnc", {
-        periodo_inicial,
-        periodo_final,
-        subprefeitura,
-        status,
-        tipo_servico,
-      });
-      const result = await getOrSet(key, async () => {
-        const r = await pool.query(sql, params);
-        const rows = r.rows.map((row) => ({
+    const listQuery: CncListQuery = {
+      periodo_inicial,
+      periodo_final,
+      subprefeitura,
+      status,
+      tipo_servico,
+      q,
+    };
+
+    const pageParsed = Number(pageRaw);
+    const page = Number.isFinite(pageParsed) && pageParsed >= 1 ? Math.floor(pageParsed) : 1;
+    const pageSizeParsed = Number(pageSizeRaw);
+    const pageSize =
+      Number.isFinite(pageSizeParsed) && pageSizeParsed > 0
+        ? Math.min(Math.floor(pageSizeParsed), 10000)
+        : 50;
+
+    const { fragment, params: whereParams } = buildCncListWhere(listQuery);
+    const offset = (page - 1) * pageSize;
+
+    const key = cacheKey("cnc", {
+      periodo_inicial,
+      periodo_final,
+      subprefeitura,
+      status,
+      tipo_servico,
+      q: (q ?? "").trim(),
+      page,
+      page_size: pageSize,
+    });
+
+    const result = await getOrSet(key, async () => {
+      const statsSql = `
+        SELECT
+          COUNT(*)::int AS total,
+          COUNT(*) FILTER (WHERE TRIM(COALESCE(status, '')) = 'Sem Irregularidades')::int AS sem_irregularidade
+        FROM bfs WHERE 1=1 ${fragment}`;
+      const statsR = await pool.query(statsSql, whereParams);
+      const st = statsR.rows[0] as { total: number; sem_irregularidade: number };
+
+      let ifEstimado: {
+        if_percent: number;
+        total_fiscalizacoes: number;
+        total_sem_irregularidade: number;
+      } | null = null;
+      if (periodo_inicial && periodo_final) {
+        ifEstimado = await computeIfEstimadoAdc({
+          periodo_inicial,
+          periodo_final,
+          subprefeitura,
+        });
+      }
+
+      const countSql = `SELECT COUNT(*)::int AS c FROM bfs WHERE 1=1 ${fragment}`;
+      const countR = await pool.query(countSql, whereParams);
+      const totalRows = Number(countR.rows[0]?.c ?? 0);
+
+      const limitPos = whereParams.length + 1;
+      const offsetPos = whereParams.length + 2;
+      const listSql = `
+        SELECT id, numero_bfs, data_fiscalizacao, data_vistoria, status, tipo_servico, regional, endereco, raw
+        FROM bfs WHERE 1=1 ${fragment}
+        ORDER BY data_fiscalizacao DESC
+        LIMIT $${limitPos} OFFSET $${offsetPos}`;
+      const r = await pool.query(listSql, [...whereParams, pageSize, offset]);
+      const rows = r.rows.map((row) => ({
         id: String(row.id),
         bfs: row.numero_bfs,
         subprefeitura: row.regional,
@@ -91,11 +169,28 @@ export const cncRoutes: FastifyPluginAsync = async (fastify) => {
         fiscal: row.raw?.Fiscal || row.raw?.fiscal || null,
         sem_irregularidade: (row.status || "").trim() === "Sem Irregularidades",
       }));
-        return { items: rows, total: rows.length };
-      });
-      return result;
-    }
-  );
+
+      return {
+        items: rows,
+        total: totalRows,
+        page,
+        page_size: pageSize,
+        stats: {
+          total: st.total,
+          sem_irregularidade: st.sem_irregularidade,
+          com_irregularidade: Math.max(0, st.total - st.sem_irregularidade),
+        },
+        if_estimado: ifEstimado
+          ? {
+              if_percent: ifEstimado.if_percent,
+              total_fiscalizacoes_adc: ifEstimado.total_fiscalizacoes,
+              total_sem_irregularidade_adc: ifEstimado.total_sem_irregularidade,
+            }
+          : null,
+      };
+    });
+    return result;
+  });
 
   /**
    * BFSs escalonados para Defesa/Contestação:

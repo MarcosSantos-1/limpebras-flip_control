@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -16,12 +16,25 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { DatePicker } from "@/components/ui/date-picker";
-import { FileText } from "lucide-react";
+import { FileText, Search } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 
 export default function SACsPage() {
   const [sacs, setSacs] = useState<SAC[]>([]);
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const pageSize = 50;
+  const [pesquisaInput, setPesquisaInput] = useState("");
+  const [pesquisa, setPesquisa] = useState("");
+  const [serverStats, setServerStats] = useState<{
+    total: number;
+    demandantes: number;
+    escalonados: number;
+    no_prazo: number;
+    fora_prazo: number;
+  } | null>(null);
   const [selectedSAC, setSelectedSAC] = useState<SAC | null>(null);
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
   const [filters, setFilters] = useState(() => {
@@ -55,60 +68,79 @@ export default function SACsPage() {
   }, [filters.data_inicio, filters.data_fim]);
 
   const stats = useMemo(() => {
-    const isDemandanteIA = (s: SAC) =>
-      (s.classificacao_servico?.trim() || "") === "Solicitação" &&
-      (s.finalizado_fora_de_escopo?.trim() || "") === "NÃO" &&
-      ["SIM", "NÃO"].includes(s.responsividade_execucao?.trim() || "");
-    const isEscalonado = (s: SAC) =>
-      (s.classificacao_servico?.trim() || "") === "Reclamação" &&
-      (s.finalizado_fora_de_escopo?.trim() || "") === "NÃO" &&
-      (s.procedente_por_status?.trim() || "") === "PROCEDE";
-
-    const demandantes = sacs.filter(isDemandanteIA);
-    const escalonados = sacs.filter(isEscalonado);
-    const noPrazo = demandantes.filter((s) => (s.responsividade_execucao?.trim() || "") === "SIM").length;
-    const foraPrazo = demandantes.filter((s) => (s.responsividade_execucao?.trim() || "") === "NÃO").length;
-
-    return {
-      total: sacs.length,
-      demandantes: demandantes.length,
-      escalonados: escalonados.length,
-      noPrazo,
-      foraPrazo,
-    };
-  }, [sacs]);
+    if (serverStats) {
+      return {
+        total: serverStats.total,
+        demandantes: serverStats.demandantes,
+        escalonados: serverStats.escalonados,
+        noPrazo: serverStats.no_prazo,
+        foraPrazo: serverStats.fora_prazo,
+      };
+    }
+    return { total: 0, demandantes: 0, escalonados: 0, noPrazo: 0, foraPrazo: 0 };
+  }, [serverStats]);
 
   useEffect(() => {
+    const t = setTimeout(() => {
+      setPesquisa(pesquisaInput.trim());
+      setPage(1);
+    }, 400);
+    return () => clearTimeout(t);
+  }, [pesquisaInput]);
+
+  const patchFilters = useCallback(
+    (patch: Partial<typeof filters>) => {
+      setFilters((prev) => ({ ...prev, ...patch }));
+      setPage(1);
+    },
+    []
+  );
+
+  useEffect(() => {
+    const loadSACs = async () => {
+      try {
+        setLoading(true);
+        const apiFilters: Record<string, string | number | boolean> = {
+          page,
+          page_size: pageSize,
+        };
+        if (filters.data_inicio) apiFilters.periodo_inicial = filters.data_inicio;
+        if (filters.data_fim) apiFilters.periodo_final = filters.data_fim;
+        if (filters.status && filters.status !== "todos") apiFilters.status = filters.status;
+        if (filters.subprefeitura && filters.subprefeitura !== "todas") apiFilters.subprefeitura = filters.subprefeitura;
+        if (filters.fora_prazo) apiFilters.fora_do_prazo = true;
+        if (filters.tipo !== "all") apiFilters.tipo = filters.tipo;
+        if (filters.tipo_servico !== "todos") apiFilters.tipo_servico = filters.tipo_servico;
+        if (filters.procedente !== "todos") apiFilters.procedente = filters.procedente;
+        if (pesquisa) apiFilters.q = pesquisa;
+
+        const data = await apiService.getSACs(apiFilters);
+        const items = Array.isArray(data) ? data : (data?.items ?? []);
+        setSacs(items);
+        setTotal(Array.isArray(data) ? data.length : (data?.total ?? items.length));
+        const st = !Array.isArray(data) ? data?.stats : undefined;
+        if (st) {
+          setServerStats({
+            total: st.total,
+            demandantes: st.demandantes,
+            escalonados: st.escalonados,
+            no_prazo: st.no_prazo,
+            fora_prazo: st.fora_prazo,
+          });
+        } else {
+          setServerStats(null);
+        }
+      } catch (error) {
+        console.error("Erro ao carregar SACs:", error);
+        setSacs([]);
+        setTotal(0);
+        setServerStats(null);
+      } finally {
+        setLoading(false);
+      }
+    };
     loadSACs();
-  }, [filters]);
-
-  const loadSACs = async () => {
-    try {
-      setLoading(true);
-      const apiFilters: any = {
-        limit: 10000,
-      };
-      if (filters.data_inicio) apiFilters.periodo_inicial = filters.data_inicio;
-      if (filters.data_fim) apiFilters.periodo_final = filters.data_fim;
-      if (filters.status && filters.status !== "todos") apiFilters.status = filters.status;
-      if (filters.subprefeitura && filters.subprefeitura !== "todas") apiFilters.subprefeitura = filters.subprefeitura;
-      if (filters.fora_prazo) apiFilters.fora_do_prazo = true;
-      if (filters.tipo !== "all") apiFilters.tipo = filters.tipo;
-      if (filters.tipo_servico !== "todos") apiFilters.tipo_servico = filters.tipo_servico;
-      if (filters.procedente !== "todos") apiFilters.procedente = filters.procedente;
-
-      const data = await apiService.getSACs(apiFilters);
-      const items = Array.isArray(data) ? data : (data?.items ?? []);
-      setSacs(items);
-      setTotal(Array.isArray(data) ? data.length : (data?.total ?? items.length));
-    } catch (error) {
-      console.error("Erro ao carregar SACs:", error);
-      setSacs([]);
-      setTotal(0);
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, [filters, pesquisa, page]);
 
   const getStatusColor = (status: string) => {
     const colors: Record<string, string> = {
@@ -210,7 +242,7 @@ export default function SACsPage() {
                 <Label className="text-xs text-muted-foreground">Período Inicial</Label>
                 <DatePicker
                   value={filters.data_inicio}
-                  onChange={(value) => setFilters({ ...filters, data_inicio: value })}
+                  onChange={(value) => patchFilters({ data_inicio: value })}
                   placeholder="Selecionar início"
                 />
               </div>
@@ -219,7 +251,7 @@ export default function SACsPage() {
                 <Label className="text-xs text-muted-foreground">Período Final</Label>
                 <DatePicker
                   value={filters.data_fim}
-                  onChange={(value) => setFilters({ ...filters, data_fim: value })}
+                  onChange={(value) => patchFilters({ data_fim: value })}
                   placeholder="Selecionar fim"
                 />
               </div>
@@ -228,7 +260,7 @@ export default function SACsPage() {
                 <Label className="text-xs text-muted-foreground">Tipo</Label>
                 <Select
                   value={filters.tipo}
-                  onValueChange={(value: "IA" | "IRD" | "all") => setFilters({ ...filters, tipo: value })}
+                  onValueChange={(value: "IA" | "IRD" | "all") => patchFilters({ tipo: value })}
                 >
                   <SelectTrigger className="bg-background">
                     <SelectValue placeholder="Todos" />
@@ -245,7 +277,7 @@ export default function SACsPage() {
                 <Label className="text-xs text-muted-foreground">Status</Label>
                 <Select
                   value={filters.status}
-                  onValueChange={(value) => setFilters({ ...filters, status: value })}
+                  onValueChange={(value) => patchFilters({ status: value })}
                 >
                   <SelectTrigger className="bg-background">
                     <SelectValue placeholder="Todos" />
@@ -266,7 +298,7 @@ export default function SACsPage() {
                 <Select
                   value={filters.procedente}
                   onValueChange={(value: "todos" | "PROCEDE" | "NAO_PROCEDE") =>
-                    setFilters({ ...filters, procedente: value })
+                    patchFilters({ procedente: value })
                   }
                 >
                   <SelectTrigger className="bg-background">
@@ -284,7 +316,7 @@ export default function SACsPage() {
                 <Label className="text-xs text-muted-foreground">Subprefeitura</Label>
                 <Select
                   value={filters.subprefeitura}
-                  onValueChange={(value) => setFilters({ ...filters, subprefeitura: value })}
+                  onValueChange={(value) => patchFilters({ subprefeitura: value })}
                 >
                   <SelectTrigger className="bg-background">
                     <SelectValue placeholder="Todas" />
@@ -303,7 +335,7 @@ export default function SACsPage() {
                 <Label className="text-xs text-muted-foreground">Tipo de Serviço</Label>
                 <Select
                   value={filters.tipo_servico}
-                  onValueChange={(value) => setFilters({ ...filters, tipo_servico: value })}
+                  onValueChange={(value) => patchFilters({ tipo_servico: value })}
                 >
                   <SelectTrigger className="bg-background">
                     <SelectValue placeholder="Todos" />
@@ -326,11 +358,27 @@ export default function SACsPage() {
                   <Checkbox
                     id="fora-prazo"
                     checked={filters.fora_prazo}
-                    onCheckedChange={(checked) => setFilters({ ...filters, fora_prazo: checked as boolean })}
+                    onCheckedChange={(checked) => patchFilters({ fora_prazo: checked as boolean })}
                   />
                   <Label htmlFor="fora-prazo" className="text-sm text-muted-foreground cursor-pointer">
                     Apenas fora do prazo
                   </Label>
+                </div>
+              </div>
+
+              <div className="space-y-1 md:col-span-2 lg:col-span-4 w-full min-w-0">
+                <Label className="text-xs text-muted-foreground">Pesquisar (protocolo ou endereço)</Label>
+                <div className="relative w-full max-w-4xl">
+                  <Search
+                    className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+                    aria-hidden
+                  />
+                  <Input
+                    className="bg-background w-full pl-9"
+                    placeholder="Ex.: número do protocolo, rua, bairro…"
+                    value={pesquisaInput}
+                    onChange={(e) => setPesquisaInput(e.target.value)}
+                  />
                 </div>
               </div>
             </div>
@@ -443,6 +491,33 @@ export default function SACsPage() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+            )}
+            {!loading && sacs.length > 0 && (
+              <div className="flex flex-col gap-3 border-t border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm text-muted-foreground">
+                  Mostrando {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, total)} de {total}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={page <= 1}
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  >
+                    Anterior
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={page >= Math.max(1, Math.ceil(total / pageSize))}
+                    onClick={() => setPage((p) => p + 1)}
+                  >
+                    Próxima
+                  </Button>
+                </div>
               </div>
             )}
           </CardContent>

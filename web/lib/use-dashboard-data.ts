@@ -7,9 +7,11 @@ const DEDUP_INTERVAL_MS = 30 * 1000; // 30s entre refetches automáticos
 export function useDashboardData(periodoInicial: string, periodoFinal: string) {
   const kpisKey = periodoInicial && periodoFinal ? `kpis:${periodoInicial}:${periodoFinal}` : null;
   const sacsKey = periodoInicial && periodoFinal
-    ? `sacs:${periodoInicial}:${periodoFinal}:10000`
+    ? `sacs:${periodoInicial}:${periodoFinal}:p1:10000`
     : null;
-  const cncsKey = "cnc:all";
+  const cncsKey = periodoInicial && periodoFinal
+    ? `cnc:${periodoInicial}:${periodoFinal}:p1:10000`
+    : null;
 
   const kpisSwr = useSWR(kpisKey, () => apiService.getKPIs(periodoInicial, periodoFinal), {
     revalidateOnFocus: false,
@@ -21,15 +23,20 @@ export function useDashboardData(periodoInicial: string, periodoFinal: string) {
     apiService.getSACs({
       periodo_inicial: periodoInicial,
       periodo_final: periodoFinal,
-      full: true,
-      limit: 10000,
+      page: 1,
+      page_size: 10000,
     }), {
     revalidateOnFocus: false,
     dedupingInterval: DEDUP_INTERVAL_MS,
   });
 
   const cncsSwr = useSWR(cncsKey, () =>
-    apiService.getCNCs({ page: 1, page_size: 1000 }), {
+    apiService.getCNCs({
+      periodo_inicial: periodoInicial,
+      periodo_final: periodoFinal,
+      page: 1,
+      page_size: 10000,
+    }), {
     revalidateOnFocus: false,
     dedupingInterval: DEDUP_INTERVAL_MS,
   });

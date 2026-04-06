@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useState, useEffect, useMemo } from "react";
+import { Fragment, useState, useEffect, useMemo, useCallback } from "react";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -17,7 +17,9 @@ import {
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { DatePicker } from "@/components/ui/date-picker";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Search } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 
 interface BFS {
   id: string;
@@ -38,6 +40,20 @@ export default function BFSPage() {
   const [bfss, setBfss] = useState<BFS[]>([]);
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const pageSize = 50;
+  const [pesquisaInput, setPesquisaInput] = useState("");
+  const [pesquisa, setPesquisa] = useState("");
+  const [listStats, setListStats] = useState<{
+    total: number;
+    sem_irregularidade: number;
+    com_irregularidade: number;
+  } | null>(null);
+  const [ifEstimado, setIfEstimado] = useState<{
+    if_percent: number;
+    total_fiscalizacoes_adc: number;
+    total_sem_irregularidade_adc: number;
+  } | null>(null);
   const [selectedBFS, setSelectedBFS] = useState<BFS | null>(null);
   const [filters, setFilters] = useState(() => {
     const now = new Date();
@@ -68,46 +84,95 @@ export default function BFSPage() {
   }, [filters.periodo_inicial, filters.periodo_final]);
 
   const stats = useMemo(() => {
-    const semIrregularidade = bfss.filter(b => b.sem_irregularidade).length;
-    const comIrregularidade = bfss.length - semIrregularidade;
-    const percentualSemIrregularidade = bfss.length > 0 
-      ? ((semIrregularidade / bfss.length) * 100).toFixed(1)
-      : "0";
-    
+    if (listStats) {
+      const pctLista =
+        listStats.total > 0
+          ? ((listStats.sem_irregularidade / listStats.total) * 100).toFixed(1)
+          : "0";
+      return {
+        total: listStats.total,
+        semIrregularidade: listStats.sem_irregularidade,
+        comIrregularidade: listStats.com_irregularidade,
+        percentualSemIrregularidade: pctLista,
+      };
+    }
     return {
-      total: bfss.length,
-      semIrregularidade,
-      comIrregularidade,
-      percentualSemIrregularidade,
+      total: 0,
+      semIrregularidade: 0,
+      comIrregularidade: 0,
+      percentualSemIrregularidade: "0",
     };
-  }, [bfss]);
+  }, [listStats]);
+
+  const ifPercentLabel = useMemo(() => {
+    if (ifEstimado == null) return "—";
+    return `${ifEstimado.if_percent.toFixed(1)}%`;
+  }, [ifEstimado]);
 
   useEffect(() => {
-    loadBFSs();
-  }, [filters]);
+    const t = setTimeout(() => {
+      setPesquisa(pesquisaInput.trim());
+      setPage(1);
+    }, 400);
+    return () => clearTimeout(t);
+  }, [pesquisaInput]);
 
-  const loadBFSs = async () => {
-    try {
-      setLoading(true);
-      const params: Record<string, any> = { full: true };
-      
-      if (filters.periodo_inicial) params.periodo_inicial = filters.periodo_inicial;
-      if (filters.periodo_final) params.periodo_final = filters.periodo_final;
-      if (filters.subprefeitura !== "todas") params.subprefeitura = filters.subprefeitura;
-      if (filters.status !== "todos") params.status = filters.status;
-      if (filters.tipo_servico !== "todos") params.tipo_servico = filters.tipo_servico;
-      
-      const data = await apiService.getCNCs(params);
-      setBfss(data.items || []);
-      setTotal(data.total || 0);
-    } catch (error) {
-      console.error("Erro ao carregar BFSs:", error);
-      setBfss([]);
-      setTotal(0);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const patchFilters = useCallback(
+    (patch: Partial<typeof filters>) => {
+      setFilters((prev) => ({ ...prev, ...patch }));
+      setPage(1);
+    },
+    []
+  );
+
+  useEffect(() => {
+    const loadBFSs = async () => {
+      try {
+        setLoading(true);
+        const params: Record<string, string | number> = {
+          page,
+          page_size: pageSize,
+        };
+        if (filters.periodo_inicial) params.periodo_inicial = filters.periodo_inicial;
+        if (filters.periodo_final) params.periodo_final = filters.periodo_final;
+        if (filters.subprefeitura !== "todas") params.subprefeitura = filters.subprefeitura;
+        if (filters.status !== "todos") params.status = filters.status;
+        if (filters.tipo_servico !== "todos") params.tipo_servico = filters.tipo_servico;
+        if (pesquisa) params.q = pesquisa;
+
+        const data = await apiService.getCNCs(params);
+        setBfss(data.items || []);
+        setTotal(data.total ?? 0);
+        if (data.stats) {
+          setListStats({
+            total: data.stats.total,
+            sem_irregularidade: data.stats.sem_irregularidade,
+            com_irregularidade: data.stats.com_irregularidade,
+          });
+        } else {
+          setListStats(null);
+        }
+        if (data.if_estimado) {
+          setIfEstimado({
+            if_percent: data.if_estimado.if_percent,
+            total_fiscalizacoes_adc: data.if_estimado.total_fiscalizacoes_adc,
+            total_sem_irregularidade_adc: data.if_estimado.total_sem_irregularidade_adc,
+          });
+        } else {
+          setIfEstimado(null);
+        }
+      } catch (error) {
+        console.error("Erro ao carregar BFSs:", error);
+        setBfss([]);
+        setTotal(0);
+        setListStats(null);
+        setIfEstimado(null);
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadBFSs();
+  }, [filters, pesquisa, page]);
 
   const formatStatus = (status?: string) => {
     if (!status) return "—";
@@ -190,15 +255,21 @@ export default function BFSPage() {
           <Card className="hover:shadow-md transition-all duration-200 border-l-4 border-l-blue-500">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">
-                IF Estimado
+                IF estimado (ADC)
               </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="text-4xl font-bold text-blue-600 dark:text-blue-400">
-                {stats.percentualSemIrregularidade}%
+                {ifPercentLabel}
               </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                Percentual sem irregularidades
+              <p className="text-xs text-muted-foreground mt-1 leading-snug">
+                Média dos % por subprefeitura no período (regra ADC: exclui 3 serviços e fiscais SELIMP -).
+                {ifEstimado != null && (
+                  <span className="block mt-1">
+                    Base: {ifEstimado.total_sem_irregularidade_adc} sem irregularidade /{" "}
+                    {ifEstimado.total_fiscalizacoes_adc} fiscalizações
+                  </span>
+                )}
               </p>
             </CardContent>
           </Card>
@@ -220,7 +291,7 @@ export default function BFSPage() {
                 <Label className="text-xs text-muted-foreground">Período Inicial</Label>
                 <DatePicker
                   value={filters.periodo_inicial}
-                  onChange={(value) => setFilters({ ...filters, periodo_inicial: value })}
+                  onChange={(value) => patchFilters({ periodo_inicial: value })}
                   placeholder="Selecionar início"
                 />
               </div>
@@ -229,7 +300,7 @@ export default function BFSPage() {
                 <Label className="text-xs text-muted-foreground">Período Final</Label>
                 <DatePicker
                   value={filters.periodo_final}
-                  onChange={(value) => setFilters({ ...filters, periodo_final: value })}
+                  onChange={(value) => patchFilters({ periodo_final: value })}
                   placeholder="Selecionar fim"
                 />
               </div>
@@ -238,7 +309,7 @@ export default function BFSPage() {
                 <Label className="text-xs text-muted-foreground">Subprefeitura</Label>
                 <Select
                   value={filters.subprefeitura}
-                  onValueChange={(value) => setFilters({ ...filters, subprefeitura: value })}
+                  onValueChange={(value) => patchFilters({ subprefeitura: value })}
                 >
                   <SelectTrigger className="bg-background">
                     <SelectValue placeholder="Todas" />
@@ -257,7 +328,7 @@ export default function BFSPage() {
                 <Label className="text-xs text-muted-foreground">Status</Label>
                 <Select
                   value={filters.status}
-                  onValueChange={(value) => setFilters({ ...filters, status: value })}
+                  onValueChange={(value) => patchFilters({ status: value })}
                 >
                   <SelectTrigger className="bg-background">
                     <SelectValue placeholder="Todos" />
@@ -274,7 +345,7 @@ export default function BFSPage() {
                 <Label className="text-xs text-muted-foreground">Tipo de Serviço</Label>
                 <Select
                   value={filters.tipo_servico}
-                  onValueChange={(value) => setFilters({ ...filters, tipo_servico: value })}
+                  onValueChange={(value) => patchFilters({ tipo_servico: value })}
                 >
                   <SelectTrigger className="bg-background">
                     <SelectValue placeholder="Todos" />
@@ -291,6 +362,22 @@ export default function BFSPage() {
                     <SelectItem value="PEV">PEV</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+
+              <div className="space-y-1 md:col-span-2 lg:col-span-5 w-full min-w-0">
+                <Label className="text-xs text-muted-foreground">Pesquisar (nº BFS ou endereço)</Label>
+                <div className="relative w-full max-w-4xl">
+                  <Search
+                    className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+                    aria-hidden
+                  />
+                  <Input
+                    className="bg-background w-full pl-9"
+                    placeholder="Ex.: número da BFS, rua…"
+                    value={pesquisaInput}
+                    onChange={(e) => setPesquisaInput(e.target.value)}
+                  />
+                </div>
               </div>
             </div>
           </CardContent>
@@ -384,6 +471,31 @@ export default function BFSPage() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+              <div className="flex flex-col gap-3 border-t border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm text-muted-foreground">
+                  Mostrando {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, total)} de {total}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={page <= 1}
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  >
+                    Anterior
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={page >= Math.max(1, Math.ceil(total / pageSize))}
+                    onClick={() => setPage((p) => p + 1)}
+                  >
+                    Próxima
+                  </Button>
+                </div>
               </div>
             </CardContent>
           </Card>

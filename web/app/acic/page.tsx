@@ -898,7 +898,8 @@ export default function ACICPage() {
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-12 xl:items-end">
-              <div className="flex max-w-full min-w-0 shrink-0 items-center gap-2 rounded-lg bg-emerald-600 px-2.5 py-1.5 shadow-lg text-white xl:col-span-4">
+              <div className="min-w-0 justify-self-start xl:col-span-2">
+                <div className="inline-flex max-w-full items-center gap-2 rounded-lg bg-emerald-600 px-2.5 py-1.5 shadow-lg text-white">
                 <Calendar className="h-4 w-4 shrink-0" aria-hidden />
                 <DateRangePicker
                   value={periodRange}
@@ -912,7 +913,7 @@ export default function ACICPage() {
                   maxDate={new Date()}
                   modeLabel={periodModeLabel}
                   emptyLabel="Todos os períodos"
-                  className="max-w-[min(100vw-8rem,22rem)]"
+                  className="max-w-[min(100vw-8rem,22rem)] w-[min(100%,22rem)]"
                   footer={(close) => (
                     <>
                       <Button
@@ -944,6 +945,7 @@ export default function ACICPage() {
                     </>
                   )}
                 />
+                </div>
               </div>
               <div className="min-w-0 space-y-1 xl:col-span-2">
                 <Label className="text-xs text-muted-foreground">Registro</Label>
@@ -964,7 +966,7 @@ export default function ACICPage() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="min-w-0 space-y-1 xl:col-span-3">
+              <div className="min-w-0 space-y-1 xl:col-span-4">
                 <Label className="text-xs text-muted-foreground">Subprefeitura</Label>
                 <Select
                   value={filters.subprefeitura}
@@ -983,7 +985,7 @@ export default function ACICPage() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="flex items-center gap-2 pt-1 xl:col-span-3">
+              <div className="flex items-center gap-2 pt-1 xl:col-span-4">
                 <Checkbox
                   id="acic-only-multi-bfs"
                   checked={filters.somenteBfsMultipla}
