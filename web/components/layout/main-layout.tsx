@@ -1,15 +1,56 @@
 "use client"
 
+import { useEffect } from "react"
+import { usePathname, useRouter } from "next/navigation"
 import { useState } from "react"
 import { Sidebar } from "./sidebar"
+import { useAuth } from "@/lib/auth"
+import type { AuthPageKey } from "@/lib/api"
 
 interface MainLayoutProps {
   children: React.ReactNode
 }
 
+const PAGE_ACCESS_BY_PATH: Record<string, AuthPageKey> = {
+  "/": "dashboard",
+  "/indicadores": "indicadores",
+  "/ipt": "ipt",
+  "/sacs": "sacs",
+  "/bfs": "bfs",
+  "/defesa": "defesa",
+  "/acic": "acic",
+  "/upload": "upload",
+  "/admin/users": "admin_users",
+}
+
 export function MainLayout({ children }: MainLayoutProps) {
   const [collapsed, setCollapsed] = useState(false)
+  const { user, loading, hasPageAccess } = useAuth()
+  const pathname = usePathname()
+  const router = useRouter()
   const sidebarWidth = 288 // 18rem (w-72)
+
+  useEffect(() => {
+    if (loading) return
+    if (!user) {
+      router.replace("/login")
+      return
+    }
+    const pageKey = PAGE_ACCESS_BY_PATH[pathname]
+    if (pageKey && !hasPageAccess(pageKey)) {
+      router.replace("/")
+    }
+  }, [hasPageAccess, loading, pathname, router, user])
+
+  if (loading || !user) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background px-6">
+        <div className="rounded-2xl border border-border bg-card px-6 py-5 text-sm text-muted-foreground shadow-sm">
+          Carregando acesso...
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex min-h-screen bg-background overflow-x-hidden">

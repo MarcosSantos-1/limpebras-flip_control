@@ -4,6 +4,7 @@ import { cacheKey, getOrSet, invalidatePrefix } from "../cache.js";
 import { BFS_DEFESA_EXCLUSAO_SQL, sqlBfsFiscalNaoEhSelimp } from "../constants/bfs.js";
 import { findSetorByCoords, parseCoordenada, findSetorByPlano } from "../services/setorLookup.js";
 import { parseSetor, FREQUENCIAS, normalizarSetor } from "../constants/ipt.js";
+import { requirePageAccess } from "../auth.js";
 
 const STATUS_DEFESA_VALID = new Set(["Analisar", "Irregular", "Contestar"]);
 
@@ -12,6 +13,14 @@ function normNumeroBfs(v: string | null | undefined): string {
 }
 
 export const cncRoutes: FastifyPluginAsync = async (fastify) => {
+  fastify.addHook("preHandler", async (request, reply) => {
+    const routeUrl = request.routeOptions.url ?? "";
+    if (routeUrl.startsWith("/cnc/defesa")) {
+      const user = await requirePageAccess(request, reply, "defesa");
+      if (!user) return reply;
+    }
+  });
+
   fastify.get<{
     Querystring: {
       periodo_inicial?: string;

@@ -4,6 +4,7 @@ import "react-toastify/dist/ReactToastify.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ToastProvider } from "@/components/ui/toast-provider";
 import { SpeedInsights } from "@vercel/speed-insights/next";
+import { AuthProvider } from "@/lib/auth";
 
 export const metadata: Metadata = {
   title: "ADC Control - Sistema de Gestão ADC",
@@ -27,16 +28,18 @@ export default function RootLayout({
   return (
     <html lang="pt-BR" suppressHydrationWarning>
       <body className="antialiased bg-background text-foreground">
-        <ThemeProvider
-          attribute="class"
-          defaultTheme="light"
-          enableSystem
-          disableTransitionOnChange
-          storageKey="flip-theme"
-        >
-          {children}
-          <ToastProvider />
-        </ThemeProvider>
+        <AuthProvider>
+          <ThemeProvider
+            attribute="class"
+            defaultTheme="light"
+            enableSystem
+            disableTransitionOnChange
+            storageKey="flip-theme"
+          >
+            {children}
+            <ToastProvider />
+          </ThemeProvider>
+        </AuthProvider>
         <SpeedInsights />
       </body>
     </html>

@@ -1,4 +1,6 @@
 import axios from 'axios';
+import type { AuthPageKey } from "@/lib/auth-shared";
+import { getStoredSessionToken } from "@/lib/session-storage";
 
 // Se NEXT_PUBLIC_API_URL j├í incluir /api/v1, usa direto, sen├úo adiciona
 const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
@@ -6,10 +8,58 @@ const API_URL = baseUrl.includes('/api/v1') ? baseUrl : `${baseUrl}/api/v1`;
 
 export const api = axios.create({
   baseURL: API_URL,
+  withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
   },
 });
+
+api.interceptors.request.use((config) => {
+  const sessionToken = typeof window !== "undefined" ? getStoredSessionToken() : "";
+  if (sessionToken) {
+    config.headers["x-session-token"] = sessionToken;
+  }
+  return config;
+});
+
+export type { AuthPageKey };
+
+export interface AuthUser {
+  id: number;
+  username: string;
+  display_name: string | null;
+  role: "host" | "user";
+  status: "active" | "inactive";
+  blocked: boolean;
+  page_permissions: Record<AuthPageKey, boolean>;
+  visible_password: string;
+}
+
+export interface LoginPayload {
+  username: string;
+  password: string;
+  rememberMe: boolean;
+}
+
+export interface LoginResponse {
+  user: AuthUser;
+  session_token: string;
+  remember_me: boolean;
+  expires_at: string;
+}
+
+type QueryParams = Record<string, string | number | boolean | undefined | null>;
+
+function getErrorMessage(error: unknown, fallback = "Erro desconhecido") {
+  if (typeof error === "object" && error !== null) {
+    const maybe = error as { response?: { data?: { detail?: string } }; message?: string };
+    if (!maybe.response && maybe.message === "Network Error") {
+      return "Não foi possível conectar ao backend. Verifique se a API está rodando e se o CORS está liberado.";
+    }
+    return maybe.response?.data?.detail || maybe.message || fallback;
+  }
+  return fallback;
+}
 
 // Tipos
 export interface SAC {
@@ -167,8 +217,57 @@ export interface IptPreviewResponse {
 
 // API calls
 export const apiService = {
+  extractErrorMessage: getErrorMessage,
+  login: async (payload: LoginPayload): Promise<LoginResponse> => {
+    const { data } = await api.post("/auth/login", payload);
+    return data;
+  },
+
+  logout: async () => {
+    const { data } = await api.post("/auth/logout");
+    return data;
+  },
+
+  getCurrentUser: async (): Promise<{ user: AuthUser }> => {
+    const { data } = await api.get("/auth/me");
+    return data;
+  },
+
+  getUsers: async (): Promise<{ items: AuthUser[]; total: number; page_keys: AuthPageKey[] }> => {
+    const { data } = await api.get("/auth/users");
+    return data;
+  },
+
+  createUser: async (payload: {
+    username: string;
+    display_name?: string;
+    password: string;
+    role: "host" | "user";
+    status: "active" | "inactive";
+    blocked: boolean;
+    page_permissions: Record<string, boolean>;
+  }): Promise<{ user: AuthUser | null }> => {
+    const { data } = await api.post("/auth/users", payload);
+    return data;
+  },
+
+  updateUser: async (
+    id: number,
+    payload: {
+      display_name?: string;
+      password?: string;
+      role?: "host" | "user";
+      status?: "active" | "inactive";
+      blocked?: boolean;
+      page_permissions?: Record<string, boolean>;
+    }
+  ): Promise<{ user: AuthUser | null }> => {
+    const { data } = await api.patch(`/auth/users/${id}`, payload);
+    return data;
+  },
+
   // SACs
-  getSACs: async (params?: any) => {
+  getSACs: async (params?: QueryParams) => {
     const { data } = await api.get('/sacs', { params });
     return data;
   },
@@ -191,13 +290,13 @@ export const apiService = {
   },
   
   // CNCs
-  getCNCs: async (params?: any) => {
+  getCNCs: async (params?: QueryParams) => {
     const { data } = await api.get('/cnc', { params });
     return data;
   },
 
   /** BFSs escalonados para Defesa/Contestação (Com irregularidade, exclui 4 serviços, cruza com CNCs) */
-  getCNCsDefesa: async (params?: any) => {
+  getCNCsDefesa: async (params?: QueryParams) => {
     const { data } = await api.get('/cnc/defesa', { params });
     return data;
   },
@@ -229,7 +328,7 @@ export const apiService = {
   },
   
   // ACICs
-  getACICs: async (params?: any) => {
+  getACICs: async (params?: QueryParams) => {
     const { data } = await api.get('/acic', { params });
     return data;
   },

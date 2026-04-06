@@ -8,15 +8,43 @@ import { indicadoresRoutes } from "./routes/indicadores.js";
 import { sacsRoutes } from "./routes/sacs.js";
 import { cncRoutes } from "./routes/cnc.js";
 import { acicRoutes } from "./routes/acic.js";
+import { authRoutes } from "./routes/auth.js";
+import { attachAuthToRequest, requireAuth } from "./auth.js";
 
 const fastify = Fastify({ logger: true });
 
 async function start() {
-  await fastify.register(cors, { origin: true });
+  await fastify.register(cors, {
+    origin: true,
+    credentials: true,
+    methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+  });
   await fastify.register(multipart, { limits: { fileSize: 50 * 1024 * 1024 } }); // 50 MB
 
   await runMigrations();
 
+  fastify.addHook("preHandler", async (request) => {
+    await attachAuthToRequest(request);
+  });
+
+  fastify.addHook("preHandler", async (request, reply) => {
+    const routeUrl = request.routeOptions.url ?? "";
+    const requestUrl = request.raw.url ?? "";
+    const isAuthRoute =
+      routeUrl.startsWith("/auth") ||
+      routeUrl.startsWith("/api/v1/auth") ||
+      requestUrl.startsWith("/api/v1/auth");
+    const isHealthRoute =
+      routeUrl === "/health" ||
+      routeUrl === "/api/v1/health" ||
+      requestUrl.startsWith("/api/v1/health");
+
+    if (isAuthRoute || isHealthRoute) return;
+    const user = await requireAuth(request, reply);
+    if (!user) return reply;
+  });
+
+  await fastify.register(authRoutes, { prefix: "/api/v1" });
   await fastify.register(indicadoresRoutes, { prefix: "/api/v1" });
   await fastify.register(uploadRoutes, { prefix: "/api/v1" });
   await fastify.register(sacsRoutes, { prefix: "/api/v1" });

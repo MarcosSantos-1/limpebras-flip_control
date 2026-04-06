@@ -1,5 +1,7 @@
 import pg from "pg";
 import { config } from "./config.js";
+import { encryptPassword } from "./auth-crypto.js";
+import { APP_PAGE_KEYS, DEFAULT_USER_ALLOWED_PAGES } from "./auth-shared.js";
 
 const { Pool } = pg;
 
@@ -15,6 +17,78 @@ export const pool = new Pool({
 export async function runMigrations() {
   const client = await pool.connect();
   try {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username TEXT NOT NULL UNIQUE,
+        display_name TEXT,
+        password_encrypted TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'user',
+        status TEXT NOT NULL DEFAULT 'active',
+        blocked BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        CONSTRAINT chk_users_role CHECK (role IN ('host', 'user')),
+        CONSTRAINT chk_users_status CHECK (status IN ('active', 'inactive'))
+      );
+    `);
+    await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT").catch(() => {});
+    await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_encrypted TEXT").catch(() => {});
+    await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user'").catch(() => {});
+    await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'").catch(() => {});
+    await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS blocked BOOLEAN NOT NULL DEFAULT FALSE").catch(() => {});
+    await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()").catch(() => {});
+    await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()").catch(() => {});
+    await client.query("CREATE UNIQUE INDEX IF NOT EXISTS ux_users_username ON users(username)").catch(() => {});
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS user_page_permissions (
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        page_key TEXT NOT NULL,
+        allowed BOOLEAN NOT NULL DEFAULT TRUE,
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        PRIMARY KEY (user_id, page_key)
+      );
+    `);
+    await client.query("ALTER TABLE user_page_permissions ADD COLUMN IF NOT EXISTS allowed BOOLEAN NOT NULL DEFAULT TRUE").catch(
+      () => {}
+    );
+    await client.query("ALTER TABLE user_page_permissions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()").catch(
+      () => {}
+    );
+    await client.query("CREATE INDEX IF NOT EXISTS idx_user_page_permissions_page ON user_page_permissions(page_key)").catch(
+      () => {}
+    );
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS auth_sessions (
+        session_id TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        session_token_hash TEXT NOT NULL,
+        remember_me BOOLEAN NOT NULL DEFAULT FALSE,
+        expires_at TIMESTAMPTZ NOT NULL,
+        last_seen_at TIMESTAMPTZ DEFAULT NOW(),
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client.query("ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS session_token_hash TEXT").catch(() => {});
+    await client.query("ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS remember_me BOOLEAN NOT NULL DEFAULT FALSE").catch(
+      () => {}
+    );
+    await client.query("ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ").catch(() => {});
+    await client.query("ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ DEFAULT NOW()").catch(
+      () => {}
+    );
+    await client.query("ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()").catch(
+      () => {}
+    );
+    await client.query("ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()").catch(
+      () => {}
+    );
+    await client.query("CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions(user_id)").catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires_at ON auth_sessions(expires_at)").catch(() => {});
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS sacs (
         id SERIAL PRIMARY KEY,
@@ -360,6 +434,46 @@ export async function runMigrations() {
     `);
     await client.query("CREATE INDEX IF NOT EXISTS idx_consol_varr_setor ON ipt_consolidado_varricao_dados(setor)").catch(() => {});
     await client.query("CREATE INDEX IF NOT EXISTS idx_consol_varr_data ON ipt_consolidado_varricao_dados(data_referencia)").catch(() => {});
+
+    const adminEncryptedPassword = encryptPassword("1515");
+    const userResult = await client.query<{ id: number }>(
+      `INSERT INTO users (username, display_name, password_encrypted, role, status, blocked, created_at, updated_at)
+       VALUES ('admin', 'Administrador', $1, 'host', 'active', FALSE, NOW(), NOW())
+       ON CONFLICT (username) DO UPDATE SET
+         role = 'host',
+         status = 'active',
+         blocked = FALSE,
+         password_encrypted = COALESCE(NULLIF(users.password_encrypted, ''), EXCLUDED.password_encrypted),
+         updated_at = NOW()
+       RETURNING id`,
+      [adminEncryptedPassword]
+    );
+    const adminUserId = userResult.rows[0]?.id;
+
+    if (adminUserId) {
+      for (const pageKey of APP_PAGE_KEYS) {
+        await client.query(
+          `INSERT INTO user_page_permissions (user_id, page_key, allowed, updated_at)
+           VALUES ($1, $2, TRUE, NOW())
+           ON CONFLICT (user_id, page_key) DO UPDATE SET allowed = TRUE, updated_at = NOW()`,
+          [adminUserId, pageKey]
+        );
+      }
+    }
+
+    const nonHostUsers = await client.query<{ id: number }>(
+      `SELECT id FROM users WHERE role <> 'host'`
+    );
+    for (const row of nonHostUsers.rows) {
+      for (const pageKey of DEFAULT_USER_ALLOWED_PAGES) {
+        await client.query(
+          `INSERT INTO user_page_permissions (user_id, page_key, allowed, updated_at)
+           VALUES ($1, $2, TRUE, NOW())
+           ON CONFLICT (user_id, page_key) DO NOTHING`,
+          [row.id, pageKey]
+        );
+      }
+    }
   } finally {
     client.release();
   }

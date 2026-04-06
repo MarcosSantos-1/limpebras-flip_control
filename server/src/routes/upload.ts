@@ -17,6 +17,7 @@ import { normalizarSetor, parseSetor } from "../constants/ipt.js";
 import { parseConsolidadoVeiculos, parseConsolidadoVarricao } from "../services/parseRelatorioConsolidado.js";
 import { estimarDatasReport, type ReportLinhaRaw } from "../services/estimarDataReport.js";
 import { mergeAcicOverridesAfterImportRow } from "../services/acicImportMerge.js";
+import { requirePageAccess } from "../auth.js";
 
 function normCncKeyForMerge(numeroCnc: string | null | undefined): string {
   return (numeroCnc ?? "").trim();
@@ -248,6 +249,11 @@ function describeReportReference(mode: ReportReferenceMode, inicio: string, fim:
 }
 
 export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
+  fastify.addHook("preHandler", async (request, reply) => {
+    const user = await requirePageAccess(request, reply, "upload");
+    if (!user) return reply;
+  });
+
   const getLastUpdate = async (table: "sacs" | "bfs" | "acic" | "ouvidoria" | "cncs") => {
     const last = await pool.query(
       `SELECT source_file, updated_at FROM ${table} ORDER BY updated_at DESC NULLS LAST, id DESC LIMIT 1`

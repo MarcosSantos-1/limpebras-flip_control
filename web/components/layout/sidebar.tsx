@@ -1,5 +1,6 @@
 "use client"
 
+import Image from "next/image"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { 
@@ -7,24 +8,31 @@ import {
   FileText, 
   AlertTriangle, 
   Upload, 
-  Settings,
   FileWarning,
   ChartPie,
   Activity,
   ShieldCheck,
+  Users,
+  LogOut,
+  ChevronUp,
+  Sparkles,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { ThemeToggle } from "@/components/theme-toggle"
+import { useAuth } from "@/lib/auth"
+import type { AuthPageKey } from "@/lib/api"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 
 const navItems = [
-  { href: "/", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/indicadores", label: "Indicadores", icon: ChartPie  },
-  { href: "/ipt", label: "IPT", icon: Activity },
-  { href: "/sacs", label: "SACs", icon: FileText },
-  { href: "/bfs", label: "BFSs", icon: AlertTriangle },
-  { href: "/defesa", label: "Defesa / Contestação", icon: ShieldCheck },
-  { href: "/acic", label: "ACICs", icon: FileWarning },
-  { href: "/upload", label: "Upload", icon: Upload },
+  { href: "/", label: "Dashboard", icon: LayoutDashboard, pageKey: "dashboard" as AuthPageKey },
+  { href: "/indicadores", label: "Indicadores", icon: ChartPie, pageKey: "indicadores" as AuthPageKey },
+  { href: "/ipt", label: "IPT", icon: Activity, pageKey: "ipt" as AuthPageKey },
+  { href: "/sacs", label: "SACs", icon: FileText, pageKey: "sacs" as AuthPageKey },
+  { href: "/bfs", label: "BFSs", icon: AlertTriangle, pageKey: "bfs" as AuthPageKey },
+  { href: "/defesa", label: "Defesa / Contestação", icon: ShieldCheck, pageKey: "defesa" as AuthPageKey },
+  { href: "/acic", label: "ACICs", icon: FileWarning, pageKey: "acic" as AuthPageKey },
+  { href: "/upload", label: "Upload", icon: Upload, pageKey: "upload" as AuthPageKey },
+  { href: "/admin/users", label: "Usuários", icon: Users, pageKey: "admin_users" as AuthPageKey },
 ]
 
 interface SidebarProps {
@@ -33,6 +41,8 @@ interface SidebarProps {
 
 export function Sidebar({ collapsed = false }: SidebarProps) {
   const pathname = usePathname()
+  const { user, hasPageAccess, logout } = useAuth()
+  const visibleItems = navItems.filter((item) => hasPageAccess(item.pageKey))
 
   return (
     <aside
@@ -44,13 +54,28 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
       )}
     >
       <div className="flex h-full flex-col">
-        <div className="flex h-20 pt-12 items-center justify-between border-b border-border/70 px-6">
-          <h1 className="text-2xl ml-8 font-extrabold bg-linear-to-r from-zinc-800 via-indigo-700 to-blue-700 dark:from-zinc-300 dark:via-indigo-300 dark:to-blue-300 bg-clip-text text-transparent tracking-tight">
-            Limpebras
-          </h1>
+        <div className="flex h-20 pt-12 items-center justify-start border-b border-border/70 px-6">
+          <Link href="/" className="ml-6 flex shrink-0 items-center" aria-label="Limpebras — início">
+            <Image
+              src="/logotipo.png"
+              alt="Limpebras"
+              width={180}
+              height={48}
+              className="h-10 w-auto max-w-[200px] object-contain object-left dark:hidden"
+              priority
+            />
+            <Image
+              src="/logotipo-white.png"
+              alt="Limpebras"
+              width={230}
+              height={55}
+              className="hidden h-10 mb-2 w-auto max-w-[230px] object-contain object-left dark:block"
+              priority
+            />
+          </Link>
         </div>
         <nav className="flex-1 space-y-2 p-4">
-          {navItems.map((item) => {
+          {visibleItems.map((item) => {
             const Icon = item.icon
             const isActive = pathname === item.href
             return (
@@ -71,9 +96,67 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
           })}
         </nav>
         <div className="border-t border-border/70 p-4 bg-background/50">
-          <div className="flex items-center justify-between gap-4 px-2">
-            <span className="text-xs font-medium text-muted-foreground">Tema</span>
-            <ThemeToggle />
+          <div className="px-2">
+            <Popover>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  className="group flex w-full items-center gap-3 rounded-2xl border border-border/70 bg-linear-to-r from-background via-background to-cyan-500/5 px-3 py-3 text-left shadow-sm transition hover:border-blue-400/35 hover:shadow-md"
+                >
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-linear-to-br from-blue-600 to-cyan-500 text-white shadow-md">
+                    <Sparkles className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-semibold text-foreground">
+                      {user?.display_name || user?.username || "Sem sessão"}
+                    </div>
+                    <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
+                      <span className="rounded-full bg-blue-500/10 px-2 py-0.5 font-medium text-blue-700 dark:text-blue-300">
+                        {user?.role === "host" ? "Host" : "Usuário"}
+                      </span>
+                      <span className="truncate">
+                        {user?.status === "active" ? "Ativo" : "Inativo"}
+                      </span>
+                    </div>
+                  </div>
+                  <ChevronUp className="h-4 w-4 shrink-0 text-muted-foreground transition group-data-[state=open]:rotate-180" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="end" side="top" className="w-72 rounded-2xl border-border/80 p-3 shadow-xl">
+                <div className="space-y-3">
+                  <div className="rounded-xl border border-border/70 bg-muted/25 px-3 py-3">
+                    <div className="text-sm font-semibold text-foreground">
+                      {user?.display_name || user?.username || "Sem sessão"}
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      @{user?.username || "usuario"}
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <span className="rounded-full bg-blue-500/10 px-2.5 py-1 text-[11px] font-medium text-blue-700 dark:text-blue-300">
+                        {user?.role === "host" ? "Host" : "Usuário padrão"}
+                      </span>
+                      <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
+                        {user?.status === "active" ? "Status ativo" : "Status inativo"}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between rounded-xl border border-border/70 px-3 py-2.5">
+                    <span className="text-sm font-medium text-foreground">Tema</span>
+                    <ThemeToggle />
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => void logout()}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-zinc-900 px-3 py-2.5 text-sm font-medium text-white transition hover:bg-zinc-800 dark:bg-white dark:text-zinc-900 dark:hover:bg-zinc-200"
+                  >
+                    <LogOut className="h-4 w-4" />
+                    Sair
+                  </button>
+                </div>
+              </PopoverContent>
+            </Popover>
           </div>
         </div>
       </div>

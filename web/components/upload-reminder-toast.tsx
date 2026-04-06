@@ -50,20 +50,20 @@ export function UploadReminderToast() {
 
         toast(
           ({ closeToast }) => (
-            <div className="relative flex w-[min(100vw-2rem,28rem)] items-start gap-3 rounded-2xl border border-violet-300/90 bg-linear-to-br from-white via-violet-50/40 to-indigo-50/80 px-4 py-3.5 pr-10 shadow-lg shadow-violet-500/15 ring-1 ring-violet-500/10 dark:border-violet-500/35 dark:from-zinc-900 dark:via-violet-950/30 dark:to-zinc-950 dark:ring-violet-400/20">
+            <div className="relative flex w-4xl items-start gap-3 rounded-2xl border border-violet-300/90 bg-linear-to-br from-white via-violet-50/40 to-indigo-50/80 px-4 py-3.5 pr-10 shadow-lg shadow-violet-500/15 ring-1 ring-violet-500/10 dark:border-violet-500/35 dark:from-zinc-900 dark:via-violet-950/30 dark:to-zinc-950 dark:ring-violet-400/20">
               <div
                 className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-violet-600 text-white shadow-md shadow-violet-600/30 dark:bg-violet-500"
                 aria-hidden
               >
                 <Upload className="h-5 w-5" strokeWidth={2.25} />
               </div>
-              <div className="min-w-0 flex-1 pt-0.5">
+              <div className="min-w-0 flex-1 pt-0.5 ">
                 <p className="text-[15px] font-semibold leading-snug text-zinc-900 dark:text-zinc-50">
                   Atualize os dados (FLIP + Report)
                 </p>
                 <p className="mt-1 text-sm leading-relaxed text-zinc-600 dark:text-zinc-300">
                   Ainda faltam importações para a referência de <strong className="text-zinc-800 dark:text-zinc-100">{ontemLabel}</strong>
-                  :
+                  
                 </p>
                 <ul className="mt-2 list-inside list-disc text-sm leading-relaxed text-zinc-600 dark:text-zinc-300">
                   {faltas.map((line) => (
