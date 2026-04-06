@@ -16,6 +16,15 @@ type UserRow = {
   page_permissions: AppPageKey[] | null;
 };
 
+function safeDecryptVisiblePassword(encrypted: string): string {
+  try {
+    return decryptPassword(encrypted);
+  } catch {
+    /** Senha cifrada com outro AUTH_SECRET (ex.: após troca no deploy). Regrave a senha no painel. */
+    return "";
+  }
+}
+
 function sanitizeUser(row: UserRow) {
   const defaults = buildDefaultPermissions(row.role);
   const allowed = new Set((row.page_permissions ?? []).filter((page): page is AppPageKey => isAppPageKey(page)));
@@ -31,7 +40,7 @@ function sanitizeUser(row: UserRow) {
     status: row.status,
     blocked: row.blocked,
     page_permissions: pagePermissions,
-    visible_password: decryptPassword(row.password_encrypted),
+    visible_password: safeDecryptVisiblePassword(row.password_encrypted),
   };
 }
 
