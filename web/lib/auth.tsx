@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { usePathname, useRouter } from "next/navigation";
 import { apiService, type AuthPageKey, type AuthUser, type LoginPayload } from "@/lib/api";
 import { setStoredSessionToken } from "@/lib/session-storage";
+import { clearWebSessionCookie, setWebSessionCookie } from "@/lib/web-session-cookie";
 
 const REMEMBER_FLAG_KEY = "flip-remember-me";
 const REMEMBER_USERNAME_KEY = "flip-remember-username";
@@ -70,9 +71,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const data = await apiService.getCurrentUser();
       setUser(data.user);
+      if (typeof window !== "undefined") {
+        const rememberMe = readStorage(REMEMBER_FLAG_KEY) === "1";
+        setWebSessionCookie(rememberMe);
+      }
     } catch {
       setUser(null);
       setStoredSessionToken(null);
+      if (typeof window !== "undefined") {
+        clearWebSessionCookie();
+      }
     } finally {
       setLoading(false);
     }
@@ -104,6 +112,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setRememberMeSaved(payload.rememberMe);
         setUser(data.user);
         if (typeof window !== "undefined") {
+          setWebSessionCookie(payload.rememberMe);
           window.sessionStorage.setItem("flip_show_welcome", "1");
           window.sessionStorage.setItem("flip_upload_reminder_delay_ms", "700");
         }
@@ -127,6 +136,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setStoredSessionToken(null);
       setUser(null);
       if (typeof window !== "undefined") {
+        clearWebSessionCookie();
         window.sessionStorage.removeItem("flip_show_welcome");
         window.sessionStorage.removeItem("flip_upload_reminder_delay_ms");
       }
