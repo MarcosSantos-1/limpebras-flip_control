@@ -1584,7 +1584,9 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
     }
   };
 
-  fastify.get("/upload/last-updates", async () => {
+  fastify.get("/upload/last-updates", async (_request, reply) => {
+    reply.header("Cache-Control", "no-store, no-cache, must-revalidate, private");
+    reply.header("Pragma", "no-cache");
     const [
       sacs,
       cnc,
@@ -1618,23 +1620,51 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         .query<{
           ontem_brt: string;
           flip_cobre_ontem: boolean;
+          ipt_report_cobre_ontem: boolean;
         }>(
-          `SELECT
-             TO_CHAR((CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo')::date - 1, 'YYYY-MM-DD') AS ontem_brt,
+          `WITH ref AS (
+             SELECT (CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo')::date - 1 AS d
+           )
+           SELECT
+             TO_CHAR(ref.d, 'YYYY-MM-DD') AS ontem_brt,
              (
                EXISTS (
-                 SELECT 1 FROM bfs b
-                 WHERE b.data_fiscalizacao IS NOT NULL
-                   AND (b.data_fiscalizacao AT TIME ZONE 'America/Sao_Paulo')::date
-                       = (CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo')::date - 1
+                 SELECT 1 FROM bfs b, ref
+                 WHERE (
+                   (b.data_fiscalizacao IS NOT NULL
+                     AND (b.data_fiscalizacao AT TIME ZONE 'America/Sao_Paulo')::date = ref.d)
+                   OR (b.data_vistoria IS NOT NULL
+                     AND (b.data_vistoria AT TIME ZONE 'America/Sao_Paulo')::date = ref.d)
+                 )
                )
                OR EXISTS (
-                 SELECT 1 FROM cncs c
-                 WHERE c.data_fiscalizacao IS NOT NULL
-                   AND (c.data_fiscalizacao AT TIME ZONE 'America/Sao_Paulo')::date
-                       = (CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo')::date - 1
+                 SELECT 1 FROM cncs c, ref
+                 WHERE (
+                   (c.data_fiscalizacao IS NOT NULL
+                     AND (c.data_fiscalizacao AT TIME ZONE 'America/Sao_Paulo')::date = ref.d)
+                   OR (c.data_execucao IS NOT NULL
+                     AND (c.data_execucao AT TIME ZONE 'America/Sao_Paulo')::date = ref.d)
+                   OR (c.data_sincronizacao IS NOT NULL
+                     AND (c.data_sincronizacao AT TIME ZONE 'America/Sao_Paulo')::date = ref.d)
+                 )
                )
-             ) AS flip_cobre_ontem`
+               OR EXISTS (
+                 SELECT 1 FROM sacs s, ref
+                 WHERE s.data_registro IS NOT NULL
+                   AND (s.data_registro AT TIME ZONE 'America/Sao_Paulo')::date = ref.d
+               )
+             ) AS flip_cobre_ontem,
+             (
+               EXISTS (
+                 SELECT 1 FROM ipt_report_linhas r, ref
+                 WHERE ref.d BETWEEN r.periodo_inicial AND r.periodo_final
+               )
+               OR EXISTS (
+                 SELECT 1 FROM ipt_report_linhas r, ref
+                 WHERE r.data_estimada IS NOT NULL AND r.data_estimada = ref.d
+               )
+             ) AS ipt_report_cobre_ontem
+           FROM ref`
         )
         .then((r) => r.rows[0]),
     ]);
@@ -1686,15 +1716,8 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
 
     const ontemBrt = String(dashboardOntemRow?.ontem_brt ?? "").trim();
     const flipCobreOntem = Boolean(dashboardOntemRow?.flip_cobre_ontem);
-    const repIni = iptReport.periodo_inicial ? String(iptReport.periodo_inicial).slice(0, 10) : "";
-    const repFim = iptReport.periodo_final ? String(iptReport.periodo_final).slice(0, 10) : "";
-    const iptReportCobreOntem =
-      !!ontemBrt &&
-      isDateKey(repIni) &&
-      isDateKey(repFim) &&
-      Number(iptReport.total_registros ?? 0) > 0 &&
-      ontemBrt >= repIni &&
-      ontemBrt <= repFim;
+    /** Qualquer linha do Report SELIMP cujo período cubra D-1 BRT (não só a última linha por updated_at). */
+    const iptReportCobreOntem = Boolean(dashboardOntemRow?.ipt_report_cobre_ontem);
 
     return {
       sacs,

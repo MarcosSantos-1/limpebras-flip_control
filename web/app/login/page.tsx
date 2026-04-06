@@ -12,6 +12,17 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/lib/auth";
 
+const LOGIN_WALLPAPER_STORAGE_KEY = "flip_login_wallpaper_index";
+
+const wallpapers = [
+  "/loginWallpaper1.jpg",
+  "/loginWallpaper2.jpg",
+  "/loginWallpaper3.jpg",
+  "/loginWallpaper4.jpg",
+  "/loginWallpaper5.jpg",
+  "/loginWallpaper6.jpg",
+] as const;
+
 export default function LoginPage() {
   const { login, isAuthenticated, loading, rememberedUsername, rememberedPassword, rememberMeSaved } = useAuth();
   const router = useRouter();
@@ -24,6 +35,7 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [wallpaperIndex, setWallpaperIndex] = useState(0);
   const usernameValue = usernameDirty ? username : rememberedUsername;
   const passwordValue = passwordDirty ? password : rememberedPassword;
   const rememberValue = rememberDirty ? rememberMe : rememberMeSaved;
@@ -33,6 +45,30 @@ export default function LoginPage() {
       router.replace("/");
     }
   }, [isAuthenticated, loading, router]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(LOGIN_WALLPAPER_STORAGE_KEY);
+      if (raw === null) return;
+      const n = Number.parseInt(raw, 10);
+      if (Number.isNaN(n) || n < 0 || n >= wallpapers.length) return;
+      setWallpaperIndex(n);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  function cycleWallpaper() {
+    setWallpaperIndex((current) => {
+      const next = (current + 1) % wallpapers.length;
+      try {
+        localStorage.setItem(LOGIN_WALLPAPER_STORAGE_KEY, String(next));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -50,17 +86,19 @@ export default function LoginPage() {
   return (
     <div className="relative min-h-screen overflow-hidden bg-zinc-950">
       <Image
-        src="/loginWallpaper1.jpg"
+        src={wallpapers[wallpaperIndex]}
         alt="Wallpaper da tela de login"
         fill
         priority
         className="object-cover"
       />
-      <div className="absolute inset-0 bg-gradient-to-br from-zinc-950/85 via-zinc-950/65 to-blue-950/75" />
+      <div className="absolute inset-0 bg-gradient-to-br from-zinc-950/80 via-zinc-950/55 to-blue-950/70" />
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="absolute -left-1/4 top-1/4 h-[420px] w-[420px] rounded-full bg-sky-400/20 blur-[100px] dark:bg-sky-500/15" />
-        <div className="absolute -right-1/4 bottom-1/4 h-[380px] w-[380px] rounded-full bg-indigo-500/18 blur-[90px] dark:bg-indigo-400/12" />
-        <div className="absolute left-1/2 top-0 h-px w-[min(90%,480px)] -translate-x-1/2 bg-gradient-to-r from-transparent via-white/25 to-transparent dark:via-white/10" />
+        <div className="absolute -left-1/4 top-1/4 h-[480px] w-[480px] rounded-full bg-sky-400/25 blur-[110px] motion-safe:animate-pulse dark:bg-sky-500/18" />
+        <div className="absolute -right-1/4 bottom-1/4 h-[440px] w-[440px] rounded-full bg-indigo-500/22 blur-[100px] motion-safe:animate-pulse dark:bg-indigo-400/15 [animation-delay:1.2s]" />
+        <div className="absolute left-1/3 top-1/2 h-[280px] w-[280px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-cyan-400/12 blur-[80px] dark:bg-cyan-400/10" />
+        <div className="absolute left-1/2 top-0 h-px w-[min(90%,480px)] -translate-x-1/2 bg-gradient-to-r from-transparent via-white/30 to-transparent dark:via-white/12" />
+        <div className="absolute bottom-0 left-1/2 h-px w-[min(70%,360px)] -translate-x-1/2 bg-gradient-to-r from-transparent via-white/15 to-transparent dark:via-white/8" />
       </div>
       <div className="relative z-10 flex min-h-screen items-center justify-center px-4 py-8">
         <div className="relative w-full max-w-md">
@@ -68,10 +106,10 @@ export default function LoginPage() {
             aria-hidden
             className="pointer-events-none absolute -inset-px rounded-2xl bg-gradient-to-br from-white/35 via-white/5 to-blue-500/20 opacity-90 blur-[1px] dark:from-white/12 dark:via-white/[0.03] dark:to-indigo-500/25"
           />
-          <Card className="relative w-full overflow-hidden border-white/30 bg-white/80 shadow-[0_25px_60px_-15px_rgba(15,23,42,0.35),0_0_0_1px_rgba(255,255,255,0.12)_inset] backdrop-blur-xl dark:border-white/12 dark:bg-zinc-950/78 dark:shadow-[0_25px_60px_-15px_rgba(0,0,0,0.55),0_0_0_1px_rgba(255,255,255,0.06)_inset]">
+          <Card className="relative w-full overflow-hidden border-white/25 bg-white/62 shadow-[0_25px_60px_-15px_rgba(15,23,42,0.3),0_0_0_1px_rgba(255,255,255,0.1)_inset] backdrop-blur-2xl dark:border-white/10 dark:bg-zinc-950/55 dark:shadow-[0_25px_60px_-15px_rgba(0,0,0,0.5),0_0_0_1px_rgba(255,255,255,0.05)_inset]">
             <div
               aria-hidden
-              className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/50 via-transparent to-blue-500/[0.07] dark:from-white/[0.06] dark:to-indigo-500/10"
+              className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/40 via-transparent to-blue-500/[0.1] dark:from-white/[0.05] dark:to-indigo-500/12"
             />
             <div className="relative">
           <CardHeader className="relative">
@@ -83,6 +121,7 @@ export default function LoginPage() {
                 width={160}
                 height={160}
                 className="object-contain dark:hidden"
+                style={{ width: "auto", height: "auto" }}
                 priority
               />
               <Image
@@ -91,13 +130,14 @@ export default function LoginPage() {
                 width={160}
                 height={160}
                 className="object-contain hidden dark:block"
+                style={{ width: "auto", height: "auto" }}
                 priority
               />
             </div>
             <div className="space-y-3">
               <CardTitle
                 className="text-center text-3xl font-extrabold tracking-tight pt-4 bg-gradient-to-r from-blue-900 via-sky-700 
-                to-indigo-700 bg-clip-text text-transparent dark:from-blue-500 dark:via-sky-00 dark:to-indigo-300"
+                to-indigo-700 bg-clip-text text-transparent dark:from-blue-500 dark:via-sky-400 dark:to-indigo-300"
                 style={{ WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}
               >
                 ADC Control
@@ -202,6 +242,15 @@ export default function LoginPage() {
           </Card>
         </div>
       </div>
+      <button
+        type="button"
+        onClick={cycleWallpaper}
+        className="absolute bottom-4 right-4 z-20 inline-flex h-11 w-11 items-center justify-center rounded-full border border-white/40 bg-black/35 text-sm font-semibold text-white shadow-lg backdrop-blur-sm transition hover:bg-black/45"
+        aria-label={`Alternar wallpaper (atual ${wallpaperIndex + 1} de ${wallpapers.length})`}
+        title="Alternar wallpaper (preferência salva neste navegador)"
+      >
+        {wallpaperIndex + 1}
+      </button>
     </div>
   );
 }

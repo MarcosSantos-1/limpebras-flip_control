@@ -639,11 +639,6 @@ export async function gerarRelatorioIndicadoresPDF(input: RelatorioIndicadoresIn
     paragrafo(ctx, "Pontuação máxima: 20 pontos.");
     subTitulo(ctx, "Fórmula");
     paragrafo(ctx, "IF por sub = (sem irregularidades / total BFS escalonados) x 100. \nMedia dos 4 percentuais (JT, CV, ST, MG) = IF final.");
-    subTitulo(ctx, "Excluídos do cálculo");
-    paragrafo(
-      ctx,
-      "Fiscal com nome começando por SELIMP - (fiscalização interna SELIMP); coleta de entulho; papeleiras; remoção de animais mortos não identificados."
-    );
 
     if (detalhes?.if?.memoria_calculo) {
       subTitulo(ctx, "Memória de cálculo");

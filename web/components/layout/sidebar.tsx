@@ -53,7 +53,7 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
         collapsed ? "w-0 -translate-x-full opacity-0 pointer-events-none" : "w-72"
       )}
     >
-      <div className="flex h-full flex-col">
+      <div className="flex h-full min-h-0 flex-col">
         <div className="flex h-20 pt-12 items-center justify-start border-b border-border/70 px-6">
           <Link href="/" className="ml-6 flex shrink-0 items-center" aria-label="Limpebras — início">
             <Image
@@ -62,6 +62,7 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
               width={180}
               height={48}
               className="h-10 w-auto max-w-[200px] object-contain object-left dark:hidden"
+              style={{ width: "auto", height: "auto" }}
               priority
             />
             <Image
@@ -70,11 +71,12 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
               width={230}
               height={55}
               className="hidden h-10 mb-2 w-auto max-w-[230px] object-contain object-left dark:block"
+              style={{ width: "auto", height: "auto" }}
               priority
             />
           </Link>
         </div>
-        <nav className="flex-1 space-y-2 p-4">
+        <nav className="flex-1 min-h-0 space-y-2 overflow-y-auto p-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {visibleItems.map((item) => {
             const Icon = item.icon
             const isActive = pathname === item.href

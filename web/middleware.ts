@@ -8,7 +8,6 @@ export function middleware(request: NextRequest) {
 
   if (
     pathname.startsWith("/_next") ||
-    pathname.startsWith("/favicon") ||
     pathname.startsWith("/api") ||
     pathname.match(/\.(png|jpg|jpeg|gif|svg|ico|webp|json)$/)
   ) {

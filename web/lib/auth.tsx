@@ -103,6 +103,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setRememberedPassword(payload.rememberMe ? payload.password : "");
         setRememberMeSaved(payload.rememberMe);
         setUser(data.user);
+        if (typeof window !== "undefined") {
+          window.sessionStorage.setItem("flip_show_welcome", "1");
+          window.sessionStorage.setItem("flip_upload_reminder_delay_ms", "700");
+        }
         return { ok: true };
       } catch (error) {
         return {
@@ -122,6 +126,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } finally {
       setStoredSessionToken(null);
       setUser(null);
+      if (typeof window !== "undefined") {
+        window.sessionStorage.removeItem("flip_show_welcome");
+        window.sessionStorage.removeItem("flip_upload_reminder_delay_ms");
+      }
       router.replace("/login");
     }
   }, [router]);

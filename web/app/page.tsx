@@ -447,7 +447,7 @@ export default function DashboardPage() {
           <div className="relative flex flex-col gap-6 sm:flex-row sm:items-start sm:justify-between sm:gap-8">
             <div className="min-w-0 flex-1">
               <h1 className="text-4xl font-bold tracking-tight text-slate-900 dark:bg-linear-to-r dark:from-primary dark:to-indigo-400 dark:bg-clip-text dark:text-transparent">
-                Dashboard - Limpebras
+                Dashboard 
               </h1>
               <p className="mt-3 max-w-2xl text-lg text-slate-600 dark:text-muted-foreground">
                 Visão geral dos indicadores de desempenho.
@@ -458,7 +458,13 @@ export default function DashboardPage() {
                 className="select-none text-xl pr-8 font-bold tracking-tight sm:text-2xl md:text-3xl bg-linear-to-br from-sky-500 via-cyan-500 to-emerald-500 bg-clip-text text-transparent dark:from-sky-400 dark:via-cyan-400 dark:to-emerald-400"
                 aria-hidden
               >
-                {monthNameExtenso}
+                {monthNameExtenso && (
+                  <>
+                    {monthNameExtenso.charAt(0).toUpperCase() + monthNameExtenso.slice(1)}
+                    {" de "}
+                    {selectedMonth.getFullYear()}
+                  </>
+                )}
               </span>
               <div
                 className="flex h-22 w-22 shrink-0 items-center justify-center rounded-2xl bg-linear-to-br from-primary/15 via-indigo-500/12 to-cyan-500/15 shadow-md shadow-slate-900/10 dark:from-primary/25 dark:via-indigo-500/20 dark:to-cyan-950/40 dark:shadow-lg dark:shadow-black/30"
