@@ -171,7 +171,7 @@ function isFirebaseStorageUrl(url: string): boolean {
   }
 }
 
-async function loadImageAsBase64(url: string): Promise<string> {
+async function loadImageFromUrlUncached(url: string): Promise<string> {
   if (url.startsWith("data:")) return url;
   const isFirebase = url.startsWith("http") && isFirebaseStorageUrl(url);
   const proxyUrl =
@@ -224,11 +224,6 @@ async function ensurePngOrJpeg(dataUrl: string): Promise<string> {
   return dataUrl;
 }
 
-async function loadAsset(baseUrl: string, path: string): Promise<string> {
-  const url = path.startsWith("http") ? path : `${baseUrl}${path.startsWith("/") ? "" : "/"}${path}`;
-  return loadImageAsBase64(url);
-}
-
 /** Retorna dimensões da imagem preservando aspect ratio para caber em maxW x maxH */
 function fitImageDimensions(
   imgW: number,
@@ -274,6 +269,21 @@ export async function gerarRelatorioContestacaoPDF(
   }) as jsPDF & { addImage: (img: string, fmt: string, x: number, y: number, w: number, h: number, alias?: string, compression?: string, rotation?: number) => void };
 
   const baseUrl = input.baseUrl ?? (typeof window !== "undefined" ? window.location.origin : "");
+
+  const imageMemo = new Map<string, Promise<string>>();
+  const loadImageCached = (url: string): Promise<string> => {
+    let p = imageMemo.get(url);
+    if (!p) {
+      p = loadImageFromUrlUncached(url);
+      imageMemo.set(url, p);
+    }
+    return p;
+  };
+  async function loadLocalAsset(path: string): Promise<string> {
+    const url = path.startsWith("http") ? path : `${baseUrl}${path.startsWith("/") ? "" : "/"}${path}`;
+    return loadImageCached(url);
+  }
+
   const periodoLabel = `${safeFormatDate(input.periodoInicial)} - ${safeFormatDate(input.periodoFinal)}`;
   const mesAnoLabel = (() => {
     const d = parseLocalDate(input.periodoFinal) ?? new Date();
@@ -286,9 +296,9 @@ export async function gerarRelatorioContestacaoPDF(
   let designRodapeBase64: string;
   try {
     [logoBase64, designCapaBase64, designRodapeBase64] = await Promise.all([
-      loadAsset(baseUrl, "/logotipo.png"),
-      loadAsset(baseUrl, "/design_capa.png"),
-      loadAsset(baseUrl, "/design_rodape_capafinal.png"),
+      loadLocalAsset("/logotipo.png"),
+      loadLocalAsset("/design_capa.png"),
+      loadLocalAsset("/design_rodape_capafinal.png"),
     ]);
   } catch (e) {
     console.error("Erro ao carregar assets:", e);
@@ -744,7 +754,7 @@ export async function gerarRelatorioContestacaoPDF(
       const drawn: { x: number; w: number; h: number }[] = [];
       for (let i = 0; i < Math.min(2, fotosAgente.length); i++) {
         try {
-          let src = await loadImageAsBase64(fotosAgente[i]);
+          let src = await loadImageCached(fotosAgente[i]);
           src = await ensurePngOrJpeg(src);
           const dim = await getImageDimensions(src);
           const { w, h } = fitImageDimensions(dim.w, dim.h, maxPorFoto, FOTO_MAX_SIZE);
@@ -899,7 +909,7 @@ export async function gerarRelatorioContestacaoPDF(
       const drawnExec: { x: number; w: number; h: number }[] = [];
       for (let i = 0; i < Math.min(2, fotosExec.length); i++) {
         try {
-          let src = await loadImageAsBase64(fotosExec[i]);
+          let src = await loadImageCached(fotosExec[i]);
           src = await ensurePngOrJpeg(src);
           const dim = await getImageDimensions(src);
           const { w, h } = fitImageDimensions(dim.w, dim.h, maxPorFoto, FOTO_MAX_SIZE);

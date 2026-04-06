@@ -2,7 +2,7 @@ import useSWR from "swr";
 import { apiService } from "./api";
 import { format, startOfMonth, endOfMonth, subDays } from "date-fns";
 
-const DEDUP_INTERVAL_MS = 30 * 1000; // 30s
+const DEDUP_INTERVAL_MS = 90 * 1000;
 
 export interface ReportDiarioDia {
   data: string;
@@ -59,17 +59,19 @@ export function useIptData(
   }
   const obsKey = `ipt:obs:${obsScopeStart}:${obsScopeEnd}`;
 
-  const observacoesSwr = useSWR(
-    obsKey,
-    () => apiService.getIptObservacoes(obsScopeStart, obsScopeEnd),
-    { revalidateOnFocus: false, dedupingInterval: DEDUP_INTERVAL_MS }
-  );
-
-  const previewCardsSwr = useSWR(cardsKey, () =>
-    apiService.getIptPreview(periodoKpisInicio, periodoKpisFim, false, subprefeituraFilter), {
+  const swrReadOpts = {
     revalidateOnFocus: false,
     dedupingInterval: DEDUP_INTERVAL_MS,
-  });
+    revalidateIfStale: false,
+  } as const;
+
+  const observacoesSwr = useSWR(obsKey, () => apiService.getIptObservacoes(obsScopeStart, obsScopeEnd), swrReadOpts);
+
+  const previewCardsSwr = useSWR(
+    cardsKey,
+    () => apiService.getIptPreview(periodoKpisInicio, periodoKpisFim, false, subprefeituraFilter),
+    swrReadOpts
+  );
 
   const previewTableSwr = useSWR(
     tableKey,
@@ -87,18 +89,15 @@ export function useIptData(
       }
       return apiService.getIptPreview(undefined, undefined, false, subprefeituraFilter);
     },
-    { revalidateOnFocus: false, dedupingInterval: DEDUP_INTERVAL_MS }
+    swrReadOpts
   );
 
-  const kpisSwr = useSWR(kpisKey, () => apiService.getKPIs(periodoKpisInicio, periodoKpisFim), {
-    revalidateOnFocus: false,
-    dedupingInterval: DEDUP_INTERVAL_MS,
-  });
+  const kpisSwr = useSWR(kpisKey, () => apiService.getKPIs(periodoKpisInicio, periodoKpisFim), swrReadOpts);
 
   const reportDiarioSwr = useSWR<ReportDiarioResponse>(
     reportDiarioKey,
     () => apiService.getIptReportDiario(periodoKpisInicio, periodoKpisFim),
-    { revalidateOnFocus: false, dedupingInterval: DEDUP_INTERVAL_MS }
+    swrReadOpts
   );
 
   const isLoading = previewCardsSwr.isLoading || previewTableSwr.isLoading;

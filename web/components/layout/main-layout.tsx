@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect } from "react"
+import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { useState } from "react"
 import { Sidebar } from "./sidebar"
@@ -42,11 +43,28 @@ export function MainLayout({ children }: MainLayoutProps) {
     }
   }, [hasPageAccess, loading, pathname, router, user])
 
-  if (loading || !user) {
+  if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background px-6">
         <div className="rounded-2xl border border-border bg-card px-6 py-5 text-sm text-muted-foreground shadow-sm">
           Carregando acesso...
+        </div>
+      </div>
+    )
+  }
+
+  if (!user) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background px-6">
+        <div className="rounded-2xl border border-border bg-card px-6 py-5 text-sm text-muted-foreground shadow-sm text-center space-y-3 max-w-sm">
+          <p>Você não está logado. Abrindo a tela de login…</p>
+          <p className="text-xs">
+            Se nada mudar em alguns segundos,{" "}
+            <Link href="/login" className="font-medium text-primary underline underline-offset-2">
+              clique aqui para entrar
+            </Link>
+            .
+          </p>
         </div>
       </div>
     )

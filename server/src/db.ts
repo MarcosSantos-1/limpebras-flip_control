@@ -5,9 +5,13 @@ import { APP_PAGE_KEYS, DEFAULT_USER_ALLOWED_PAGES } from "./auth-shared.js";
 
 const { Pool } = pg;
 
+const isNeon = config.databaseUrl.includes("neon.tech");
+
 export const pool = new Pool({
   connectionString: config.databaseUrl,
-  ssl: config.databaseUrl.includes("neon.tech") ? { rejectUnauthorized: false } : undefined,
+  ssl: isNeon ? { rejectUnauthorized: false } : undefined,
+  ...(config.dbPoolMax != null ? { max: config.dbPoolMax } : {}),
+  ...(config.dbIdleTimeoutMs != null ? { idleTimeoutMillis: config.dbIdleTimeoutMs } : {}),
 });
 
 /**

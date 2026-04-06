@@ -10,6 +10,9 @@ const SESSION_TTL_DAYS = 30;
 const SESSION_TTL_MS = SESSION_TTL_DAYS * 24 * 60 * 60 * 1000;
 const NON_HOST_VISIBLE_PAGES = APP_PAGE_KEYS.filter((page) => page !== "admin_users");
 
+/** Último UPDATE de last_seen_at por sessão (por processo) — evita 1 write por request. */
+const lastSeenUpdateAt = new Map<string, number>();
+
 type SessionRow = {
   session_id: string;
   user_id: number;
@@ -113,6 +116,7 @@ export async function createSession(userId: number, rememberMe: boolean) {
 
 export async function deleteSession(sessionId: string | null) {
   if (!sessionId) return;
+  lastSeenUpdateAt.delete(sessionId);
   await pool.query("DELETE FROM auth_sessions WHERE session_id = $1", [sessionId]);
 }
 
@@ -151,10 +155,20 @@ export async function getRequestAuth(request: FastifyRequest): Promise<{ user: A
     return { user: null, sessionId };
   }
 
+  await maybeTouchSessionLastSeen(sessionId);
+  return { user: mapSessionRowToAuthUser(row), sessionId };
+}
+
+async function maybeTouchSessionLastSeen(sessionId: string): Promise<void> {
+  const now = Date.now();
+  const throttle = config.authLastSeenThrottleMs;
+  const prev = lastSeenUpdateAt.get(sessionId);
+  if (prev !== undefined && now - prev < throttle) return;
+
+  lastSeenUpdateAt.set(sessionId, now);
   await pool.query("UPDATE auth_sessions SET last_seen_at = NOW(), updated_at = NOW() WHERE session_id = $1", [sessionId]).catch(
     () => {}
   );
-  return { user: mapSessionRowToAuthUser(row), sessionId };
 }
 
 /** Em produção (HTTPS), front e API em domínios diferentes precisam SameSite=None + Secure para o cookie ir no axios/fetch. */

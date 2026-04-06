@@ -9,6 +9,7 @@ const API_URL = baseUrl.includes('/api/v1') ? baseUrl : `${baseUrl}/api/v1`;
 export const api = axios.create({
   baseURL: API_URL,
   withCredentials: true,
+  timeout: 25_000,
   headers: {
     'Content-Type': 'application/json',
   },

@@ -3,7 +3,11 @@
  * Cacheia respostas pesadas de KPIs, SACs, CNCs e IPT preview.
  */
 
-const DEFAULT_TTL_MS = 2 * 60 * 1000; // 2 minutos
+import { config } from "./config.js";
+
+function defaultTtlMs(): number {
+  return config.cacheTtlMs;
+}
 
 type CacheEntry<T> = {
   data: T;
@@ -34,7 +38,7 @@ export function get<T>(key: string): T | null {
 }
 
 /** Salva no cache com TTL opcional */
-export function set<T>(key: string, data: T, ttlMs = DEFAULT_TTL_MS): void {
+export function set<T>(key: string, data: T, ttlMs = defaultTtlMs()): void {
   store.set(key, {
     data,
     expiresAt: Date.now() + ttlMs,
@@ -45,7 +49,7 @@ export function set<T>(key: string, data: T, ttlMs = DEFAULT_TTL_MS): void {
 export async function getOrSet<T>(
   key: string,
   fn: () => Promise<T>,
-  ttlMs = DEFAULT_TTL_MS
+  ttlMs = defaultTtlMs()
 ): Promise<T> {
   const cached = get<T>(key);
   if (cached != null) return cached;

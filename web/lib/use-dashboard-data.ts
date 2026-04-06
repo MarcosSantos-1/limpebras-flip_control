@@ -1,8 +1,8 @@
 import useSWR from "swr";
 import { apiService } from "./api";
 
-const CACHE_TTL_MS = 2 * 60 * 1000; // 2 min - alinha com cache do server
-const DEDUP_INTERVAL_MS = 30 * 1000; // 30s entre refetches automáticos
+/** Alinha com CACHE_TTL_MS do servidor (~2 min); evita refetch em rajada. */
+const DEDUP_INTERVAL_MS = 90 * 1000;
 
 export function useDashboardData(periodoInicial: string, periodoFinal: string) {
   const kpisKey = periodoInicial && periodoFinal ? `kpis:${periodoInicial}:${periodoFinal}` : null;
@@ -16,7 +16,7 @@ export function useDashboardData(periodoInicial: string, periodoFinal: string) {
   const kpisSwr = useSWR(kpisKey, () => apiService.getKPIs(periodoInicial, periodoFinal), {
     revalidateOnFocus: false,
     dedupingInterval: DEDUP_INTERVAL_MS,
-    revalidateIfStale: true,
+    revalidateIfStale: false,
   });
 
   const sacsSwr = useSWR(sacsKey, () =>
@@ -28,6 +28,7 @@ export function useDashboardData(periodoInicial: string, periodoFinal: string) {
     }), {
     revalidateOnFocus: false,
     dedupingInterval: DEDUP_INTERVAL_MS,
+    revalidateIfStale: false,
   });
 
   const cncsSwr = useSWR(cncsKey, () =>
@@ -39,6 +40,7 @@ export function useDashboardData(periodoInicial: string, periodoFinal: string) {
     }), {
     revalidateOnFocus: false,
     dedupingInterval: DEDUP_INTERVAL_MS,
+    revalidateIfStale: false,
   });
 
   const isLoading = kpisSwr.isLoading || sacsSwr.isLoading || cncsSwr.isLoading;

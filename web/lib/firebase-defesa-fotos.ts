@@ -1,16 +1,11 @@
-import { ref, uploadString, getDownloadURL, deleteObject, listAll } from "firebase/storage";
+import { ref, uploadBytes, getDownloadURL, deleteObject, listAll } from "firebase/storage";
 import { storage } from "./firebase";
 
 const DEFESA_FOTOS_PREFIX = "defesa";
 
-function base64ToBlob(dataUrl: string): Blob {
-  const parts = dataUrl.split(";base64,");
-  const contentType = parts[0].split(":")[1] || "image/png";
-  const raw = atob(parts[1]);
-  const arr = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
-  return new Blob([arr], { type: contentType });
-}
+/** Limite de aresta maior (px); fotos maiores são reduzidas mantendo proporção. */
+const MAX_EDGE_PX = 1920;
+const JPEG_QUALITY = 0.86;
 
 function isDataUrl(str: string): boolean {
   return str.startsWith("data:");
@@ -25,12 +20,50 @@ export interface FotosContestar {
   frequencia_override?: string | null;
 }
 
+/** Redimensiona (se necessário) e exporta JPEG para reduzir upload e banda no Storage. */
+function dataUrlToCompressedJpegBlob(dataUrl: string): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      let w = img.naturalWidth;
+      let h = img.naturalHeight;
+      if (w <= 0 || h <= 0) {
+        reject(new Error("Dimensões de imagem inválidas"));
+        return;
+      }
+      if (w > MAX_EDGE_PX || h > MAX_EDGE_PX) {
+        const scale = Math.min(MAX_EDGE_PX / w, MAX_EDGE_PX / h);
+        w = Math.round(w * scale);
+        h = Math.round(h * scale);
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        reject(new Error("Canvas não disponível"));
+        return;
+      }
+      ctx.drawImage(img, 0, 0, w, h);
+      canvas.toBlob(
+        (blob) => {
+          if (blob) resolve(blob);
+          else reject(new Error("Falha ao comprimir imagem"));
+        },
+        "image/jpeg",
+        JPEG_QUALITY
+      );
+    };
+    img.onerror = () => reject(new Error("Falha ao carregar imagem"));
+    img.src = dataUrl;
+  });
+}
+
 async function uploadImage(bfsId: string, section: string, index: number, dataUrl: string): Promise<string> {
-  const blob = base64ToBlob(dataUrl);
-  const ext = blob.type === "image/jpeg" ? "jpg" : blob.type === "image/png" ? "png" : "webp";
-  const path = `${DEFESA_FOTOS_PREFIX}/${bfsId}/${section}_${index}.${ext}`;
+  const blob = await dataUrlToCompressedJpegBlob(dataUrl);
+  const path = `${DEFESA_FOTOS_PREFIX}/${bfsId}/${section}_${index}.jpg`;
   const storageRef = ref(storage, path);
-  await uploadString(storageRef, dataUrl, "data_url");
+  await uploadBytes(storageRef, blob, { contentType: "image/jpeg" });
   return getDownloadURL(storageRef);
 }
 

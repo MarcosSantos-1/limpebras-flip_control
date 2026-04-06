@@ -341,7 +341,7 @@ function computeTopBfsServices(items: CNC[], periodStart: Date, periodEnd: Date)
   return Array.from(counter.entries()).map(([tipoServico, quantidade]) => ({ tipoServico, quantidade }));
 }
 
-export default function DashboardPage() {
+function DashboardContent() {
   const [selectedMonth, setSelectedMonth] = useState(() => startOfMonth(new Date()));
   const router = useRouter();
 
@@ -427,7 +427,7 @@ export default function DashboardPage() {
   };
 
   return (
-    <MainLayout>
+    <>
       <UploadReminderToast />
       <div className="space-y-8">
         {isLoading && (
@@ -804,6 +804,14 @@ export default function DashboardPage() {
         </div>
 
       </div>
+    </>
+  );
+}
+
+export default function DashboardPage() {
+  return (
+    <MainLayout>
+      <DashboardContent />
     </MainLayout>
   );
 }

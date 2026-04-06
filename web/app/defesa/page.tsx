@@ -1462,7 +1462,7 @@ export default function DefesaPage() {
                             <p className="text-xs font-medium text-muted-foreground mb-2">Agente da sub</p>
                             <div className="flex gap-2">
                               {fotos!.agente_sub.map((src, i) => (
-                                <img key={i} src={src} alt="" className="w-20 h-20 object-cover rounded-lg border" />
+                                <img key={i} src={src} alt="" loading="lazy" className="w-20 h-20 object-cover rounded-lg border" />
                               ))}
                             </div>
                           </div>
@@ -1501,7 +1501,7 @@ export default function DefesaPage() {
                             <p className="text-xs font-medium text-muted-foreground mb-2">Nosso agente</p>
                             <div className="flex gap-2">
                               {fotos!.nosso_agente.map((src, i) => (
-                                <img key={i} src={src} alt="" className="w-20 h-20 object-cover rounded-lg border" />
+                                <img key={i} src={src} alt="" loading="lazy" className="w-20 h-20 object-cover rounded-lg border" />
                               ))}
                             </div>
                           </div>
