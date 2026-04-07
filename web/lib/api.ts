@@ -15,6 +15,9 @@ export const api = axios.create({
   },
 });
 
+/** Uploads multipart: planilhas grandes + parsing no servidor costumam passar de 25s. */
+const UPLOAD_REQUEST_TIMEOUT_MS = 180_000;
+
 api.interceptors.request.use((config) => {
   const sessionToken = typeof window !== "undefined" ? getStoredSessionToken() : "";
   if (sessionToken) {
@@ -363,6 +366,7 @@ export const apiService = {
     formData.append('file', file);
     const { data } = await api.post('/upload/sacs-csv', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: UPLOAD_REQUEST_TIMEOUT_MS,
     });
     return data;
   },
@@ -372,6 +376,7 @@ export const apiService = {
     formData.append('file', file);
     const { data } = await api.post('/upload/cnc-csv', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: UPLOAD_REQUEST_TIMEOUT_MS,
     });
     return data;
   },
@@ -394,6 +399,7 @@ export const apiService = {
     const { data } = await api.post('/upload/cnc-detalhes-csv', formData, {
       headers: { "Content-Type": "multipart/form-data" },
       params: Object.keys(params).length ? params : undefined,
+      timeout: UPLOAD_REQUEST_TIMEOUT_MS,
     });
     return data;
   },
@@ -403,6 +409,7 @@ export const apiService = {
     formData.append('file', file);
     const { data } = await api.post('/upload/acic-csv', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: UPLOAD_REQUEST_TIMEOUT_MS,
     });
     return data;
   },
@@ -412,6 +419,7 @@ export const apiService = {
     formData.append('file', file);
     const { data } = await api.post('/upload/ouvidoria-csv', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: UPLOAD_REQUEST_TIMEOUT_MS,
     });
     return data;
   },
@@ -421,6 +429,7 @@ export const apiService = {
     formData.append('file', file);
     const { data } = await api.post('/upload/ipt-historico-os', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: UPLOAD_REQUEST_TIMEOUT_MS,
     });
     return data;
   },
@@ -430,6 +439,7 @@ export const apiService = {
     formData.append('file', file);
     const { data } = await api.post('/upload/ipt-historico-os-varricao', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: UPLOAD_REQUEST_TIMEOUT_MS,
     });
     return data;
   },
@@ -439,6 +449,7 @@ export const apiService = {
     formData.append('file', file);
     const { data } = await api.post('/upload/ipt-historico-os-compactadores', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: UPLOAD_REQUEST_TIMEOUT_MS,
     });
     return data;
   },
@@ -448,6 +459,37 @@ export const apiService = {
     formData.append('file', file);
     const { data } = await api.post(`/upload/session/${session}`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: UPLOAD_REQUEST_TIMEOUT_MS,
+    });
+    return data;
+  },
+
+  uploadDdmxVarricao: async (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const { data } = await api.post('/upload/ipt-ddmx-varricao', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: UPLOAD_REQUEST_TIMEOUT_MS,
+    });
+    return data;
+  },
+
+  uploadDdmxCompactadores: async (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const { data } = await api.post('/upload/ipt-ddmx-compactadores', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: UPLOAD_REQUEST_TIMEOUT_MS,
+    });
+    return data;
+  },
+
+  uploadDdmxLight: async (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const { data } = await api.post('/upload/ipt-ddmx-light', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: UPLOAD_REQUEST_TIMEOUT_MS,
     });
     return data;
   },
@@ -473,6 +515,7 @@ export const apiService = {
     }
     const { data } = await api.post(`/upload/ipt-report?${params.toString()}`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: UPLOAD_REQUEST_TIMEOUT_MS,
     });
     return data;
   },
@@ -482,6 +525,7 @@ export const apiService = {
     formData.append('file', file);
     const { data } = await api.post('/upload/ipt-status-bateria', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: UPLOAD_REQUEST_TIMEOUT_MS,
     });
     return data;
   },
@@ -491,6 +535,7 @@ export const apiService = {
     formData.append('file', file);
     const { data } = await api.post('/upload/ipt-cronograma', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: UPLOAD_REQUEST_TIMEOUT_MS,
     });
     return data;
   },
@@ -543,6 +588,7 @@ export const apiService = {
     formData.append('file', file);
     const { data } = await api.post('/upload/ipt-consolidado-veiculos', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: UPLOAD_REQUEST_TIMEOUT_MS,
     });
     return data;
   },
@@ -551,6 +597,7 @@ export const apiService = {
     formData.append('file', file);
     const { data } = await api.post('/upload/ipt-consolidado-varricao', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: UPLOAD_REQUEST_TIMEOUT_MS,
     });
     return data;
   },

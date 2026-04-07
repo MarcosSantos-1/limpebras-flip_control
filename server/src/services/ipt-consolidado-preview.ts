@@ -73,7 +73,7 @@ export async function buildIptPreviewFromConsolidado(
        ${reportDateFilter}
      ORDER BY plano, data_estimada`;
 
-  // --- DDMX (ipt_imports historico_os*) ---
+  // --- DDMX (novas tabelas dedicadas + fallback ipt_imports legado) ---
   const ddmxFileTypes = ["ipt_historico_os", "ipt_historico_os_varricao", "ipt_historico_os_compactadores"];
   let ddmxDateFilter = "";
   const dparams: unknown[] = [ddmxFileTypes];
@@ -84,14 +84,32 @@ export async function buildIptPreviewFromConsolidado(
     dparams.push(scopeStart, scopeEnd);
     ddmxDateFilter = ` AND data_referencia >= $2::date AND data_referencia <= $3::date`;
   }
-  const ddmxQuery = `SELECT setor, data_referencia, raw, servico
+  const ddmxLegacyQuery = `SELECT setor, data_referencia, raw, servico
      FROM ipt_imports
      WHERE file_type = ANY($1) ${ddmxDateFilter}
      ORDER BY setor, data_referencia`;
 
-  const [reportRes, ddmxRes, bateriaRows] = await Promise.all([
+  let ddmxNewDateFilter = "";
+  const newDateParams: unknown[] = [];
+  if (escopo === "dia_anterior" && scopeStart) {
+    newDateParams.push(scopeStart);
+    ddmxNewDateFilter = ` AND data_referencia = $1::date`;
+  } else if (escopo === "periodo" && scopeStart && scopeEnd) {
+    newDateParams.push(scopeStart, scopeEnd);
+    ddmxNewDateFilter = ` AND data_referencia >= $1::date AND data_referencia <= $2::date`;
+  }
+  const ddmxVarricaoQuery = `SELECT setor, data_referencia, raw, servico
+     FROM ipt_ddmx_varricao
+     WHERE TRUE ${ddmxNewDateFilter}
+     ORDER BY setor, data_referencia`;
+  const ddmxVeiculosQuery = `SELECT setor, data_referencia, raw, servico
+     FROM ipt_ddmx_veiculos
+     WHERE TRUE ${ddmxNewDateFilter}
+     ORDER BY setor, data_referencia`;
+
+  const [reportRes, ddmxLegacyRes, bateriaRows] = await Promise.all([
     client.query(reportQuery, rparams),
-    client.query(ddmxQuery, dparams),
+    client.query(ddmxLegacyQuery, dparams),
     client.query(
       `SELECT raw, updated_at
        FROM ipt_imports
@@ -99,6 +117,27 @@ export async function buildIptPreviewFromConsolidado(
        ORDER BY updated_at DESC`
     ),
   ]);
+
+  type DdmxRow = {
+    setor: string | null;
+    data_referencia: string | Date | null;
+    raw: Record<string, unknown>;
+    servico: string | null;
+  };
+  let ddmxVarricaoRows: DdmxRow[] = [];
+  let ddmxVeiculosRows: DdmxRow[] = [];
+  try {
+    const [vr, vv] = await Promise.all([
+      client.query(ddmxVarricaoQuery, newDateParams),
+      client.query(ddmxVeiculosQuery, newDateParams),
+    ]);
+    ddmxVarricaoRows = (vr.rows ?? []) as DdmxRow[];
+    ddmxVeiculosRows = (vv.rows ?? []) as DdmxRow[];
+  } catch {
+    // Tabelas ipt_ddmx_* ainda nao criadas (migracao pendente) — usa so ipt_imports legado
+  }
+
+  const ddmxRows = [...ddmxVarricaoRows, ...ddmxVeiculosRows, ...(ddmxLegacyRes.rows ?? [])] as DdmxRow[];
 
   // --- Bateria ---
   const bateriaMap = new Map<
@@ -243,13 +282,8 @@ export async function buildIptPreviewFromConsolidado(
     }
   }
 
-  // --- 2. DDMX → percentual_nosso ---
-  for (const row of (ddmxRes.rows ?? []) as Array<{
-    setor: string | null;
-    data_referencia: string | Date | null;
-    raw: Record<string, unknown>;
-    servico: string | null;
-  }>) {
+  // --- 2. DDMX → percentual_nosso (novas tabelas + legado, deduplicados pelo merge acima) ---
+  for (const row of ddmxRows) {
     const rawData = row.raw ?? {};
     // DDMX: rota é o campo principal para o plano (ex: MG10101VP0001)
     const rotaOrSetor = String(rawData.rota ?? rawData.plano ?? rawData.setor ?? row.setor ?? "").trim();
@@ -411,6 +445,53 @@ export async function buildIptPreviewFromConsolidado(
     })
     .filter((r): r is NonNullable<typeof r> => r != null)
     .sort((a, b) => compareSetores(a.plano, b.plano, "asc"));
+
+  // --- Enriquecer com cronograma (proxima_programacao + cronograma_preview) ---
+  if (rows.length > 0) {
+    const allSetores = rows.map((r) => r.plano);
+    const allSetoresNorm = rows.map((r) => normalizarSetor(r.plano));
+    const cronRes = await client.query<{ setor: string; data_esperada: string }>(
+      `SELECT setor, to_char(data_esperada, 'YYYY-MM-DD') AS data_esperada
+       FROM ipt_cronograma
+       WHERE TRIM(setor) = ANY($1) OR TRIM(setor) = ANY($2)
+       ORDER BY setor, data_esperada`,
+      [allSetores, allSetoresNorm]
+    );
+
+    const cronMap = new Map<string, string[]>();
+    for (const cr of cronRes.rows) {
+      const key = normalizarSetor(cr.setor.trim());
+      if (!cronMap.has(key)) cronMap.set(key, []);
+      cronMap.get(key)!.push(cr.data_esperada);
+    }
+
+    const today = yesterdayKey;
+    for (const row of rows) {
+      const key = normalizarSetor(row.plano);
+      const allDates = cronMap.get(key);
+      if (!allDates || allDates.length === 0) continue;
+
+      const sorted = [...new Set(allDates)].sort();
+      const pastOrToday = sorted.filter((d) => d <= today);
+      const future = sorted.filter((d) => d > today);
+
+      const recentIdx = pastOrToday.length > 0 ? pastOrToday.length - 1 : -1;
+      const previousIdx = recentIdx > 0 ? recentIdx - 1 : -1;
+
+      const preview: string[] = [];
+      if (previousIdx >= 0) preview.push(pastOrToday[previousIdx]);
+      if (recentIdx >= 0) preview.push(pastOrToday[recentIdx]);
+      for (let i = 0; i < 3 && i < future.length; i++) {
+        preview.push(future[i]);
+      }
+      if (preview.length < 5 && recentIdx < 0 && future.length > 3) {
+        preview.push(future[3]);
+      }
+
+      row.cronograma_preview = preview;
+      row.proxima_programacao = future.length > 0 ? future[0] : null;
+    }
+  }
 
   let rowsFiltered = rows;
   if (subFilter && subFilter.trim() !== "" && subFilter.toLowerCase() !== "all") {

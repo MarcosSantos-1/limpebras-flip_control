@@ -161,6 +161,9 @@ type SessionUploadType =
   | "iptHistoricoOs"
   | "iptHistoricoOsVarricao"
   | "iptHistoricoOsCompactadores"
+  | "iptDdmxVarricao"
+  | "iptDdmxCompactadores"
+  | "iptDdmxLight"
   | "iptReport"
   | "iptStatusBateria"
   | "iptCronograma"
@@ -219,6 +222,12 @@ function mapSessionTypeToLabel(type: SessionUploadType): string {
       return "DDMX — Varrição (histórico OS)";
     case "iptHistoricoOsCompactadores":
       return "DDMX — Compactadores (histórico OS)";
+    case "iptDdmxVarricao":
+      return "DDMX — Varrição";
+    case "iptDdmxCompactadores":
+      return "DDMX — Compactadores";
+    case "iptDdmxLight":
+      return "DDMX — Light (Veículos)";
     case "iptReport":
       return "IPT - Report SELIMP";
     case "iptStatusBateria":
@@ -264,6 +273,40 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       source_file: last.rows[0]?.source_file ?? null,
       total_registros: Number(count.rows[0]?.total ?? 0),
     };
+  };
+
+  type DdmxNewTableKey = "ddmx_varricao" | "ddmx_veiculos_light" | "ddmx_veiculos_compactadores";
+
+  const getLastDdmxUpdate = async (key: DdmxNewTableKey) => {
+    try {
+      if (key === "ddmx_varricao") {
+        const last = await pool.query(
+          `SELECT source_file, updated_at FROM ipt_ddmx_varricao ORDER BY updated_at DESC NULLS LAST, id DESC LIMIT 1`
+        );
+        const count = await pool.query(`SELECT COUNT(*)::int AS total FROM ipt_ddmx_varricao`);
+        return {
+          ultimo_import: last.rows[0]?.updated_at ?? null,
+          source_file: last.rows[0]?.source_file ?? null,
+          total_registros: Number(count.rows[0]?.total ?? 0),
+        };
+      }
+      const subtipo = key === "ddmx_veiculos_light" ? "light" : "compactadores";
+      const last = await pool.query(
+        `SELECT source_file, updated_at FROM ipt_ddmx_veiculos WHERE subtipo = $1 ORDER BY updated_at DESC NULLS LAST, id DESC LIMIT 1`,
+        [subtipo]
+      );
+      const count = await pool.query(
+        `SELECT COUNT(*)::int AS total FROM ipt_ddmx_veiculos WHERE subtipo = $1`,
+        [subtipo]
+      );
+      return {
+        ultimo_import: last.rows[0]?.updated_at ?? null,
+        source_file: last.rows[0]?.source_file ?? null,
+        total_registros: Number(count.rows[0]?.total ?? 0),
+      };
+    } catch {
+      return { ultimo_import: null, source_file: null, total_registros: 0 };
+    }
   };
 
   const getLastIptUpdate = async (fileType: IptFileType | "ipt_consolidado_veiculos" | "ipt_consolidado_varricao") => {
@@ -778,6 +821,101 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
     }
   };
 
+  type DdmxTarget = "varricao" | "compactadores" | "light";
+  const ddmxParseConfig: Record<DdmxTarget, IptFileType> = {
+    varricao: "ipt_historico_os_varricao",
+    compactadores: "ipt_historico_os_compactadores",
+    light: "ipt_historico_os",
+  };
+
+  const importDdmxBuffer = async (
+    target: DdmxTarget,
+    buffer: Buffer,
+    sourceFile: string
+  ) => {
+    const parseType = ddmxParseConfig[target];
+    const rows = parseIptWorkbook(buffer, parseType);
+
+    const client = await pool.connect();
+    try {
+      let inserted = 0;
+      let updated = 0;
+
+      if (target === "varricao") {
+        for (const row of rows) {
+          const result = await client.query(
+            `INSERT INTO ipt_ddmx_varricao (
+              record_key, setor, data_referencia, servico, raw, source_file, updated_at
+            ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, NOW())
+            ON CONFLICT (record_key)
+            DO UPDATE SET
+              setor = EXCLUDED.setor,
+              data_referencia = EXCLUDED.data_referencia,
+              servico = EXCLUDED.servico,
+              raw = EXCLUDED.raw,
+              source_file = EXCLUDED.source_file,
+              updated_at = NOW()
+            RETURNING (xmax = 0) AS inserted`,
+            [
+              row.recordKey,
+              row.setor || null,
+              row.dataReferencia,
+              row.servico || null,
+              JSON.stringify(row.raw),
+              sourceFile,
+            ]
+          );
+          if (Boolean(result.rows[0]?.inserted)) inserted += 1;
+          else updated += 1;
+        }
+      } else {
+        const subtipo = target;
+        for (const row of rows) {
+          const result = await client.query(
+            `INSERT INTO ipt_ddmx_veiculos (
+              subtipo, record_key, setor, data_referencia, servico, raw, source_file, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, NOW())
+            ON CONFLICT (subtipo, record_key)
+            DO UPDATE SET
+              setor = EXCLUDED.setor,
+              data_referencia = EXCLUDED.data_referencia,
+              servico = EXCLUDED.servico,
+              raw = EXCLUDED.raw,
+              source_file = EXCLUDED.source_file,
+              updated_at = NOW()
+            RETURNING (xmax = 0) AS inserted`,
+            [
+              subtipo,
+              row.recordKey,
+              row.setor || null,
+              row.dataReferencia,
+              row.servico || null,
+              JSON.stringify(row.raw),
+              sourceFile,
+            ]
+          );
+          if (Boolean(result.rows[0]?.inserted)) inserted += 1;
+          else updated += 1;
+        }
+      }
+
+      invalidatePrefix("ipt_preview");
+      invalidatePrefix("kpis");
+      return {
+        processados: inserted + updated,
+        total: rows.length,
+        inseridos: inserted,
+        atualizados: updated,
+        duplicados: 0,
+        erros: 0,
+        ultimo_import: new Date().toISOString(),
+        source_file: sourceFile,
+      };
+    } finally {
+      client.release();
+    }
+  };
+
   const importConsolidadoBuffer = async (
     fileType: "ipt_consolidado_veiculos" | "ipt_consolidado_varricao",
     buffer: Buffer,
@@ -961,6 +1099,35 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.code(400).send({ detail });
     }
   });
+
+  const ddmxUploadHandler = (target: DdmxTarget, sessionType: SessionUploadType) =>
+    async (request: FastifyRequest, reply: any) => {
+      const data = await request.file();
+      if (!data) return reply.code(400).send({ detail: "Arquivo XLSX obrigatório" });
+      const lowerName = data.filename.toLowerCase();
+      if (!lowerName.endsWith(".xlsx") && !lowerName.endsWith(".xls")) {
+        return reply.code(400).send({ detail: "Aceita apenas arquivos XLSX/XLS." });
+      }
+      try {
+        const buffer = await data.toBuffer();
+        const summary = await importDdmxBuffer(target, buffer, data.filename);
+        await recordUploadEvent("ddmx", sessionType, data.filename, summary);
+        return {
+          ...summary,
+          tipo_detectado: sessionType,
+          tipo_detectado_label: mapSessionTypeToLabel(sessionType),
+          sessao: "ddmx",
+          source_file: data.filename,
+        };
+      } catch (error: unknown) {
+        const detail = error instanceof Error ? error.message : "Falha no upload DDMX";
+        return reply.code(400).send({ detail });
+      }
+    };
+
+  fastify.post("/upload/ipt-ddmx-varricao", ddmxUploadHandler("varricao", "iptDdmxVarricao"));
+  fastify.post("/upload/ipt-ddmx-compactadores", ddmxUploadHandler("compactadores", "iptDdmxCompactadores"));
+  fastify.post("/upload/ipt-ddmx-light", ddmxUploadHandler("light", "iptDdmxLight"));
 
   fastify.post("/upload/sacs-csv", async (request, reply) => {
     const data = await request.file();
@@ -1596,6 +1763,9 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       iptHistoricoOs,
       iptHistoricoOsVarricao,
       iptHistoricoOsCompactadores,
+      ddmxVarricao,
+      ddmxCompactadores,
+      ddmxLight,
       iptReport,
       iptStatusBateria,
       iptCronograma,
@@ -1611,6 +1781,9 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       getLastIptUpdate("ipt_historico_os"),
       getLastIptUpdate("ipt_historico_os_varricao"),
       getLastIptUpdate("ipt_historico_os_compactadores"),
+      getLastDdmxUpdate("ddmx_varricao"),
+      getLastDdmxUpdate("ddmx_veiculos_compactadores"),
+      getLastDdmxUpdate("ddmx_veiculos_light"),
       getLastIptUpdate("ipt_report_selimp"),
       getLastIptUpdate("ipt_status_bateria"),
       getLastCronogramaUpdate(),
@@ -1693,16 +1866,25 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       }),
       getSessionOverview("ddmx", {
         ultimo_import:
+          ddmxCompactadores.ultimo_import ??
+          ddmxVarricao.ultimo_import ??
+          ddmxLight.ultimo_import ??
           iptHistoricoOsCompactadores.ultimo_import ??
           iptHistoricoOsVarricao.ultimo_import ??
           iptHistoricoOs.ultimo_import ??
           null,
         source_file:
+          ddmxCompactadores.source_file ??
+          ddmxVarricao.source_file ??
+          ddmxLight.source_file ??
           iptHistoricoOsCompactadores.source_file ??
           iptHistoricoOsVarricao.source_file ??
           iptHistoricoOs.source_file ??
           null,
         total_registros:
+          Number(ddmxVarricao.total_registros ?? 0) +
+          Number(ddmxCompactadores.total_registros ?? 0) +
+          Number(ddmxLight.total_registros ?? 0) +
           Number(iptHistoricoOs.total_registros ?? 0) +
           Number(iptHistoricoOsVarricao.total_registros ?? 0) +
           Number(iptHistoricoOsCompactadores.total_registros ?? 0),
@@ -1728,6 +1910,9 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       iptHistoricoOs,
       iptHistoricoOsVarricao,
       iptHistoricoOsCompactadores,
+      ddmxVarricao,
+      ddmxCompactadores,
+      ddmxLight,
       iptReport,
       iptStatusBateria,
       iptCronograma,
@@ -1798,11 +1983,34 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
     return { deleted: r.rowCount ?? 0, periodo_inicial, periodo_final };
   });
 
-  /** Remove Historico OS DDMX (todas as variantes) de ipt_imports. */
+  /** Remove Historico OS DDMX (todas as variantes) de ipt_imports + novas tabelas. */
   fastify.post("/upload/clear-ipt-ddmx", async (_request, reply) => {
-    const r = await pool.query(
+    const r1 = await pool.query(
       `DELETE FROM ipt_imports WHERE file_type IN ('ipt_historico_os', 'ipt_historico_os_varricao', 'ipt_historico_os_compactadores') RETURNING id`
     );
+    const r2 = await pool.query(`DELETE FROM ipt_ddmx_varricao RETURNING id`);
+    const r3 = await pool.query(`DELETE FROM ipt_ddmx_veiculos RETURNING id`);
+    invalidatePrefix("ipt_preview");
+    invalidatePrefix("kpis");
+    return { deleted: (r1.rowCount ?? 0) + (r2.rowCount ?? 0) + (r3.rowCount ?? 0) };
+  });
+
+  fastify.post("/upload/clear-ddmx-varricao", async (_request, reply) => {
+    const r = await pool.query(`DELETE FROM ipt_ddmx_varricao RETURNING id`);
+    invalidatePrefix("ipt_preview");
+    invalidatePrefix("kpis");
+    return { deleted: r.rowCount ?? 0 };
+  });
+
+  fastify.post("/upload/clear-ddmx-compactadores", async (_request, reply) => {
+    const r = await pool.query(`DELETE FROM ipt_ddmx_veiculos WHERE subtipo = 'compactadores' RETURNING id`);
+    invalidatePrefix("ipt_preview");
+    invalidatePrefix("kpis");
+    return { deleted: r.rowCount ?? 0 };
+  });
+
+  fastify.post("/upload/clear-ddmx-light", async (_request, reply) => {
+    const r = await pool.query(`DELETE FROM ipt_ddmx_veiculos WHERE subtipo = 'light' RETURNING id`);
     invalidatePrefix("ipt_preview");
     invalidatePrefix("kpis");
     return { deleted: r.rowCount ?? 0 };
@@ -1956,13 +2164,66 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         stats.varricao += 1;
       }
 
+      // 4. Migrar DDMX historico_os -> ipt_ddmx_veiculos (subtipo light)
+      const ddmxLightRows = await client.query(
+        `SELECT record_key, setor, data_referencia, servico, raw, source_file
+         FROM ipt_imports WHERE file_type = 'ipt_historico_os'`
+      );
+      let ddmxLightCount = 0;
+      for (const row of ddmxLightRows.rows) {
+        await client.query(
+          `INSERT INTO ipt_ddmx_veiculos (subtipo, record_key, setor, data_referencia, servico, raw, source_file, updated_at)
+           VALUES ('light', $1, $2, $3, $4, $5::jsonb, $6, NOW())
+           ON CONFLICT (subtipo, record_key) DO NOTHING`,
+          [row.record_key, row.setor, row.data_referencia, row.servico, JSON.stringify(row.raw), row.source_file]
+        );
+        ddmxLightCount += 1;
+      }
+
+      // 5. Migrar DDMX historico_os_compactadores -> ipt_ddmx_veiculos (subtipo compactadores)
+      const ddmxCompRows = await client.query(
+        `SELECT record_key, setor, data_referencia, servico, raw, source_file
+         FROM ipt_imports WHERE file_type = 'ipt_historico_os_compactadores'`
+      );
+      let ddmxCompCount = 0;
+      for (const row of ddmxCompRows.rows) {
+        await client.query(
+          `INSERT INTO ipt_ddmx_veiculos (subtipo, record_key, setor, data_referencia, servico, raw, source_file, updated_at)
+           VALUES ('compactadores', $1, $2, $3, $4, $5::jsonb, $6, NOW())
+           ON CONFLICT (subtipo, record_key) DO NOTHING`,
+          [row.record_key, row.setor, row.data_referencia, row.servico, JSON.stringify(row.raw), row.source_file]
+        );
+        ddmxCompCount += 1;
+      }
+
+      // 6. Migrar DDMX historico_os_varricao -> ipt_ddmx_varricao
+      const ddmxVarrRows = await client.query(
+        `SELECT record_key, setor, data_referencia, servico, raw, source_file
+         FROM ipt_imports WHERE file_type = 'ipt_historico_os_varricao'`
+      );
+      let ddmxVarrCount = 0;
+      for (const row of ddmxVarrRows.rows) {
+        await client.query(
+          `INSERT INTO ipt_ddmx_varricao (record_key, setor, data_referencia, servico, raw, source_file, updated_at)
+           VALUES ($1, $2, $3, $4, $5::jsonb, $6, NOW())
+           ON CONFLICT (record_key) DO NOTHING`,
+          [row.record_key, row.setor, row.data_referencia, row.servico, JSON.stringify(row.raw), row.source_file]
+        );
+        ddmxVarrCount += 1;
+      }
+
       await client.query("COMMIT");
       invalidatePrefix("ipt_preview");
       invalidatePrefix("kpis");
       return {
         ok: true,
-        migrados: stats,
-        mensagem: `Migrados: ${stats.report} report, ${stats.veiculos} veiculos, ${stats.varricao} varricao.`,
+        migrados: {
+          ...stats,
+          ddmx_light: ddmxLightCount,
+          ddmx_compactadores: ddmxCompCount,
+          ddmx_varricao: ddmxVarrCount,
+        },
+        mensagem: `Migrados: ${stats.report} report, ${stats.veiculos} veiculos, ${stats.varricao} varricao, ${ddmxLightCount} ddmx light, ${ddmxCompCount} ddmx compactadores, ${ddmxVarrCount} ddmx varricao.`,
       };
     } catch (e) {
       await client.query("ROLLBACK");

@@ -439,6 +439,42 @@ export async function runMigrations() {
     await client.query("CREATE INDEX IF NOT EXISTS idx_consol_varr_setor ON ipt_consolidado_varricao_dados(setor)").catch(() => {});
     await client.query("CREATE INDEX IF NOT EXISTS idx_consol_varr_data ON ipt_consolidado_varricao_dados(data_referencia)").catch(() => {});
 
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS ipt_ddmx_varricao (
+        id SERIAL PRIMARY KEY,
+        record_key TEXT NOT NULL,
+        setor TEXT,
+        data_referencia DATE,
+        servico TEXT,
+        raw JSONB NOT NULL,
+        source_file TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client.query("CREATE UNIQUE INDEX IF NOT EXISTS ux_ddmx_varricao_key ON ipt_ddmx_varricao(record_key)").catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_ddmx_varricao_data ON ipt_ddmx_varricao(data_referencia)").catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_ddmx_varricao_setor ON ipt_ddmx_varricao(setor)").catch(() => {});
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS ipt_ddmx_veiculos (
+        id SERIAL PRIMARY KEY,
+        subtipo TEXT NOT NULL,
+        record_key TEXT NOT NULL,
+        setor TEXT,
+        data_referencia DATE,
+        servico TEXT,
+        raw JSONB NOT NULL,
+        source_file TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client.query("CREATE UNIQUE INDEX IF NOT EXISTS ux_ddmx_veiculos_key ON ipt_ddmx_veiculos(subtipo, record_key)").catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_ddmx_veiculos_data ON ipt_ddmx_veiculos(data_referencia)").catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_ddmx_veiculos_setor ON ipt_ddmx_veiculos(setor)").catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_ddmx_veiculos_subtipo ON ipt_ddmx_veiculos(subtipo)").catch(() => {});
+
     const adminEncryptedPassword = encryptPassword("1515");
     const userResult = await client.query<{ id: number }>(
       `INSERT INTO users (username, display_name, password_encrypted, role, status, blocked, created_at, updated_at)

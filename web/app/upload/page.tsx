@@ -42,6 +42,9 @@ type SessionKey = "flip" | "ddmx" | "selimp";
 type UploadKey =
   | "flip"
   | "ddmx"
+  | "ddmxVarricao"
+  | "ddmxCompactadores"
+  | "ddmxLight"
   | "iptReport"
   | "iptStatusBateria"
   | "iptCronograma";
@@ -132,6 +135,9 @@ interface UploadOverviewResponse {
   iptHistoricoOs?: DdmxTipoSnapshot;
   iptHistoricoOsVarricao?: DdmxTipoSnapshot;
   iptHistoricoOsCompactadores?: DdmxTipoSnapshot;
+  ddmxVarricao?: DdmxTipoSnapshot;
+  ddmxCompactadores?: DdmxTipoSnapshot;
+  ddmxLight?: DdmxTipoSnapshot;
   sessions?: Record<SessionKey, LastUploadInfo>;
 }
 
@@ -236,6 +242,9 @@ function createInitialStates(): Record<UploadKey, UploadState> {
   return {
     flip: { status: "idle" },
     ddmx: { status: "idle" },
+    ddmxVarricao: { status: "idle" },
+    ddmxCompactadores: { status: "idle" },
+    ddmxLight: { status: "idle" },
     iptReport: { status: "idle" },
     iptStatusBateria: { status: "idle" },
     iptCronograma: { status: "idle" },
@@ -303,7 +312,7 @@ function SessionAccordionItem({
   );
 }
 
-type DropzoneTone = "neutral" | "violet" | "sky" | "fuchsia" | "emerald";
+type DropzoneTone = "neutral" | "violet" | "sky" | "fuchsia" | "emerald" | "amber";
 
 const DROPZONE_SURFACE: Record<DropzoneTone, string> = {
   neutral:
@@ -316,6 +325,8 @@ const DROPZONE_SURFACE: Record<DropzoneTone, string> = {
     "border-fuchsia-200/70 from-fuchsia-50/45 to-white hover:border-fuchsia-300/80 dark:border-dashed dark:border-fuchsia-500/35 dark:from-fuchsia-950/35 dark:to-card dark:hover:border-fuchsia-400/45",
   emerald:
     "border-emerald-200/75 from-emerald-50/45 to-white hover:border-emerald-300/80 dark:border-dashed dark:border-emerald-500/35 dark:from-emerald-950/35 dark:to-card dark:hover:border-emerald-400/45",
+  amber:
+    "border-amber-200/75 from-amber-50/50 to-white hover:border-amber-300/80 dark:border-dashed dark:border-amber-500/35 dark:from-amber-950/35 dark:to-card dark:hover:border-amber-400/45",
 };
 
 function SummaryBox({ state }: { state: UploadState }) {
@@ -779,6 +790,38 @@ export default function UploadPage() {
     }
   };
 
+  const handleDdmxUpload = async (
+    target: "ddmxVarricao" | "ddmxCompactadores" | "ddmxLight",
+    files: FileList | null
+  ) => {
+    const file = files?.[0];
+    if (!file) return;
+    const lowerName = file.name.toLowerCase();
+    if (!lowerName.endsWith(".xlsx") && !lowerName.endsWith(".xls")) {
+      const msg = "Aceita apenas arquivos XLSX/XLS.";
+      toast.error(msg);
+      setUploadState(target, { status: "error", error: msg });
+      return;
+    }
+    setUploadState(target, { status: "uploading" });
+    try {
+      const uploader =
+        target === "ddmxVarricao"
+          ? apiService.uploadDdmxVarricao
+          : target === "ddmxCompactadores"
+          ? apiService.uploadDdmxCompactadores
+          : apiService.uploadDdmxLight;
+      const result = await uploader(file);
+      setUploadState(target, { status: "success", result });
+      toast.success(`${result?.tipo_detectado_label || "Arquivo"} importado com sucesso.`);
+      await loadOverview();
+    } catch (error) {
+      const message = getErrorMessage(error);
+      setUploadState(target, { status: "error", error: message });
+      toast.error(message);
+    }
+  };
+
   const handleTypedUpload = async (key: "iptReport" | "iptStatusBateria", files: FileList | null) => {
     const file = files?.[0];
     if (!file) return;
@@ -977,25 +1020,113 @@ export default function UploadPage() {
             accent="sky"
             icon={Table2}
             title="DDMX"
-            subtitle="Um envio por vez: o backend detecta veículos (histórico geral), compactadores ou varrição. O resumo abaixo agrupa frota + compactadores num único cartão e deixa varrição à parte."
+            subtitle="Três canais separados: Varrição, Compactadores e Light (veículos). Cada um com seu próprio histórico e armazenamento dedicado."
+            contentClassName="grid gap-6 pb-6 pt-1 md:grid-cols-3"
           >
-            <UploadDropzone
-              inputId="ddmx"
-              accept=".xlsx,.xls"
-              tone="sky"
-              loading={states.ddmx.status === "uploading"}
-              helperText="Planilhas de histórico de OS do DDMX. A detecção usa o layout das abas e colunas — use o modelo habitual de cada operação."
-              onFilesSelected={(files) => handleSessionUpload("ddmx", files)}
-            />
-            <DdmxPorTipoBlock overview={overview} />
-            <HistoryBlock
-              title="Histórico recente da sessão DDMX"
-              hint="Os dados do topo deste quadro são só da última importação enviada (qualquer tipo). Para arquivo, data e volume por linha DDMX (frota, compactadores e varrição), use o bloco resumido acima."
-              overview={overview.sessions?.ddmx}
-              expanded={Boolean(expandedHistory.ddmx)}
-              onToggle={() => toggleHistory("ddmx")}
-            />
-            <SummaryBox state={states.ddmx} />
+            <div
+              className={cn(
+                "rounded-2xl border p-6 shadow-sm",
+                "border-slate-200/85 bg-gradient-to-b from-white to-slate-50/40",
+                "dark:border-border dark:bg-gradient-to-b dark:from-card dark:to-muted/25 dark:shadow-md dark:shadow-black/20",
+              )}
+            >
+              <div className="mb-5 flex items-start gap-3">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-sky-100 text-sky-800 ring-1 ring-sky-200/80 dark:bg-sky-950/40 dark:text-sky-200 dark:ring-sky-500/25">
+                  <Table2 className="h-4 w-4" />
+                </span>
+                <div>
+                  <div className="text-lg font-semibold tracking-tight">Varrição</div>
+                  <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                    Histórico de OS de varrição do DDMX.
+                  </p>
+                </div>
+              </div>
+              <UploadDropzone
+                inputId="ddmxVarricao"
+                accept=".xlsx,.xls"
+                tone="sky"
+                loading={states.ddmxVarricao.status === "uploading"}
+                helperText="Planilha de varrição DDMX (XLSX/XLS)."
+                onFilesSelected={(files) => handleDdmxUpload("ddmxVarricao", files)}
+              />
+              <HistoryBlock
+                title="Último import de varrição"
+                overview={overview.ddmxVarricao ?? overview.iptHistoricoOsVarricao}
+                expanded={Boolean(expandedHistory.ddmxVarricao)}
+                onToggle={() => toggleHistory("ddmxVarricao")}
+              />
+              <SummaryBox state={states.ddmxVarricao} />
+            </div>
+
+            <div
+              className={cn(
+                "rounded-2xl border p-6 shadow-sm",
+                "border-slate-200/85 bg-gradient-to-b from-white to-slate-50/40",
+                "dark:border-border dark:bg-gradient-to-b dark:from-card dark:to-muted/25 dark:shadow-md dark:shadow-black/20",
+              )}
+            >
+              <div className="mb-5 flex items-start gap-3">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-800 ring-1 ring-amber-200/80 dark:bg-amber-950/40 dark:text-amber-200 dark:ring-amber-500/25">
+                  <Table2 className="h-4 w-4" />
+                </span>
+                <div>
+                  <div className="text-lg font-semibold tracking-tight">Compactadores</div>
+                  <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                    Histórico de OS de compactadores do DDMX.
+                  </p>
+                </div>
+              </div>
+              <UploadDropzone
+                inputId="ddmxCompactadores"
+                accept=".xlsx,.xls"
+                tone="amber"
+                loading={states.ddmxCompactadores.status === "uploading"}
+                helperText="Planilha de compactadores DDMX (XLSX/XLS)."
+                onFilesSelected={(files) => handleDdmxUpload("ddmxCompactadores", files)}
+              />
+              <HistoryBlock
+                title="Último import de compactadores"
+                overview={overview.ddmxCompactadores ?? overview.iptHistoricoOsCompactadores}
+                expanded={Boolean(expandedHistory.ddmxCompactadores)}
+                onToggle={() => toggleHistory("ddmxCompactadores")}
+              />
+              <SummaryBox state={states.ddmxCompactadores} />
+            </div>
+
+            <div
+              className={cn(
+                "rounded-2xl border p-6 shadow-sm",
+                "border-slate-200/85 bg-gradient-to-b from-white to-slate-50/40",
+                "dark:border-border dark:bg-gradient-to-b dark:from-card dark:to-muted/25 dark:shadow-md dark:shadow-black/20",
+              )}
+            >
+              <div className="mb-5 flex items-start gap-3">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-violet-100 text-violet-800 ring-1 ring-violet-200/80 dark:bg-violet-950/40 dark:text-violet-200 dark:ring-violet-500/25">
+                  <Table2 className="h-4 w-4" />
+                </span>
+                <div>
+                  <div className="text-lg font-semibold tracking-tight">Light (Veículos)</div>
+                  <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                    Histórico de OS geral de veículos (frota leve) do DDMX.
+                  </p>
+                </div>
+              </div>
+              <UploadDropzone
+                inputId="ddmxLight"
+                accept=".xlsx,.xls"
+                tone="violet"
+                loading={states.ddmxLight.status === "uploading"}
+                helperText="Planilha de veículos (light) DDMX (XLSX/XLS)."
+                onFilesSelected={(files) => handleDdmxUpload("ddmxLight", files)}
+              />
+              <HistoryBlock
+                title="Último import de light"
+                overview={overview.ddmxLight ?? overview.iptHistoricoOs}
+                expanded={Boolean(expandedHistory.ddmxLight)}
+                onToggle={() => toggleHistory("ddmxLight")}
+              />
+              <SummaryBox state={states.ddmxLight} />
+            </div>
           </SessionAccordionItem>
 
           <SessionAccordionItem
