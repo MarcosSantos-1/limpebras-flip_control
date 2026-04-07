@@ -194,6 +194,28 @@ export function toDateKey(value: Date | string | null | undefined): string | nul
   return `${y}-${m}-${day}`;
 }
 
+/**
+ * D-1 (ontem) no calendário de São Paulo — alinha IPT com Report SELIMP e evita
+ * divergência entre servidor em UTC (produção) e máquina local em BRT (dev).
+ */
+export function getYesterdayDateKeyBrt(now: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+  const y = Number(parts.find((p) => p.type === "year")?.value);
+  const mo = Number(parts.find((p) => p.type === "month")?.value);
+  const day = Number(parts.find((p) => p.type === "day")?.value);
+  const todayUtc = new Date(Date.UTC(y, mo - 1, day));
+  todayUtc.setUTCDate(todayUtc.getUTCDate() - 1);
+  const yy = todayUtc.getUTCFullYear();
+  const mm = String(todayUtc.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(todayUtc.getUTCDate()).padStart(2, "0");
+  return `${yy}-${mm}-${dd}`;
+}
+
 export function parseDateKeyLocal(dateKey: string): Date {
   return new Date(`${dateKey}T00:00:00`);
 }

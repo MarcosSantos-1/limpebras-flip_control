@@ -21,7 +21,7 @@ import {
   getSubFromPlano,
   getTipoServicoFromPlano,
   CRONOGRAMA_SERVICOS,
-  toDateKey,
+  getYesterdayDateKeyBrt,
   parseDateKeyLocal,
   diffInDaysAbs,
   isFrequencyDate,
@@ -1047,9 +1047,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
   }>("/dashboard/ipt-preview", async (request, reply) => {
     const { periodo_inicial: inicio, periodo_final: fim, mostrar_todos, subprefeitura: subFilter } = request.query;
     const showAll = mostrar_todos === "1";
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayKey = toDateKey(yesterday)!;
+    const yesterdayKey = getYesterdayDateKeyBrt();
 
     let escopo: "dia_anterior" | "periodo" | "todos" = "periodo";
     let scopeStart: string | null = inicio ?? yesterdayKey;
@@ -1073,6 +1071,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
       periodo_final: fim,
       mostrar_todos: mostrar_todos ?? "",
       subprefeitura: subFilter ?? "",
+      ...(escopo === "dia_anterior" && scopeStart ? { ref_dia: scopeStart } : {}),
     });
     const payload = await getOrSet(key, async () => {
       const client = await pool.connect();
