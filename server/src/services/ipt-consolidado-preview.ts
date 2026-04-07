@@ -6,6 +6,10 @@ import {
   getSubFromPlano,
   getTipoServicoCanonicoPlano,
   getFrequenciaDescricao,
+  generateFrequencyDates,
+  isFrequencyDate,
+  findNextExpectedByFrequency,
+  parseDateKeyLocal,
 } from "../constants/ipt.js";
 
 const normalizeText = (value: string): string =>
@@ -40,6 +44,34 @@ function toDateKey(value: string | Date | null | undefined): string | null {
     return `${y}-${m}-${d}`;
   }
   return null;
+}
+
+function dateKeyAddDays(dateKey: string, deltaDays: number): string {
+  const d = parseDateKeyLocal(dateKey);
+  d.setDate(d.getDate() + deltaDays);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/** Mesma lógica visual da prévia de ipt_cronograma: ~5 datas (passado recente + próximas). */
+function buildCronogramaPreviewFromSorted(sortedUnique: string[], todayKey: string): string[] {
+  const sorted = [...sortedUnique].sort();
+  const pastOrToday = sorted.filter((d) => d <= todayKey);
+  const future = sorted.filter((d) => d > todayKey);
+  const recentIdx = pastOrToday.length > 0 ? pastOrToday.length - 1 : -1;
+  const previousIdx = recentIdx > 0 ? recentIdx - 1 : -1;
+  const preview: string[] = [];
+  if (previousIdx >= 0) preview.push(pastOrToday[previousIdx]);
+  if (recentIdx >= 0) preview.push(pastOrToday[recentIdx]);
+  for (let i = 0; i < 3 && i < future.length; i++) {
+    preview.push(future[i]);
+  }
+  if (preview.length < 5 && recentIdx < 0 && future.length > 3) {
+    preview.push(future[3]);
+  }
+  return preview;
 }
 
 type Escopo = "dia_anterior" | "periodo" | "todos";
@@ -469,27 +501,37 @@ export async function buildIptPreviewFromConsolidado(
     for (const row of rows) {
       const key = normalizarSetor(row.plano);
       const allDates = cronMap.get(key);
-      if (!allDates || allDates.length === 0) continue;
-
-      const sorted = [...new Set(allDates)].sort();
-      const pastOrToday = sorted.filter((d) => d <= today);
-      const future = sorted.filter((d) => d > today);
-
-      const recentIdx = pastOrToday.length > 0 ? pastOrToday.length - 1 : -1;
-      const previousIdx = recentIdx > 0 ? recentIdx - 1 : -1;
-
-      const preview: string[] = [];
-      if (previousIdx >= 0) preview.push(pastOrToday[previousIdx]);
-      if (recentIdx >= 0) preview.push(pastOrToday[recentIdx]);
-      for (let i = 0; i < 3 && i < future.length; i++) {
-        preview.push(future[i]);
+      if (allDates && allDates.length > 0) {
+        const sorted = [...new Set(allDates)].sort();
+        const future = sorted.filter((d) => d > today);
+        row.cronograma_preview = buildCronogramaPreviewFromSorted(sorted, today);
+        row.proxima_programacao = future.length > 0 ? future[0] : null;
+      } else if (row.frequencia_codigo) {
+        const winStart = dateKeyAddDays(today, -120);
+        const winEnd = dateKeyAddDays(today, 120);
+        const freqDates = generateFrequencyDates(row.frequencia_codigo, winStart, winEnd);
+        const sorted = [...new Set(freqDates)].sort();
+        if (sorted.length > 0) {
+          const future = sorted.filter((d) => d > today);
+          row.cronograma_preview = buildCronogramaPreviewFromSorted(sorted, today);
+          row.proxima_programacao =
+            future.length > 0 ? future[0] : findNextExpectedByFrequency(row.frequencia_codigo, today);
+        }
       }
-      if (preview.length < 5 && recentIdx < 0 && future.length > 3) {
-        preview.push(future[3]);
-      }
+    }
 
-      row.cronograma_preview = preview;
-      row.proxima_programacao = future.length > 0 ? future[0] : null;
+    for (const row of rows) {
+      const key = normalizarSetor(row.plano);
+      const cronDates = cronMap.get(key) ?? [];
+      const cronSet = new Set(cronDates);
+      const freqCode = row.frequencia_codigo;
+      for (const d of row.detalhes_diarios) {
+        const inCron = cronSet.has(d.data);
+        const inFreq =
+          freqCode != null && String(freqCode).length === 4 && isFrequencyDate(String(freqCode), d.data);
+        d.esperado = inCron || inFreq;
+        d.data_estimada = inCron;
+      }
     }
   }
 

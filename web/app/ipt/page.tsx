@@ -2051,10 +2051,10 @@ export default function IPTPage() {
                                               <th className="text-left py-2 px-2">% SELIMP</th>
                                               <th className="text-left py-2 px-2">% DDMX</th>
                                               <th className="text-left py-2 px-2">
-                                                <span className="flex items-center gap-1"><Truck className="h-3.5 w-3.5" /> D. Selimp</span>
+                                                <span className="flex items-center gap-1"><Truck className="h-3.5 w-3.5" /> Des. Selimp</span>
                                               </th>
                                               <th className="text-left py-2 px-2">
-                                                <span className="flex items-center gap-1"><Package className="h-3.5 w-3.5" /> D. DDMX</span>
+                                                <span className="flex items-center gap-1"><Truck className="h-3.5 w-3.5" /> Des. DDMX</span>
                                               </th>
                                               <th className="text-left py-2 px-2 w-20">Obs</th>
                                             </tr>
@@ -2084,7 +2084,9 @@ export default function IPTPage() {
                                                         <Check className="h-3.5 w-3.5" /> Sim
                                                       </span>
                                                     ) : (
-                                                      <span className="text-muted-foreground">—</span>
+                                                      <span className="inline-flex items-center gap-1 rounded-full bg-slate-500/15 px-2 py-0.5 text-muted-foreground">
+                                                        Não
+                                                      </span>
                                                     )}
                                                   </td>
                                                   <td className="py-2 px-2">
@@ -2094,16 +2096,30 @@ export default function IPTPage() {
                                                     <PercentualBar value={d.percentual_nosso} compact />
                                                   </td>
                                                   <td className="py-2 px-2">
-                                                    <span className="inline-flex items-center gap-1 font-medium">
-                                                      <Truck className="h-3.5 w-3.5 text-blue-600" />
-                                                      {d.despachos_selimp}
-                                                    </span>
+                                                    {d.despachos_selimp > 0 ? (
+                                                      <span className="inline-flex items-center gap-1 rounded-full bg-blue-500/15 px-2 py-0.5 text-blue-800 dark:text-blue-200 font-medium">
+                                                        <Truck className="h-3.5 w-3.5 shrink-0" />
+                                                        Sim
+                                                      </span>
+                                                    ) : (
+                                                      <span className="inline-flex items-center gap-1 rounded-full bg-slate-500/15 px-2 py-0.5 text-muted-foreground font-medium">
+                                                        <Truck className="h-3.5 w-3.5 shrink-0 opacity-60" />
+                                                        Não
+                                                      </span>
+                                                    )}
                                                   </td>
                                                   <td className="py-2 px-2">
-                                                    <span className="inline-flex items-center gap-1 font-medium">
-                                                      <Package className="h-3.5 w-3.5 text-violet-600" />
-                                                      {d.despachos_nosso}
-                                                    </span>
+                                                    {d.despachos_nosso > 0 ? (
+                                                      <span className="inline-flex items-center gap-1 rounded-full bg-violet-500/15 px-2 py-0.5 text-violet-800 dark:text-violet-200 font-medium">
+                                                        <Truck className="h-3.5 w-3.5 shrink-0" />
+                                                        Sim
+                                                      </span>
+                                                    ) : (
+                                                      <span className="inline-flex items-center gap-1 rounded-full bg-slate-500/15 px-2 py-0.5 text-muted-foreground font-medium">
+                                                        <Truck className="h-3.5 w-3.5 shrink-0 opacity-60" />
+                                                        Não
+                                                      </span>
+                                                    )}
                                                   </td>
                                                   <td className="py-2 px-2">
                                                     <span className="inline-flex items-center gap-1 flex-wrap">
