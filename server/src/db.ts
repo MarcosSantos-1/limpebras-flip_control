@@ -115,6 +115,13 @@ export async function runMigrations() {
     await client.query("ALTER TABLE sacs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()").catch(() => {});
     await client.query("CREATE INDEX IF NOT EXISTS idx_sacs_data_registro ON sacs(data_registro)").catch(() => {});
     await client.query("CREATE INDEX IF NOT EXISTS idx_sacs_classificacao ON sacs(classificacao_do_servico)").catch(() => {});
+    await client.query("ALTER TABLE sacs ADD COLUMN IF NOT EXISTS data_agendamento TIMESTAMPTZ").catch(() => {});
+    await client
+      .query("ALTER TABLE sacs ADD COLUMN IF NOT EXISTS data_realizacao_confirmacao_execucao TIMESTAMPTZ")
+      .catch(() => {});
+    await client.query("ALTER TABLE sacs ADD COLUMN IF NOT EXISTS data_ultima_atualizacao TIMESTAMPTZ").catch(() => {});
+    await client.query("ALTER TABLE sacs ADD COLUMN IF NOT EXISTS status_planilha TEXT").catch(() => {});
+    await client.query("ALTER TABLE sacs ADD COLUMN IF NOT EXISTS data_acionamento_agendamento TIMESTAMPTZ").catch(() => {});
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS bfs (

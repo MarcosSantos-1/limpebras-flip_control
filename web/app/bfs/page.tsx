@@ -5,7 +5,7 @@ import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { apiService } from "@/lib/api";
-import { formatFlipDateTimeUtc } from "@/lib/flip-datetime";
+import { formatFlipDateTimeUtc, formatFlipDateTimeUtcWithWeekday } from "@/lib/flip-datetime";
 import { format, startOfMonth, endOfMonth } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { DatePicker } from "@/components/ui/date-picker";
-import { AlertTriangle, Search } from "lucide-react";
+import { AlertTriangle, CalendarDays, ClipboardList, MapPin, Search, User, Wrench } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
@@ -406,10 +406,14 @@ export default function BFSPage() {
                       <th className="px-3 py-3"></th>
                       <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider">BFS</th>
                       <th className="whitespace-nowrap px-6 py-3 font-medium uppercase text-xs tracking-wider">Status</th>
-                      <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider">Tipo de Serviço</th>
+                      <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider min-w-[8rem]">
+                        Tipo de serviço
+                      </th>
                       <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider">Fiscal</th>
                       <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider">Subprefeitura</th>
-                      <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider">Data Fiscalização</th>
+                      <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider min-w-[11rem]">
+                        Datas
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
@@ -448,21 +452,74 @@ export default function BFSPage() {
                           <td className="px-6 py-4 text-muted-foreground">
                             {bfs.subprefeitura || "—"}
                           </td>
-                          <td className="px-6 py-4 text-muted-foreground">
-                            {bfs.data_abertura ? formatFlipDateTimeUtc(bfs.data_abertura) : "—"}
+                          <td className="px-6 py-4 text-muted-foreground align-top text-xs leading-relaxed min-w-[11rem]">
+                            <div className="flex gap-1.5">
+                              <CalendarDays className="h-3.5 w-3.5 shrink-0 mt-0.5 text-blue-600 dark:text-blue-400" />
+                              <div>
+                                <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                  Fiscalização
+                                </span>
+                                <div className="font-mono tabular-nums">
+                                  {bfs.data_abertura ? formatFlipDateTimeUtc(bfs.data_abertura) : "—"}
+                                </div>
+                                <div className="text-[10px] text-muted-foreground mt-1">Registro do BFS na planilha</div>
+                              </div>
+                            </div>
+                            <div className="flex gap-1.5 mt-2 pt-2 border-t border-border/60">
+                              <ClipboardList className="h-3.5 w-3.5 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+                              <div>
+                                <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                  Vistoria
+                                </span>
+                                <div className="font-mono tabular-nums">
+                                  {bfs.data_vistoria ? formatFlipDateTimeUtc(bfs.data_vistoria) : "—"}
+                                </div>
+                                <div className="text-[10px] text-muted-foreground mt-1">Quando constar na planilha</div>
+                              </div>
+                            </div>
                           </td>
                         </tr>
                         {expandedIds[bfs.id] && (
                           <tr className="bg-muted/20">
                             <td colSpan={7} className="px-6 py-3 text-xs">
                               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                                <div><strong>BFS:</strong> {bfs.bfs}</div>
-                                <div><strong>Fiscal:</strong> {bfs.fiscal || "—"}</div>
-                                <div><strong>Sem irregularidade:</strong> {bfs.sem_irregularidade ? "Sim" : "Não"}</div>
-                                <div><strong>Data fiscalização:</strong> {bfs.data_abertura ? formatFlipDateTimeUtc(bfs.data_abertura) : "—"}</div>
-                                <div><strong>Data vistoria:</strong> {bfs.data_vistoria ? formatFlipDateTimeUtc(bfs.data_vistoria) : "—"}</div>
-                                <div><strong>Subprefeitura:</strong> {bfs.subprefeitura || "—"}</div>
-                                <div className="md:col-span-3"><strong>Endereço completo:</strong> {bfs.endereco || "—"}</div>
+                                <div className="flex items-start gap-2">
+                                  <ClipboardList className="h-4 w-4 shrink-0 text-muted-foreground mt-0.5" />
+                                  <div>
+                                    <strong>BFS</strong>
+                                    <div className="font-mono">{bfs.bfs}</div>
+                                  </div>
+                                </div>
+                                <div className="flex items-start gap-2">
+                                  <User className="h-4 w-4 shrink-0 text-muted-foreground mt-0.5" />
+                                  <div>
+                                    <strong>Fiscal</strong>
+                                    <div>{bfs.fiscal || "—"}</div>
+                                  </div>
+                                </div>
+                                <div>
+                                  <strong>Sem irregularidade</strong>
+                                  <div>{bfs.sem_irregularidade ? "Sim" : "Não"}</div>
+                                </div>
+                                <div>
+                                  <strong>Fiscalização (registro)</strong>
+                                  <div className="font-mono">{bfs.data_abertura ? formatFlipDateTimeUtc(bfs.data_abertura) : "—"}</div>
+                                </div>
+                                <div>
+                                  <strong>Vistoria em campo</strong>
+                                  <div className="font-mono">{bfs.data_vistoria ? formatFlipDateTimeUtc(bfs.data_vistoria) : "—"}</div>
+                                </div>
+                                <div>
+                                  <strong>Subprefeitura</strong>
+                                  <div>{bfs.subprefeitura || "—"}</div>
+                                </div>
+                                <div className="md:col-span-3 flex gap-2">
+                                  <MapPin className="h-4 w-4 shrink-0 text-muted-foreground mt-0.5" />
+                                  <div>
+                                    <strong>Endereço</strong>
+                                    <div>{bfs.endereco || "—"}</div>
+                                  </div>
+                                </div>
                               </div>
                             </td>
                           </tr>
@@ -505,75 +562,107 @@ export default function BFSPage() {
         <Dialog open={!!selectedBFS} onOpenChange={() => setSelectedBFS(null)}>
           <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Detalhes da BFS {selectedBFS?.bfs}</DialogTitle>
+              <DialogTitle className="flex flex-wrap items-center gap-2">
+                <ClipboardList className="h-5 w-5 text-primary shrink-0" />
+                BFS {selectedBFS?.bfs}
+              </DialogTitle>
               <DialogDescription>
-                Informações completas do Boletim de Fiscalização
+                Horários em Brasília. <strong>Fiscalização</strong> é o registro do boletim; <strong>vistoria</strong> é a
+                data de campo quando informada na planilha — podem diferir.
               </DialogDescription>
             </DialogHeader>
             {selectedBFS && (
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-sm font-medium text-muted-foreground">Número BFS</label>
-                    <p className="text-sm font-mono">{selectedBFS.bfs}</p>
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-muted-foreground">Status</label>
-                    <p className="text-sm whitespace-nowrap">
-                      <span className={`inline-flex whitespace-nowrap px-2.5 py-0.5 text-xs font-medium rounded-full border ${getStatusColor(selectedBFS.status, selectedBFS.sem_irregularidade)}`}>
+              <div className="space-y-6">
+                <div className="rounded-xl border border-border/80 bg-muted/25 p-4 space-y-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Identificação</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="flex gap-2">
+                      <ClipboardList className="h-5 w-5 shrink-0 text-muted-foreground" />
+                      <div>
+                        <p className="text-xs text-muted-foreground">Número BFS</p>
+                        <p className="text-sm font-mono font-semibold">{selectedBFS.bfs}</p>
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1">Status (planilha)</p>
+                      <span
+                        className={`inline-flex whitespace-nowrap px-2.5 py-0.5 text-xs font-medium rounded-full border ${getStatusColor(selectedBFS.status, selectedBFS.sem_irregularidade)}`}
+                      >
                         {formatStatus(selectedBFS.status)}
                       </span>
-                    </p>
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-muted-foreground">Tipo de Serviço</label>
-                    <p className="text-sm">{selectedBFS.tipo_servico || "—"}</p>
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-muted-foreground">Fiscal</label>
-                    <p className="text-sm">{selectedBFS.fiscal || "—"}</p>
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-muted-foreground">Subprefeitura</label>
-                    <p className="text-sm">{selectedBFS.subprefeitura || "—"}</p>
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-muted-foreground">Sem Irregularidades</label>
-                    <p className="text-sm">
+                    </div>
+                    <div className="flex gap-2 sm:col-span-2">
+                      <Wrench className="h-5 w-5 shrink-0 text-muted-foreground" />
+                      <div>
+                        <p className="text-xs text-muted-foreground">Tipo de serviço</p>
+                        <p className="text-sm">{selectedBFS.tipo_servico || "—"}</p>
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <User className="h-5 w-5 shrink-0 text-muted-foreground" />
+                      <div>
+                        <p className="text-xs text-muted-foreground">Fiscal</p>
+                        <p className="text-sm">{selectedBFS.fiscal || "—"}</p>
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Subprefeitura</p>
+                      <p className="text-sm">{selectedBFS.subprefeitura || "—"}</p>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <p className="text-xs text-muted-foreground mb-1">Irregularidade</p>
                       {selectedBFS.sem_irregularidade ? (
-                        <span className="text-green-600 dark:text-green-400 font-semibold">Sim</span>
+                        <span className="text-emerald-600 dark:text-emerald-400 font-semibold">Sem irregularidades</span>
                       ) : (
-                        <span className="text-red-600 dark:text-red-400 font-semibold">Não</span>
+                        <span className="text-red-600 dark:text-red-400 font-semibold">Com irregularidade</span>
                       )}
-                    </p>
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-muted-foreground">Data de Fiscalização</label>
-                    <p className="text-sm">
-                      {selectedBFS.data_abertura
-                        ? formatFlipDateTimeUtc(selectedBFS.data_abertura)
-                        : "—"}
-                    </p>
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-muted-foreground">Data de Vistoria</label>
-                    <p className="text-sm">
-                      {selectedBFS.data_vistoria
-                        ? formatFlipDateTimeUtc(selectedBFS.data_vistoria)
-                        : "—"}
-                    </p>
+                    </div>
                   </div>
                 </div>
-                <div>
-                  <label className="text-sm font-medium text-muted-foreground">Endereço</label>
-                  <p className="text-sm">{selectedBFS.endereco || "—"}</p>
+
+                <div className="rounded-xl border border-border/80 bg-card p-4 space-y-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-2">
+                    <CalendarDays className="h-4 w-4" />
+                    Datas
+                  </p>
+                  <ul className="space-y-3 text-sm">
+                    <li className="flex gap-3 pb-3 border-b border-border/60">
+                      <CalendarDays className="h-5 w-5 shrink-0 text-blue-600 dark:text-blue-400 mt-0.5" />
+                      <div>
+                        <p className="font-medium">Fiscalização (registro do BFS)</p>
+                        <p className="text-xs text-muted-foreground">Data associada ao lançamento do boletim na base</p>
+                        <p className="font-mono mt-1">
+                          {selectedBFS.data_abertura
+                            ? formatFlipDateTimeUtcWithWeekday(selectedBFS.data_abertura)
+                            : "—"}
+                        </p>
+                      </div>
+                    </li>
+                    <li className="flex gap-3">
+                      <ClipboardList className="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
+                      <div>
+                        <p className="font-medium">Vistoria em campo</p>
+                        <p className="text-xs text-muted-foreground">Preenchida na planilha quando a vistoria ocorre</p>
+                        <p className="font-mono mt-1">
+                          {selectedBFS.data_vistoria
+                            ? formatFlipDateTimeUtcWithWeekday(selectedBFS.data_vistoria)
+                            : "—"}
+                        </p>
+                      </div>
+                    </li>
+                  </ul>
                 </div>
-                {selectedBFS.coordenadas && (
-                  <div>
-                    <label className="text-sm font-medium text-muted-foreground">Coordenadas</label>
-                    <p className="text-sm font-mono">{selectedBFS.coordenadas}</p>
+
+                <div className="rounded-xl border border-border/80 bg-muted/15 p-4 flex gap-3">
+                  <MapPin className="h-5 w-5 shrink-0 text-muted-foreground" />
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Endereço</p>
+                    <p className="text-sm leading-relaxed">{selectedBFS.endereco || "—"}</p>
+                    {selectedBFS.coordenadas && (
+                      <p className="text-xs font-mono text-muted-foreground mt-2">{selectedBFS.coordenadas}</p>
+                    )}
                   </div>
-                )}
+                </div>
               </div>
             )}
           </DialogContent>

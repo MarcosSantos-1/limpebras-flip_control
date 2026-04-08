@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -16,9 +16,27 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { DatePicker } from "@/components/ui/date-picker";
-import { FileText, Search } from "lucide-react";
+import {
+  AlertCircle,
+  Bell,
+  Calendar,
+  CalendarClock,
+  CheckCircle2,
+  ClipboardList,
+  FileText,
+  MapPin,
+  RefreshCw,
+  Search,
+} from "lucide-react";
+import { formatFlipDateTimeUtc, formatFlipDateTimeUtcWithWeekday } from "@/lib/flip-datetime";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+
+/** IRD ou bueiros: classificação vazia na planilha — mesma regra de prazo (acionamento / só após finalizar). */
+function sacUsesAcionamentoPrazoRules(sac: Pick<SAC, "classificacao_servico">): boolean {
+  const c = (sac.classificacao_servico || "").trim();
+  return c === "Reclamação" || c === "";
+}
 
 export default function SACsPage() {
   const [sacs, setSacs] = useState<SAC[]>([]);
@@ -45,7 +63,7 @@ export default function SACsPage() {
       data_inicio: format(startOfMonth(now), "yyyy-MM-dd"),
       data_fim: format(endOfMonth(now), "yyyy-MM-dd"),
       fora_prazo: false,
-      tipo: "all" as "IA" | "IRD" | "all",
+      tipo: "all" as "IA" | "IRD" | "Bueiros" | "all",
       tipo_servico: "todos",
       procedente: "todos" as "todos" | "PROCEDE" | "NAO_PROCEDE",
     };
@@ -142,15 +160,137 @@ export default function SACsPage() {
     loadSACs();
   }, [filters, pesquisa, page]);
 
-  const getStatusColor = (status: string) => {
-    const colors: Record<string, string> = {
-      "Finalizado": "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
-      "Em Execução": "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
-      "Aguardando Agendamento": "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300",
-      "Aguardando Análise": "bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-300",
-      "Executado": "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
+  /** Status: só cor + extrabold, sem bolha (centralizado na célula). */
+  const getStatusTextClass = (status: string) => {
+    const map: Record<string, string> = {
+      Finalizado: "text-center text-sm font-extrabold text-emerald-600 dark:text-emerald-400",
+      Executado: "text-center text-sm font-extrabold text-emerald-600 dark:text-emerald-400",
+      Agendado: "text-center text-sm font-extrabold text-violet-600 dark:text-violet-400",
+      "Em andamento": "text-center text-sm font-extrabold text-sky-600 dark:text-sky-400",
+      "Em Execução": "text-center text-sm font-extrabold text-blue-600 dark:text-blue-400",
+      "Aguardando Agendamento": "text-center text-sm font-extrabold text-amber-700 dark:text-amber-400",
+      "Aguardando Análise": "text-center text-sm font-extrabold text-zinc-600 dark:text-zinc-400",
     };
-    return colors[status] || "bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300";
+    return map[status] || "text-center text-sm font-extrabold text-foreground";
+  };
+
+  const getSituacaoText = (sac: SAC) => {
+    if (sac.fora_do_prazo) {
+      return {
+        label: "Fora do prazo",
+        className: "text-center text-sm font-extrabold text-red-600 dark:text-red-400",
+      };
+    }
+    const resp = (sac.responsividade_execucao?.trim() || "").toUpperCase();
+    const finalized = Boolean(sac.data_execucao || sac.data_realizacao_confirmacao_execucao);
+    if (resp === "SIM") {
+      return {
+        label: "No prazo",
+        className: "text-center text-sm font-extrabold text-emerald-600 dark:text-emerald-400",
+      };
+    }
+    if (resp === "NÃO") {
+      if (finalized) {
+        return {
+          label: "No prazo",
+          className: "text-center text-sm font-extrabold text-emerald-600 dark:text-emerald-400",
+        };
+      }
+      return {
+        label: "Em andamento",
+        className: "text-center text-sm font-extrabold text-sky-600 dark:text-sky-400",
+      };
+    }
+    return {
+      label: sac.data_execucao ? "—" : "Em andamento",
+      className: "text-center text-sm font-extrabold text-sky-600 dark:text-sky-400",
+    };
+  };
+
+  const SacDatesCell = ({ sac }: { sac: SAC }) => {
+    const fora = sac.fora_do_prazo;
+    const sameAgend =
+      sac.data_agendamento &&
+      sac.data_acionamento_agendamento &&
+      sac.data_agendamento === sac.data_acionamento_agendamento;
+    return (
+      <div className="space-y-1 text-[11px] leading-snug min-w-[10.5rem]">
+        <div className="flex gap-1">
+          <Calendar className="h-3.5 w-3.5 shrink-0 text-muted-foreground mt-0.5" aria-hidden />
+          <div>
+            <span className="text-muted-foreground font-medium">Registro</span>
+            <div className="font-mono tabular-nums">{formatFlipDateTimeUtc(sac.data_criacao)}</div>
+          </div>
+        </div>
+        {sac.data_acionamento_agendamento && (
+          <div className="flex gap-1">
+            <Bell className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" aria-hidden />
+            <div>
+              <span className="text-muted-foreground font-medium">Acionam. / agend.</span>
+              <div className="font-mono tabular-nums text-amber-800 dark:text-amber-200">
+                {formatFlipDateTimeUtc(sac.data_acionamento_agendamento)}
+              </div>
+            </div>
+          </div>
+        )}
+        {sac.data_agendamento && !sameAgend && (
+          <div className="flex gap-1">
+            <CalendarClock className="h-3.5 w-3.5 shrink-0 text-violet-600 dark:text-violet-400 mt-0.5" aria-hidden />
+            <div>
+              <span className="text-muted-foreground font-medium">Agendamento</span>
+              <div className="font-mono tabular-nums text-violet-700 dark:text-violet-300">
+                {formatFlipDateTimeUtc(sac.data_agendamento)}
+              </div>
+            </div>
+          </div>
+        )}
+        {(sac.data_realizacao_confirmacao_execucao || sac.data_execucao) && (
+          <div className="flex gap-1">
+            <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400 mt-0.5" aria-hidden />
+            <div>
+              <span className="text-muted-foreground font-medium">Execução / confirmação</span>
+              {sac.data_realizacao_confirmacao_execucao && (
+                <div className="font-mono tabular-nums text-emerald-700 dark:text-emerald-300">
+                  Conf.: {formatFlipDateTimeUtc(sac.data_realizacao_confirmacao_execucao)}
+                </div>
+              )}
+              {sac.data_execucao && (
+                <div className="font-mono tabular-nums text-emerald-700 dark:text-emerald-300">
+                  Exec.: {formatFlipDateTimeUtc(sac.data_execucao)}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+        {sac.data_ultima_atualizacao && (
+          <div className="flex gap-1">
+            <RefreshCw className="h-3.5 w-3.5 shrink-0 text-muted-foreground mt-0.5" aria-hidden />
+            <div>
+              <span className="text-muted-foreground font-medium">Últ. atualização</span>
+              <div className="font-mono tabular-nums">{formatFlipDateTimeUtc(sac.data_ultima_atualizacao)}</div>
+            </div>
+          </div>
+        )}
+        {fora && (
+          <div className="mt-1.5 rounded-lg border border-red-300/80 bg-red-500/10 dark:border-red-800 dark:bg-red-950/40 px-2 py-1.5 space-y-0.5">
+            <div className="flex items-center gap-1 text-red-700 dark:text-red-300 font-semibold text-[10px] uppercase tracking-wide">
+              <AlertCircle className="h-3.5 w-3.5" />
+              Fora do prazo — horários
+            </div>
+            <div className="text-[10px]">
+              <span className="text-muted-foreground">Abertura: </span>
+              <span className="font-mono font-medium">{formatFlipDateTimeUtc(sac.data_criacao)}</span>
+            </div>
+            <div className="text-[10px]">
+              <span className="text-muted-foreground">Finalização (efetiva): </span>
+              <span className="font-mono font-medium text-red-800 dark:text-red-200">
+                {formatFlipDateTimeUtc(sac.data_finalizacao_efetiva) || "—"}
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+    );
   };
 
   const toggleExpand = (id: string) => {
@@ -260,7 +400,7 @@ export default function SACsPage() {
                 <Label className="text-xs text-muted-foreground">Tipo</Label>
                 <Select
                   value={filters.tipo}
-                  onValueChange={(value: "IA" | "IRD" | "all") => patchFilters({ tipo: value })}
+                  onValueChange={(value: "IA" | "IRD" | "Bueiros" | "all") => patchFilters({ tipo: value })}
                 >
                   <SelectTrigger className="bg-background">
                     <SelectValue placeholder="Todos" />
@@ -269,6 +409,7 @@ export default function SACsPage() {
                     <SelectItem value="all">Todos</SelectItem>
                     <SelectItem value="IA">IA - Solicitações</SelectItem>
                     <SelectItem value="IRD">IRD - Reclamações</SelectItem>
+                    <SelectItem value="Bueiros">Bueiros (classificação vazia)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -284,11 +425,12 @@ export default function SACsPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="todos">Todos</SelectItem>
+                    <SelectItem value="Finalizado">Finalizado (com exec./confirmação)</SelectItem>
+                    <SelectItem value="Agendado">Agendado</SelectItem>
                     <SelectItem value="Aguardando Análise">Aguardando Análise</SelectItem>
                     <SelectItem value="Aguardando Agendamento">Aguardando Agendamento</SelectItem>
                     <SelectItem value="Em Execução">Em Execução</SelectItem>
-                    <SelectItem value="Executado">Executado</SelectItem>
-                    <SelectItem value="Finalizado">Finalizado</SelectItem>
+                    <SelectItem value="Executado">Executado (mesmo filtro que Finalizado)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -410,7 +552,9 @@ export default function SACsPage() {
                       <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider">Status</th>
                       <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider text-center">Classificação</th>
                       <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider text-center">Situação</th>
-                      <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider">Datas</th>
+                      <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider min-w-[11rem]">
+                        Linha do tempo
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
@@ -418,7 +562,7 @@ export default function SACsPage() {
                       <Fragment key={sac.id}>
                         <tr
                           className={`hover:bg-muted/50 transition-colors cursor-pointer ${
-                            (sac.responsividade_execucao?.trim() || "") === "NÃO" ? "bg-red-50/50 dark:bg-red-900/10" : ""
+                            sac.fora_do_prazo ? "bg-red-50/50 dark:bg-red-900/10" : ""
                           }`}
                           onClick={() => setSelectedSAC(sac)}
                         >
@@ -443,36 +587,20 @@ export default function SACsPage() {
                           <td className="px-6 py-4 max-w-xs truncate text-muted-foreground" title={sac.endereco_text}>
                             {sac.endereco_text}
                           </td>
-                          <td className="px-6 py-4">
-                            <span className={`px-2.5 py-0.5 text-xs font-medium rounded-full border ${getStatusColor(sac.status)} bg-opacity-10 border-opacity-20`}>
-                              {sac.status}
-                            </span>
+                          <td className="px-6 py-4 align-middle">
+                            <p className={getStatusTextClass(sac.status)}>{sac.status}</p>
                           </td>
                           <td className="px-6 py-4 text-center text-muted-foreground">
                             {sac.classificacao_servico || "—"}
                           </td>
-                          <td className="px-6 py-4 text-center">
-                            {(sac.responsividade_execucao?.trim() || "") === "NÃO" ? (
-                              <span className="px-2 py-1 text-xs font-semibold rounded-md bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 border border-red-200 dark:border-red-800">
-                                Fora do prazo
-                              </span>
-                            ) : (sac.responsividade_execucao?.trim() || "") === "SIM" ? (
-                              <span className="px-2 py-1 text-xs font-medium rounded-md bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 border border-green-200 dark:border-green-800">
-                                No prazo
-                              </span>
-                            ) : (
-                              <span className="text-xs font-medium text-blue-600 dark:text-blue-400">
-                                {sac.data_execucao ? "—" : "Em andamento"}
-                              </span>
-                            )}
+                          <td className="px-6 py-4 align-middle">
+                            {(() => {
+                              const sit = getSituacaoText(sac);
+                              return <p className={sit.className}>{sit.label}</p>;
+                            })()}
                           </td>
-                          <td className="px-6 py-4 text-xs text-muted-foreground">
-                            <div>C: {format(new Date(sac.data_criacao), "dd/MM/yy")}</div>
-                            {sac.data_execucao && (
-                              <div className="text-green-600 dark:text-green-400 font-medium mt-0.5">
-                                E: {format(new Date(sac.data_execucao), "dd/MM/yy")}
-                              </div>
-                            )}
+                          <td className="px-6 py-4 align-top text-muted-foreground">
+                            <SacDatesCell sac={sac} />
                           </td>
                         </tr>
                         {expandedIds[sac.id] && (
@@ -527,89 +655,245 @@ export default function SACsPage() {
         <Dialog open={!!selectedSAC} onOpenChange={() => setSelectedSAC(null)}>
           <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>SAC {selectedSAC?.protocolo}</DialogTitle>
+              <DialogTitle className="flex flex-wrap items-center gap-2">
+                <ClipboardList className="h-5 w-5 text-primary shrink-0" />
+                SAC {selectedSAC?.protocolo}
+              </DialogTitle>
               <DialogDescription>
-                Detalhes completos da solicitação/reclamação
+                Datas em horário de Brasília. O status exibido combina a planilha com a existência de data de execução ou
+                confirmação — evita “Finalizado” sem evidência na base.
               </DialogDescription>
             </DialogHeader>
             {selectedSAC && (
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-sm font-medium text-muted-foreground">Protocolo</label>
-                    <p className="text-sm font-mono">{selectedSAC.protocolo}</p>
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-muted-foreground">Status</label>
-                    <p className="text-sm">
-                      <span className={`px-2.5 py-0.5 text-xs font-medium rounded-full border ${getStatusColor(selectedSAC.status)}`}>
-                        {selectedSAC.status}
-                      </span>
-                    </p>
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-muted-foreground">Tipo de Serviço</label>
-                    <p className="text-sm">{selectedSAC.tipo_servico}</p>
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-muted-foreground">Subprefeitura</label>
-                    <p className="text-sm">{selectedSAC.subprefeitura}</p>
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-muted-foreground">Classificação</label>
-                    <p className="text-sm">{selectedSAC.classificacao_servico || "—"}</p>
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-muted-foreground">Responsividade Execução</label>
-                    <p className="text-sm">{selectedSAC.responsividade_execucao || "—"} (SIM = no prazo, NÃO = fora do prazo)</p>
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-muted-foreground">Data de Criação</label>
-                    <p className="text-sm">
-                      {selectedSAC.data_criacao 
-                        ? format(new Date(selectedSAC.data_criacao), "dd/MM/yyyy HH:mm")
-                        : "—"}
-                    </p>
-                  </div>
-                  {selectedSAC.data_agendamento && (
+              <div className="space-y-6">
+                <div className="rounded-xl border border-border/80 bg-muted/25 p-4 space-y-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-2">
+                    <ClipboardList className="h-4 w-4" />
+                    Identificação e situação
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
-                      <label className="text-sm font-medium text-muted-foreground">Data de Agendamento</label>
-                      <p className="text-sm">
-                        {format(new Date(selectedSAC.data_agendamento), "dd/MM/yyyy HH:mm")}
-                      </p>
+                      <p className="text-xs text-muted-foreground mb-0.5">Protocolo</p>
+                      <p className="text-sm font-mono font-semibold">{selectedSAC.protocolo}</p>
                     </div>
-                  )}
-                  {selectedSAC.data_execucao && (
                     <div>
-                      <label className="text-sm font-medium text-muted-foreground">Data de Execução</label>
-                      <p className="text-sm text-green-600 dark:text-green-400 font-medium">
-                        {format(new Date(selectedSAC.data_execucao), "dd/MM/yyyy HH:mm")}
-                      </p>
-                    </div>
-                  )}
-                  <div>
-                    <label className="text-sm font-medium text-muted-foreground">Situação</label>
-                    <p className="text-sm">
-                      {(selectedSAC.responsividade_execucao?.trim() || "") === "NÃO" ? (
-                        <span className="text-red-600 dark:text-red-400 font-semibold">Fora do prazo</span>
-                      ) : (selectedSAC.responsividade_execucao?.trim() || "") === "SIM" ? (
-                        <span className="text-green-600 dark:text-green-400 font-semibold">No prazo</span>
-                      ) : (
-                        <span className="text-blue-600 dark:text-blue-400 font-semibold">Em andamento</span>
+                      <p className="text-xs text-muted-foreground mb-0.5">Status (derivado)</p>
+                      <p className={getStatusTextClass(selectedSAC.status)}>{selectedSAC.status}</p>
+                      {selectedSAC.status_planilha && selectedSAC.status_planilha !== selectedSAC.status && (
+                        <p className="text-[11px] text-muted-foreground mt-1">
+                          Planilha: <span className="font-medium text-foreground">{selectedSAC.status_planilha}</span>
+                        </p>
                       )}
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-0.5">Tipo de serviço</p>
+                      <p className="text-sm">{selectedSAC.tipo_servico}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-0.5">Subprefeitura</p>
+                      <p className="text-sm">{selectedSAC.subprefeitura}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-0.5">
+                        Classificação (IA / IRD; bueiro costuma vir vazio)
+                      </p>
+                      <p className="text-sm">{selectedSAC.classificacao_servico || "—"}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-0.5">Responsividade (planilha)</p>
+                      <p className="text-sm">
+                        {selectedSAC.responsividade_execucao || "—"}
+                        <span className="text-muted-foreground text-xs block mt-0.5">
+                          SIM = no prazo · NÃO = fora do prazo
+                        </span>
+                      </p>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <p className="text-xs text-muted-foreground mb-0.5">Prazo / medição</p>
+                      {(() => {
+                        const sit = getSituacaoText(selectedSAC);
+                        return (
+                          <div className="space-y-1">
+                            <p className={sit.className}>{sit.label}</p>
+                            {sacUsesAcionamentoPrazoRules(selectedSAC) &&
+                              selectedSAC.data_acionamento_agendamento && (
+                                <p className="text-[11px] text-muted-foreground leading-snug">
+                                  IRD / bueiros: em aberto não entra como fora do prazo; após{" "}
+                                  <strong>finalização</strong>, compara-se o dia da execução à data de{" "}
+                                  <strong>acionamento/agendamento</strong> da planilha.
+                                </p>
+                              )}
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-border/80 bg-card p-4 space-y-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-2">
+                    <Calendar className="h-4 w-4" />
+                    Linha do tempo
+                  </p>
+                  {(() => {
+                    type Step = { key: string; icon: ReactNode; title: string; hint: string; body: ReactNode };
+                    const steps: Step[] = [
+                      {
+                        key: "reg",
+                        icon: <Calendar className="h-5 w-5 shrink-0 text-muted-foreground" />,
+                        title: "Registro do chamado",
+                        hint: "Data de abertura na base FLIP",
+                        body: (
+                          <p className="font-mono text-sm mt-0.5">
+                            {formatFlipDateTimeUtcWithWeekday(selectedSAC.data_criacao)}
+                          </p>
+                        ),
+                      },
+                    ];
+                    if (selectedSAC.data_acionamento_agendamento) {
+                      steps.push({
+                        key: "acion",
+                        icon: <Bell className="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />,
+                        title: "Acionamento / agendamento",
+                        hint: "Coluna Data_Acionamento_Agendamento — IRD e bueiros (classificação vazia); referência de prazo após finalização",
+                        body: (
+                          <p className="font-mono text-sm mt-0.5 text-amber-900 dark:text-amber-100">
+                            {formatFlipDateTimeUtcWithWeekday(selectedSAC.data_acionamento_agendamento)}
+                          </p>
+                        ),
+                      });
+                    }
+                    const sameAgend =
+                      selectedSAC.data_agendamento &&
+                      selectedSAC.data_acionamento_agendamento &&
+                      selectedSAC.data_agendamento === selectedSAC.data_acionamento_agendamento;
+                    if (selectedSAC.data_agendamento && !sameAgend) {
+                      steps.push({
+                        key: "ag",
+                        icon: <CalendarClock className="h-5 w-5 shrink-0 text-violet-600 dark:text-violet-400" />,
+                        title: "Agendamento (visita / execução)",
+                        hint: "Quando informado na planilha além do acionamento",
+                        body: (
+                          <p className="font-mono text-sm mt-0.5 text-violet-800 dark:text-violet-200">
+                            {formatFlipDateTimeUtcWithWeekday(selectedSAC.data_agendamento)}
+                          </p>
+                        ),
+                      });
+                    }
+                    if (selectedSAC.data_realizacao_confirmacao_execucao || selectedSAC.data_execucao) {
+                      steps.push({
+                        key: "ex",
+                        icon: <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600 dark:text-emerald-400" />,
+                        title: "Execução e confirmação",
+                        hint: "Confirmação de realização e/ou data de execução na planilha",
+                        body: (
+                          <div className="space-y-1 mt-0.5">
+                            {selectedSAC.data_realizacao_confirmacao_execucao && (
+                              <p className="font-mono text-sm text-emerald-800 dark:text-emerald-200">
+                                Confirmação:{" "}
+                                {formatFlipDateTimeUtcWithWeekday(selectedSAC.data_realizacao_confirmacao_execucao)}
+                              </p>
+                            )}
+                            {selectedSAC.data_execucao && (
+                              <p className="font-mono text-sm text-emerald-800 dark:text-emerald-200">
+                                Execução: {formatFlipDateTimeUtcWithWeekday(selectedSAC.data_execucao)}
+                              </p>
+                            )}
+                          </div>
+                        ),
+                      });
+                    }
+                    if (selectedSAC.data_ultima_atualizacao) {
+                      steps.push({
+                        key: "ult",
+                        icon: <RefreshCw className="h-5 w-5 shrink-0 text-muted-foreground" />,
+                        title: "Última atualização do registro",
+                        hint: "Última movimentação informada na planilha",
+                        body: (
+                          <p className="font-mono text-sm mt-0.5">
+                            {formatFlipDateTimeUtcWithWeekday(selectedSAC.data_ultima_atualizacao)}
+                          </p>
+                        ),
+                      });
+                    }
+                    return (
+                      <>
+                        <div className="space-y-0">
+                          {steps.map((step, i) => (
+                            <div key={step.key} className="flex gap-0">
+                              <div className="flex w-9 shrink-0 flex-col items-center pt-1">
+                                <div className="z-10 flex h-7 w-7 items-center justify-center rounded-full border-2 border-background bg-card shadow-sm">
+                                  <span className="h-2.5 w-2.5 rounded-full bg-primary" aria-hidden />
+                                </div>
+                                {i < steps.length - 1 && (
+                                  <div className="w-px flex-1 min-h-[1.75rem] bg-border" aria-hidden />
+                                )}
+                              </div>
+                              <div className="min-w-0 flex-1 flex gap-3 pb-8 pt-0.5 last:pb-2">
+                                {step.icon}
+                                <div className="min-w-0">
+                                  <p className="font-medium text-foreground">{step.title}</p>
+                                  <p className="text-xs text-muted-foreground">{step.hint}</p>
+                                  {step.body}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        {selectedSAC.fora_do_prazo && (
+                          <div className="rounded-lg border border-red-300/80 bg-red-500/10 dark:bg-red-950/35 p-3 text-sm space-y-1">
+                            <p className="font-semibold text-red-800 dark:text-red-200 flex items-center gap-2">
+                              <AlertCircle className="h-4 w-4 shrink-0" />
+                              Fora do prazo — horários para conferência
+                            </p>
+                            <p className="text-xs text-red-900/90 dark:text-red-100/90">
+                              <span className="text-muted-foreground dark:text-red-200/80">Registro: </span>
+                              <span className="font-mono font-medium">{formatFlipDateTimeUtc(selectedSAC.data_criacao)}</span>
+                            </p>
+                            {selectedSAC.data_acionamento_agendamento && (
+                              <p className="text-xs text-red-900/90 dark:text-red-100/90">
+                                <span className="text-muted-foreground dark:text-red-200/80">Acionam. / agend.: </span>
+                                <span className="font-mono font-medium">
+                                  {formatFlipDateTimeUtc(selectedSAC.data_acionamento_agendamento)}
+                                </span>
+                              </p>
+                            )}
+                            <p className="text-xs text-red-900/90 dark:text-red-100/90">
+                              <span className="text-muted-foreground dark:text-red-200/80">Finalização efetiva: </span>
+                              <span className="font-mono font-semibold">
+                                {formatFlipDateTimeUtc(selectedSAC.data_finalizacao_efetiva) || "—"}
+                              </span>
+                            </p>
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
+
+                <div className="rounded-xl border border-border/80 bg-muted/15 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-2 mb-2">
+                    <MapPin className="h-4 w-4" />
+                    Local
+                  </p>
+                  <p className="text-sm leading-relaxed">{selectedSAC.endereco_text}</p>
+                  {selectedSAC.lat != null && selectedSAC.lng != null && (
+                    <p className="text-xs font-mono text-muted-foreground mt-2">
+                      {selectedSAC.lat}, {selectedSAC.lng}
                     </p>
-                  </div>
+                  )}
                 </div>
-                <div>
-                  <label className="text-sm font-medium text-muted-foreground">Endereço</label>
-                  <p className="text-sm">{selectedSAC.endereco_text}</p>
-                </div>
-                {(selectedSAC.lat && selectedSAC.lng) && (
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs text-muted-foreground">
                   <div>
-                    <label className="text-sm font-medium text-muted-foreground">Coordenadas</label>
-                    <p className="text-sm font-mono">{selectedSAC.lat}, {selectedSAC.lng}</p>
+                    <span className="font-medium text-foreground">Procedência: </span>
+                    {selectedSAC.procedente_por_status || "—"}
                   </div>
-                )}
+                  <div>
+                    <span className="font-medium text-foreground">Fora de escopo: </span>
+                    {selectedSAC.finalizado_fora_de_escopo || "—"}
+                  </div>
+                </div>
               </div>
             )}
           </DialogContent>

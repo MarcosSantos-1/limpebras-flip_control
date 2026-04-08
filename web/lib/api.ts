@@ -75,9 +75,18 @@ export interface SAC {
   endereco_text: string;
   lat?: number;
   lng?: number;
-  data_criacao: string;
-  data_agendamento?: string;
-  data_execucao?: string;
+  data_criacao: string | null;
+  data_agendamento?: string | null;
+  /** Coluna Data_Acionamento_Agendamento (ex.: IRD) — prazo de atendimento ao agendamento */
+  data_acionamento_agendamento?: string | null;
+  data_execucao?: string | null;
+  /** Confirmação de realização (planilha), quando existir */
+  data_realizacao_confirmacao_execucao?: string | null;
+  /** max(data_realizacao_confirmacao, data_execucao) — uso em linha do tempo / fora do prazo */
+  data_finalizacao_efetiva?: string | null;
+  data_ultima_atualizacao?: string | null;
+  /** Status bruto da planilha (quando importado) */
+  status_planilha?: string | null;
   prazo_max_hours?: number;
   horas_ate_execucao?: number | null;
   fora_do_prazo?: boolean;

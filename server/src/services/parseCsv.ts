@@ -147,6 +147,11 @@ export interface SacRow {
   servico: string;
   endereco: string;
   data_execucao: Date | null;
+  data_agendamento: Date | null;
+  data_acionamento_agendamento: Date | null;
+  data_realizacao_confirmacao_execucao: Date | null;
+  data_ultima_atualizacao: Date | null;
+  status_planilha: string;
   raw: Record<string, string>;
 }
 
@@ -157,7 +162,18 @@ export function parseSacCsv(buffer: Buffer, sourceFile: string): SacRow[] {
 
   return records.map((row) => {
     const dataRegistroStr = getCanonical(row, ["data_registro"]);
-    const dataExecucaoStr = getCanonical(row, ["data_execucao"]);
+    const dataExecucaoStr = getCanonical(row, ["data_execucao", "data_de_execucao"]);
+    const dataAgendStr = getCanonical(row, ["data_agendamento", "data_de_agendamento"]);
+    const dataAcionamentoStr = getCanonical(row, [
+      "data_acionamento_agendamento",
+      "data_de_acionamento_agendamento",
+    ]);
+    const dataRealizacaoStr = getCanonical(row, [
+      "data_realizacao_confirmacao_execucao",
+      "data_realizacao_da_confirmacao_de_execucao",
+    ]);
+    const dataUltimaStr = getCanonical(row, ["data_ultima_atualizacao", "data_da_ultima_atualizacao"]);
+    const statusPl = getCanonical(row, ["status", "situacao", "status_do_chamado", "status_chamado"]);
     return {
       numero_chamado: getCanonical(row, ["numero_chamado"]),
       data_registro: parseFlipDate(dataRegistroStr),
@@ -172,6 +188,11 @@ export function parseSacCsv(buffer: Buffer, sourceFile: string): SacRow[] {
       servico: getCanonical(row, ["servico"]),
       endereco: getCanonical(row, ["endereco"]),
       data_execucao: parseFlipDate(dataExecucaoStr),
+      data_agendamento: parseFlipDate(dataAgendStr),
+      data_acionamento_agendamento: parseFlipDate(dataAcionamentoStr),
+      data_realizacao_confirmacao_execucao: parseFlipDate(dataRealizacaoStr),
+      data_ultima_atualizacao: parseFlipDate(dataUltimaStr),
+      status_planilha: statusPl.trim(),
       raw: { ...row },
     } as SacRow;
   });

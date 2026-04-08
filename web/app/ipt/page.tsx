@@ -19,14 +19,12 @@ import {
   Cpu,
   Info,
   Package,
-  PanelBottomClose,
-  PanelBottomOpen,
   Plus,
   RotateCcw,
+  Search,
   Sparkles,
   TrendingUp,
   Truck,
-  X,
 } from "lucide-react";
 import Lottie from "lottie-react";
 import loadingAnimation from "@/public/Loading.json";
@@ -208,7 +206,7 @@ const ORIGEM_VALUES = ["ambos", "somente_selimp", "somente_nosso", "sem_despacho
 type OrigemValue = (typeof ORIGEM_VALUES)[number];
 const MIN_COL_WIDTH = 72;
 const MAX_COL_WIDTH = 520;
-type TableScope = "dia_anterior" | "periodo" | "todos";
+type TableScope = "dia_anterior" | "periodo";
 
 export default function IPTPage() {
   const [selectedMonth, setSelectedMonth] = useState(() => startOfMonth(new Date()));
@@ -218,7 +216,7 @@ export default function IPTPage() {
   const [baseDadosCardFilter, setBaseDadosCardFilter] = useState<"inativos" | "obs_global" | "obs_diaria" | null>(null);
   const [origemFilter, setOrigemFilter] = useState<"all" | "ambos" | "somente_selimp" | "somente_nosso" | "sem_despacho">("all");
   const [zeroFilter, setZeroFilter] = useState<"all" | "zerados" | "nao_zerados">("all");
-  const [tableExpanded, setTableExpanded] = useState(true);
+  const [tableSearchQuery, setTableSearchQuery] = useState("");
   const [headerMenuOpen, setHeaderMenuOpen] = useState<TableColumnKey | null>(null);
   const [subSiglaFilter, setSubSiglaFilter] = useState<Array<(typeof SUB_SIGLAS)[number]>>([
     "CV",
@@ -348,9 +346,22 @@ export default function IPTPage() {
     return map;
   }, [iptPreviewTable]);
 
+  const normalizeSearch = (s: string) =>
+    s
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .trim();
+
   const filteredComparativo = useMemo(() => {
     const rows = sourceRows;
+    const q = normalizeSearch(tableSearchQuery);
     const filtered = rows.filter((row) => {
+      if (q) {
+        const planoN = normalizeSearch(row.plano || "");
+        const servN = normalizeSearch(row.tipo_servico || "");
+        if (!planoN.includes(q) && !servN.includes(q)) return false;
+      }
       if (subprefeituraFilter !== "all" && row.subprefeitura !== subprefeituraFilter) return false;
       const origemEfetiva = row.percentual_selimp == null && row.percentual_nosso == null ? "sem_despacho" : row.origem;
       if (origemFilter !== "all" && origemEfetiva !== origemFilter) return false;
@@ -413,6 +424,7 @@ export default function IPTPage() {
     serviceFilterValues,
     observacoes.globais,
     observacoes.diarias,
+    tableSearchQuery,
   ]);
 
   const comparativoInsights = useMemo(() => {
@@ -582,6 +594,7 @@ export default function IPTPage() {
     setSubSiglaFilter([...SUB_SIGLAS]);
     setServiceFilterValues(serviceOptions);
     setOrigemFilterValues([...ORIGEM_VALUES]);
+    setTableSearchQuery("");
     setHeaderMenuOpen(null);
   };
 
@@ -607,7 +620,6 @@ export default function IPTPage() {
   }, [selectedMonth]);
 
   const tableRangeCalendarValue = useMemo((): DateRange | undefined => {
-    if (tableScope === "todos") return undefined;
     if (tableScope === "dia_anterior") {
       const y = startOfDay(subDays(new Date(), 1));
       return { from: y, to: y };
@@ -621,11 +633,11 @@ export default function IPTPage() {
     return undefined;
   }, [tableScope, tablePeriodRange]);
 
-  const periodModeLabel = tableScope === "todos" ? "" : tableScope === "dia_anterior" ? "D-1" : "Período";
+  const periodModeLabel = tableScope === "dia_anterior" ? "D-1" : "Período";
 
   const handleTableRangeChange = (r: DateRange | undefined) => {
     if (!r?.from || !r?.to) {
-      setTableScope("todos");
+      setTableScope("dia_anterior");
       setTablePeriodRange(null);
       return;
     }
@@ -1274,15 +1286,29 @@ export default function IPTPage() {
                   <div
                     key={item.tipo_servico}
                     className="group rounded-xl bg-background/60 p-3 shadow-sm transition-all hover:shadow-md hover:bg-cyan-500/5 hover:ring-1 hover:ring-cyan-500/20 cursor-default"
-                    title={`${item.tipo_servico || "Não informado"}: ${pct(item.media_execucao)} com zerados | ${pct(item.media_sem_zerados)} sem zerados | ${item.total_despachos ?? 0} despachos`}
+                    title={`${item.total_despachos ?? 0} despachos SELIMP no mês${item.despachos_zerados != null ? ` · ${item.despachos_zerados} com 0%` : ""}`}
                   >
                     <div className="mb-2 flex items-center justify-between gap-2">
-                      <span className="truncate font-semibold text-sm group-hover:text-cyan-700 dark:group-hover:text-cyan-300">
+                      <span className="truncate font-semibold text-sm group-hover:text-cyan-700 dark:group-hover:text-cyan-300 min-w-0">
                         {item.tipo_servico || "Não informado"}
                       </span>
-                      <span className="text-lg font-bold tabular-nums text-cyan-600 dark:text-cyan-400 shrink-0">
-                        {pct(item.media_execucao)}
-                      </span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span
+                          className="text-lg font-bold tabular-nums text-cyan-600 dark:text-cyan-400 underline decoration-dotted decoration-cyan-600/50 underline-offset-2 cursor-help"
+                          title="Com zerados: média do percentual SELIMP em todos os despachos do período (inclui execução 0%)."
+                        >
+                          {pct(item.media_execucao)}
+                        </span>
+                        <span className="text-xs font-semibold text-muted-foreground" aria-hidden>
+                          /
+                        </span>
+                        <span
+                          className="text-base font-bold tabular-nums text-emerald-600 dark:text-emerald-400 underline decoration-dotted decoration-emerald-600/50 underline-offset-2 cursor-help"
+                          title="Sem zerados: média apenas nos despachos SELIMP com percentual maior que 0%."
+                        >
+                          {pct(item.media_sem_zerados ?? null)}
+                        </span>
+                      </div>
                     </div>
                     <div className="flex items-center gap-2">
                       <div className="flex-1 h-3 rounded-full bg-muted/50 overflow-hidden">
@@ -1377,14 +1403,6 @@ export default function IPTPage() {
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                onClick={() => setTableExpanded((prev) => !prev)}
-                className="h-10 px-4 rounded-lg text-sm font-bold bg-slate-600 text-white shadow-lg hover:bg-slate-500 transition-all inline-flex items-center gap-2"
-              >
-                {tableExpanded ? <PanelBottomClose className="h-4 w-4" /> : <PanelBottomOpen className="h-4 w-4" />}
-                {tableExpanded ? "Encolher tabela" : "Mostrar tabela"}
-              </button>
               <Select value={zeroFilter} onValueChange={(v) => setZeroFilter(v as "all" | "zerados" | "nao_zerados")}>
                 <SelectTrigger className="h-10 w-auto min-w-[140px] rounded-lg border-0 bg-blue-600 text-white font-bold shadow-lg hover:bg-blue-500 [&>svg]:text-white">
                   <BarChart2 className="h-4 w-4 shrink-0 mr-2" />
@@ -1403,7 +1421,7 @@ export default function IPTPage() {
                   onChange={handleTableRangeChange}
                   maxDate={new Date()}
                   modeLabel={periodModeLabel}
-                  emptyLabel="Todos"
+                  emptyLabel="D-1"
                   className="max-w-[min(100vw-8rem,22rem)]"
                   footer={(close) => (
                     <>
@@ -1457,19 +1475,6 @@ export default function IPTPage() {
 
               <button
                 type="button"
-                onClick={() => {
-                  setTableScope("todos");
-                  setTablePeriodRange(null);
-                }}
-                className="h-10 px-4 rounded-lg text-sm font-bold bg-slate-600 text-white shadow-lg hover:bg-slate-500 transition-all"
-                title="Mostrar todos os setores (visão abrangente)"
-              >
-                <X className="h-4 w-4 inline mr-1.5 -mt-0.5" />
-                Apagar período
-              </button>
-
-              <button
-                type="button"
                 onClick={clearAllTableFilters}
                 className="h-10 px-4 rounded-lg text-sm font-bold bg-emerald-600 text-white shadow-lg hover:bg-emerald-500 transition-all inline-flex items-center gap-2"
               >
@@ -1478,8 +1483,22 @@ export default function IPTPage() {
               </button>
             </div>
 
-            {tableExpanded && (
-              <div className="rounded-2xl bg-background/60 shadow-inner transition-all">
+            <div className="relative">
+              <Search
+                className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/80"
+                aria-hidden
+              />
+              <input
+                type="search"
+                value={tableSearchQuery}
+                onChange={(e) => setTableSearchQuery(e.target.value)}
+                placeholder="Buscar por plano (setor) ou serviço…"
+                className=" w-4xl rounded-xl border-2 border-zinc-200 dark:border-zinc-500 h-12 bg-background/80 py-2.5 pl-10 pr-3 text-sm shadow-md ring-1 ring-black/5 transition-[box-shadow,background-color] placeholder:text-muted-foreground/90 focus:bg-background focus:outline-none focus:ring-2 focus:ring-emerald-500/35 dark:bg-background/60 dark:ring-white/10"
+                aria-label="Buscar plano ou serviço na tabela"
+              />
+            </div>
+
+            <div className="rounded-2xl bg-background/60 shadow-inner transition-all">
                 <table className="w-full text-sm table-fixed">
                   <colgroup>
                     <col style={{ width: 36 }} />
@@ -2046,15 +2065,15 @@ export default function IPTPage() {
                                                 <span className="flex items-center gap-1"><Calendar className="h-3.5 w-3.5" /> Data</span>
                                               </th>
                                               <th className="text-left py-2 px-2">
-                                                <span className="flex items-center gap-1"><Check className="h-3.5 w-3.5" /> Esperado</span>
+                                                <span className="flex items-center gap-1"><Check className="h-3.5 w-3.5" /> Esperado?</span>
                                               </th>
                                               <th className="text-left py-2 px-2">% SELIMP</th>
                                               <th className="text-left py-2 px-2">% DDMX</th>
                                               <th className="text-left py-2 px-2">
-                                                <span className="flex items-center gap-1"><Truck className="h-3.5 w-3.5" /> Des. Selimp</span>
+                                                <span className="flex items-center gap-1"><Truck className="h-3.5 w-3.5" /> Des. Selimp?</span>
                                               </th>
                                               <th className="text-left py-2 px-2">
-                                                <span className="flex items-center gap-1"><Truck className="h-3.5 w-3.5" /> Des. DDMX</span>
+                                                <span className="flex items-center gap-1"><Truck className="h-3.5 w-3.5" /> Des. DDMX?</span>
                                               </th>
                                               <th className="text-left py-2 px-2 w-20">Obs</th>
                                             </tr>
@@ -2195,7 +2214,6 @@ export default function IPTPage() {
                 </tbody>
               </table>
               </div>
-            )}
           </CardContent>
         </Card>
 

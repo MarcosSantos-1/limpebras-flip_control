@@ -1,6 +1,12 @@
 import { FastifyPluginAsync } from "fastify";
 import { pool } from "../db.js";
 import { cacheKey, getOrSet } from "../cache.js";
+import {
+  computeForaDoPrazoSac,
+  deriveSacStatus,
+  effectiveSacExecutionDate,
+  toIsoOrNull,
+} from "../services/sac-derive.js";
 
 type SacsListQuery = {
   periodo_inicial?: string;
@@ -36,8 +42,43 @@ function buildSacsWhereFragment(q: SacsListQuery): { fragment: string; params: (
   }
 
   const foraDoPrazoFlag = q.fora_do_prazo === true || q.fora_do_prazo === "true";
+  /** IRD ou bueiro (classificação vazia): mesmas regras de prazo na query. */
+  const sqlAcionPrazoClass = `(
+      TRIM(COALESCE(classificacao_do_servico, '')) = 'Reclamação'
+      OR TRIM(COALESCE(classificacao_do_servico, '')) = ''
+    )`;
   if (foraDoPrazoFlag) {
-    fragment += ` AND UPPER(TRIM(COALESCE(responsividade_execucao, ''))) = 'NÃO'`;
+    fragment += ` AND (
+      (
+        TRIM(COALESCE(classificacao_do_servico, '')) = 'Solicitação'
+        AND UPPER(TRIM(COALESCE(responsividade_execucao, ''))) = 'NÃO'
+      )
+      OR (
+        ${sqlAcionPrazoClass}
+        AND data_acionamento_agendamento IS NULL
+        AND (data_execucao IS NOT NULL OR data_realizacao_confirmacao_execucao IS NOT NULL)
+        AND UPPER(TRIM(COALESCE(responsividade_execucao, ''))) = 'NÃO'
+      )
+      OR (
+        ${sqlAcionPrazoClass}
+        AND data_acionamento_agendamento IS NOT NULL
+        AND (
+          CASE
+            WHEN data_realizacao_confirmacao_execucao IS NOT NULL AND data_execucao IS NOT NULL
+              THEN GREATEST(data_realizacao_confirmacao_execucao, data_execucao)
+            ELSE COALESCE(data_realizacao_confirmacao_execucao, data_execucao)
+          END
+        ) IS NOT NULL
+        AND (
+          (CASE
+            WHEN data_realizacao_confirmacao_execucao IS NOT NULL AND data_execucao IS NOT NULL
+              THEN GREATEST(data_realizacao_confirmacao_execucao, data_execucao)
+            ELSE COALESCE(data_realizacao_confirmacao_execucao, data_execucao)
+          END AT TIME ZONE 'America/Sao_Paulo')::date
+          > (data_acionamento_agendamento AT TIME ZONE 'America/Sao_Paulo')::date
+        )
+      )
+    )`;
   }
 
   if (q.tipo === "IA") {
@@ -47,6 +88,9 @@ function buildSacsWhereFragment(q: SacsListQuery): { fragment: string; params: (
     fragment += ` AND TRIM(COALESCE(classificacao_do_servico, '')) = 'Reclamação'`;
     fragment += ` AND UPPER(TRIM(COALESCE(finalizado_fora_de_escopo, ''))) = 'NÃO'`;
     fragment += ` AND UPPER(TRIM(COALESCE(procedente_por_status, ''))) = 'PROCEDE'`;
+  } else if (q.tipo === "Bueiros") {
+    fragment += ` AND TRIM(COALESCE(classificacao_do_servico, '')) = ''`;
+    fragment += ` AND UPPER(TRIM(COALESCE(finalizado_fora_de_escopo, ''))) = 'NÃO'`;
   }
 
   if (q.tipo_servico && q.tipo_servico !== "todos") {
@@ -64,14 +108,16 @@ function buildSacsWhereFragment(q: SacsListQuery): { fragment: string; params: (
   }
 
   if (q.status && q.status !== "todos") {
-    if (q.status === "Finalizado" || q.status === "Executado") {
-      fragment += ` AND data_execucao IS NOT NULL`;
+    if (q.status === "Finalizado" || q.status === "Executado" || q.status === "Concluído") {
+      fragment += ` AND (data_execucao IS NOT NULL OR data_realizacao_confirmacao_execucao IS NOT NULL)`;
+    } else if (q.status === "Agendado") {
+      fragment += ` AND (data_agendamento IS NOT NULL OR data_acionamento_agendamento IS NOT NULL) AND data_execucao IS NULL AND data_realizacao_confirmacao_execucao IS NULL`;
     } else if (
       q.status === "Em Execução" ||
       q.status === "Aguardando Agendamento" ||
       q.status === "Aguardando Análise"
     ) {
-      fragment += ` AND data_execucao IS NULL`;
+      fragment += ` AND data_execucao IS NULL AND data_realizacao_confirmacao_execucao IS NULL`;
     }
   }
 
@@ -83,6 +129,71 @@ function buildSacsWhereFragment(q: SacsListQuery): { fragment: string; params: (
   }
 
   return { fragment, params };
+}
+
+type SacPgRow = {
+  id: unknown;
+  numero_chamado: string | null;
+  data_registro: Date | string | null;
+  data_execucao: Date | string | null;
+  data_agendamento?: Date | string | null;
+  data_acionamento_agendamento?: Date | string | null;
+  data_realizacao_confirmacao_execucao?: Date | string | null;
+  data_ultima_atualizacao?: Date | string | null;
+  status_planilha?: string | null;
+  classificacao_do_servico: string | null;
+  responsividade_execucao: string | null;
+  procedente_por_status: string | null;
+  finalizado_fora_de_escopo: string | null;
+  regional: string | null;
+  servico: string | null;
+  endereco: string | null;
+};
+
+function mapSacRowToApi(row: SacPgRow) {
+  const dataExec = row.data_execucao ? new Date(row.data_execucao) : null;
+  const dataReal = row.data_realizacao_confirmacao_execucao
+    ? new Date(row.data_realizacao_confirmacao_execucao)
+    : null;
+  const dataAgend = row.data_agendamento ? new Date(row.data_agendamento) : null;
+  const dataAcion = row.data_acionamento_agendamento ? new Date(row.data_acionamento_agendamento) : null;
+  const dataUlt = row.data_ultima_atualizacao ? new Date(row.data_ultima_atualizacao) : null;
+  const eff = effectiveSacExecutionDate(dataReal, dataExec);
+  const status = deriveSacStatus({
+    status_planilha: row.status_planilha,
+    data_execucao: dataExec,
+    data_realizacao_confirmacao: dataReal,
+    data_agendamento: dataAgend,
+    data_acionamento_agendamento: dataAcion,
+  });
+  const fora_do_prazo = computeForaDoPrazoSac({
+    classificacao_do_servico: row.classificacao_do_servico,
+    responsividade_execucao: row.responsividade_execucao,
+    data_acionamento_agendamento: dataAcion,
+    data_execucao: dataExec,
+    data_realizacao_confirmacao: dataReal,
+  });
+  return {
+    id: String(row.id),
+    protocolo: row.numero_chamado ?? "",
+    tipo_servico: row.servico ?? "",
+    status,
+    subprefeitura: row.regional,
+    endereco_text: row.endereco,
+    data_criacao: toIsoOrNull(row.data_registro),
+    data_agendamento: toIsoOrNull(dataAgend),
+    data_acionamento_agendamento: toIsoOrNull(dataAcion),
+    data_execucao: toIsoOrNull(dataExec),
+    data_realizacao_confirmacao_execucao: toIsoOrNull(dataReal),
+    data_finalizacao_efetiva: toIsoOrNull(eff),
+    data_ultima_atualizacao: toIsoOrNull(dataUlt),
+    status_planilha: row.status_planilha ?? null,
+    classificacao_servico: row.classificacao_do_servico,
+    responsividade_execucao: row.responsividade_execucao,
+    finalizado_fora_de_escopo: row.finalizado_fora_de_escopo,
+    procedente_por_status: row.procedente_por_status,
+    fora_do_prazo,
+  };
 }
 
 export const sacsRoutes: FastifyPluginAsync = async (fastify) => {
@@ -187,27 +298,15 @@ export const sacsRoutes: FastifyPluginAsync = async (fastify) => {
       const limitPos = whereParams.length + 1;
       const offsetPos = whereParams.length + 2;
       const listSql = `
-        SELECT id, numero_chamado, data_registro, classificacao_do_servico, responsividade_execucao, procedente_por_status, finalizado_fora_de_escopo, regional, servico, endereco, data_execucao
+        SELECT id, numero_chamado, data_registro, classificacao_do_servico, responsividade_execucao,
+          procedente_por_status, finalizado_fora_de_escopo, regional, servico, endereco, data_execucao,
+          data_agendamento, data_acionamento_agendamento, data_realizacao_confirmacao_execucao, data_ultima_atualizacao, status_planilha
         FROM sacs WHERE 1=1 ${fragment}
         ORDER BY data_registro DESC
         LIMIT $${limitPos} OFFSET $${offsetPos}`;
       const listParams = [...whereParams, pageSize, offset];
       const r = await pool.query(listSql, listParams);
-      const rows = r.rows.map((row) => ({
-        id: String(row.id),
-        protocolo: row.numero_chamado,
-        tipo_servico: row.servico,
-        status: "Finalizado",
-        subprefeitura: row.regional,
-        endereco_text: row.endereco,
-        data_criacao: row.data_registro ? new Date(row.data_registro).toISOString() : null,
-        data_execucao: row.data_execucao ? new Date(row.data_execucao).toISOString() : null,
-        classificacao_servico: row.classificacao_do_servico,
-        responsividade_execucao: row.responsividade_execucao,
-        finalizado_fora_de_escopo: row.finalizado_fora_de_escopo,
-        procedente_por_status: row.procedente_por_status,
-        fora_do_prazo: (row.responsividade_execucao || "").trim().toUpperCase() === "NÃO",
-      }));
+      const rows = r.rows.map((row: SacPgRow) => mapSacRowToApi(row));
 
       return {
         items: rows,
@@ -233,20 +332,7 @@ export const sacsRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get<{ Params: { id: string } }>("/sacs/:id", async (request, reply) => {
     const r = await pool.query("SELECT * FROM sacs WHERE id = $1", [request.params.id]);
     if (r.rows.length === 0) return reply.code(404).send({ detail: "SAC não encontrado" });
-    const row = r.rows[0];
-    return {
-      id: String(row.id),
-      protocolo: row.numero_chamado,
-      tipo_servico: row.servico,
-      status: "Finalizado",
-      subprefeitura: row.regional,
-      endereco_text: row.endereco,
-      data_criacao: row.data_registro ? new Date(row.data_registro).toISOString() : null,
-      data_execucao: row.data_execucao ? new Date(row.data_execucao).toISOString() : null,
-      classificacao_servico: row.classificacao_do_servico,
-      responsividade_execucao: row.responsividade_execucao,
-      procedente_por_status: row.procedente_por_status,
-    };
+    return mapSacRowToApi(r.rows[0] as SacPgRow);
   });
 
   fastify.post<{ Params: { id: string }; Querystring: { data_agendamento: string } }>(

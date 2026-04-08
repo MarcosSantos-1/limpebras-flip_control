@@ -23,7 +23,7 @@ export interface ReportDiarioResponse {
 
 export function useIptData(
   selectedMonth: Date,
-  tableScope: "dia_anterior" | "periodo" | "todos",
+  tableScope: "dia_anterior" | "periodo",
   tablePeriodRange: { inicio: Date; fim: Date } | null,
   subprefeituraFilter: string
 ) {
@@ -31,9 +31,7 @@ export function useIptData(
   const periodoKpisFim = format(endOfMonth(selectedMonth), "yyyy-MM-dd");
 
   let tableKey: string;
-  if (tableScope === "todos") {
-    tableKey = `ipt:all:${subprefeituraFilter}`;
-  } else if (tableScope === "periodo" && tablePeriodRange) {
+  if (tableScope === "periodo" && tablePeriodRange) {
     tableKey = `ipt:${format(tablePeriodRange.inicio, "yyyy-MM-dd")}:${format(tablePeriodRange.fim, "yyyy-MM-dd")}:${subprefeituraFilter}`;
   } else {
     const ontem = subDays(new Date(), 1);
@@ -46,10 +44,7 @@ export function useIptData(
 
   let obsScopeStart: string | undefined;
   let obsScopeEnd: string | undefined;
-  if (tableScope === "todos") {
-    obsScopeStart = format(startOfMonth(new Date()), "yyyy-MM-dd");
-    obsScopeEnd = format(endOfMonth(new Date()), "yyyy-MM-dd");
-  } else if (tableScope === "periodo" && tablePeriodRange) {
+  if (tableScope === "periodo" && tablePeriodRange) {
     obsScopeStart = format(tablePeriodRange.inicio, "yyyy-MM-dd");
     obsScopeEnd = format(tablePeriodRange.fim, "yyyy-MM-dd");
   } else {
@@ -76,9 +71,6 @@ export function useIptData(
   const previewTableSwr = useSWR(
     tableKey,
     async () => {
-      if (tableScope === "todos") {
-        return apiService.getIptPreview(undefined, undefined, true, subprefeituraFilter);
-      }
       if (tableScope === "periodo" && tablePeriodRange) {
         return apiService.getIptPreview(
           format(tablePeriodRange.inicio, "yyyy-MM-dd"),

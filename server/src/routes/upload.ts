@@ -496,8 +496,13 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
               servico = $8,
               endereco = $9,
               data_execucao = $10,
-              raw = $11,
-              source_file = $12,
+              data_agendamento = $11,
+              data_acionamento_agendamento = $12,
+              data_realizacao_confirmacao_execucao = $13,
+              data_ultima_atualizacao = $14,
+              status_planilha = $15,
+              raw = $16,
+              source_file = $17,
               updated_at = NOW()
             WHERE numero_chamado = $1`,
             [
@@ -511,6 +516,11 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
               r.servico || null,
               r.endereco || null,
               r.data_execucao,
+              r.data_agendamento,
+              r.data_acionamento_agendamento,
+              r.data_realizacao_confirmacao_execucao,
+              r.data_ultima_atualizacao,
+              r.status_planilha || null,
               JSON.stringify(r.raw),
               sourceFile,
             ]
@@ -522,8 +532,10 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
           await client.query(
             `INSERT INTO sacs (
               numero_chamado, data_registro, finalizado_fora_de_escopo, classificacao_do_servico,
-              responsividade_execucao, procedente_por_status, regional, servico, endereco, data_execucao, raw, source_file, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())`,
+              responsividade_execucao, procedente_por_status, regional, servico, endereco, data_execucao,
+              data_agendamento, data_acionamento_agendamento, data_realizacao_confirmacao_execucao, data_ultima_atualizacao, status_planilha,
+              raw, source_file, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW())`,
             [
               r.numero_chamado || null,
               r.data_registro,
@@ -535,6 +547,11 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
               r.servico || null,
               r.endereco || null,
               r.data_execucao,
+              r.data_agendamento,
+              r.data_acionamento_agendamento,
+              r.data_realizacao_confirmacao_execucao,
+              r.data_ultima_atualizacao,
+              r.status_planilha || null,
               JSON.stringify(r.raw),
               sourceFile,
             ]
@@ -1152,8 +1169,13 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
             servico = $8,
             endereco = $9,
             data_execucao = $10,
-            raw = $11,
-            source_file = $12,
+            data_agendamento = $11,
+            data_acionamento_agendamento = $12,
+            data_realizacao_confirmacao_execucao = $13,
+            data_ultima_atualizacao = $14,
+            status_planilha = $15,
+            raw = $16,
+            source_file = $17,
             updated_at = NOW()
           WHERE numero_chamado = $1`,
           [
@@ -1167,6 +1189,11 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
             r.servico || null,
             r.endereco || null,
             r.data_execucao,
+            r.data_agendamento,
+            r.data_acionamento_agendamento,
+            r.data_realizacao_confirmacao_execucao,
+            r.data_ultima_atualizacao,
+            r.status_planilha || null,
             JSON.stringify(r.raw),
             sourceFile,
           ]
@@ -1179,8 +1206,10 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         await client.query(
           `INSERT INTO sacs (
             numero_chamado, data_registro, finalizado_fora_de_escopo, classificacao_do_servico,
-            responsividade_execucao, procedente_por_status, regional, servico, endereco, data_execucao, raw, source_file, updated_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())`,
+            responsividade_execucao, procedente_por_status, regional, servico, endereco, data_execucao,
+            data_agendamento, data_acionamento_agendamento, data_realizacao_confirmacao_execucao, data_ultima_atualizacao, status_planilha,
+            raw, source_file, updated_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW())`,
           [
             r.numero_chamado || null,
             r.data_registro,
@@ -1192,6 +1221,11 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
             r.servico || null,
             r.endereco || null,
             r.data_execucao,
+            r.data_agendamento,
+            r.data_acionamento_agendamento,
+            r.data_realizacao_confirmacao_execucao,
+            r.data_ultima_atualizacao,
+            r.status_planilha || null,
             JSON.stringify(r.raw),
             sourceFile,
           ]
