@@ -15,9 +15,12 @@ export function middleware(request: NextRequest) {
   }
 
   const isPublicPath = PUBLIC_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
-  /** API pode setar `flip_auth` no mesmo host (dev); em produção front Vercel + API Fly só `flip_web_session` existe aqui. */
-  const hasSessionCookie =
-    request.cookies.has("flip_web_session") || request.cookies.has("flip_auth");
+  /**
+   * Só `flip_web_session` (setado pelo front após login válido). Não usar `flip_auth` aqui:
+   * em dev a API pode deixar `flip_auth` HttpOnly no mesmo host; se a sessão JS expirar, o cliente
+   * apaga só `flip_web_session` e o middleware continuaria achando que há sessão → loop /login ↔ /.
+   */
+  const hasSessionCookie = request.cookies.has("flip_web_session");
 
   if (!hasSessionCookie && !isPublicPath) {
     const url = request.nextUrl.clone();

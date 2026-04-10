@@ -72,8 +72,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const data = await apiService.getCurrentUser();
       setUser(data.user);
       if (typeof window !== "undefined") {
-        const rememberMe = readStorage(REMEMBER_FLAG_KEY) === "1";
-        setWebSessionCookie(rememberMe);
+        setWebSessionCookie();
       }
     } catch {
       setUser(null);
@@ -112,7 +111,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setRememberMeSaved(payload.rememberMe);
         setUser(data.user);
         if (typeof window !== "undefined") {
-          setWebSessionCookie(payload.rememberMe);
+          setWebSessionCookie();
           window.sessionStorage.setItem("flip_show_welcome", "1");
           window.sessionStorage.setItem("flip_upload_reminder_delay_ms", "700");
         }

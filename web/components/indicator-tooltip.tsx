@@ -1,6 +1,7 @@
 "use client"
 
-import { useState } from "react"
+import { useLayoutEffect, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import { Info } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -16,7 +17,8 @@ interface IndicatorTooltipProps {
 const tooltips = {
   IRD: {
     nome: "IRD – ÍNDICADOR DE RECLAMAÇÕES POR DOMICÍLIO",
-    descricao: "Avalia o número de reclamações recebidas no FLIP relativos aos serviços regulares escalonados (varrição, mutirão, limpeza de bueiro e cata-bagulho).",
+    descricao:
+      "Avalia o número de reclamações recebidas no FLIP relativos aos serviços regulares escalonados (varrição, mutirão, limpeza de bueiro e cata-bagulho).",
     formula: "IRD = (Reclamações Escalonadas Procedentes / Nº Domicílios) × 1000",
     pontuacaoMax: 20,
   },
@@ -42,12 +44,78 @@ const tooltips = {
 
 export function IndicatorTooltip({ tipo, valor, pontuacao, iconClassName, children }: IndicatorTooltipProps) {
   const [showTooltip, setShowTooltip] = useState(false)
+  const anchorRef = useRef<HTMLDivElement>(null)
+  const [pos, setPos] = useState({ top: 0, left: 0 })
+
   const info = tooltips[tipo]
+
+  useLayoutEffect(() => {
+    if (!showTooltip || !anchorRef.current) return
+    const el = anchorRef.current
+    const update = () => {
+      const r = el.getBoundingClientRect()
+      const w = 320
+      const margin = 8
+      let left = r.left
+      if (left + w > window.innerWidth - margin) {
+        left = Math.max(margin, window.innerWidth - w - margin)
+      }
+      setPos({ top: r.bottom + margin, left })
+    }
+    update()
+    window.addEventListener("scroll", update, true)
+    window.addEventListener("resize", update)
+    return () => {
+      window.removeEventListener("scroll", update, true)
+      window.removeEventListener("resize", update)
+    }
+  }, [showTooltip])
+
+  const panel =
+    typeof document !== "undefined" &&
+    showTooltip &&
+    createPortal(
+      <div
+        className="pointer-events-none fixed z-[12000] w-80 max-w-[min(20rem,calc(100vw-1rem))] rounded-lg border border-zinc-700 bg-zinc-900 p-4 text-xs text-white shadow-xl dark:bg-zinc-800"
+        style={{ top: pos.top, left: pos.left }}
+        role="tooltip"
+      >
+        <div className="mb-2 text-sm font-bold text-violet-400">{info.nome}</div>
+        <div className="mb-3 text-xs leading-relaxed text-zinc-300">{info.descricao}</div>
+
+        <div className="mb-3 rounded border border-zinc-700 bg-zinc-800 p-2 dark:bg-zinc-900">
+          <div className="mb-1 text-xs text-zinc-400">Fórmula:</div>
+          <div className="font-mono text-xs font-semibold text-violet-300">{info.formula}</div>
+        </div>
+
+        <div className="space-y-1 border-t border-zinc-700 pt-2">
+          {valor !== undefined && (
+            <div className="flex justify-between">
+              <span className="text-zinc-400">Valor:</span>
+              <span className="font-semibold text-violet-300">
+                {tipo === "IRD" ? valor.toFixed(3) : valor.toFixed(1)}
+                {tipo !== "IRD" ? "%" : ""}
+              </span>
+            </div>
+          )}
+          {pontuacao !== undefined && (
+            <div className="flex justify-between">
+              <span className="text-zinc-400">Pontuação:</span>
+              <span className="font-semibold text-green-400">
+                {pontuacao.toFixed(0)} / {info.pontuacaoMax} pontos
+              </span>
+            </div>
+          )}
+        </div>
+      </div>,
+      document.body
+    )
 
   return (
     <div className="relative inline-flex items-center gap-2">
       {children}
       <div
+        ref={anchorRef}
         className="relative"
         onMouseEnter={() => setShowTooltip(true)}
         onMouseLeave={() => setShowTooltip(false)}
@@ -58,42 +126,8 @@ export function IndicatorTooltip({ tipo, valor, pontuacao, iconClassName, childr
             iconClassName ?? "text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
           )}
         />
-        {showTooltip && (
-          <div className="absolute left-0 top-6 z-50 w-80 rounded-lg bg-zinc-900 dark:bg-zinc-800 p-4 text-xs text-white shadow-xl border border-zinc-700">
-            <div className="font-bold mb-2 text-sm text-violet-400">{info.nome}</div>
-            <div className="text-zinc-300 mb-3 text-xs leading-relaxed">{info.descricao}</div>
-            
-            {/* Fórmula estilizada */}
-            <div className="mb-3 p-2 bg-zinc-800 dark:bg-zinc-900 rounded border border-zinc-700">
-              <div className="text-zinc-400 text-xs mb-1">Fórmula:</div>
-              <div className="font-mono text-xs text-violet-300 font-semibold">
-                {info.formula}
-              </div>
-            </div>
-            
-            {/* Valores */}
-            <div className="space-y-1 border-t border-zinc-700 pt-2">
-              {valor !== undefined && (
-                <div className="flex justify-between">
-                  <span className="text-zinc-400">Valor:</span>
-                  <span className="font-semibold text-violet-300">
-                    {tipo === "IRD" ? valor.toFixed(3) : valor.toFixed(1)}{tipo !== "IRD" ? "%" : ""}
-                  </span>
-                </div>
-              )}
-              {pontuacao !== undefined && (
-                <div className="flex justify-between">
-                  <span className="text-zinc-400">Pontuação:</span>
-                  <span className="font-semibold text-green-400">
-                    {pontuacao.toFixed(0)} / {info.pontuacaoMax} pontos
-                  </span>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
       </div>
+      {panel}
     </div>
   )
 }
-

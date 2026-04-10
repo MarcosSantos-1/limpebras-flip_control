@@ -202,21 +202,24 @@ export default function LoginPage() {
                 </div>
               </div>
 
-              <div className="flex items-center justify-between gap-3">
-                <label className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Checkbox
-                    checked={rememberValue}
-                    onCheckedChange={(checked) => {
-                      setRememberDirty(true);
-                      setRememberMe(checked === true);
-                    }}
-                  />
-                  <span>Lembrar Senha</span>
-                </label>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0 space-y-1">
+                  <label className="flex cursor-pointer items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={rememberValue}
+                      onCheckedChange={(checked) => {
+                        setRememberDirty(true);
+                        setRememberMe(checked === true);
+                      }}
+                    />
+                    <span className="font-medium text-foreground">Manter conectado</span>
+                  </label>
+             
+                </div>
                 <Link
                   href="https://api.whatsapp.com/send?phone=5511964821876&text=Olá, gostaria de solicitar uma nova senha para o meu usuário."
                   target="_blank"
-                  className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-700 hover:underline dark:text-blue-300"
+                  className="inline-flex shrink-0 items-center gap-1.5 text-sm font-medium text-blue-700 hover:underline dark:text-blue-300 sm:pt-0.5"
                 >
                   <MessageCircleMore className="h-4 w-4" />
                   Esqueceu a senha?

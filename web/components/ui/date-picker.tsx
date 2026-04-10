@@ -68,7 +68,7 @@ function DatePicker({
           />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-auto p-0" align="start">
+      <PopoverContent className="w-auto p-0" align="start" sideOffset={8} collisionPadding={12}>
         <Calendar
           mode="single"
           locale={ptBR}

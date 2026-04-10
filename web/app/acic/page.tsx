@@ -897,11 +897,12 @@ export default function ACICPage() {
             </p>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-12 xl:items-end">
+            <div className="grid grid-cols-1 gap-y-5 gap-x-4 lg:grid-cols-2 lg:gap-x-8 xl:grid-cols-12 xl:items-end xl:gap-x-12">
               <div className="min-w-0 justify-self-start xl:col-span-2">
-                <div className="inline-flex max-w-full items-center gap-2 rounded-lg bg-emerald-600 px-2.5 py-1.5 shadow-lg text-white">
-                <Calendar className="h-4 w-4 shrink-0" aria-hidden />
-                <DateRangePicker
+                <div className="inline-flex max-w-full items-center gap-4 rounded-lg bg-emerald-600 px-2.5 py-1.5 shadow-lg text-white">
+                  <Calendar className="h-4 w-4 shrink-0" aria-hidden />
+                  <DateRangePicker
+       
                   value={periodRange}
                   onChange={(r) => {
                     if (!r?.from || !r?.to) {
@@ -947,7 +948,7 @@ export default function ACICPage() {
                 />
                 </div>
               </div>
-              <div className="min-w-0 space-y-1 xl:col-span-2">
+              <div className="min-w-0 space-y-1 xl:col-span-2 xl:ml-4 2xl:ml-6">
                 <Label className="text-xs text-muted-foreground">Registro</Label>
                 <Select
                   value={filters.registro}
@@ -972,7 +973,7 @@ export default function ACICPage() {
                   value={filters.subprefeitura}
                   onValueChange={(value) => setFilters({ ...filters, subprefeitura: value })}
                 >
-                  <SelectTrigger className="bg-background">
+                  <SelectTrigger className="bg-background w-[min(100%,70%)]">
                     <SelectValue placeholder="Todas" />
                   </SelectTrigger>
                   <SelectContent>
@@ -985,7 +986,9 @@ export default function ACICPage() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="flex items-center gap-2 pt-1 xl:col-span-4">
+            </div>
+            <div className="mt-4 flex flex-col gap-3 border-t border-border/50 pt-4 sm:flex-row sm:flex-wrap sm:items-center">
+              <div className="flex items-center gap-2">
                 <Checkbox
                   id="acic-only-multi-bfs"
                   checked={filters.somenteBfsMultipla}
@@ -995,8 +998,6 @@ export default function ACICPage() {
                   Só BFS com mais de uma ACIC (no filtro atual)
                 </Label>
               </div>
-            </div>
-            <div className="mt-4 flex flex-col gap-3 border-t border-border/50 pt-4 sm:flex-row sm:flex-wrap sm:items-center">
               <div className="flex items-center gap-2">
                 <Checkbox
                   id="acic-sem-clausula"

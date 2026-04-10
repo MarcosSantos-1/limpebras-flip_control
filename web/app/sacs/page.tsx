@@ -367,7 +367,7 @@ export default function SACsPage() {
         </div>
 
         {/* Filtros */}
-        <Card className="overflow-hidden border-none shadow-sm bg-muted/30">
+        <Card className="overflow-visible border-none shadow-sm bg-muted/30">
           <CardHeader className="pb-4">
             <CardTitle className="text-base font-medium flex items-center gap-2">
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-filter">
@@ -376,9 +376,12 @@ export default function SACsPage() {
               Filtros
             </CardTitle>
           </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="space-y-1">
+          <CardContent className="overflow-visible">
+            {/*
+              Em ~1366px com sidebar, 4 colunas espremem triggers/popover. Menos colunas até 2xl + gap maior.
+            */}
+            <div className="grid grid-cols-1 gap-5 gap-y-6 min-[560px]:grid-cols-2 min-[1180px]:grid-cols-3 2xl:grid-cols-4 [&>*]:min-w-0">
+              <div className="space-y-1.5">
                 <Label className="text-xs text-muted-foreground">Período Inicial</Label>
                 <DatePicker
                   value={filters.data_inicio}
@@ -386,8 +389,8 @@ export default function SACsPage() {
                   placeholder="Selecionar início"
                 />
               </div>
-              
-              <div className="space-y-1">
+
+              <div className="space-y-1.5">
                 <Label className="text-xs text-muted-foreground">Período Final</Label>
                 <DatePicker
                   value={filters.data_fim}
@@ -396,7 +399,7 @@ export default function SACsPage() {
                 />
               </div>
 
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <Label className="text-xs text-muted-foreground">Tipo</Label>
                 <Select
                   value={filters.tipo}
@@ -508,7 +511,7 @@ export default function SACsPage() {
                 </div>
               </div>
 
-              <div className="space-y-1 md:col-span-2 lg:col-span-4 w-full min-w-0">
+              <div className="col-span-full space-y-1.5 w-full min-w-0 pt-1">
                 <Label className="text-xs text-muted-foreground">Pesquisar (protocolo ou endereço)</Label>
                 <div className="relative w-full max-w-4xl">
                   <Search
@@ -755,7 +758,7 @@ export default function SACsPage() {
                         key: "acion",
                         icon: <Bell className="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />,
                         title: "Acionamento / agendamento",
-                        hint: "Coluna Data_Acionamento_Agendamento — IRD e bueiros (classificação vazia); referência de prazo após finalização",
+                        hint: "Serviço agendado. Referência de prazo após finalização",
                         body: (
                           <p className="font-mono text-sm mt-0.5 text-amber-900 dark:text-amber-100">
                             {formatFlipDateTimeUtcWithWeekday(selectedSAC.data_acionamento_agendamento)}
