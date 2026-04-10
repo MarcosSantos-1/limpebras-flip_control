@@ -89,6 +89,13 @@ export function parseSetor(setor: string): ParsedSetor | null {
 }
 
 /**
+ * Asseio / população em situação de rua — sigla no plano **CA** (não confundir com **LM** = Lavagem de Monumentos).
+ * SELIMP pode trazer texto tipo "Asseio de Morador em Situação de Rua - CA".
+ */
+export const SERVICO_ASSEIO_POPULACAO_RUA =
+  "Equipe de asseio a locais com população em situação de rua e comércio desordenado";
+
+/**
  * Mapeamento codinome do setor (2 letras) -> nome completo do serviço.
  * Nunca exibir "Não informado" — sempre usar este mapeamento quando disponível.
  */
@@ -104,7 +111,9 @@ export const SERVICO_POR_CODIGO: Record<string, string> = {
   VL: "Varrição manual de vias e logradouros públicos - sarjetas e calçadas",
   /** Varrição mecanizada (código no plano, ex.: CV10302VM0002) */
   VM: "Varrição mecanizada de vias e logradouros públicos",
-  LM: "Equipe de asseio a locais com população em situação de rua e comércio desordenado",
+  LM: "Lavagem de Monumentos",
+  /** Asseio / população em situação de rua (não é LM). */
+  CA: SERVICO_ASSEIO_POPULACAO_RUA,
   CV: "Coleta manual de resíduos de varrição com compactador",
 };
 
@@ -125,6 +134,39 @@ export function getTipoServicoCanonicoPlano(plano: string): string {
  */
 export function getTipoServicoFromPlano(plano: string): string {
   return getTipoServicoCanonicoPlano(plano);
+}
+
+function normalizeTextIpt(value: string): string {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+/**
+ * Nome do serviço para exibição e agregação na IPT (tabela geral, cards, filtros).
+ * Unifica sigla do plano (LM = monumentos, CA = asseio) com texto cru do report quando necessário.
+ */
+export function resolveTipoServicoExibicao(plano: string, tipoServicoRaw: string): string {
+  const fromPlano = getTipoServicoCanonicoPlano(plano);
+  if (fromPlano) return fromPlano;
+
+  const raw = String(tipoServicoRaw ?? "").trim();
+  if (!raw || /n[aã]o\s*informado/i.test(raw)) return "—";
+
+  const compact = normalizeTextIpt(raw).replace(/[^a-z]/g, "");
+
+  if (
+    compact.includes("asseio") ||
+    (compact.includes("morador") && compact.includes("situacaoderua")) ||
+    (compact.includes("populacao") && compact.includes("rua")) ||
+    (compact.includes("comercio") && compact.includes("desordenado"))
+  ) {
+    return SERVICO_ASSEIO_POPULACAO_RUA;
+  }
+
+  return raw;
 }
 
 /**
@@ -181,7 +223,7 @@ export function compareSetores(a: string, b: string, direction: "asc" | "desc" =
   return direction === "asc" ? cmp : -cmp;
 }
 
-export const CRONOGRAMA_SERVICOS = new Set(["BL", "MT", "NH", "LM", "GO", "LE"]);
+export const CRONOGRAMA_SERVICOS = new Set(["BL", "MT", "NH", "LM", "CA", "GO", "LE"]);
 
 export function toDateKey(value: Date | string | null | undefined): string | null {
   if (!value) return null;

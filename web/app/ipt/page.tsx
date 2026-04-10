@@ -16,15 +16,24 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronUp,
+  CloudRain,
   Cpu,
+  Flag,
+  Hammer,
   Info,
+  MapPin,
+  MessageSquare,
   Package,
+  Pencil,
   Plus,
   RotateCcw,
   Search,
   Sparkles,
   TrendingUp,
+  Trash2,
   Truck,
+  Wrench,
+  X,
 } from "lucide-react";
 import Lottie from "lottie-react";
 import loadingAnimation from "@/public/Loading.json";
@@ -47,6 +56,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { apiService, type IptPreviewResponse } from "@/lib/api";
 import { useIptData } from "@/lib/use-ipt-data";
 import { getSortKey, getSubFromPlano } from "@/lib/ipt-utils";
@@ -182,6 +192,146 @@ const getDivergenceMagnitude = (selimp?: number | null, nosso?: number | null) =
 
 type SortDirection = "asc" | "desc";
 
+const OBS_DIARIA_CATEGORIES = [
+  {
+    id: "bateria",
+    label: "Bateria baixa",
+    Icon: Battery,
+    colorClass: "border-violet-500/50 bg-violet-500/10 text-violet-700 dark:text-violet-300 hover:bg-violet-500/20",
+    activeClass: "border-violet-500 bg-violet-500/25 text-violet-700 dark:text-violet-200 ring-2 ring-violet-500/40",
+    tableIconClass: "text-violet-500",
+  },
+  {
+    id: "alerta_despacho",
+    label: "Problema no despacho",
+    Icon: AlertTriangle,
+    colorClass: "border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20",
+    activeClass: "border-amber-500 bg-amber-500/25 text-amber-700 dark:text-amber-200 ring-2 ring-amber-500/40",
+    tableIconClass: "text-amber-500",
+  },
+  {
+    id: "manutencao",
+    label: "Manutenção / Veículo",
+    Icon: Wrench,
+    colorClass: "border-orange-500/50 bg-orange-500/10 text-orange-700 dark:text-orange-300 hover:bg-orange-500/20",
+    activeClass: "border-orange-500 bg-orange-500/25 text-orange-700 dark:text-orange-200 ring-2 ring-orange-500/40",
+    tableIconClass: "text-orange-500",
+  },
+  {
+    id: "demanda_sub",
+    label: "Demanda subprefeito",
+    Icon: Flag,
+    colorClass: "border-blue-500/50 bg-blue-500/10 text-blue-700 dark:text-blue-300 hover:bg-blue-500/20",
+    activeClass: "border-blue-500 bg-blue-500/25 text-blue-700 dark:text-blue-200 ring-2 ring-blue-500/40",
+    tableIconClass: "text-blue-500",
+  },
+  {
+    id: "chuva",
+    label: "Chuva / Intempérie",
+    Icon: CloudRain,
+    colorClass: "border-sky-500/50 bg-sky-500/10 text-sky-700 dark:text-sky-300 hover:bg-sky-500/20",
+    activeClass: "border-sky-500 bg-sky-500/25 text-sky-700 dark:text-sky-200 ring-2 ring-sky-500/40",
+    tableIconClass: "text-sky-500",
+  },
+  {
+    id: "obra",
+    label: "Obra / Interdição",
+    Icon: Hammer,
+    colorClass: "border-yellow-500/50 bg-yellow-500/10 text-yellow-700 dark:text-yellow-300 hover:bg-yellow-500/20",
+    activeClass: "border-yellow-500 bg-yellow-500/25 text-yellow-700 dark:text-yellow-200 ring-2 ring-yellow-500/40",
+    tableIconClass: "text-yellow-500",
+  },
+  {
+    id: "outro",
+    label: "Outro motivo",
+    Icon: MessageSquare,
+    colorClass: "border-slate-500/50 bg-slate-500/10 text-slate-700 dark:text-slate-300 hover:bg-slate-500/20",
+    activeClass: "border-slate-500 bg-slate-500/25 text-slate-700 dark:text-slate-200 ring-2 ring-slate-500/40",
+    tableIconClass: "text-slate-500",
+  },
+] as const;
+
+const OBS_GLOBAL_CATEGORIES = [
+  {
+    id: "setor_incorreto",
+    label: "Setor incorreto SELIMP",
+    Icon: AlertTriangle,
+    colorClass: "border-red-500/50 bg-red-500/10 text-red-700 dark:text-red-300 hover:bg-red-500/20",
+    activeClass: "border-red-500 bg-red-500/25 text-red-700 dark:text-red-200 ring-2 ring-red-500/40",
+    tableIconClass: "text-red-500",
+    template: "Setor incorreto cadastrado na SELIMP. Há divergência entre os dados da SELIMP e a base interna.",
+  },
+  {
+    id: "bateria_recorrente",
+    label: "Bateria recorrente",
+    Icon: BatteryWarning,
+    colorClass: "border-violet-500/50 bg-violet-500/10 text-violet-700 dark:text-violet-300 hover:bg-violet-500/20",
+    activeClass: "border-violet-500 bg-violet-500/25 text-violet-700 dark:text-violet-200 ring-2 ring-violet-500/40",
+    tableIconClass: "text-violet-500",
+    template: "Problema recorrente de bateria nos módulos deste setor. Impacto contínuo no IPT.",
+  },
+  {
+    id: "veiculo_inativo",
+    label: "Veículo / Módulo inativo",
+    Icon: Truck,
+    colorClass: "border-orange-500/50 bg-orange-500/10 text-orange-700 dark:text-orange-300 hover:bg-orange-500/20",
+    activeClass: "border-orange-500 bg-orange-500/25 text-orange-700 dark:text-orange-200 ring-2 ring-orange-500/40",
+    tableIconClass: "text-orange-500",
+    template: "Veículo ou módulo GPS inativo neste setor. Dados ausentes por período prolongado.",
+  },
+  {
+    id: "demanda_sub",
+    label: "Demanda subprefeito",
+    Icon: Flag,
+    colorClass: "border-blue-500/50 bg-blue-500/10 text-blue-700 dark:text-blue-300 hover:bg-blue-500/20",
+    activeClass: "border-blue-500 bg-blue-500/25 text-blue-700 dark:text-blue-200 ring-2 ring-blue-500/40",
+    tableIconClass: "text-blue-500",
+    template: "Setor com demanda especial solicitada pela subprefeitura. Execução diferenciada.",
+  },
+  {
+    id: "endereco_errado",
+    label: "Endereço / Setor errado",
+    Icon: MapPin,
+    colorClass: "border-pink-500/50 bg-pink-500/10 text-pink-700 dark:text-pink-300 hover:bg-pink-500/20",
+    activeClass: "border-pink-500 bg-pink-500/25 text-pink-700 dark:text-pink-200 ring-2 ring-pink-500/40",
+    tableIconClass: "text-pink-500",
+    template: "Endereço ou delimitação de setor incorreto no cadastro. Requer ajuste na base de dados.",
+  },
+  {
+    id: "outro",
+    label: "Outro / Geral",
+    Icon: MessageSquare,
+    colorClass: "border-slate-500/50 bg-slate-500/10 text-slate-700 dark:text-slate-300 hover:bg-slate-500/20",
+    activeClass: "border-slate-500 bg-slate-500/25 text-slate-700 dark:text-slate-200 ring-2 ring-slate-500/40",
+    tableIconClass: "text-slate-500",
+    template: "",
+  },
+] as const;
+
+type ObsDiariaCategoria = (typeof OBS_DIARIA_CATEGORIES)[number]["id"];
+type ObsGlobalCategoria = (typeof OBS_GLOBAL_CATEGORIES)[number]["id"];
+
+const getObsDiariaCategory = (titulo: string) => {
+  const t = (titulo ?? "").toLowerCase();
+  if (t.includes("bateria")) return OBS_DIARIA_CATEGORIES.find((c) => c.id === "bateria")!;
+  if (t.includes("despacho") || t.includes("alerta") || t.includes("problema no despacho")) return OBS_DIARIA_CATEGORIES.find((c) => c.id === "alerta_despacho")!;
+  if (t.includes("manutenção") || t.includes("manutencao") || t.includes("veículo") || t.includes("veiculo") || t.includes("frota")) return OBS_DIARIA_CATEGORIES.find((c) => c.id === "manutencao")!;
+  if (t.includes("subprefeito") || t.includes("subprefeitura") || t.includes("demanda sub")) return OBS_DIARIA_CATEGORIES.find((c) => c.id === "demanda_sub")!;
+  if (t.includes("chuva") || t.includes("intempérie") || t.includes("intemperie") || t.includes("chuva")) return OBS_DIARIA_CATEGORIES.find((c) => c.id === "chuva")!;
+  if (t.includes("obra") || t.includes("interdição") || t.includes("interdicao") || t.includes("bloqueio")) return OBS_DIARIA_CATEGORIES.find((c) => c.id === "obra")!;
+  return OBS_DIARIA_CATEGORIES.find((c) => c.id === "outro")!;
+};
+
+const getObsGlobalCategory = (titulo: string) => {
+  const t = (titulo ?? "").toLowerCase();
+  if (t.includes("setor incorreto") || t.includes("incorreto") || t.includes("selimp")) return OBS_GLOBAL_CATEGORIES.find((c) => c.id === "setor_incorreto")!;
+  if (t.includes("bateria")) return OBS_GLOBAL_CATEGORIES.find((c) => c.id === "bateria_recorrente")!;
+  if (t.includes("veículo") || t.includes("veiculo") || t.includes("módulo") || t.includes("modulo") || t.includes("inativo")) return OBS_GLOBAL_CATEGORIES.find((c) => c.id === "veiculo_inativo")!;
+  if (t.includes("subprefeito") || t.includes("subprefeitura") || t.includes("demanda")) return OBS_GLOBAL_CATEGORIES.find((c) => c.id === "demanda_sub")!;
+  if (t.includes("endereço") || t.includes("endereco") || t.includes("errado")) return OBS_GLOBAL_CATEGORIES.find((c) => c.id === "endereco_errado")!;
+  return OBS_GLOBAL_CATEGORIES.find((c) => c.id === "outro")!;
+};
+
 /** Ordena por SUB + serviço (VP, VJ, GO...) + mapa (4 últimos dígitos). Ignora turno e frequência. */
 function compareByPlanoStructure(
   a: { plano?: string },
@@ -248,11 +398,16 @@ export default function IPTPage() {
   const [modalObsGlobalSetor, setModalObsGlobalSetor] = useState<string | null>(null);
   const [modalObsGlobalTitulo, setModalObsGlobalTitulo] = useState("");
   const [modalObsGlobalDescricao, setModalObsGlobalDescricao] = useState("");
+  const [modalObsGlobalCategoria, setModalObsGlobalCategoria] = useState<ObsGlobalCategoria | "">("");
   const [modalObsDiariaOpen, setModalObsDiariaOpen] = useState(false);
   const [modalObsDiariaSetor, setModalObsDiariaSetor] = useState<string | null>(null);
   const [modalObsDiariaData, setModalObsDiariaData] = useState<string | null>(null);
   const [modalObsDiariaTitulo, setModalObsDiariaTitulo] = useState("");
-  const [modalObsDiariaDescricao, setModalObsDiariaDescricao] = useState("");
+  const [modalObsDiariaCategoria, setModalObsDiariaCategoria] = useState<ObsDiariaCategoria | "">("");
+  /** Chaves de observações salvas na sessão corrente — usadas para animar ícones na tabela */
+  const [recentlySavedKeys, setRecentlySavedKeys] = useState<Set<string>>(new Set());
+  /** Menu ações da obs. diária: `plano::YYYY-MM-DD` — um menu aberto por vez */
+  const [obsDiariaMenuKey, setObsDiariaMenuKey] = useState<string | null>(null);
   const { previewCards: iptPreviewCards, previewTable: iptPreviewTable, observacoes, kpis: kpisData, isLoading: loading, mutate: loadData } = useIptData(
     selectedMonth,
     tableScope,
@@ -939,98 +1094,217 @@ export default function IPTPage() {
             </DialogContent>
           </Dialog>
 
-          <Dialog open={modalObsGlobalOpen} onOpenChange={(open) => { setModalObsGlobalOpen(open); if (!open) setModalObsGlobalSetor(null); }}>
-            <DialogContent className="sm:max-w-md">
-              <DialogHeader>
-                <DialogTitle>Observação global</DialogTitle>
-                <DialogDescription>Marca o setor com um aviso que aparece em todos os despachos. Ex.: setores incorretos na SELIMP.</DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4 py-2">
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground">Setor</label>
-                  <p className="font-mono text-sm py-1">{modalObsGlobalSetor ?? "—"}</p>
+          {/* ── Modal: Observação Global ─────────────────────────── */}
+          <Dialog open={modalObsGlobalOpen} onOpenChange={(open) => {
+            setModalObsGlobalOpen(open);
+            if (!open) { setModalObsGlobalSetor(null); setModalObsGlobalCategoria(""); }
+          }}>
+            <DialogContent className="sm:max-w-lg p-0 overflow-hidden">
+              {/* Header colorido */}
+              <div className="bg-gradient-to-br from-red-600/90 via-red-700 to-rose-800 px-6 pt-6 pb-5">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/20 shadow-inner">
+                    <AlertTriangle className="h-5 w-5 text-white" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <DialogTitle className="text-white text-lg font-bold leading-tight">Observação global</DialogTitle>
+                    <DialogDescription className="text-red-100/80 text-sm mt-0.5">
+                      Marca o setor permanentemente com aviso em todos os despachos.
+                    </DialogDescription>
+                    {modalObsGlobalSetor && (
+                      <div className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-2.5 py-1 text-xs font-mono font-semibold text-white">
+                        <MapPin className="h-3.5 w-3.5" />
+                        {modalObsGlobalSetor}
+                      </div>
+                    )}
+                  </div>
                 </div>
+              </div>
+
+              <div className="space-y-4 px-6 py-5">
+                {/* Seleção de categoria */}
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground">Título</label>
+                  <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2.5 block">
+                    Tipo de problema
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {OBS_GLOBAL_CATEGORIES.map((cat) => {
+                      const Icon = cat.Icon;
+                      const isSelected = modalObsGlobalCategoria === cat.id;
+                      return (
+                        <button
+                          key={cat.id}
+                          type="button"
+                          onClick={() => {
+                            setModalObsGlobalCategoria(cat.id as ObsGlobalCategoria);
+                            setModalObsGlobalTitulo(cat.label);
+                            if (cat.template) setModalObsGlobalDescricao(cat.template);
+                          }}
+                          className={`flex items-center gap-2 rounded-xl border p-2.5 text-left text-xs font-semibold transition-all duration-150 ${isSelected ? cat.activeClass : cat.colorClass}`}
+                        >
+                          <Icon className="h-4 w-4 shrink-0" />
+                          <span className="leading-tight">{cat.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Título */}
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                    Título <span className="text-red-500">*</span>
+                  </label>
                   <input
                     value={modalObsGlobalTitulo}
                     onChange={(e) => setModalObsGlobalTitulo(e.target.value)}
                     placeholder="Ex.: Setor incorreto na SELIMP"
-                    className="w-full mt-1 h-9 rounded-lg border bg-background px-3 text-sm"
+                    className="w-full h-10 rounded-xl border-2  border-zinc-300 dark:border-zinc-700 shadow-xl shadow-zinc-300/10 dark:shadow-zinc-700/10  bg-background/80 px-3.5 text-sm transition-all focus:outline-none focus:border-red-500/60 focus:bg-background"
                   />
                 </div>
+
+                {/* Descrição */}
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground">Descrição (opcional)</label>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                    Descrição detalhada <span className="text-muted-foreground/60">(opcional)</span>
+                  </label>
                   <textarea
                     value={modalObsGlobalDescricao}
                     onChange={(e) => setModalObsGlobalDescricao(e.target.value)}
-                    placeholder="Detalhes da observação..."
+                    placeholder="Detalhes adicionais da observação..."
                     rows={3}
-                    className="w-full mt-1 rounded-lg border bg-background px-3 py-2 text-sm resize-none"
+                    className="w-full rounded-xl border-2 border-zinc-300 dark:border-zinc-700 shadow-xl shadow-zinc-300/10 dark:shadow-zinc-700/10 bg-background/80 px-3.5 py-2.5 text-sm resize-none transition-all focus:outline-none focus:border-red-500/60 focus:bg-background"
                   />
                 </div>
-                <div className="flex justify-end gap-2">
-                  <button onClick={() => setModalObsGlobalOpen(false)} className="px-3 py-1.5 rounded-lg border text-sm">Cancelar</button>
+
+                {/* Ações */}
+                <div className="flex items-center justify-between gap-3 pt-1">
                   <button
-                    onClick={async () => {
+                    onClick={() => setModalObsGlobalOpen(false)}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border text-sm font-medium hover:bg-muted/60 transition-colors"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={() => {
                       if (!modalObsGlobalSetor || !modalObsGlobalTitulo.trim()) return;
-                      await apiService.createIptObservacaoGlobal(modalObsGlobalSetor, modalObsGlobalTitulo.trim(), modalObsGlobalDescricao.trim() || undefined);
+                      const key = `global::${modalObsGlobalSetor}`;
                       setModalObsGlobalOpen(false);
-                      loadData();
+                      setRecentlySavedKeys((prev) => new Set([...prev, key]));
+                      apiService
+                        .createIptObservacaoGlobal(modalObsGlobalSetor, modalObsGlobalTitulo.trim(), modalObsGlobalDescricao.trim() || undefined)
+                        .then(() => loadData());
                     }}
                     disabled={!modalObsGlobalTitulo.trim()}
-                    className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-sm disabled:opacity-50"
+                    className="inline-flex items-center gap-2 px-5 py-2 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 text-white text-sm font-semibold disabled:opacity-50 hover:opacity-90 transition-all shadow-lg shadow-red-500/30"
                   >
-                    OK
+                    <Check className="h-4 w-4" />
+                    Salvar observação global
                   </button>
                 </div>
               </div>
             </DialogContent>
           </Dialog>
 
-          <Dialog open={modalObsDiariaOpen} onOpenChange={(open) => { setModalObsDiariaOpen(open); if (!open) { setModalObsDiariaSetor(null); setModalObsDiariaData(null); } }}>
-            <DialogContent className="sm:max-w-md">
-              <DialogHeader>
-                <DialogTitle>Observação diária</DialogTitle>
-                <DialogDescription>Justificativa para o dia específico. Ex.: falha na liberação, manutenção, acidente.</DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4 py-2">
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground">Setor / Data</label>
-                  <p className="font-mono text-sm py-1">{modalObsDiariaSetor ?? "—"} · {modalObsDiariaData ? modalObsDiariaData.replace(/^(\d{4})-(\d{2})-(\d{2})$/, "$3/$2/$1") : "—"}</p>
+          {/* ── Modal: Observação Diária ──────────────────────────── */}
+          <Dialog open={modalObsDiariaOpen} onOpenChange={(open) => {
+            setModalObsDiariaOpen(open);
+            if (!open) { setModalObsDiariaSetor(null); setModalObsDiariaData(null); setModalObsDiariaCategoria(""); }
+          }}>
+            <DialogContent className="sm:max-w-lg p-0 overflow-hidden">
+              {/* Header colorido */}
+              <div className="bg-gradient-to-br from-amber-500/90 via-amber-600 to-orange-700 px-6 pt-6 pb-5">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/20 shadow-inner">
+                    <Calendar className="h-5 w-5 text-white" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <DialogTitle className="text-white text-lg font-bold leading-tight">Observação diária</DialogTitle>
+                    <DialogDescription className="text-amber-100/80 text-sm mt-0.5">
+                      Justificativa para o dia específico — ex.: manutenção, chuva, demanda extra.
+                    </DialogDescription>
+                    {modalObsDiariaSetor && modalObsDiariaData && (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-2.5 py-1 text-xs font-mono font-semibold text-white">
+                          <MapPin className="h-3.5 w-3.5" />
+                          {modalObsDiariaSetor}
+                        </span>
+                        <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-2.5 py-1 text-xs font-mono font-semibold text-white">
+                          <Calendar className="h-3.5 w-3.5" />
+                          {modalObsDiariaData.replace(/^(\d{4})-(\d{2})-(\d{2})$/, "$3/$2/$1")}
+                        </span>
+                      </div>
+                    )}
+                  </div>
                 </div>
+              </div>
+
+              <div className="space-y-4 px-6 py-5">
+                {/* Seleção de categoria */}
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground">Título</label>
+                  <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2.5 block">
+                    Motivo da ocorrência
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {OBS_DIARIA_CATEGORIES.map((cat) => {
+                      const Icon = cat.Icon;
+                      const isSelected = modalObsDiariaCategoria === cat.id;
+                      return (
+                        <button
+                          key={cat.id}
+                          type="button"
+                          onClick={() => {
+                            setModalObsDiariaCategoria(cat.id as ObsDiariaCategoria);
+                            setModalObsDiariaTitulo(cat.label);
+                          }}
+                          className={`flex items-center gap-2 rounded-xl border p-2.5 text-left text-xs font-semibold transition-all duration-150 ${isSelected ? cat.activeClass : cat.colorClass}`}
+                        >
+                          <Icon className="h-4 w-4 shrink-0" />
+                          <span className="leading-tight">{cat.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Título */}
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                    Título <span className="text-red-500">*</span>
+                  </label>
                   <input
                     value={modalObsDiariaTitulo}
                     onChange={(e) => setModalObsDiariaTitulo(e.target.value)}
-                    placeholder="Ex.: Falha na liberação"
-                    className="w-full mt-1 h-9 rounded-lg border bg-background px-3 text-sm"
+                    placeholder="Ex.: Bateria baixa, Manutenção..."
+                    className="w-full h-10 rounded-xl border-2  border-zinc-300 dark:border-zinc-700 shadow-xl shadow-zinc-300/10 dark:shadow-zinc-700/10 bg-background/80 px-3.5 text-sm transition-all focus:outline-none focus:border-amber-500/60 focus:bg-background"
                   />
                 </div>
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground">Descrição (opcional)</label>
-                  <textarea
-                    value={modalObsDiariaDescricao}
-                    onChange={(e) => setModalObsDiariaDescricao(e.target.value)}
-                    placeholder="Detalhes..."
-                    rows={3}
-                    className="w-full mt-1 rounded-lg border bg-background px-3 py-2 text-sm resize-none"
-                  />
-                </div>
-                <div className="flex justify-end gap-2">
-                  <button onClick={() => setModalObsDiariaOpen(false)} className="px-3 py-1.5 rounded-lg border text-sm">Cancelar</button>
+
+                {/* Ações */}
+                <div className="flex items-center justify-between gap-3 pt-1">
                   <button
-                    onClick={async () => {
+                    onClick={() => setModalObsDiariaOpen(false)}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border text-sm font-medium hover:bg-muted/60 transition-colors"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={() => {
                       if (!modalObsDiariaSetor || !modalObsDiariaData || !modalObsDiariaTitulo.trim()) return;
-                      await apiService.createIptObservacaoDiaria(modalObsDiariaSetor, modalObsDiariaData, modalObsDiariaTitulo.trim(), modalObsDiariaDescricao.trim() || undefined);
+                      const key = `diaria::${modalObsDiariaSetor}::${modalObsDiariaData}`;
                       setModalObsDiariaOpen(false);
-                      loadData();
+                      setRecentlySavedKeys((prev) => new Set([...prev, key]));
+                      apiService
+                        .createIptObservacaoDiaria(modalObsDiariaSetor, modalObsDiariaData, modalObsDiariaTitulo.trim(), undefined)
+                        .then(() => loadData());
                     }}
                     disabled={!modalObsDiariaTitulo.trim()}
-                    className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-sm disabled:opacity-50"
+                    className="inline-flex items-center gap-2 px-5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-white text-sm font-semibold disabled:opacity-50 hover:opacity-90 transition-all shadow-lg shadow-amber-500/30"
                   >
-                    OK
+                    <Check className="h-4 w-4" />
+                    Salvar observação
                   </button>
                 </div>
               </div>
@@ -1806,33 +2080,59 @@ export default function IPTPage() {
                             )}
                           </td>
                           <td className="px-3 py-2 font-medium">
-                            <span
-                              className={`inline-flex items-center gap-1.5 ${
-                                temObsGlobal
-                                  ? "text-red-600 dark:text-red-400 font-semibold"
-                                  : temInatividadeLonga
-                                  ? "text-amber-600 dark:text-amber-400"
-                                  : ""
-                              }`}
-                            >
-                              {row.plano || "-"}
-                              {temObsGlobal && (
+                            {(() => {
+                              const obsGlobal = observacoes.globais[row.plano];
+                              const globalCat = obsGlobal ? getObsGlobalCategory(obsGlobal.titulo) : null;
+                              const GlobalIcon = globalCat?.Icon ?? AlertTriangle;
+                              const isRecentGlobal = recentlySavedKeys.has(`global::${row.plano}`);
+                              const temObsDiariaQualquer = Boolean(
+                                observacoes.diarias[row.plano] &&
+                                Object.keys(observacoes.diarias[row.plano]).length > 0
+                              );
+                              return (
                                 <span
-                                  title={observacoes.globais[row.plano].titulo}
-                                  className="inline-flex text-red-500 shrink-0"
+                                  className={`inline-flex items-center gap-1.5 ${
+                                    temObsGlobal
+                                      ? "text-red-600 dark:text-red-400 font-semibold"
+                                      : temInatividadeLonga
+                                      ? "text-amber-600 dark:text-amber-400"
+                                      : ""
+                                  }`}
                                 >
-                                  <AlertTriangle className="h-4 w-4" />
+                                  {row.plano || "-"}
+                                  {temObsGlobal && (
+                                    <span
+                                      title={obsGlobal.titulo}
+                                      className={`inline-flex shrink-0 ${globalCat?.tableIconClass ?? "text-red-500"} ${isRecentGlobal ? "animate-pulse drop-shadow-[0_0_5px_currentColor]" : ""}`}
+                                    >
+                                      <GlobalIcon className="h-4 w-4" />
+                                    </span>
+                                  )}
+                                  {!temObsGlobal && temInatividadeLonga && (
+                                    <span
+                                      title="Módulo(s) com inatividade há muito tempo (7+ dias sem comunicação)"
+                                      className="inline-flex text-amber-500 shrink-0"
+                                    >
+                                      <Battery className="h-4 w-4" />
+                                    </span>
+                                  )}
+                                  {temObsDiariaQualquer && (() => {
+                                    const allKeys = Object.keys(observacoes.diarias[row.plano]);
+                                    const anyRecent = allKeys.some((dk) => recentlySavedKeys.has(`diaria::${row.plano}::${dk}`));
+                                    const firstObs = observacoes.diarias[row.plano][allKeys[0]];
+                                    const dCat = firstObs ? getObsDiariaCategory(firstObs.titulo) : null;
+                                    return (
+                                      <span
+                                        title={`${allKeys.length} obs. diária(s) — ex.: ${firstObs?.titulo ?? ""}`}
+                                        className={`inline-flex shrink-0 ${dCat?.tableIconClass ?? "text-amber-500"} ${anyRecent ? "animate-pulse drop-shadow-[0_0_4px_currentColor]" : "opacity-70"}`}
+                                      >
+                                        {dCat ? <dCat.Icon className="h-3.5 w-3.5" /> : <Calendar className="h-3.5 w-3.5" />}
+                                      </span>
+                                    );
+                                  })()}
                                 </span>
-                              )}
-                              {!temObsGlobal && temInatividadeLonga && (
-                                <span
-                                  title="Módulo(s) com inatividade há muito tempo (7+ dias sem comunicação)"
-                                  className="inline-flex text-amber-500 shrink-0"
-                                >
-                                  <Battery className="h-4 w-4" />
-                                </span>
-                              )}
-                            </span>
+                              );
+                            })()}
                           </td>
                           <td className="px-3 py-2">
                             <span className={`inline-flex items-center justify-center rounded-full border px-2 py-0.5 text-xs font-semibold ${subTag.className}`}>
@@ -2141,52 +2441,116 @@ export default function IPTPage() {
                                                     )}
                                                   </td>
                                                   <td className="py-2 px-2">
-                                                    <span className="inline-flex items-center gap-1 flex-wrap">
-                                                      {observacoes.globais[row.plano] && (
-                                                        <span
-                                                          title={observacoes.globais[row.plano].titulo}
-                                                          className="inline-flex text-red-500"
-                                                        >
-                                                          <AlertTriangle className="h-4 w-4" />
+                                                    {(() => {
+                                                      const dateKey = d.data.replace(/T.*/, "");
+                                                      const obsGlobal = observacoes.globais[row.plano];
+                                                      const obsDiaria = observacoes.diarias[row.plano]?.[dateKey];
+                                                      const recentGlobalKey = `global::${row.plano}`;
+                                                      const recentDiariaKey = `diaria::${row.plano}::${dateKey}`;
+                                                      const isRecentGlobal = recentlySavedKeys.has(recentGlobalKey);
+                                                      const isRecentDiaria = recentlySavedKeys.has(recentDiariaKey);
+                                                      const hasBateria = d.esperado && d.despachos_selimp === 0 && d.despachos_nosso === 0 && row.bateria_por_equipamento && Object.values(row.bateria_por_equipamento).some((b) => /critico|baixo|descarregad|alerta|medio|aten/i.test(b.status_bateria));
+                                                      const diariaCategory = obsDiaria ? getObsDiariaCategory(obsDiaria.titulo) : null;
+                                                      const globalCategory = obsGlobal ? getObsGlobalCategory(obsGlobal.titulo) : null;
+                                                      const diariaActionKey = `${row.plano}::${dateKey}`;
+                                                      return (
+                                                        <span className="inline-flex items-center gap-1 flex-wrap">
+                                                          {obsGlobal && (() => {
+                                                            const GIcon = globalCategory?.Icon ?? AlertTriangle;
+                                                            return (
+                                                              <span
+                                                                title={`[Global] ${obsGlobal.titulo}`}
+                                                                className={`inline-flex ${globalCategory?.tableIconClass ?? "text-red-500"} ${isRecentGlobal ? "animate-pulse drop-shadow-[0_0_4px_currentColor]" : ""}`}
+                                                              >
+                                                                <GIcon className="h-4 w-4" />
+                                                              </span>
+                                                            );
+                                                          })()}
+                                                          {obsDiaria && (() => {
+                                                            const DIcon = diariaCategory?.Icon ?? AlertTriangle;
+                                                            return (
+                                                              <Popover
+                                                                open={obsDiariaMenuKey === diariaActionKey}
+                                                                onOpenChange={(open) =>
+                                                                  setObsDiariaMenuKey(open ? diariaActionKey : null)
+                                                                }
+                                                              >
+                                                                <PopoverTrigger asChild>
+                                                                  <button
+                                                                    type="button"
+                                                                    onClick={(e) => e.stopPropagation()}
+                                                                    className={`inline-flex rounded-md p-0.5 outline-none transition-colors hover:bg-amber-500/20 focus-visible:ring-2 focus-visible:ring-amber-500/50 ${diariaCategory?.tableIconClass ?? "text-amber-500"} ${isRecentDiaria ? "animate-pulse drop-shadow-[0_0_4px_currentColor]" : ""}`}
+                                                                    title={obsDiaria.titulo}
+                                                                    aria-label={`Observação diária: ${obsDiaria.titulo}. Abrir menu`}
+                                                                  >
+                                                                    <DIcon className="h-4 w-4" />
+                                                                  </button>
+                                                                </PopoverTrigger>
+                                                                <PopoverContent
+                                                                  className="w-auto min-w-[9.5rem] p-1 z-[120]"
+                                                                  align="start"
+                                                                  side="bottom"
+                                                                  onClick={(e) => e.stopPropagation()}
+                                                                >
+                                                                  <button
+                                                                    type="button"
+                                                                    className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm hover:bg-muted"
+                                                                    onClick={(e) => {
+                                                                      e.stopPropagation();
+                                                                      setObsDiariaMenuKey(null);
+                                                                      setModalObsDiariaSetor(row.plano);
+                                                                      setModalObsDiariaData(dateKey);
+                                                                      setModalObsDiariaTitulo(obsDiaria.titulo);
+                                                                      setModalObsDiariaCategoria("");
+                                                                      setModalObsDiariaOpen(true);
+                                                                    }}
+                                                                  >
+                                                                    <Pencil className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                                                    Editar
+                                                                  </button>
+                                                                  <button
+                                                                    type="button"
+                                                                    className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm text-red-600 hover:bg-red-500/10 dark:text-red-400"
+                                                                    onClick={async (e) => {
+                                                                      e.stopPropagation();
+                                                                      setObsDiariaMenuKey(null);
+                                                                      if (!confirm("Cancelar esta observação diária?")) return;
+                                                                      await apiService.cancelarIptObservacaoDiaria(obsDiaria.id);
+                                                                      loadData();
+                                                                    }}
+                                                                  >
+                                                                    <Trash2 className="h-4 w-4 shrink-0" />
+                                                                    Cancelar
+                                                                  </button>
+                                                                </PopoverContent>
+                                                              </Popover>
+                                                            );
+                                                          })()}
+                                                          {!obsDiaria && hasBateria && (
+                                                            <span title="Bateria baixa e setor não realizado neste dia" className="inline-flex text-amber-400">
+                                                              <BatteryWarning className="h-4 w-4" />
+                                                            </span>
+                                                          )}
+                                                          {!obsDiaria && (
+                                                            <button
+                                                              type="button"
+                                                              onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                setModalObsDiariaSetor(row.plano);
+                                                                setModalObsDiariaData(dateKey);
+                                                                setModalObsDiariaTitulo("");
+                                                                setModalObsDiariaCategoria("");
+                                                                setModalObsDiariaOpen(true);
+                                                              }}
+                                                              className={`inline-flex items-center gap-0.5 p-1 rounded-lg text-muted-foreground/60 hover:bg-muted/60 hover:text-foreground transition-all ${isRecentDiaria ? "ring-2 ring-amber-400/60 animate-pulse" : ""}`}
+                                                              title="Adicionar observação diária"
+                                                            >
+                                                              <Plus className="h-3.5 w-3.5" />
+                                                            </button>
+                                                          )}
                                                         </span>
-                                                      )}
-                                                      {observacoes.diarias[row.plano]?.[d.data.replace(/T.*/, "")] && (
-                                                        <span
-                                                          title={observacoes.diarias[row.plano][d.data.replace(/T.*/, "")].titulo}
-                                                          className="inline-flex text-amber-500"
-                                                        >
-                                                          <AlertTriangle className="h-4 w-4" />
-                                                        </span>
-                                                      )}
-                                                      {d.esperado &&
-                                                        (d.despachos_selimp === 0 && d.despachos_nosso === 0) &&
-                                                        row.bateria_por_equipamento &&
-                                                        Object.values(row.bateria_por_equipamento).some(
-                                                          (b) => /critico|baixo|descarregad|alerta|medio|aten/i.test(b.status_bateria)
-                                                        ) && (
-                                                          <span
-                                                            title="Bateria baixa e setor não realizado neste dia"
-                                                            className="inline-flex text-amber-400"
-                                                          >
-                                                            <BatteryWarning className="h-4 w-4" />
-                                                          </span>
-                                                        )}
-                                                      <button
-                                                        type="button"
-                                                        onClick={(e) => {
-                                                          e.stopPropagation();
-                                                          setModalObsDiariaSetor(row.plano);
-                                                          setModalObsDiariaData(d.data.replace(/T.*/, ""));
-                                                          setModalObsDiariaTitulo("");
-                                                          setModalObsDiariaDescricao("");
-                                                          setModalObsDiariaOpen(true);
-                                                        }}
-                                                        className="inline-flex p-0.5 rounded hover:bg-muted/60 text-muted-foreground hover:text-foreground"
-                                                        title="Adicionar observação diária"
-                                                      >
-                                                        <Plus className="h-3.5 w-3.5" />
-                                                      </button>
-                                                    </span>
+                                                      );
+                                                    })()}
                                                   </td>
                                                 </tr>
                                               );

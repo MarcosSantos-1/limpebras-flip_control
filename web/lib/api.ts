@@ -694,6 +694,11 @@ export const apiService = {
     return data;
   },
 
+  cancelarIptObservacaoDiaria: async (id: number) => {
+    const { data } = await api.post(`/ipt/observacoes/diarias/${id}/cancelar`);
+    return data;
+  },
+
   /** Diagnóstico: contagens e amostra de ipt_imports (DDMX/SELIMP) para debug */
   getIptDiagnostico: async () => {
     const { data } = await api.get('/dashboard/ipt-diagnostico');

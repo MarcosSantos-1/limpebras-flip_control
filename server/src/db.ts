@@ -369,10 +369,14 @@ export async function runMigrations() {
         data DATE NOT NULL,
         titulo TEXT NOT NULL,
         descricao TEXT,
+        data_cancelamento TIMESTAMPTZ,
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
+    await client.query(
+      "ALTER TABLE ipt_observacoes_diarias ADD COLUMN IF NOT EXISTS data_cancelamento TIMESTAMPTZ"
+    ).catch(() => {});
     await client.query("CREATE INDEX IF NOT EXISTS idx_ipt_obs_diarias_setor_data ON ipt_observacoes_diarias(setor, data)").catch(() => {});
 
     await client.query(`

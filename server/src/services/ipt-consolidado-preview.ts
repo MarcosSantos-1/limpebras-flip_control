@@ -4,7 +4,7 @@ import {
   compareSetores,
   parseSetor,
   getSubFromPlano,
-  getTipoServicoCanonicoPlano,
+  resolveTipoServicoExibicao,
   getFrequenciaDescricao,
   generateFrequencyDates,
   isFrequencyDate,
@@ -437,10 +437,7 @@ export async function buildIptPreviewFromConsolidado(
 
       if (!mostrar) return null;
 
-      const fromPlano = getTipoServicoCanonicoPlano(item.plano);
-      const tipoServicoFinal =
-        fromPlano ||
-        (item.tipo_servico && !/n[aã]o\s*informado/i.test(item.tipo_servico) ? item.tipo_servico : "—");
+      const tipoServicoFinal = resolveTipoServicoExibicao(item.plano, item.tipo_servico);
 
       return {
         plano: item.plano,

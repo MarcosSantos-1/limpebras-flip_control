@@ -20,6 +20,7 @@ import {
   parseSetor,
   getSubFromPlano,
   getTipoServicoFromPlano,
+  SERVICO_ASSEIO_POPULACAO_RUA,
   CRONOGRAMA_SERVICOS,
   getYesterdayDateKeyBrt,
   parseDateKeyLocal,
@@ -367,9 +368,10 @@ const normalizeServiceName = (service: string, plano: string): string => {
   if (
     compact.includes("asseio") ||
     (compact.includes("populacao") && compact.includes("rua")) ||
-    (compact.includes("comercio") && compact.includes("desordenado"))
+    (compact.includes("comercio") && compact.includes("desordenado")) ||
+    (compact.includes("morador") && compact.includes("situacaoderua"))
   ) {
-    return "Equipe de asseio a locais com população em situação de rua e comércio desordenado";
+    return SERVICO_ASSEIO_POPULACAO_RUA;
   }
 
   if (
@@ -1154,6 +1156,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
           `SELECT id, setor, data::text AS data, titulo, descricao
            FROM ipt_observacoes_diarias
            WHERE data >= $1::date AND data <= $2::date
+             AND data_cancelamento IS NULL
            ORDER BY setor, data`,
           [scopeStart, scopeEnd]
         );
@@ -1232,6 +1235,27 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
       );
       invalidatePrefix("ipt_preview");
       return r.rows[0];
+    } finally {
+      client.release();
+    }
+  });
+
+  /** IPT: Cancelar observação diária (registra data_cancelamento) */
+  fastify.post<{
+    Params: { id: string };
+  }>("/ipt/observacoes/diarias/:id/cancelar", async (request, reply) => {
+    const id = Number(request.params.id);
+    if (!Number.isFinite(id) || id < 1) {
+      return reply.code(400).send({ detail: "ID inválido" });
+    }
+    const client = await pool.connect();
+    try {
+      await client.query(
+        `UPDATE ipt_observacoes_diarias SET data_cancelamento = NOW(), updated_at = NOW() WHERE id = $1`,
+        [id]
+      );
+      invalidatePrefix("ipt_preview");
+      return { ok: true };
     } finally {
       client.release();
     }

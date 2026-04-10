@@ -897,94 +897,96 @@ export default function ACICPage() {
             </p>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-1 gap-y-5 gap-x-4 lg:grid-cols-2 lg:gap-x-8 xl:grid-cols-12 xl:items-end xl:gap-x-12">
-              <div className="min-w-0 justify-self-start xl:col-span-2">
-                <div className="inline-flex max-w-full items-center gap-4 rounded-lg bg-emerald-600 px-2.5 py-1.5 shadow-lg text-white">
+            <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between lg:gap-8">
+              <div className="min-w-0 shrink-0">
+                <div className="inline-flex max-w-full items-center gap-2 rounded-lg bg-emerald-600 px-2.5 py-1.5 shadow-lg text-white">
                   <Calendar className="h-4 w-4 shrink-0" aria-hidden />
                   <DateRangePicker
-       
-                  value={periodRange}
-                  onChange={(r) => {
-                    if (!r?.from || !r?.to) {
-                      setPeriodRange(undefined);
-                      return;
-                    }
-                    setPeriodRange({ from: startOfDay(r.from), to: startOfDay(r.to) });
-                  }}
-                  maxDate={new Date()}
-                  modeLabel={periodModeLabel}
-                  emptyLabel="Todos os períodos"
-                  className="max-w-[min(100vw-8rem,22rem)] w-[min(100%,22rem)]"
-                  footer={(close) => (
-                    <>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        className="h-8 text-xs"
-                        onClick={() => {
-                          const cap = clampDateNotFuture(new Date());
-                          const { from, to } = getEsteMesRange(new Date(), cap);
-                          setPeriodRange({ from, to });
-                          close();
-                        }}
-                      >
-                        Este mês
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="h-8 text-xs"
-                        onClick={() => {
-                          setPeriodRange(undefined);
-                          close();
-                        }}
-                      >
-                        Todos os períodos
-                      </Button>
-                    </>
-                  )}
-                />
+                    value={periodRange}
+                    onChange={(r) => {
+                      if (!r?.from || !r?.to) {
+                        setPeriodRange(undefined);
+                        return;
+                      }
+                      setPeriodRange({ from: startOfDay(r.from), to: startOfDay(r.to) });
+                    }}
+                    maxDate={new Date()}
+                    modeLabel={periodModeLabel}
+                    emptyLabel="Todos os períodos"
+                    className="max-w-[min(100vw-8rem,22rem)] w-[min(100%,22rem)]"
+                    footer={(close) => (
+                      <>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          className="h-8 text-xs"
+                          onClick={() => {
+                            const cap = clampDateNotFuture(new Date());
+                            const { from, to } = getEsteMesRange(new Date(), cap);
+                            setPeriodRange({ from, to });
+                            close();
+                          }}
+                        >
+                          Este mês
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-8 text-xs"
+                          onClick={() => {
+                            setPeriodRange(undefined);
+                            close();
+                          }}
+                        >
+                          Todos os períodos
+                        </Button>
+                      </>
+                    )}
+                  />
                 </div>
               </div>
-              <div className="min-w-0 space-y-1 xl:col-span-2 xl:ml-4 2xl:ml-6">
-                <Label className="text-xs text-muted-foreground">Registro</Label>
-                <Select
-                  value={filters.registro}
-                  onValueChange={(value: FiltroRegistro) => setFilters({ ...filters, registro: value })}
-                >
-                  <SelectTrigger className="bg-background">
-                    <SelectValue placeholder="Todos" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="todos">Todos</SelectItem>
-                    <SelectItem value="arquivado">Processo arquivado</SelectItem>
-                    <SelectItem value="defesa">Defesa apresentada</SelectItem>
-                    <SelectItem value="em_aberto">Em aberto (solicitação)</SelectItem>
-                    <SelectItem value="confirmado">Confirmado (multa homologada)</SelectItem>
-                    <SelectItem value="sem_recurso">Sem recurso</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="min-w-0 space-y-1 xl:col-span-4">
-                <Label className="text-xs text-muted-foreground">Subprefeitura</Label>
-                <Select
-                  value={filters.subprefeitura}
-                  onValueChange={(value) => setFilters({ ...filters, subprefeitura: value })}
-                >
-                  <SelectTrigger className="bg-background w-[min(100%,70%)]">
-                    <SelectValue placeholder="Todas" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="todas">Todas as subs</SelectItem>
-                    {ACIC_SUBPREFEITURA_ORDER.map((sub) => (
-                      <SelectItem key={sub} value={sub}>
-                        {sub}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+
+              <div className="flex min-w-0 w-full flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end sm:justify-end lg:flex-1">
+                <div className="min-w-0 space-y-1 sm:w-[min(100%,17rem)]">
+                  <Label className="text-xs text-muted-foreground">Registro</Label>
+                  <Select
+                    value={filters.registro}
+                    onValueChange={(value: FiltroRegistro) => setFilters({ ...filters, registro: value })}
+                  >
+                    <SelectTrigger className="bg-background w-full">
+                      <SelectValue placeholder="Todos" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="todos">Todos</SelectItem>
+                      <SelectItem value="arquivado">Processo arquivado</SelectItem>
+                      <SelectItem value="defesa">Defesa apresentada</SelectItem>
+                      <SelectItem value="em_aberto">Em aberto (solicitação)</SelectItem>
+                      <SelectItem value="confirmado">Confirmado (multa homologada)</SelectItem>
+                      <SelectItem value="sem_recurso">Sem recurso</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="min-w-0 space-y-1 sm:w-[min(100%,70%)] sm:max-w-[17.5rem]">
+                  <Label className="text-xs text-muted-foreground">Subprefeitura</Label>
+                  <Select
+                    value={filters.subprefeitura}
+                    onValueChange={(value) => setFilters({ ...filters, subprefeitura: value })}
+                  >
+                    <SelectTrigger className="bg-background w-full">
+                      <SelectValue placeholder="Todas" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="todas">Todas as subs</SelectItem>
+                      {ACIC_SUBPREFEITURA_ORDER.map((sub) => (
+                        <SelectItem key={sub} value={sub}>
+                          {sub}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
             </div>
             <div className="mt-4 flex flex-col gap-3 border-t border-border/50 pt-4 sm:flex-row sm:flex-wrap sm:items-center">
