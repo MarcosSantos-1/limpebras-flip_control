@@ -47,7 +47,7 @@ const PAGE_LABELS: Record<AuthPageKey, string> = {
 const DEFAULT_USER_PAGE_KEYS: AuthPageKey[] = ["dashboard", "indicadores", "ipt", "sacs", "bfs", "acic"];
 const IPT_RESTRICTED_PAGE_KEYS: AuthPageKey[] = ["ipt", "ipt_restrito", "upload"];
 
-function buildPagePermissions(allowedPageKeys: AuthPageKey[]): Record<AuthPageKey, boolean> {
+function buildPagePermissions(allowedPageKeys: readonly AuthPageKey[]): Record<AuthPageKey, boolean> {
   const allowed = new Set(allowedPageKeys);
   return Object.fromEntries(AUTH_PAGE_KEYS.map((pageKey) => [pageKey, allowed.has(pageKey)])) as Record<AuthPageKey, boolean>;
 }
