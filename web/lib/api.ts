@@ -618,6 +618,23 @@ export const apiService = {
     const { data } = await api.post('/upload/clear-ipt-consolidado-varricao');
     return data;
   },
+  uploadIptModulosBateria: async (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const { data } = await api.post('/upload/ipt-modulos-bateria', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: UPLOAD_REQUEST_TIMEOUT_MS,
+    });
+    return data;
+  },
+  clearIptModulosBateria: async () => {
+    const { data } = await api.post('/upload/clear-ipt-modulos-bateria');
+    return data;
+  },
+  getIptModulosBateria: async () => {
+    const { data } = await api.get('/dashboard/ipt-modulos-bateria');
+    return data;
+  },
   /** Remove registros manuais de IPT. */
   clearIptRegistros: async () => {
     const { data } = await api.post('/upload/clear-ipt-registros');

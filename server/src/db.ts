@@ -486,6 +486,51 @@ export async function runMigrations() {
     await client.query("CREATE INDEX IF NOT EXISTS idx_ddmx_veiculos_setor ON ipt_ddmx_veiculos(setor)").catch(() => {});
     await client.query("CREATE INDEX IF NOT EXISTS idx_ddmx_veiculos_subtipo ON ipt_ddmx_veiculos(subtipo)").catch(() => {});
 
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS ipt_modulos_bateria_batches (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        imported_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        source_file TEXT,
+        total_registros INT NOT NULL DEFAULT 0
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS ipt_modulos_bateria (
+        id SERIAL PRIMARY KEY,
+        subprefeitura TEXT,
+        setor TEXT NOT NULL,
+        numero_selimp TEXT,
+        dias_execucao TEXT,
+        ultima_comunicacao TIMESTAMPTZ,
+        bateria TEXT,
+        raw JSONB NOT NULL,
+        source_file TEXT,
+        batch_id UUID REFERENCES ipt_modulos_bateria_batches(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    // Remove unique constraint on setor — history allows same setor in multiple batches
+    await client.query("DROP INDEX IF EXISTS ux_modulos_bateria_setor").catch(() => {});
+    // Add batch_id column to existing tables that predate this migration
+    await client.query("ALTER TABLE ipt_modulos_bateria ADD COLUMN IF NOT EXISTS batch_id UUID REFERENCES ipt_modulos_bateria_batches(id) ON DELETE CASCADE").catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_modulos_bateria_batch ON ipt_modulos_bateria(batch_id)").catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_modulos_bateria_sub ON ipt_modulos_bateria(subprefeitura)").catch(() => {});
+    // Create a legacy batch for any orphaned records (from before the batch system)
+    await client.query(`
+      WITH orphans AS (SELECT COUNT(*) AS cnt FROM ipt_modulos_bateria WHERE batch_id IS NULL),
+           new_batch AS (
+             INSERT INTO ipt_modulos_bateria_batches (source_file, total_registros)
+             SELECT 'legacy', cnt::int FROM orphans WHERE cnt > 0
+             RETURNING id
+           )
+      UPDATE ipt_modulos_bateria
+        SET batch_id = new_batch.id
+        FROM new_batch
+        WHERE ipt_modulos_bateria.batch_id IS NULL
+    `).catch(() => {});
+
     const adminEncryptedPassword = encryptPassword("1515");
     const userResult = await client.query<{ id: number }>(
       `INSERT INTO users (username, display_name, password_encrypted, role, status, blocked, created_at, updated_at)

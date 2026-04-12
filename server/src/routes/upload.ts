@@ -17,6 +17,7 @@ import { normalizarSetor, parseSetor } from "../constants/ipt.js";
 import { parseConsolidadoVeiculos, parseConsolidadoVarricao } from "../services/parseRelatorioConsolidado.js";
 import { estimarDatasReport, type ReportLinhaRaw } from "../services/estimarDataReport.js";
 import { mergeAcicOverridesAfterImportRow } from "../services/acicImportMerge.js";
+import { parseModulosBateriaWorkbook } from "../services/parseModulosBateria.js";
 import { requirePageAccess } from "../auth.js";
 
 function normCncKeyForMerge(numeroCnc: string | null | undefined): string {
@@ -168,7 +169,8 @@ type SessionUploadType =
   | "iptStatusBateria"
   | "iptCronograma"
   | "iptConsolidadoVeiculos"
-  | "iptConsolidadoVarricao";
+  | "iptConsolidadoVarricao"
+  | "iptModulosBateria";
 type SessionKey = "flip" | "ddmx" | "selimp";
 
 interface UploadSummary {
@@ -238,6 +240,8 @@ function mapSessionTypeToLabel(type: SessionUploadType): string {
       return "IPT — Consolidado (veículos)";
     case "iptConsolidadoVarricao":
       return "IPT — Consolidado (varrição)";
+    case "iptModulosBateria":
+      return "IPT — Baterias x Módulos";
   }
 }
 
@@ -1721,6 +1725,93 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
+  fastify.post("/upload/ipt-modulos-bateria", async (request, reply) => {
+    const data = await request.file();
+    if (!data) return reply.code(400).send({ detail: "Arquivo XLSX obrigatório" });
+    const lower = data.filename.toLowerCase();
+    if (!lower.endsWith(".xlsx") && !lower.endsWith(".xls")) {
+      return reply.code(400).send({ detail: "Aceita apenas arquivos XLSX/XLS." });
+    }
+    try {
+      const buffer = await data.toBuffer();
+      const rows = parseModulosBateriaWorkbook(buffer);
+      if (rows.length === 0) throw new Error("Nenhum registro valido na planilha");
+
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+
+        // Create a new batch record for this import snapshot
+        const batchResult = await client.query<{ id: string }>(
+          `INSERT INTO ipt_modulos_bateria_batches (source_file, total_registros)
+           VALUES ($1, $2) RETURNING id`,
+          [data.filename, rows.length]
+        );
+        const batchId = batchResult.rows[0].id;
+
+        let inserted = 0;
+        for (const row of rows) {
+          const raw: Record<string, unknown> = {
+            comunicacao: row.comunicacao,
+            bateria_percentual: row.bateria_percentual,
+            status_sinal_geral: row.status_sinal_geral,
+            status_bateria: row.status_bateria,
+            data_instalacao: row.data_instalacao,
+            quantidade_trocas: row.quantidade_trocas,
+            dias_on: row.dias_on,
+            dias_off: row.dias_off,
+            produtividade: row.produtividade,
+          };
+          await client.query(
+            `INSERT INTO ipt_modulos_bateria (
+              subprefeitura, setor, numero_selimp, dias_execucao,
+              ultima_comunicacao, bateria, raw, source_file, batch_id, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, NOW())`,
+            [
+              row.subprefeitura || null,
+              row.setor,
+              row.numero_selimp || null,
+              row.dias_execucao || null,
+              row.ultima_comunicacao,
+              row.bateria || null,
+              JSON.stringify(raw),
+              data.filename,
+              batchId,
+            ]
+          );
+          inserted++;
+        }
+
+        await client.query("COMMIT");
+        invalidatePrefix("ipt_modulos_bateria");
+        invalidatePrefix("kpis");
+
+        const batchAt = new Date().toISOString();
+        const summary = {
+          processados: inserted,
+          total: rows.length,
+          inseridos: inserted,
+          atualizados: 0,
+          duplicados: 0,
+          erros: 0,
+          batch_id: batchId,
+          ultimo_import: batchAt,
+          source_file: data.filename,
+        };
+        await recordUploadEvent("selimp", "iptModulosBateria", data.filename, summary);
+        return summary;
+      } catch (e) {
+        await client.query("ROLLBACK");
+        throw e;
+      } finally {
+        client.release();
+      }
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : "Falha no upload";
+      return reply.code(400).send({ detail });
+    }
+  });
+
   const getLastCronogramaUpdate = async () => {
     const last = await pool.query(
       `SELECT source_file, updated_at FROM ipt_cronograma ORDER BY updated_at DESC NULLS LAST LIMIT 1`
@@ -1731,6 +1822,23 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       source_file: last.rows[0]?.source_file ?? null,
       total_registros: Number(count.rows[0]?.total ?? 0),
     };
+  };
+
+  const getLastModulosBateriaUpdate = async () => {
+    try {
+      const last = await pool.query(
+        `SELECT id, source_file, imported_at, total_registros
+         FROM ipt_modulos_bateria_batches ORDER BY imported_at DESC NULLS LAST LIMIT 1`
+      );
+      return {
+        ultimo_import: last.rows[0]?.imported_at ?? null,
+        source_file: last.rows[0]?.source_file ?? null,
+        total_registros: Number(last.rows[0]?.total_registros ?? 0),
+        batch_id: last.rows[0]?.id ?? null,
+      };
+    } catch {
+      return { ultimo_import: null, source_file: null, total_registros: 0, batch_id: null };
+    }
   };
 
   fastify.post("/upload/ipt-cronograma", async (request, reply) => {
@@ -1805,6 +1913,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       iptCronograma,
       iptConsolidadoVeiculos,
       iptConsolidadoVarricao,
+      iptModulosBateria,
       dashboardOntemRow,
     ] = await Promise.all([
       getLastUpdate("sacs"),
@@ -1823,6 +1932,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       getLastCronogramaUpdate(),
       getLastIptUpdate("ipt_consolidado_veiculos"),
       getLastIptUpdate("ipt_consolidado_varricao"),
+      getLastModulosBateriaUpdate(),
       pool
         .query<{
           ontem_brt: string;
@@ -1952,6 +2062,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       iptCronograma,
       iptConsolidadoVeiculos,
       iptConsolidadoVarricao,
+      iptModulosBateria,
       sessions: {
         flip: flipSession,
         ddmx: ddmxSession,
@@ -2062,6 +2173,14 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
     const r = await pool.query(`DELETE FROM ipt_consolidado_varricao_dados RETURNING id`);
     await pool.query(`DELETE FROM ipt_imports WHERE file_type = 'ipt_consolidado_varricao'`).catch(() => {});
     invalidatePrefix("ipt_preview");
+    invalidatePrefix("kpis");
+    return { deleted: r.rowCount ?? 0 };
+  });
+
+  fastify.post("/upload/clear-ipt-modulos-bateria", async (_request, reply) => {
+    // Deleting from the batches table cascades to ipt_modulos_bateria via ON DELETE CASCADE
+    const r = await pool.query(`DELETE FROM ipt_modulos_bateria_batches RETURNING id`);
+    invalidatePrefix("ipt_modulos_bateria");
     invalidatePrefix("kpis");
     return { deleted: r.rowCount ?? 0 };
   });

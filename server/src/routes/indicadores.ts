@@ -34,6 +34,7 @@ import {
 import { config } from "../config.js";
 import { buildIptPreviewFromConsolidado } from "../services/ipt-consolidado-preview.js";
 import { percentDisplayToDecimal } from "../services/parseRelatorioConsolidado.js";
+import { formatDataInstalacaoBr } from "../services/formatDataInstalacaoBr.js";
 
 /** Ordens SELIMP a partir das planilhas consolidadas (prioridade sobre Report oficial). */
 async function fetchOrdensConsolidadoNoPeriodo(
@@ -1350,5 +1351,88 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
     } finally {
       client.release();
     }
+  });
+
+  fastify.get("/dashboard/ipt-modulos-bateria", async (_request, reply) => {
+    const cacheResult = await getOrSet(
+      cacheKey("ipt_modulos_bateria", {}),
+      async () => {
+        // Resolve the latest batch
+        const batchRow = await pool.query<{ id: string; imported_at: Date; source_file: string; total_registros: number }>(
+          `SELECT id, imported_at, source_file, total_registros
+           FROM ipt_modulos_bateria_batches
+           ORDER BY imported_at DESC LIMIT 1`
+        );
+        const latestBatch = batchRow.rows[0] ?? null;
+
+        // Filter records by latest batch (if one exists); fall back to all for legacy data
+        const result = await pool.query(
+          `SELECT m.id, m.subprefeitura, m.setor, m.numero_selimp, m.dias_execucao,
+                  m.ultima_comunicacao, m.bateria, m.raw, m.updated_at, m.batch_id
+           FROM ipt_modulos_bateria m
+           ${latestBatch ? "WHERE m.batch_id = $1" : ""}
+           ORDER BY m.subprefeitura, m.setor`,
+          latestBatch ? [latestBatch.id] : []
+        );
+
+        const modules = result.rows.map((r) => {
+          const raw = (r.raw ?? {}) as Record<string, unknown>;
+          return {
+            id: r.id,
+            subprefeitura: r.subprefeitura ?? "",
+            setor: r.setor,
+            numeroSelimp: r.numero_selimp ?? "",
+            diasExecucao: r.dias_execucao ?? "",
+            comunicacao: String(raw.comunicacao ?? "OFF"),
+            bateria: r.bateria ?? "",
+            bateriaPercentual: Number(raw.bateria_percentual ?? 0),
+            ultimaComunicacao: r.ultima_comunicacao
+              ? new Date(r.ultima_comunicacao).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })
+              : "",
+            statusSinalGeral: String(raw.status_sinal_geral ?? ""),
+            statusBateria: String(raw.status_bateria ?? ""),
+            dataInstalacao: formatDataInstalacaoBr(String(raw.data_instalacao ?? "")),
+            quantidadeTrocas: Number(raw.quantidade_trocas ?? 0),
+            diasOn: Number(raw.dias_on ?? 0),
+            diasOff: Number(raw.dias_off ?? 0),
+            produtividade: Number(raw.produtividade ?? 0),
+          };
+        });
+
+        const total = modules.length;
+        const online = modules.filter((m) => m.comunicacao === "ON").length;
+        const offline = total - online;
+        const avgProductivity = total > 0
+          ? Math.round(modules.reduce((sum, m) => sum + m.produtividade, 0) / total)
+          : 0;
+        const criticalAlerts = modules.filter(
+          (m) => m.statusBateria === "DESATUALIZADA" || m.produtividade < 50
+        ).length;
+        const lowBattery = modules.filter(
+          (m) => m.statusBateria === "BAIXA" || m.bateriaPercentual < 40
+        ).length;
+
+        const lastUpdate = latestBatch
+          ? new Date(latestBatch.imported_at).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })
+          : null;
+
+        return {
+          modules,
+          stats: { total, online, offline, avgProductivity, criticalAlerts, lowBattery },
+          lastUpdate,
+          latestBatch: latestBatch
+            ? {
+                id: latestBatch.id,
+                importedAt: new Date(latestBatch.imported_at).toISOString(),
+                sourceFile: latestBatch.source_file,
+                totalRegistros: latestBatch.total_registros,
+              }
+            : null,
+        };
+      },
+      15
+    );
+
+    return cacheResult;
   });
 };

@@ -47,7 +47,8 @@ type UploadKey =
   | "ddmxLight"
   | "iptReport"
   | "iptStatusBateria"
-  | "iptCronograma";
+  | "iptCronograma"
+  | "iptModulosBateria";
 type IptReferenceMode = "d_minus_1" | "fim_de_semana" | "mensal" | "personalizado";
 
 interface UploadApiError {
@@ -248,6 +249,7 @@ function createInitialStates(): Record<UploadKey, UploadState> {
     iptReport: { status: "idle" },
     iptStatusBateria: { status: "idle" },
     iptCronograma: { status: "idle" },
+    iptModulosBateria: { status: "idle" },
   };
 }
 
@@ -908,6 +910,30 @@ export default function UploadPage() {
     }
   };
 
+  const handleModulosBateriaUpload = async (files: FileList | null) => {
+    const file = files?.[0];
+    if (!file) return;
+
+    if (!file.name.toLowerCase().endsWith(".xlsx")) {
+      const message = "Aceita apenas arquivos XLSX.";
+      setUploadState("iptModulosBateria", { status: "error", error: message });
+      toast.error(message);
+      return;
+    }
+
+    setUploadState("iptModulosBateria", { status: "uploading" });
+    try {
+      const result = await apiService.uploadIptModulosBateria(file);
+      setUploadState("iptModulosBateria", { status: "success", result });
+      toast.success("Baterias x Módulos importado com sucesso.");
+      await loadOverview();
+    } catch (error) {
+      const message = getErrorMessage(error);
+      setUploadState("iptModulosBateria", { status: "error", error: message });
+      toast.error(message);
+    }
+  };
+
   const toggleHistory = (key: string) => {
     setExpandedHistory((prev) => ({ ...prev, [key]: !prev[key] }));
   };
@@ -1134,8 +1160,8 @@ export default function UploadPage() {
             accent="emerald"
             icon={LayoutDashboard}
             title="SELIMP"
-            subtitle="Dois canais fixos: relatório de ordens (com período de referência obrigatório) e planilha de status de bateria, para não misturar com o DDMX."
-            contentClassName="grid gap-6 pb-6 pt-1 md:grid-cols-2"
+            subtitle="Três canais fixos: relatório de ordens (com período de referência obrigatório), planilha de status de bateria e baterias x módulos (dashboard de monitoramento)."
+            contentClassName="grid gap-6 pb-6 pt-1 md:grid-cols-2 lg:grid-cols-3"
           >
             <div
               className={cn(
@@ -1252,6 +1278,42 @@ export default function UploadPage() {
                   onToggle={() => toggleHistory("iptStatusBateria")}
                 />
                 <SummaryBox state={states.iptStatusBateria} />
+              </div>
+
+              <div
+                className={cn(
+                "rounded-2xl border p-6 shadow-sm",
+                "border-slate-200/85 bg-gradient-to-b from-white to-slate-50/40",
+                "dark:border-border dark:bg-gradient-to-b dark:from-card dark:to-muted/25 dark:shadow-md dark:shadow-black/20",
+              )}
+            >
+                <div className="mb-5 flex items-start gap-3">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-violet-100 text-violet-800 ring-1 ring-violet-200/80 dark:bg-violet-950/40 dark:text-violet-200 dark:ring-violet-500/25">
+                    <BatteryFull className="h-4 w-4" />
+                  </span>
+                  <div>
+                    <div className="text-lg font-semibold tracking-tight">IPT — Baterias x Módulos</div>
+                    <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                      Planilha completa com dados de todos os módulos: comunicação, bateria, produtividade, dias ON/OFF e status de sinal. Alimenta o dashboard de monitoramento.
+                    </p>
+                  </div>
+                </div>
+
+                <UploadDropzone
+                  inputId="iptModulosBateria"
+                  accept=".xlsx"
+                  tone="violet"
+                  loading={states.iptModulosBateria.status === "uploading"}
+                  helperText="Planilha 'baterias x modulos' com dados de todos os módulos IPT (subprefeitura, setor, comunicação, bateria, produtividade)."
+                  onFilesSelected={handleModulosBateriaUpload}
+                />
+                <HistoryBlock
+                  title="Última importação módulos"
+                  overview={(overview as Record<string, unknown>).iptModulosBateria as LastUploadInfo | undefined}
+                  expanded={Boolean(expandedHistory.iptModulosBateria)}
+                  onToggle={() => toggleHistory("iptModulosBateria")}
+                />
+                <SummaryBox state={states.iptModulosBateria} />
               </div>
           </SessionAccordionItem>
         </Accordion>

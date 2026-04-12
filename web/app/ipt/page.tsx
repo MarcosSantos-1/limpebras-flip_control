@@ -2,6 +2,7 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { format, startOfDay, startOfMonth, subDays } from "date-fns";
 import type { DateRange } from "react-day-picker";
 import { ptBR } from "date-fns/locale";
@@ -28,7 +29,12 @@ import {
   Plus,
   RotateCcw,
   Search,
+  ShieldAlert,
+  ShieldCheck,
+  ShieldX,
   Sparkles,
+  Target,
+  TrendingDown,
   TrendingUp,
   Trash2,
   Truck,
@@ -382,7 +388,6 @@ export default function IPTPage() {
     direction: "asc",
   });
   const [expandedPlano, setExpandedPlano] = useState<string | null>(null);
-  const [modalBateriaOpen, setModalBateriaOpen] = useState(false);
   const [modalCruzamentoOpen, setModalCruzamentoOpen] = useState(false);
   const [iptFormulaTooltip, setIptFormulaTooltip] = useState(false);
   const monthReferenciaInputRef = useRef<HTMLInputElement>(null);
@@ -638,9 +643,11 @@ export default function IPTPage() {
   /** Itens do comparativo no escopo do mês (cards) - para métricas do card Subprefeituras */
   const cardsComparativoItens = useMemo(
     () => (iptPreviewCards?.comparativo?.itens ?? []) as Array<{
+      plano: string;
       subprefeitura: string;
       percentual_selimp: number | null;
       percentual_nosso: number | null;
+      origem: "ambos" | "somente_selimp" | "somente_nosso";
       despachos_selimp?: number;
       raw_selimp_sum?: number;
       raw_selimp_count?: number;
@@ -917,7 +924,7 @@ export default function IPTPage() {
 
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
           <Card className="xl:col-span-1 border-0 shadow-[0_20px_50px_-30px_rgba(16,185,129,0.7)] bg-linear-to-br from-emerald-500/15 via-card to-card">
-            <CardHeader>
+            <CardHeader className="pb-3">
               <div className="flex items-center gap-2">
                 <CardTitle className="text-base">IPT (Cálculo Automático)</CardTitle>
                 <div
@@ -927,39 +934,58 @@ export default function IPTPage() {
                 >
                   <Info className="h-4 w-4 text-zinc-400 hover:text-emerald-500 cursor-help transition-colors shrink-0" />
                   {iptFormulaTooltip && (
-                    <div className="absolute left-0 top-6 z-50 w-[min(95vw,96rem)] max-w-[96rem] rounded-lg bg-zinc-900 dark:bg-zinc-800 p-4 text-xs text-white shadow-xl border border-zinc-700">
-                      <div className="font-bold mb-2 text-sm text-emerald-400">IPT – Algoritmo SELIMP</div>
-                      <div className="mb-3 p-2 bg-zinc-800 dark:bg-zinc-900 rounded border border-zinc-700">
-                        <div className="text-zinc-400 text-xs mb-1">Fórmula completa:</div>
+                    <div className="absolute left-0 top-6 z-50 w-[min(95vw,28rem)] rounded-lg bg-zinc-900 dark:bg-zinc-800 p-4 text-xs text-white shadow-xl border border-zinc-700">
+                      <div className="font-bold mb-2 text-sm text-emerald-400">IPT — SELIMP</div>
+                      <div className="p-2 bg-zinc-800 dark:bg-zinc-900 rounded border border-zinc-700">
                         <div className="font-mono text-xs text-emerald-300 leading-relaxed">
                           PF = 0.7 × min(Q̄ + min(σ, 0.08), 1) + 0.3 × min(A/C, 1)
                           <br />
                           <span className="text-zinc-400">onde C = P×R/F , Q̄ = (1/N)×ΣQᵢ , N = A−Z</span>
                         </div>
                       </div>
-                      <div className="text-zinc-400 text-xs">70% Qualidade + 30% Cobertura. Fonte: planilha SELIMP.</div>
+                      <div className="text-zinc-400 text-xs mt-2">70% qualidade + 30% cobertura. Fonte: planilha SELIMP.</div>
                     </div>
                   )}
                 </div>
               </div>
-              <CardDescription>Percentual Médio e Pontuação do ADC.</CardDescription>
+              <CardDescription>Percentual Médio e Pontuação.</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="rounded-xl bg-background/70 p-4 shadow-sm transition-all hover:shadow-md">
-                <p className="text-xs text-muted-foreground">IPT (%)</p>
-                <p className="text-3xl font-bold text-emerald-600">{iptCard.valor != null ? `${iptCard.valor.toFixed(1)}%` : "--"}</p>
-                <div className="mt-3 h-2 rounded-full bg-emerald-200/40 dark:bg-emerald-900/20">
+            <CardContent className="space-y-3">
+              {/* IPT real + pontuação */}
+              <div className="rounded-xl bg-background/70 p-3.5 shadow-sm transition-all hover:shadow-md">
+                <p className="text-xs text-muted-foreground">IPT calculado (SELIMP)</p>
+                <p className="text-3xl font-bold text-emerald-600 mt-0.5">
+                  {iptCard.valor != null ? `${iptCard.valor.toFixed(1)}%` : "--"}
+                </p>
+                <div className="mt-2.5 h-2 rounded-full bg-emerald-200/40 dark:bg-emerald-900/20">
                   <div
-                    className="h-2 rounded-full bg-gradient-to-r from-emerald-500 to-teal-500 transition-all"
+                    className="h-2 rounded-full bg-linear-to-r from-emerald-500 to-teal-500 transition-all"
                     style={{ width: `${clamp(iptCard.valor ?? 0)}%` }}
                   />
                 </div>
+                {/* marcadores de faixa */}
+                <div className="relative mt-1 h-3">
+                  {[80, 90].map((mark) => (
+                    <div
+                      key={mark}
+                      className="absolute top-0 flex flex-col items-center"
+                      style={{ left: `${mark}%`, transform: "translateX(-50%)" }}
+                    >
+                      <div className="w-px h-2 bg-muted-foreground/40" />
+                      <span className="text-[9px] text-muted-foreground/60">{mark}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
-              <div className="rounded-xl bg-background/70 p-4 shadow-sm transition-all hover:shadow-md">
-                <p className="text-xs text-muted-foreground">Pontuação IPT</p>
-                <p className="text-3xl font-bold text-teal-600">{iptCard.pontuacao ?? 0}</p>
-                <p className="text-xs text-muted-foreground mt-2">Faixa de pontuação conforme parâmetros do ADC.</p>
+
+              <div className="rounded-xl bg-background/70 p-3.5 shadow-sm transition-all hover:shadow-md flex items-center justify-between">
+                <div>
+                  <p className="text-xs text-muted-foreground">Pontuação IPT</p>
+                  <p className="text-3xl font-bold text-teal-600 mt-0.5">{iptCard.pontuacao ?? 0}</p>
+                </div>
+                <Target className="h-8 w-8 text-teal-500/40" />
               </div>
+
             </CardContent>
           </Card>
 
@@ -986,17 +1012,16 @@ export default function IPTPage() {
                   </div>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setModalBateriaOpen(true)}
+              <Link
+                href="/ipt/bateria"
                 className="min-h-[140px] rounded-xl bg-violet-500/10 p-4 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg hover:bg-violet-500/20 border border-violet-500/20 hover:border-violet-500/40 text-left group flex flex-col justify-center"
               >
                 <div className="flex items-center gap-2">
                   <Battery className="h-6 w-6 text-violet-600 dark:text-violet-400 group-hover:scale-110 transition-transform" />
                   <span className="text-base font-semibold text-violet-700 dark:text-violet-300">Análise de Bateria</span>
                 </div>
-                <p className="text-xs text-muted-foreground mt-2">Clique para abrir. Status da bateria por setor nos detalhes expandidos.</p>
-              </button>
+                <p className="text-xs text-muted-foreground mt-2">Dashboard completo de monitoramento de módulos, bateria e sinal.</p>
+              </Link>
               <button
                 type="button"
                 onClick={() => setModalCruzamentoOpen(true)}
@@ -1011,41 +1036,6 @@ export default function IPTPage() {
             </CardContent>
           </Card>
 
-          <Dialog open={modalBateriaOpen} onOpenChange={setModalBateriaOpen}>
-            <DialogContent className="max-w-[94vw] w-full max-h-[92vh] overflow-y-auto p-8 animate-in fade-in zoom-in-95 duration-300">
-              <DialogHeader className="pb-6">
-                <DialogTitle className="text-2xl flex items-center gap-2">
-                  <span className="inline-block w-3 h-3 rounded-full bg-violet-500" />
-                  Análise de Bateria
-                </DialogTitle>
-                <DialogDescription className="text-base">
-                  Guia para implementação — lembrete de especificação
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-6 text-sm">
-                <p className="text-muted-foreground italic">
-                  Problema real: &quot;Estamos perdendo IPT por causa de bateria? Quais baterias?&quot; — mensurar e melhorar gestão de carga, eficiência e estratégias em relação às baterias dos módulos.
-                </p>
-                <div className="rounded-xl border border-violet-500/30 bg-violet-500/5 p-5 space-y-4">
-                  <h4 className="font-semibold text-violet-700 dark:text-violet-300">Gráficos a implementar</h4>
-                  <ul className="space-y-2 text-muted-foreground">
-                    <li className="flex gap-2">
-                      <span className="text-violet-500">📈</span>
-                      <span><strong>Evolução de bateria média por módulo</strong> — linha temporal</span>
-                    </li>
-                    <li className="flex gap-2">
-                      <span className="text-violet-500">📊</span>
-                      <span><strong>Percentual de módulos com bateria crítica</strong> (&lt;20%)</span>
-                    </li>
-                    <li className="flex gap-2">
-                      <span className="text-violet-500">📋</span>
-                      <span><strong>Ranking de módulos</strong> com mais dias com bateria baixa</span>
-                    </li>
-                  </ul>
-                </div>
-              </div>
-            </DialogContent>
-          </Dialog>
           <Dialog open={modalCruzamentoOpen} onOpenChange={setModalCruzamentoOpen}>
             <DialogContent className="max-w-[94vw] w-full max-h-[92vh] overflow-y-auto p-8 animate-in fade-in zoom-in-95 duration-300">
               <DialogHeader className="pb-6">
@@ -1093,6 +1083,7 @@ export default function IPTPage() {
               </div>
             </DialogContent>
           </Dialog>
+
 
           {/* ── Modal: Observação Global ─────────────────────────── */}
           <Dialog open={modalObsGlobalOpen} onOpenChange={(open) => {
@@ -1181,7 +1172,7 @@ export default function IPTPage() {
                 <div className="flex items-center justify-between gap-3 pt-1">
                   <button
                     onClick={() => setModalObsGlobalOpen(false)}
-                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border text-sm font-medium hover:bg-muted/60 transition-colors"
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-zinc-300 dark:border-zinc-700 shadow-xl shadow-zinc-300/10 dark:shadow-zinc-700/10 bg-background/80 text-sm font-medium hover:bg-muted/60 transition-colors"
                   >
                     <X className="h-3.5 w-3.5" />
                     Cancelar
@@ -1285,7 +1276,7 @@ export default function IPTPage() {
                 <div className="flex items-center justify-between gap-3 pt-1">
                   <button
                     onClick={() => setModalObsDiariaOpen(false)}
-                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border text-sm font-medium hover:bg-muted/60 transition-colors"
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-zinc-300 dark:border-zinc-700 shadow-xl shadow-zinc-300/10 dark:shadow-zinc-700/10 bg-background/80 text-sm font-medium hover:bg-muted/60 transition-colors"
                   >
                     <X className="h-3.5 w-3.5" />
                     Cancelar
