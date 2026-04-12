@@ -1,4 +1,4 @@
-import { FastifyPluginAsync, FastifyRequest } from "fastify";
+import { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
 import type { PoolClient } from "pg";
 import { pool } from "../db.js";
 import { invalidatePrefix } from "../cache.js";
@@ -19,6 +19,20 @@ import { estimarDatasReport, type ReportLinhaRaw } from "../services/estimarData
 import { mergeAcicOverridesAfterImportRow } from "../services/acicImportMerge.js";
 import { parseModulosBateriaWorkbook } from "../services/parseModulosBateria.js";
 import { requirePageAccess } from "../auth.js";
+
+function ensureIptRestrictedUploadAccess(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  allowedPaths: string[]
+): boolean {
+  const user = request.authUser;
+  if (!user || !user.isIptRestricted) return true;
+  const path = String(request.url ?? "").split("?")[0] ?? "";
+  const allowed = allowedPaths.includes(path);
+  if (allowed) return true;
+  reply.code(403).send({ detail: "Perfil IPT restrito sem acesso a este upload." });
+  return false;
+}
 
 function normCncKeyForMerge(numeroCnc: string | null | undefined): string {
   return (numeroCnc ?? "").trim();
@@ -265,6 +279,9 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.addHook("preHandler", async (request, reply) => {
     const user = await requirePageAccess(request, reply, "upload");
     if (!user) return reply;
+    if (!ensureIptRestrictedUploadAccess(request, reply, ["/upload/ipt-modulos-bateria", "/upload/last-updates"])) {
+      return reply;
+    }
   });
 
   const getLastUpdate = async (table: "sacs" | "bfs" | "acic" | "ouvidoria" | "cncs") => {

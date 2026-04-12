@@ -36,6 +36,7 @@ export interface AuthUser {
   status: "active" | "inactive";
   blocked: boolean;
   page_permissions: Record<AuthPageKey, boolean>;
+  is_ipt_restricted?: boolean;
   visible_password: string;
 }
 

@@ -36,6 +36,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { apiService } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
 type SessionKey = "flip" | "ddmx" | "selimp";
@@ -724,6 +725,7 @@ function UploadDropzone({
 }
 
 export default function UploadPage() {
+  const { isIptRestrictedUser } = useAuth();
   const iptReferenceOptions = useMemo(() => buildIptReferenceOptions(), []);
   const defaultIdx = new Date().getDay() === 1 ? 1 : 0;
   const [states, setStates] = useState<Record<UploadKey, UploadState>>(createInitialStates());
@@ -961,61 +963,112 @@ export default function UploadPage() {
                 <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-indigo-200/90">Central de importação</p>
                 <h1 className="mt-1 text-4xl font-bold tracking-tight">Upload de dados</h1>
                 <p className="mt-4 max-w-3xl text-sm leading-relaxed text-indigo-50/95 sm:text-base">
-                  As importações principais ficam por sessão (FLIP, DDMX, SELIMP). 
+                  {isIptRestrictedUser
+                    ? "Área dedicada ao monitoramento IPT de baterias x módulos."
+                    : "As importações principais ficam por sessão (FLIP, DDMX, SELIMP). "}
                 </p>
-                <ul className="mt-4 flex flex-wrap gap-2 text-[11px] text-indigo-100/90">
-                  <li className="rounded-full bg-white/10 px-3 py-1 ring-1 ring-white/15">Detecção automática</li>
-                  <li className="rounded-full bg-white/10 px-3 py-1 ring-1 ring-white/15">Histórico por sessão</li>
-                  <li className="rounded-full bg-white/10 px-3 py-1 ring-1 ring-white/15">Referência SELIMP explícita</li>
-                </ul>
+                {isIptRestrictedUser ? (
+                  <ul className="mt-4 flex flex-wrap gap-2 text-[11px] text-indigo-100/90">
+                    <li className="rounded-full bg-white/10 px-3 py-1 ring-1 ring-white/15">IPT</li>
+                    <li className="rounded-full bg-white/10 px-3 py-1 ring-1 ring-white/15">Baterias x módulos</li>
+                    <li className="rounded-full bg-white/10 px-3 py-1 ring-1 ring-white/15">Histórico da última carga</li>
+                  </ul>
+                ) : (
+                  <ul className="mt-4 flex flex-wrap gap-2 text-[11px] text-indigo-100/90">
+                    <li className="rounded-full bg-white/10 px-3 py-1 ring-1 ring-white/15">Detecção automática</li>
+                    <li className="rounded-full bg-white/10 px-3 py-1 ring-1 ring-white/15">Histórico por sessão</li>
+                    <li className="rounded-full bg-white/10 px-3 py-1 ring-1 ring-white/15">Referência SELIMP explícita</li>
+                  </ul>
+                )}
               </div>
             </div>
 
-            <Button
-              type="button"
-              variant="secondary"
-              size="icon"
-              className="h-11 w-11 shrink-0 rounded-xl border-0 bg-white/15 text-white shadow-lg shadow-black/20 ring-1 ring-white/20 hover:bg-white/25 hover:text-white"
-              title="Cronograma anual (BL, MT, NH, LM, GO)"
-              onClick={() => setCronogramaModalOpen(true)}
-            >
-              <Settings className="h-5 w-5" />
-              <span className="sr-only">Abrir cronograma</span>
-            </Button>
+            {!isIptRestrictedUser ? (
+              <Button
+                type="button"
+                variant="secondary"
+                size="icon"
+                className="h-11 w-11 shrink-0 rounded-xl border-0 bg-white/15 text-white shadow-lg shadow-black/20 ring-1 ring-white/20 hover:bg-white/25 hover:text-white"
+                title="Cronograma anual (BL, MT, NH, LM, GO)"
+                onClick={() => setCronogramaModalOpen(true)}
+              >
+                <Settings className="h-5 w-5" />
+                <span className="sr-only">Abrir cronograma</span>
+              </Button>
+            ) : null}
           </div>
         </div>
 
-        <div
-          className={cn(
-            "rounded-2xl border p-5 text-sm shadow-sm",
-            "border-amber-200/70 bg-gradient-to-br from-amber-50/95 via-white to-orange-50/40 text-amber-950",
-            "shadow-amber-900/[0.06] dark:border-amber-800/50 dark:bg-gradient-to-br dark:from-amber-950/55 dark:via-card dark:to-card dark:text-amber-50 dark:shadow-md dark:shadow-black/25",
-          )}
-        >
-          <div className="flex items-start gap-4">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-800 shadow-sm ring-1 ring-amber-200/80 dark:bg-amber-900/40 dark:text-amber-200 dark:ring-amber-500/30">
-              <ShieldAlert className="h-5 w-5" />
-            </span>
-            <div className="min-w-0">
-              <div className="font-semibold tracking-tight text-amber-950 dark:text-amber-50">Proteção extra nos envios</div>
-              <p className="mt-2 text-xs leading-relaxed text-amber-950/85 dark:text-amber-50/90">
-                Cada sessão aceita só formatos compatíveis. A validação final é no servidor (conteúdo + tipo real do arquivo).
-              </p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <span className="inline-flex items-center rounded-md bg-white/80 px-2 py-1 font-mono text-[11px] font-semibold text-amber-950 shadow-sm ring-1 ring-amber-200/60 dark:bg-muted/60 dark:text-amber-100 dark:ring-border">
-                  FLIP → .csv
-                </span>
-                <span className="inline-flex items-center rounded-md bg-white/80 px-2 py-1 font-mono text-[11px] font-semibold text-amber-950 shadow-sm ring-1 ring-amber-200/60 dark:bg-muted/60 dark:text-amber-100 dark:ring-border">
-                  DDMX → .xlsx / .xls
-                </span>
-                <span className="inline-flex items-center rounded-md bg-white/80 px-2 py-1 text-[11px] font-medium text-amber-950 shadow-sm ring-1 ring-amber-200/60 dark:bg-muted/60 dark:text-amber-100 dark:ring-border">
-                  Report SELIMP e status de bateria: fluxos à parte nesta página
-                </span>
+        {!isIptRestrictedUser ? (
+          <div
+            className={cn(
+              "rounded-2xl border p-5 text-sm shadow-sm",
+              "border-amber-200/70 bg-gradient-to-br from-amber-50/95 via-white to-orange-50/40 text-amber-950",
+              "shadow-amber-900/[0.06] dark:border-amber-800/50 dark:bg-gradient-to-br dark:from-amber-950/55 dark:via-card dark:to-card dark:text-amber-50 dark:shadow-md dark:shadow-black/25",
+            )}
+          >
+            <div className="flex items-start gap-4">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-800 shadow-sm ring-1 ring-amber-200/80 dark:bg-amber-900/40 dark:text-amber-200 dark:ring-amber-500/30">
+                <ShieldAlert className="h-5 w-5" />
+              </span>
+              <div className="min-w-0">
+                <div className="font-semibold tracking-tight text-amber-950 dark:text-amber-50">Proteção extra nos envios</div>
+                <p className="mt-2 text-xs leading-relaxed text-amber-950/85 dark:text-amber-50/90">
+                  Cada sessão aceita só formatos compatíveis. A validação final é no servidor (conteúdo + tipo real do arquivo).
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <span className="inline-flex items-center rounded-md bg-white/80 px-2 py-1 font-mono text-[11px] font-semibold text-amber-950 shadow-sm ring-1 ring-amber-200/60 dark:bg-muted/60 dark:text-amber-100 dark:ring-border">
+                    FLIP → .csv
+                  </span>
+                  <span className="inline-flex items-center rounded-md bg-white/80 px-2 py-1 font-mono text-[11px] font-semibold text-amber-950 shadow-sm ring-1 ring-amber-200/60 dark:bg-muted/60 dark:text-amber-100 dark:ring-border">
+                    DDMX → .xlsx / .xls
+                  </span>
+                  <span className="inline-flex items-center rounded-md bg-white/80 px-2 py-1 text-[11px] font-medium text-amber-950 shadow-sm ring-1 ring-amber-200/60 dark:bg-muted/60 dark:text-amber-100 dark:ring-border">
+                    Report SELIMP e status de bateria: fluxos à parte nesta página
+                  </span>
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        ) : null}
 
+        {isIptRestrictedUser ? (
+          <div
+            className={cn(
+              "rounded-2xl border p-6 shadow-sm",
+              "border-slate-200/85 bg-gradient-to-b from-white to-slate-50/40",
+              "dark:border-border dark:bg-gradient-to-b dark:from-card dark:to-muted/25 dark:shadow-md dark:shadow-black/20",
+            )}
+          >
+            <div className="mb-5 flex items-start gap-3">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-violet-100 text-violet-800 ring-1 ring-violet-200/80 dark:bg-violet-950/40 dark:text-violet-200 dark:ring-violet-500/25">
+                <BatteryFull className="h-4 w-4" />
+              </span>
+              <div>
+                <div className="text-lg font-semibold tracking-tight">IPT — Baterias x Módulos</div>
+                <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                  Planilha completa com dados de todos os módulos: comunicação, bateria, produtividade, dias ON/OFF e status de sinal. Alimenta o dashboard de monitoramento.
+                </p>
+              </div>
+            </div>
+
+            <UploadDropzone
+              inputId="iptModulosBateria"
+              accept=".xlsx"
+              tone="violet"
+              loading={states.iptModulosBateria.status === "uploading"}
+              helperText="Planilha 'baterias x modulos' com dados de todos os módulos IPT (subprefeitura, setor, comunicação, bateria, produtividade)."
+              onFilesSelected={handleModulosBateriaUpload}
+            />
+            <HistoryBlock
+              title="Última importação módulos"
+              overview={(overview as Record<string, unknown>).iptModulosBateria as LastUploadInfo | undefined}
+              expanded={Boolean(expandedHistory.iptModulosBateria)}
+              onToggle={() => toggleHistory("iptModulosBateria")}
+            />
+            <SummaryBox state={states.iptModulosBateria} />
+          </div>
+        ) : (
         <Accordion type="multiple" defaultValue={[]} className="space-y-5">
           <SessionAccordionItem
             value="flip"
@@ -1252,42 +1305,6 @@ export default function UploadPage() {
               )}
             >
                 <div className="mb-5 flex items-start gap-3">
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200/80 dark:bg-emerald-950/40 dark:text-emerald-200 dark:ring-emerald-500/25">
-                    <BatteryFull className="h-4 w-4" />
-                  </span>
-                  <div>
-                    <div className="text-lg font-semibold tracking-tight">IPT — Status de bateria</div>
-                    <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-                      Canal separado do report: importações não competem com o mesmo período de referência do relatório de ordens.
-                    </p>
-                  </div>
-                </div>
-
-                <UploadDropzone
-                  inputId="iptStatusBateria"
-                  accept=".xlsx"
-                  tone="emerald"
-                  loading={states.iptStatusBateria.status === "uploading"}
-                  helperText="Planilha dedicada ao acompanhamento de bateria / disponibilidade conforme modelo SELIMP."
-                  onFilesSelected={(files) => handleTypedUpload("iptStatusBateria", files)}
-                />
-                <HistoryBlock
-                  title="Último status importado"
-                  overview={overview.iptStatusBateria}
-                  expanded={Boolean(expandedHistory.iptStatusBateria)}
-                  onToggle={() => toggleHistory("iptStatusBateria")}
-                />
-                <SummaryBox state={states.iptStatusBateria} />
-              </div>
-
-              <div
-                className={cn(
-                "rounded-2xl border p-6 shadow-sm",
-                "border-slate-200/85 bg-gradient-to-b from-white to-slate-50/40",
-                "dark:border-border dark:bg-gradient-to-b dark:from-card dark:to-muted/25 dark:shadow-md dark:shadow-black/20",
-              )}
-            >
-                <div className="mb-5 flex items-start gap-3">
                   <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-violet-100 text-violet-800 ring-1 ring-violet-200/80 dark:bg-violet-950/40 dark:text-violet-200 dark:ring-violet-500/25">
                     <BatteryFull className="h-4 w-4" />
                   </span>
@@ -1317,7 +1334,9 @@ export default function UploadPage() {
               </div>
           </SessionAccordionItem>
         </Accordion>
+        )}
 
+        {!isIptRestrictedUser ? (
         <Dialog open={cronogramaModalOpen} onOpenChange={setCronogramaModalOpen}>
           <DialogContent
             className={cn(
@@ -1358,6 +1377,7 @@ export default function UploadPage() {
             </div>
           </DialogContent>
         </Dialog>
+        ) : null}
       </div>
     </MainLayout>
   );

@@ -25,6 +25,7 @@ type FormState = {
   display_name: string;
   password: string;
   role: "host" | "user";
+  access_profile: "default" | "ipt_restrito";
   status: "active" | "inactive";
   blocked: boolean;
   page_permissions: Record<AuthPageKey, boolean>;
@@ -34,6 +35,7 @@ const PAGE_LABELS: Record<AuthPageKey, string> = {
   dashboard: "Dashboard",
   indicadores: "Indicadores",
   ipt: "IPT",
+  ipt_restrito: "IPT restrito",
   sacs: "SACs",
   bfs: "BFSs",
   defesa: "Defesa / Contestação",
@@ -42,19 +44,38 @@ const PAGE_LABELS: Record<AuthPageKey, string> = {
   admin_users: "Administração de usuários",
 };
 
+const DEFAULT_USER_PAGE_KEYS: AuthPageKey[] = ["dashboard", "indicadores", "ipt", "sacs", "bfs", "acic"];
+const IPT_RESTRICTED_PAGE_KEYS: AuthPageKey[] = ["ipt", "ipt_restrito", "upload"];
+
+function buildPagePermissions(allowedPageKeys: AuthPageKey[]): Record<AuthPageKey, boolean> {
+  const allowed = new Set(allowedPageKeys);
+  return Object.fromEntries(AUTH_PAGE_KEYS.map((pageKey) => [pageKey, allowed.has(pageKey)])) as Record<AuthPageKey, boolean>;
+}
+
+function detectAccessProfile(user?: AuthUser | null): "default" | "ipt_restrito" {
+  if (user?.role === "host") return "default";
+  return user?.is_ipt_restricted ? "ipt_restrito" : "default";
+}
+
 function buildInitialForm(user?: AuthUser | null): FormState {
-  const defaultPageAccess = (pageKey: AuthPageKey) =>
-    pageKey !== "upload" && pageKey !== "defesa" && pageKey !== "admin_users";
+  const accessProfile = detectAccessProfile(user);
+  const fallbackPermissions =
+    user?.role === "host"
+      ? buildPagePermissions(AUTH_PAGE_KEYS)
+      : accessProfile === "ipt_restrito"
+      ? buildPagePermissions(IPT_RESTRICTED_PAGE_KEYS)
+      : buildPagePermissions(DEFAULT_USER_PAGE_KEYS);
 
   return {
     username: user?.username ?? "",
     display_name: user?.display_name ?? "",
     password: user?.visible_password ?? "",
     role: user?.role ?? "user",
+    access_profile: accessProfile,
     status: user?.status ?? "active",
     blocked: user?.blocked ?? false,
     page_permissions: Object.fromEntries(
-      AUTH_PAGE_KEYS.map((pageKey) => [pageKey, user?.page_permissions?.[pageKey] ?? defaultPageAccess(pageKey)])
+      AUTH_PAGE_KEYS.map((pageKey) => [pageKey, user?.page_permissions?.[pageKey] ?? fallbackPermissions[pageKey]])
     ) as Record<AuthPageKey, boolean>,
   };
 }
@@ -99,6 +120,17 @@ export default function AdminUsersPage() {
     if (!editor.user || !user) return true;
     return editor.user.id !== user.id;
   }, [editor.user, user]);
+
+  const isPermissionPresetLocked = form.role === "host" || form.access_profile === "ipt_restrito";
+
+  function applyAccessProfile(profile: "default" | "ipt_restrito", role: "host" | "user") {
+    if (role === "host") {
+      return buildPagePermissions(AUTH_PAGE_KEYS);
+    }
+    return profile === "ipt_restrito"
+      ? buildPagePermissions(IPT_RESTRICTED_PAGE_KEYS)
+      : buildPagePermissions(DEFAULT_USER_PAGE_KEYS);
+  }
 
   function openCreateDialog() {
     setEditor({ open: true, mode: "create", user: null });
@@ -181,6 +213,10 @@ export default function AdminUsersPage() {
                       {item.role === "host" ? (
                         <span className="inline-flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-500/15 px-2.5 py-1 text-xs font-semibold text-amber-900 dark:border-amber-400/30 dark:bg-amber-500/20 dark:text-amber-100">
                           👑 Host
+                        </span>
+                      ) : item.is_ipt_restricted ? (
+                        <span className="rounded-full border border-cyan-400/35 bg-cyan-500/12 px-2.5 py-1 text-xs font-medium text-cyan-900 dark:border-cyan-400/25 dark:bg-cyan-500/18 dark:text-cyan-100">
+                          IPT restrito
                         </span>
                       ) : (
                         <span className="rounded-full border border-violet-400/35 bg-violet-500/12 px-2.5 py-1 text-xs font-medium text-violet-900 dark:border-violet-400/25 dark:bg-violet-500/18 dark:text-violet-100">
@@ -297,7 +333,13 @@ export default function AdminUsersPage() {
               <Label htmlFor="role">Perfil</Label>
               <Select
                 value={form.role}
-                onValueChange={(value: "host" | "user") => setForm((prev) => ({ ...prev, role: value }))}
+                onValueChange={(value: "host" | "user") =>
+                  setForm((prev) => ({
+                    ...prev,
+                    role: value,
+                    page_permissions: applyAccessProfile(prev.access_profile, value),
+                  }))
+                }
                 disabled={!canEditSelf}
               >
                 <SelectTrigger id="role" className="w-full bg-background">
@@ -306,6 +348,28 @@ export default function AdminUsersPage() {
                 <SelectContent>
                   <SelectItem value="user">Usuário</SelectItem>
                   <SelectItem value="host">👑 Host</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="access-profile">Acesso</Label>
+              <Select
+                value={form.access_profile}
+                onValueChange={(value: "default" | "ipt_restrito") =>
+                  setForm((prev) => ({
+                    ...prev,
+                    access_profile: value,
+                    page_permissions: applyAccessProfile(value, prev.role),
+                  }))
+                }
+                disabled={form.role === "host"}
+              >
+                <SelectTrigger id="access-profile" className="w-full bg-background">
+                  <SelectValue placeholder="Tipo de acesso" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="default">Usuário padrão</SelectItem>
+                  <SelectItem value="ipt_restrito">Usuário IPT - Bateria e Upload</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -345,7 +409,7 @@ export default function AdminUsersPage() {
                 <label key={pageKey} className="flex items-center gap-3 rounded-xl border border-border/60 px-3 py-2">
                   <Checkbox
                     checked={form.role === "host" ? true : form.page_permissions[pageKey]}
-                    disabled={form.role === "host" || pageKey === "admin_users"}
+                    disabled={isPermissionPresetLocked || pageKey === "admin_users"}
                     onCheckedChange={(checked) =>
                       setForm((prev) => ({
                         ...prev,

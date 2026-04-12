@@ -16,6 +16,7 @@ const PAGE_ACCESS_BY_PATH: Record<string, AuthPageKey> = {
   "/": "dashboard",
   "/indicadores": "indicadores",
   "/ipt": "ipt",
+  "/ipt/bateria": "ipt",
   "/sacs": "sacs",
   "/bfs": "bfs",
   "/defesa": "defesa",
@@ -24,9 +25,25 @@ const PAGE_ACCESS_BY_PATH: Record<string, AuthPageKey> = {
   "/admin/users": "admin_users",
 }
 
+const IPT_RESTRICTED_ALLOWED_PATHS = ["/ipt", "/ipt/bateria", "/upload"] as const
+
+function getPageKeyForPath(pathname: string): AuthPageKey | undefined {
+  const direct = PAGE_ACCESS_BY_PATH[pathname]
+  if (direct) return direct
+  if (pathname.startsWith("/ipt/")) return "ipt"
+  if (pathname.startsWith("/upload")) return "upload"
+  if (pathname.startsWith("/indicadores/")) return "indicadores"
+  if (pathname.startsWith("/admin/users")) return "admin_users"
+  return undefined
+}
+
+function isAllowedIptRestrictedPath(pathname: string): boolean {
+  return IPT_RESTRICTED_ALLOWED_PATHS.some((allowedPath) => pathname === allowedPath || pathname.startsWith(`${allowedPath}/`))
+}
+
 export function MainLayout({ children }: MainLayoutProps) {
   const [collapsed, setCollapsed] = useState(false)
-  const { user, loading, hasPageAccess } = useAuth()
+  const { user, loading, hasPageAccess, isIptRestrictedUser } = useAuth()
   const pathname = usePathname()
   const router = useRouter()
   const sidebarWidth = 288 // 18rem (w-72)
@@ -37,11 +54,15 @@ export function MainLayout({ children }: MainLayoutProps) {
       router.replace("/login")
       return
     }
-    const pageKey = PAGE_ACCESS_BY_PATH[pathname]
-    if (pageKey && !hasPageAccess(pageKey)) {
-      router.replace("/")
+    if (isIptRestrictedUser && !isAllowedIptRestrictedPath(pathname)) {
+      router.replace("/ipt/bateria")
+      return
     }
-  }, [hasPageAccess, loading, pathname, router, user])
+    const pageKey = getPageKeyForPath(pathname)
+    if (pageKey && !hasPageAccess(pageKey)) {
+      router.replace(isIptRestrictedUser ? "/ipt/bateria" : "/")
+    }
+  }, [hasPageAccess, isIptRestrictedUser, loading, pathname, router, user])
 
   if (loading) {
     return (

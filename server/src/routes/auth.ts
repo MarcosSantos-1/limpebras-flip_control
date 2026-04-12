@@ -29,7 +29,7 @@ function sanitizeUser(row: UserRow) {
   const defaults = buildDefaultPermissions(row.role);
   const allowed = new Set((row.page_permissions ?? []).filter((page): page is AppPageKey => isAppPageKey(page)));
   const pagePermissions = Object.fromEntries(
-    APP_PAGE_KEYS.map((pageKey) => [pageKey, row.role === "host" ? true : allowed.has(pageKey) || defaults[pageKey]])
+    APP_PAGE_KEYS.map((pageKey) => [pageKey, row.role === "host" ? true : allowed.has(pageKey)])
   ) as Record<AppPageKey, boolean>;
 
   return {
@@ -40,6 +40,7 @@ function sanitizeUser(row: UserRow) {
     status: row.status,
     blocked: row.blocked,
     page_permissions: pagePermissions,
+    is_ipt_restricted: row.role !== "host" && allowed.has("ipt_restrito"),
     visible_password: safeDecryptVisiblePassword(row.password_encrypted),
   };
 }

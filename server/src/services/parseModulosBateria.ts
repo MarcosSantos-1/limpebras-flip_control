@@ -120,6 +120,24 @@ function dateTobrStr(d: Date): string {
   return `${dd}/${mm}/${yyyy}`;
 }
 
+/** Fallback for spreadsheets that export installation dates as US text (MM/DD/YYYY). */
+function usSlashDateToBrStr(value: string): string {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) return "";
+
+  const usMatch = trimmed.match(
+    /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/
+  );
+  if (!usMatch) return formatDataInstalacaoBr(trimmed);
+
+  const month = Number(usMatch[1]);
+  const day = Number(usMatch[2]);
+  let year = usMatch[3];
+  if (year.length === 2) year = `20${year}`;
+
+  return `${String(day).padStart(2, "0")}/${String(month).padStart(2, "0")}/${year}`;
+}
+
 /** Resolve a date cell: prefer a native Date object (from cellDates read), fall back to string parsing. */
 function resolveDateCell(nativeValue: unknown, fallbackStr: string): Date | null {
   if (nativeValue instanceof Date && !Number.isNaN(nativeValue.getTime())) {
@@ -134,8 +152,7 @@ function resolveInstalacaoStr(nativeValue: unknown, fallbackStr: string): string
   if (nativeValue instanceof Date && !Number.isNaN(nativeValue.getTime())) {
     return dateTobrStr(nativeValue);
   }
-  // Last resort: use the string formatter (may still swap obvious out-of-range months)
-  return formatDataInstalacaoBr(fallbackStr);
+  return usSlashDateToBrStr(fallbackStr);
 }
 
 export function parseModulosBateriaWorkbook(buffer: Buffer): ModuloBateriaRow[] {

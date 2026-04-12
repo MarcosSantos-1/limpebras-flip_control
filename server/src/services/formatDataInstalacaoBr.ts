@@ -1,5 +1,5 @@
 /**
- * Normaliza data de instalação para dd/MM/yyyy (padrão BR, só calendário).
+ * Normaliza data de instalação já persistida para dd/MM/yyyy (padrão BR, só calendário).
  * Aceita: dd/MM/yyyy, dd/MM/yy, com ou sem hora; YYYY-MM-DD; ISO completo; timestamp parseável.
  */
 export function formatDataInstalacaoBr(input: string | number | null | undefined): string {
@@ -13,16 +13,10 @@ export function formatDataInstalacaoBr(input: string | number | null | undefined
     const second = Number(slashDate[2]);
     let yyyy = slashDate[3];
     if (yyyy.length === 2) yyyy = `20${yyyy}`;
-    const year = Number(yyyy);
-
     let day = first;
     let month = second;
 
-    // Para os dados de 2025, inverter sempre dia/mês.
-    if (year === 2025) {
-      day = second;
-      month = first;
-    } else if (first > 12 && second <= 12) {
+    if (first > 12 && second <= 12) {
       day = first;
       month = second;
     } else if (second > 12 && first <= 12) {
@@ -37,10 +31,6 @@ export function formatDataInstalacaoBr(input: string | number | null | undefined
 
   const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
   if (iso) {
-    // Alguns lotes de 2025 chegaram invertidos; corrigir trocando dia/mês nesse ano.
-    if (Number(iso[1]) === 2025) {
-      return `${iso[2]}/${iso[3]}/${iso[1]}`;
-    }
     return `${iso[3]}/${iso[2]}/${iso[1]}`;
   }
 

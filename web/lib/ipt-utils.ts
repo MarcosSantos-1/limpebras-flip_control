@@ -75,7 +75,7 @@ export function compareSetores(a: string, b: string, direction: "asc" | "desc" =
 }
 
 /**
- * Data de instalação (planilha/API) em dd/MM/yyyy — alinhado ao `formatDataInstalacaoBr` do backend.
+ * Data de instalação vinda da API em dd/MM/yyyy — mantém o valor já normalizado.
  */
 export function formatIptDataInstalacaoBr(input: string | null | undefined): string {
   if (input == null) return "";
@@ -88,16 +88,10 @@ export function formatIptDataInstalacaoBr(input: string | null | undefined): str
     const second = Number(slashDate[2]);
     let yyyy = slashDate[3];
     if (yyyy.length === 2) yyyy = `20${yyyy}`;
-    const year = Number(yyyy);
-
     let day = first;
     let month = second;
 
-    // Para os dados de 2025, inverter sempre dia/mês.
-    if (year === 2025) {
-      day = second;
-      month = first;
-    } else if (first > 12 && second <= 12) {
+    if (first > 12 && second <= 12) {
       day = first;
       month = second;
     } else if (second > 12 && first <= 12) {
@@ -112,10 +106,6 @@ export function formatIptDataInstalacaoBr(input: string | null | undefined): str
 
   const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
   if (iso) {
-    // Alguns lotes de 2025 chegaram invertidos; corrigir trocando dia/mês nesse ano.
-    if (Number(iso[1]) === 2025) {
-      return `${iso[2]}/${iso[3]}/${iso[1]}`;
-    }
     return `${iso[3]}/${iso[2]}/${iso[1]}`;
   }
 

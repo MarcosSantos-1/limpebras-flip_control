@@ -21,7 +21,19 @@ type AuthContextValue = {
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
   hasPageAccess: (pageKey: AuthPageKey) => boolean;
+  isIptRestrictedUser: boolean;
+  getDefaultAuthorizedPath: (targetUser?: AuthUser | null) => string;
 };
+
+function isIptRestrictedProfile(user: AuthUser | null | undefined): boolean {
+  if (!user || user.role === "host") return false;
+  return user.is_ipt_restricted === true || user.page_permissions?.ipt_restrito === true;
+}
+
+function getDefaultAuthorizedPathForUser(user: AuthUser | null | undefined): string {
+  if (!user) return "/login";
+  return isIptRestrictedProfile(user) ? "/ipt/bateria" : "/";
+}
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
@@ -96,7 +108,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
     if (user && pathname === "/login") {
-      router.replace("/");
+      router.replace(getDefaultAuthorizedPathForUser(user));
     }
   }, [loading, pathname, router, user]);
 
@@ -151,6 +163,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [user]
   );
 
+  const getDefaultAuthorizedPath = useCallback((targetUser?: AuthUser | null) => {
+    return getDefaultAuthorizedPathForUser(targetUser ?? user);
+  }, [user]);
+
+  const isIptRestrictedUser = isIptRestrictedProfile(user);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       user,
@@ -163,8 +181,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logout,
       refreshUser,
       hasPageAccess,
+      isIptRestrictedUser,
+      getDefaultAuthorizedPath,
     }),
-    [hasPageAccess, loading, login, logout, rememberMeSaved, rememberedPassword, rememberedUsername, refreshUser, user]
+    [getDefaultAuthorizedPath, hasPageAccess, isIptRestrictedUser, loading, login, logout, rememberMeSaved, rememberedPassword, rememberedUsername, refreshUser, user]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

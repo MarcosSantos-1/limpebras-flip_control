@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { MainLayout } from "@/components/layout/main-layout";
@@ -32,6 +32,7 @@ import { SUBPREFEITURAS } from "@/constants/sacs";
 import { useDashboardData } from "@/lib/use-dashboard-data";
 import { LayoutDashboard } from "lucide-react";
 import { UploadReminderToast } from "@/components/upload-reminder-toast";
+import { useAuth } from "@/lib/auth";
 
 const SUBPREF_LOOKUP = SUBPREFEITURAS.reduce<Record<string, string>>((acc, sub) => {
   acc[sub.code.toUpperCase()] = sub.code;
@@ -809,6 +810,17 @@ function DashboardContent() {
 }
 
 export default function DashboardPage() {
+  const { isIptRestrictedUser } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (isIptRestrictedUser) {
+      router.replace("/ipt/bateria");
+    }
+  }, [isIptRestrictedUser, router]);
+
+  if (isIptRestrictedUser) return null;
+
   return (
     <MainLayout>
       <DashboardContent />

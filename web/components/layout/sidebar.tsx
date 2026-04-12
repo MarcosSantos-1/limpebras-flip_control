@@ -12,10 +12,12 @@ import {
   ChartPie,
   Activity,
   ShieldCheck,
+  ChartColumnStacked,
   Users,
   LogOut,
   ChevronUp,
   Sparkles,
+  type LucideIcon,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { ThemeToggle } from "@/components/theme-toggle"
@@ -23,7 +25,15 @@ import { useAuth } from "@/lib/auth"
 import type { AuthPageKey } from "@/lib/api"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 
-const navItems = [
+type SidebarNavItem = {
+  href: string
+  label: string
+  icon: LucideIcon
+  pageKey: AuthPageKey
+  match?: "exact" | "prefix"
+}
+
+const navItems: SidebarNavItem[] = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard, pageKey: "dashboard" as AuthPageKey },
   { href: "/indicadores", label: "Indicadores", icon: ChartPie, pageKey: "indicadores" as AuthPageKey },
   { href: "/ipt", label: "IPT", icon: Activity, pageKey: "ipt" as AuthPageKey },
@@ -35,14 +45,21 @@ const navItems = [
   { href: "/admin/users", label: "Usuários", icon: Users, pageKey: "admin_users" as AuthPageKey },
 ]
 
+const iptRestrictedNavItems: SidebarNavItem[] = [
+  { href: "/ipt/bateria", label: "Análise de Módulos", icon: ChartColumnStacked, pageKey: "ipt" as AuthPageKey },
+  { href: "/ipt", label: "IPT", icon: Activity, pageKey: "ipt" as AuthPageKey, match: "exact" as const },
+  { href: "/upload", label: "Uploads", icon: Upload, pageKey: "upload" as AuthPageKey },
+]
+
 interface SidebarProps {
   collapsed?: boolean
 }
 
 export function Sidebar({ collapsed = false }: SidebarProps) {
   const pathname = usePathname()
-  const { user, hasPageAccess, logout } = useAuth()
-  const visibleItems = navItems.filter((item) => hasPageAccess(item.pageKey))
+  const { user, hasPageAccess, logout, isIptRestrictedUser, getDefaultAuthorizedPath } = useAuth()
+  const sourceItems = isIptRestrictedUser ? iptRestrictedNavItems : navItems
+  const visibleItems = sourceItems.filter((item) => hasPageAccess(item.pageKey))
 
   return (
     <aside
@@ -55,7 +72,7 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
     >
       <div className="flex h-full min-h-0 flex-col">
         <div className="flex h-20 pt-12 items-center justify-start border-b border-border/70 px-6">
-          <Link href="/" className="ml-6 flex shrink-0 items-center" aria-label="Limpebras — início">
+          <Link href={getDefaultAuthorizedPath()} className="ml-6 flex shrink-0 items-center" aria-label="Limpebras — início">
             <Image
               src="/logotipo.png"
               alt="Limpebras"
@@ -79,7 +96,10 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
         <nav className="flex-1 min-h-0 space-y-2 overflow-y-auto p-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {visibleItems.map((item) => {
             const Icon = item.icon
-            const isActive = pathname === item.href
+            const isActive =
+              item.match === "exact"
+                ? pathname === item.href
+                : pathname === item.href || pathname.startsWith(`${item.href}/`)
             return (
               <Link
                 key={item.href}

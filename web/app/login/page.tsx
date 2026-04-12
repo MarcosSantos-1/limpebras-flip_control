@@ -24,7 +24,7 @@ const wallpapers = [
 ] as const;
 
 export default function LoginPage() {
-  const { login, isAuthenticated, loading, rememberedUsername, rememberedPassword, rememberMeSaved } = useAuth();
+  const { login, isAuthenticated, loading, rememberedUsername, rememberedPassword, rememberMeSaved, getDefaultAuthorizedPath } = useAuth();
   const router = useRouter();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -42,9 +42,9 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (!loading && isAuthenticated) {
-      router.replace("/");
+      router.replace(getDefaultAuthorizedPath());
     }
-  }, [isAuthenticated, loading, router]);
+  }, [getDefaultAuthorizedPath, isAuthenticated, loading, router]);
 
   useEffect(() => {
     try {
@@ -80,7 +80,7 @@ export default function LoginPage() {
       setErrorMessage(result.error ?? "Usuário ou senha inválidos.");
       return;
     }
-    router.replace("/");
+    router.replace(getDefaultAuthorizedPath());
   }
 
   return (

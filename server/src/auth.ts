@@ -33,6 +33,7 @@ export type AuthUser = {
   status: string;
   blocked: boolean;
   allowedPages: Record<AppPageKey, boolean>;
+  isIptRestricted: boolean;
 };
 
 declare module "fastify" {
@@ -96,6 +97,7 @@ function mapSessionRowToAuthUser(row: SessionRow): AuthUser {
     status: row.status,
     blocked: row.blocked,
     allowedPages: parsePermissions(row.page_permissions, row.role),
+    isIptRestricted: row.role !== "host" && row.page_permissions?.includes("ipt_restrito") === true,
   };
 }
 
