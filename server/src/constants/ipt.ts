@@ -50,6 +50,7 @@ const SUFIXOS_DIA_SEMANA = /\s*-\s*(DOMINGO|SEGUNDA|TER[CÇ]A|QUARTA|QUINTA|SEXT
 /**
  * Remove sufixos como " - NOVO", " - DOMINGO", " - SEGUNDA" etc. do setor.
  * Unifica JT10700MT0090 - NOVO com JT10700MT0090 e CV20401CV0001 - DOMINGO com CV20401CV0001.
+ * Remove sufixo de ano do Report SELIMP (ex.: JT20401VJ0901-2026) para cruzar com DDMX/rota sem o ano.
  */
 export function normalizarSetor(setor: string): string {
   let s = String(setor ?? "")
@@ -59,6 +60,8 @@ export function normalizarSetor(setor: string): string {
   s = s.replace(SUFIXOS_DIA_SEMANA, "").trim();
   /** Remove espaços internos para unificar "CV 1 0500 MT 0015" com "CV10500MT0015" */
   s = s.replace(/\s+/g, "");
+  /** Sufixo -AAAA ao final do plano (SELIMP novo planejamento) */
+  s = s.replace(/-\d{4}$/, "");
   return s;
 }
 

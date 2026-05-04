@@ -733,7 +733,7 @@ export default function ACICPage() {
               className="flex h-22 w-22 shrink-0 items-center justify-center rounded-2xl bg-red-950 shadow-lg dark:bg-red-950"
               aria-hidden
             >
-              <FileWarning className="h-11 w-11 text-white" strokeWidth={1.5} />
+              <AlertTriangle className="h-11 w-11 text-white" strokeWidth={1.5} />
             </div>
             <div className="min-w-0 flex-1">
               <h1 className="text-4xl font-bold tracking-tight text-white">Histórico de ACICs</h1>
@@ -968,7 +968,7 @@ export default function ACICPage() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="min-w-0 space-y-1 sm:w-[min(100%,70%)] sm:max-w-[17.5rem]">
+                <div className="min-w-0 space-y-1 sm:w-[min(100%,70%)] sm:max-w-70">
                   <Label className="text-xs text-muted-foreground">Subprefeitura</Label>
                   <Select
                     value={filters.subprefeitura}

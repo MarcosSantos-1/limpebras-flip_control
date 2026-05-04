@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { DatePicker } from "@/components/ui/date-picker";
-import { AlertTriangle, CalendarDays, ClipboardList, MapPin, Search, User, Wrench } from "lucide-react";
+import { FileWarning, CalendarDays, ClipboardList, MapPin, Search, User, Wrench } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
@@ -202,7 +202,7 @@ export default function BFSPage() {
               className="flex h-22 w-22 shrink-0 items-center justify-center rounded-2xl bg-amber-950 shadow-lg dark:bg-amber-950"
               aria-hidden
             >
-              <AlertTriangle className="h-11 w-11 text-white" strokeWidth={1.5} />
+              <FileWarning className="h-11 w-11 text-white" strokeWidth={1.5} />
             </div>
             <div className="min-w-0 flex-1">
               <h1 className="text-4xl font-bold tracking-tight text-white">BFSs - Boletins de Fiscalização</h1>
@@ -406,12 +406,12 @@ export default function BFSPage() {
                       <th className="px-3 py-3"></th>
                       <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider">BFS</th>
                       <th className="whitespace-nowrap px-6 py-3 font-medium uppercase text-xs tracking-wider">Status</th>
-                      <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider min-w-[8rem]">
+                      <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider min-w-20">
                         Tipo de serviço
                       </th>
                       <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider">Fiscal</th>
                       <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider">Subprefeitura</th>
-                      <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider min-w-[11rem]">
+                      <th className="px-6 py-3 font-medium uppercase text-xs tracking-wider min-w-28">
                         Datas
                       </th>
                     </tr>
@@ -452,7 +452,7 @@ export default function BFSPage() {
                           <td className="px-6 py-4 text-muted-foreground">
                             {bfs.subprefeitura || "—"}
                           </td>
-                          <td className="px-6 py-4 text-muted-foreground align-top text-xs leading-relaxed min-w-[11rem]">
+                          <td className="px-6 py-4 text-muted-foreground align-top text-xs leading-relaxed min-w-28">
                             <div className="flex gap-1.5">
                               <CalendarDays className="h-3.5 w-3.5 shrink-0 mt-0.5 text-blue-600 dark:text-blue-400" />
                               <div>

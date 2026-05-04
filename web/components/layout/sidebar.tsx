@@ -38,9 +38,9 @@ const navItems: SidebarNavItem[] = [
   { href: "/indicadores", label: "Indicadores", icon: ChartPie, pageKey: "indicadores" as AuthPageKey },
   { href: "/ipt", label: "IPT", icon: Activity, pageKey: "ipt" as AuthPageKey },
   { href: "/sacs", label: "SACs", icon: FileText, pageKey: "sacs" as AuthPageKey },
-  { href: "/bfs", label: "BFSs", icon: AlertTriangle, pageKey: "bfs" as AuthPageKey },
+  { href: "/bfs", label: "BFSs", icon: FileWarning, pageKey: "bfs" as AuthPageKey },
   { href: "/defesa", label: "Defesa / Contestação", icon: ShieldCheck, pageKey: "defesa" as AuthPageKey },
-  { href: "/acic", label: "ACICs", icon: FileWarning, pageKey: "acic" as AuthPageKey },
+  { href: "/acic", label: "ACICs", icon: AlertTriangle, pageKey: "acic" as AuthPageKey },
   { href: "/upload", label: "Upload", icon: Upload, pageKey: "upload" as AuthPageKey },
   { href: "/admin/users", label: "Usuários", icon: Users, pageKey: "admin_users" as AuthPageKey },
 ]
