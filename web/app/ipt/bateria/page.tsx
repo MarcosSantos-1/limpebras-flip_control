@@ -27,10 +27,13 @@ import {
   ShieldAlert,
   Table2,
   TrendingUp,
+  Wrench,
   Wifi,
   WifiOff,
   Calendar,
 } from "lucide-react";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { faTree, faBroom } from "@fortawesome/free-solid-svg-icons";
 import {
   BarChart,
   Bar,
@@ -140,9 +143,10 @@ const CHART_COLORS = {
   error: "#ef4444",
   info: "#3b82f6",
   primary: "#10b981",
+  maintenance: "#64748b",
 };
 
-const ITEMS_PER_PAGE = 15;
+const ITEMS_PER_PAGE = 50;
 
 const DISPATCH_TYPES = [
   "Troca de Bateria",
@@ -161,8 +165,33 @@ function getStatusBySubprefeitura(data: ModuleData[]) {
     const items = data.filter((m) => m.subprefeitura === sub);
     const total = items.length;
     const online = items.filter((m) => m.comunicacao === "ON").length;
-    return { subprefeitura: sub, total, online, offline: total - online };
+    const offline = items.filter((m) => m.comunicacao === "OFF").length;
+    const maintenance = items.filter(
+      (m) => m.statusSinalGeral === "MANUTENÇÃO" || m.statusSinalGeral === "MANUTENCAO"
+    ).length;
+    return { subprefeitura: sub, total, online, offline, maintenance };
   });
+}
+
+function summarizeModuleServicoSplit(modules: ModuleData[]): {
+  moduloPracas: number;
+  moduloManual: number;
+  doubleTagged: boolean;
+} {
+  let moduloPracas = 0;
+  let moduloManual = 0;
+  for (const m of modules) {
+    const tokens = m.setor.split("/").map((p) => p.trim()).filter(Boolean);
+    const hasVp = tokens.some((t) => t.includes("VP"));
+    const hasManual = tokens.some((t) => t.includes("VJ") || t.includes("VL"));
+    if (hasVp) moduloPracas += 1;
+    if (hasManual) moduloManual += 1;
+  }
+  return {
+    moduloPracas,
+    moduloManual,
+    doubleTagged: moduloPracas + moduloManual > modules.length,
+  };
 }
 
 function getBatteryDistribution(data: ModuleData[]) {
@@ -311,7 +340,7 @@ type PieLabelRenderProps = {
 
 /** Rótulo fora do anel, maior, na cor do segmento (sem linha guia) */
 function renderOutsidePieLabel(isDark: boolean) {
-  return (props: PieLabelRenderProps) => {
+  function OutsidePieLabel(props: PieLabelRenderProps) {
     const { cx, cy, midAngle, outerRadius, name, value, fill } = props;
     if (value == null || value === 0) return null;
     const RADIAN = Math.PI / 180;
@@ -341,7 +370,9 @@ function renderOutsidePieLabel(isDark: boolean) {
         {`${name}: ${value}`}
       </text>
     );
-  };
+  }
+  OutsidePieLabel.displayName = "OutsidePieLabel";
+  return OutsidePieLabel;
 }
 
 function exportCSV(data: ModuleData[]) {
@@ -391,6 +422,24 @@ export default function BateriaDashboardPage() {
     () =>
       ({
         wrapperStyle: { paddingTop: 12, color: axisTickColor } satisfies CSSProperties,
+      }),
+    [axisTickColor]
+  );
+  const pieLegendProps = useMemo(
+    () =>
+      ({
+        verticalAlign: "bottom" as const,
+        align: "center" as const,
+        layout: "horizontal" as const,
+        wrapperStyle: {
+          width: "100%",
+          paddingTop: 32,
+          paddingBottom: 6,
+          marginTop: 28,
+          left: 0,
+          bottom: 2,
+          color: axisTickColor,
+        } satisfies CSSProperties,
       }),
     [axisTickColor]
   );
@@ -464,6 +513,27 @@ export default function BateriaDashboardPage() {
   const signalChartData = useMemo(() => getSignalDistribution(modules), [modules]);
   const criticalModules = useMemo(() => getCriticalModules(modules), [modules]);
 
+  const servicoSplit = useMemo(() => summarizeModuleServicoSplit(modules), [modules]);
+
+  const commMaintenanceStats = useMemo(() => {
+    const total = modules.length;
+    const online = modules.filter((m) => m.comunicacao === "ON").length;
+    const offline = modules.filter((m) => m.comunicacao === "OFF").length;
+    const maintenance = modules.filter(
+      (m) => m.statusSinalGeral === "MANUTENÇÃO" || m.statusSinalGeral === "MANUTENCAO",
+    ).length;
+    const pct = (n: number) => (total > 0 ? Math.round((n / total) * 100) : 0);
+    return {
+      total,
+      online,
+      offline,
+      maintenance,
+      pctOnline: pct(online),
+      pctOffline: pct(offline),
+      pctMaint: pct(maintenance),
+    };
+  }, [modules]);
+
   const filteredAlerts = useMemo(() => {
     if (!alertSearch) return criticalModules;
     const term = alertSearch.toLowerCase();
@@ -475,9 +545,14 @@ export default function BateriaDashboardPage() {
     );
   }, [criticalModules, alertSearch]);
 
+  const maintenanceChartColor = isChartDark ? "#94a3b8" : CHART_COLORS.maintenance;
+
   const PROD_COLORS = [CHART_COLORS.success, CHART_COLORS.primary, CHART_COLORS.warning, CHART_COLORS.error];
   const BATTERY_COLORS = [CHART_COLORS.success, CHART_COLORS.info, CHART_COLORS.warning, CHART_COLORS.error];
-  const SIGNAL_COLORS = [CHART_COLORS.success, CHART_COLORS.error, CHART_COLORS.warning];
+  const SIGNAL_COLORS = useMemo(
+    () => [CHART_COLORS.success, CHART_COLORS.error, maintenanceChartColor],
+    [maintenanceChartColor]
+  );
 
   const uniqueSubs = useMemo(() => {
     const set = new Set(modules.map((m) => m.subprefeitura).filter(Boolean));
@@ -510,8 +585,8 @@ export default function BateriaDashboardPage() {
               <div className="flex items-center gap-3">
                 <Activity className="h-6 w-6 text-emerald-500" />
                 <div>
-                  <h1 className="text-xl font-bold text-foreground">Monitoramento de Módulos</h1>
-                  <p className="text-xs text-muted-foreground">Dashboard de Análise de Bateria e Sinal</p>
+                  <h1 className="text-xl font-bold text-foreground">Monitoramento de Módulos SELIMP</h1>
+                  <p className="text-xs text-muted-foreground">Dashboard de Análise completa de módulos SELIMP, Bateria e Sinal</p>
                 </div>
               </div>
             </div>
@@ -530,7 +605,7 @@ export default function BateriaDashboardPage() {
                 <LayoutDashboard className="mr-2 h-4 w-4" /> Visão Geral
               </TabsTrigger>
               <TabsTrigger value="modules" className="data-[state=active]:bg-emerald-500 data-[state=active]:text-white text-muted-foreground">
-                <Table2 className="mr-2 h-4 w-4" /> Módulos
+                <Table2 className="mr-2 h-4 w-4" /> Módulos / baterias
               </TabsTrigger>
               <TabsTrigger value="alerts" className="data-[state=active]:bg-emerald-500 data-[state=active]:text-white text-muted-foreground">
                 <AlertTriangle className="mr-2 h-4 w-4" /> Alertas
@@ -547,41 +622,148 @@ export default function BateriaDashboardPage() {
 
             {/* ===== OVERVIEW TAB ===== */}
             <TabsContent value="overview" className="space-y-6">
-              {/* KPI Cards */}
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-                {[
-                  { title: "Total de Módulos", value: stats.total, desc: "Dispositivos monitorados", icon: Activity, color: "text-foreground" },
-                  { title: "Online", value: stats.online, desc: `${stats.total > 0 ? Math.round((stats.online / stats.total) * 100) : 0}% operacionais`, icon: Wifi, color: "text-emerald-500" },
-                  { title: "Offline", value: stats.offline, desc: "Sem comunicação", icon: WifiOff, color: "text-red-500" },
-                  { title: "Produtividade Média", value: `${stats.avgProductivity}%`, desc: "Dias ON / Total", icon: TrendingUp, color: "text-emerald-600 dark:text-emerald-400" },
-                  { title: "Alertas Críticos", value: stats.criticalAlerts, desc: "Requerem atenção", icon: AlertTriangle, color: "text-red-500" },
-                  { title: "Bateria Baixa", value: stats.lowBattery, desc: "Necessitam troca", icon: Battery, color: "text-yellow-500" },
-                ].map((kpi) => (
-                  <Card key={kpi.title} className="border-border/50 bg-card/80 backdrop-blur-sm shadow-sm">
-                    <CardHeader className="flex flex-row items-center justify-between pb-2">
-                      <CardTitle className="text-sm font-medium text-muted-foreground">{kpi.title}</CardTitle>
-                      <kpi.icon className={cn("h-4 w-4", kpi.color)} />
-                    </CardHeader>
-                    <CardContent>
-                      <div className={cn("text-2xl font-bold", kpi.color)}>{kpi.value}</div>
-                      <p className="text-xs text-muted-foreground">{kpi.desc}</p>
-                    </CardContent>
-                  </Card>
-                ))}
+              {/* Hero Total + tipo de serviço */}
+              <div className="relative overflow-hidden rounded-2xl border border-violet-400/40 bg-linear-to-br from-violet-600/95 via-purple-700 to-indigo-950 px-6 py-8 shadow-xl shadow-indigo-950/30 ring-1 ring-white/15 sm:px-8">
+                <div className="pointer-events-none absolute -right-24 -top-24 size-72 rounded-full bg-fuchsia-400/15 blur-3xl dark:bg-violet-500/25" aria-hidden />
+                <div className="relative flex flex-col gap-8 xl:flex-row xl:items-stretch xl:justify-between xl:gap-10">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 text-violet-100/95">
+                      <Activity className="size-9 shrink-0 text-white opacity-95" aria-hidden />
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wider text-white/85">Painel SELIMP</p>
+                        <h2 className="text-lg font-semibold text-white">Total de módulos monitorados</h2>
+                      </div>
+                    </div>
+                    <p className="mt-6 text-center text-[clamp(3rem,8vw,4.25rem)] font-bold tabular-nums leading-none tracking-tight text-white drop-shadow-sm sm:text-left">
+                      {stats.total}
+                    </p>
+
+                    {servicoSplit.doubleTagged ? (
+                      <p className="mt-2 text-xs text-violet-200/95">
+                        A soma varrição praça + manual pode exceder o total quando há setores VP e VJ/VL no mesmo módulo — cada tipo é somado só para módulos com o respectivo código.
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="grid flex-1 min-w-[220px] grid-cols-1 gap-4 sm:grid-cols-2 xl:max-w-xl">
+                    <div className="flex flex-col justify-between rounded-xl border border-white/20 bg-white/10 p-4 backdrop-blur-sm">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="text-xs font-medium uppercase tracking-wide text-white/80">Varrição de praças</p>
+                        </div>
+                        <FontAwesomeIcon icon={faTree} className="size-9 shrink-0 text-emerald-200/95" aria-hidden />
+                      </div>
+                      <p className="mt-4 font-mono text-3xl font-bold tabular-nums text-white sm:text-4xl">{servicoSplit.moduloPracas}</p>
+                    </div>
+                    <div className="flex flex-col justify-between rounded-xl border border-white/20 bg-white/10 p-4 backdrop-blur-sm">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="text-xs font-medium uppercase tracking-wide text-white/80">Varrição manual</p>
+                          <p className="mt-0.5 text-xs text-violet-100/85">
+                          </p>
+                        </div>
+                        <FontAwesomeIcon icon={faBroom} className="size-9 shrink-0 text-amber-100/95" aria-hidden />
+                      </div>
+                      <p className="mt-4 font-mono text-3xl font-bold tabular-nums text-white sm:text-4xl">{servicoSplit.moduloManual}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Online / Offline / Manutenção */}
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <Card className="relative overflow-hidden rounded-xl border-0 bg-linear-to-br from-emerald-600 to-emerald-900 text-white shadow-xl shadow-emerald-900/25 dark:bg-linear-to-br dark:from-emerald-700 dark:to-emerald-950 dark:shadow-emerald-950/35">
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <CardTitle className="text-sm font-semibold text-white/95">Online</CardTitle>
+                    <Wifi className="size-5 shrink-0 text-white/80" />
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                      <span className="font-mono text-4xl font-bold tracking-tight text-white tabular-nums">{commMaintenanceStats.online}</span>
+                      <span className="font-mono text-2xl font-bold tabular-nums text-white/85">{`(${commMaintenanceStats.pctOnline}%)`}</span>
+                    </div>
+                    <p className="mt-2 text-sm font-medium text-white/90">Comunicação ativa</p>
+                  </CardContent>
+                </Card>
+
+                <Card className="relative overflow-hidden border-red-900/55 bg-linear-to-br from-red-700/92 via-red-800 to-rose-950 text-white shadow-xl shadow-red-950/45 dark:border-red-950/55">
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <CardTitle className="text-sm font-semibold text-white">Offline</CardTitle>
+                    <WifiOff className="size-5 shrink-0 text-white/90" />
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                      <span className="font-mono text-4xl font-bold tabular-nums text-white">{commMaintenanceStats.offline}</span>
+                      <span className="font-mono text-2xl font-bold tabular-nums text-red-100/95">({commMaintenanceStats.pctOffline}%)</span>
+                    </div>
+                    <p className="mt-2 text-sm font-medium text-red-50/95">Sem comunicação</p>
+                  </CardContent>
+                </Card>
+
+                <Card className="relative overflow-hidden border border-zinc-400/50 bg-linear-to-br from-zinc-200 via-zinc-300/85 to-slate-400/90 shadow-lg dark:border-zinc-600 dark:from-zinc-800 dark:via-zinc-900 dark:to-slate-950">
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <CardTitle className="text-sm font-semibold text-zinc-800 dark:text-zinc-50">Manutenção</CardTitle>
+                    <Wrench className="size-5 shrink-0 text-zinc-700 dark:text-zinc-300" />
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                      <span className="font-mono text-4xl font-bold tracking-tight text-zinc-900 tabular-nums dark:text-white">{commMaintenanceStats.maintenance}</span>
+                      <span className="font-mono text-2xl font-bold tabular-nums text-zinc-700 dark:text-zinc-300">({commMaintenanceStats.pctMaint}%)</span>
+                    </div>
+                    <p className="mt-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">Manutenção ativa ou pendente</p>
+                  </CardContent>
+                </Card>
               </div>
 
               {/* Charts */}
               {chartsReady && (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                  {/* Status por Subprefeitura */}
-                  <Card className="col-span-2 border-border/50 bg-card/80 backdrop-blur-sm shadow-sm">
-                    <CardHeader>
-                      <CardTitle className="text-foreground">Status por Subprefeitura</CardTitle>
-                      <CardDescription>Online vs Offline por região</CardDescription>
+                <div className="grid grid-cols-1 items-stretch gap-4 md:grid-cols-2 lg:grid-cols-4">
+                  {/* Status de Sinal (Donut) — primeiro */}
+                  <Card className="col-span-2 flex h-full min-h-[28rem] flex-col overflow-visible border-border/50 bg-card/80 backdrop-blur-sm shadow-sm lg:min-h-[28rem]">
+                    <CardHeader className="shrink-0 space-y-1 pb-2 pt-6">
+                      <CardTitle className="text-foreground">Status de Sinal</CardTitle>
+                      <CardDescription className="pb-10">Distribuição de comunicação</CardDescription>
                     </CardHeader>
-                    <CardContent>
-                      <ResponsiveContainer width="100%" height={300}>
-                        <BarChart data={subChartData} margin={{ top: 8, right: 8, left: 4, bottom: 4 }}>
+                    <CardContent className="flex flex-1 flex-col items-center justify-center overflow-visible px-4 pb-10 pt-4">
+                      <div className="h-[308px] w-full max-w-full overflow-visible px-1 [&_.recharts-surface]:overflow-visible [&_.recharts-legend-wrapper]:mt-10! [&_.recharts-legend-wrapper]:pt-10!">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart margin={{ top: 18, right: 120, bottom: 102, left: 120 }}>
+                            <Pie
+                              data={signalChartData}
+                              dataKey="count"
+                              nameKey="status"
+                              cx="50%"
+                              cy="42%"
+                              innerRadius={65}
+                              outerRadius={106}
+                              paddingAngle={3}
+                              labelLine={false}
+                              label={pieOutsideLabel}
+                            >
+                              {signalChartData.map((_, idx) => (
+                                <Cell key={idx} fill={SIGNAL_COLORS[idx]} />
+                              ))}
+                            </Pie>
+                            <Tooltip content={<GlassTooltip />} cursor={false} />
+                            <Legend
+                              {...pieLegendProps}
+                              formatter={(value) => <span style={{ color: axisTickColor }}>{String(value)}</span>}
+                            />
+                          </PieChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {/* Status por Subprefeitura — segundo */}
+                  <Card className="col-span-2 flex h-full min-h-[32rem] flex-col border-border/50 bg-card/80 backdrop-blur-sm shadow-sm lg:min-h-[34rem]">
+                    <CardHeader className="shrink-0 space-y-1 pb-2 pt-6">
+                      <CardTitle className="text-foreground">Status por Subprefeitura</CardTitle>
+                      <CardDescription>Online e offline por comunicação; manutenção por status de sinal</CardDescription>
+                    </CardHeader>
+                    <CardContent className="flex flex-1 flex-col items-center justify-center px-4 pb-8 pt-4">
+                      <div className="h-[360px] w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={subChartData} margin={{ top: 12, right: 12, left: 8, bottom: 8 }}>
                           <XAxis
                             dataKey="subprefeitura"
                             tick={axisTick}
@@ -602,20 +784,23 @@ export default function BateriaDashboardPage() {
                           />
                           <Bar dataKey="online" name="Online" fill={CHART_COLORS.success} radius={[4, 4, 0, 0]} activeBar={false} />
                           <Bar dataKey="offline" name="Offline" fill={CHART_COLORS.error} radius={[4, 4, 0, 0]} activeBar={false} />
+                          <Bar dataKey="maintenance" name="Manutenção" fill={maintenanceChartColor} radius={[4, 4, 0, 0]} activeBar={false} />
                         </BarChart>
                       </ResponsiveContainer>
+                    </div>
                     </CardContent>
                   </Card>
 
                   {/* Distribuição de Produtividade */}
-                  <Card className="col-span-2 border-border/50 bg-card/80 backdrop-blur-sm shadow-sm">
-                    <CardHeader>
+                  <Card className="col-span-2 flex h-full min-h-[32rem] flex-col border-border/50 bg-card/80 backdrop-blur-sm shadow-sm lg:min-h-[34rem]">
+                    <CardHeader className="shrink-0 space-y-1 pb-2 pt-6">
                       <CardTitle className="text-foreground">Distribuição de Produtividade</CardTitle>
                       <CardDescription>Faixas de produtividade dos módulos</CardDescription>
                     </CardHeader>
-                    <CardContent>
-                      <ResponsiveContainer width="100%" height={300}>
-                        <BarChart data={prodChartData} layout="vertical" margin={{ top: 8, right: 12, left: 4, bottom: 4 }}>
+                    <CardContent className="flex flex-1 flex-col items-center justify-center px-4 pb-8 pt-4">
+                      <div className="h-[360px] w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={prodChartData} layout="vertical" margin={{ top: 12, right: 16, left: 8, bottom: 8 }}>
                           <XAxis
                             type="number"
                             tick={axisTick}
@@ -640,78 +825,42 @@ export default function BateriaDashboardPage() {
                           </Bar>
                         </BarChart>
                       </ResponsiveContainer>
+                    </div>
                     </CardContent>
                   </Card>
 
                   {/* Status de Bateria (Donut) */}
-                  <Card className="col-span-2 overflow-visible border-border/50 bg-card/80 backdrop-blur-sm shadow-sm">
-                    <CardHeader>
+                  <Card className="col-span-2 flex h-full min-h-[32rem] flex-col overflow-visible border-border/50 bg-card/80 backdrop-blur-sm shadow-sm lg:min-h-[34rem]">
+                    <CardHeader className="shrink-0 space-y-1 pb-2 pt-6">
                       <CardTitle className="text-foreground">Status de Bateria</CardTitle>
                       <CardDescription>Distribuição do status atual</CardDescription>
                     </CardHeader>
-                    <CardContent className="overflow-visible">
-                      <div className="h-[320px] w-full overflow-visible [&_.recharts-surface]:overflow-visible">
+                    <CardContent className="flex flex-1 flex-col items-center justify-center overflow-visible px-4 pb-10 pt-4">
+                      <div className="h-[300px] w-full max-w-full overflow-visible px-1 [&_.recharts-surface]:overflow-visible [&_.recharts-legend-wrapper]:mt-10! [&_.recharts-legend-wrapper]:pt-10!">
                         <ResponsiveContainer width="100%" height="100%">
-                        <PieChart margin={{ top: 28, right: 112, bottom: 28, left: 112 }}>
-                          <Pie
-                            data={batteryChartData}
-                            dataKey="count"
-                            nameKey="status"
-                            cx="50%"
-                            cy="50%"
-                            innerRadius={56}
-                            outerRadius={92}
-                            paddingAngle={3}
-                            labelLine={false}
-                            label={pieOutsideLabel}
-                          >
-                            {batteryChartData.map((_, idx) => (
-                              <Cell key={idx} fill={BATTERY_COLORS[idx]} />
-                            ))}
-                          </Pie>
-                          <Tooltip content={<GlassTooltip />} cursor={false} />
-                          <Legend
-                            {...legendProps}
-                            formatter={(value) => <span style={{ color: axisTickColor }}>{String(value)}</span>}
-                          />
-                        </PieChart>
-                        </ResponsiveContainer>
-                      </div>
-                    </CardContent>
-                  </Card>
-
-                  {/* Status de Sinal (Donut) */}
-                  <Card className="col-span-2 overflow-visible border-border/50 bg-card/80 backdrop-blur-sm shadow-sm">
-                    <CardHeader>
-                      <CardTitle className="text-foreground">Status de Sinal</CardTitle>
-                      <CardDescription>Distribuição de comunicação</CardDescription>
-                    </CardHeader>
-                    <CardContent className="overflow-visible">
-                      <div className="h-[320px] w-full overflow-visible [&_.recharts-surface]:overflow-visible">
-                        <ResponsiveContainer width="100%" height="100%">
-                        <PieChart margin={{ top: 28, right: 112, bottom: 28, left: 112 }}>
-                          <Pie
-                            data={signalChartData}
-                            dataKey="count"
-                            nameKey="status"
-                            cx="50%"
-                            cy="50%"
-                            innerRadius={56}
-                            outerRadius={92}
-                            paddingAngle={3}
-                            labelLine={false}
-                            label={pieOutsideLabel}
-                          >
-                            {signalChartData.map((_, idx) => (
-                              <Cell key={idx} fill={SIGNAL_COLORS[idx]} />
-                            ))}
-                          </Pie>
-                          <Tooltip content={<GlassTooltip />} cursor={false} />
-                          <Legend
-                            {...legendProps}
-                            formatter={(value) => <span style={{ color: axisTickColor }}>{String(value)}</span>}
-                          />
-                        </PieChart>
+                          <PieChart margin={{ top: 18, right: 120, bottom: 102, left: 120 }}>
+                            <Pie
+                              data={batteryChartData}
+                              dataKey="count"
+                              nameKey="status"
+                              cx="50%"
+                              cy="42%"
+                              innerRadius={65}
+                              outerRadius={106}
+                              paddingAngle={3}
+                              labelLine={false}
+                              label={pieOutsideLabel}
+                            >
+                              {batteryChartData.map((_, idx) => (
+                                <Cell key={idx} fill={BATTERY_COLORS[idx]} />
+                              ))}
+                            </Pie>
+                            <Tooltip content={<GlassTooltip />} cursor={false} />
+                            <Legend
+                              {...pieLegendProps}
+                              formatter={(value) => <span style={{ color: axisTickColor }}>{String(value)}</span>}
+                            />
+                          </PieChart>
                         </ResponsiveContainer>
                       </div>
                     </CardContent>
@@ -726,8 +875,8 @@ export default function BateriaDashboardPage() {
                 <CardHeader>
                   <div className="flex justify-between">
                     <div>
-                      <CardTitle className="text-foreground">Módulos</CardTitle>
-                      <CardDescription>Lista completa de dispositivos monitorados</CardDescription>
+                      <CardTitle className="text-foreground">Módulos e baterias</CardTitle>
+                      <CardDescription>Lista completa de dispositivos monitorados — produtividade, alertas e baterias</CardDescription>
                     </div>
                     <Button variant="outline" onClick={() => exportCSV(filteredModules)}>
                       <Download className="mr-2 h-4 w-4" /> Exportar CSV
@@ -735,6 +884,42 @@ export default function BateriaDashboardPage() {
                   </div>
                 </CardHeader>
                 <CardContent>
+                  <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
+                    {[
+                      {
+                        title: "Produtividade Média",
+                        value: `${stats.avgProductivity}%`,
+                        desc: "Dias ON / Total",
+                        icon: TrendingUp,
+                        color: "text-emerald-600 dark:text-emerald-400",
+                      },
+                      {
+                        title: "Alertas Críticos",
+                        value: stats.criticalAlerts,
+                        desc: "Requerem atenção",
+                        icon: AlertTriangle,
+                        color: "text-red-500",
+                      },
+                      {
+                        title: "Bateria Baixa",
+                        value: stats.lowBattery,
+                        desc: "Necessitam troca",
+                        icon: Battery,
+                        color: "text-yellow-500",
+                      },
+                    ].map((kpi) => (
+                      <Card key={kpi.title} className="border-border/50 bg-muted/15 shadow-inner">
+                        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                          <CardTitle className="text-sm font-medium text-muted-foreground">{kpi.title}</CardTitle>
+                          <kpi.icon className={cn("size-4", kpi.color)} />
+                        </CardHeader>
+                        <CardContent>
+                          <div className={cn("text-2xl font-bold tabular-nums", kpi.color)}>{kpi.value}</div>
+                          <p className="text-xs text-muted-foreground">{kpi.desc}</p>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
                   {/* Search */}
                   <div className="mb-4">
                     <div className="relative w-full max-w-[420px]">
