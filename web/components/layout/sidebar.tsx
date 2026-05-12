@@ -17,6 +17,7 @@ import {
   LogOut,
   ChevronUp,
   Sparkles,
+  Map,
   type LucideIcon,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -29,7 +30,11 @@ type SidebarNavItem = {
   href: string
   label: string
   icon: LucideIcon
-  pageKey: AuthPageKey
+  pageKey?: AuthPageKey
+  /** Quando true, o item aparece para qualquer usuário autenticado (sem checar page_permissions). */
+  skipAccessCheck?: boolean
+  /** Abre em nova aba e usa <a> em vez de rota interna. */
+  external?: boolean
   match?: "exact" | "prefix"
 }
 
@@ -41,6 +46,13 @@ const navItems: SidebarNavItem[] = [
   { href: "/bfs", label: "BFSs", icon: FileWarning, pageKey: "bfs" as AuthPageKey },
   { href: "/defesa", label: "Defesa / Contestação", icon: ShieldCheck, pageKey: "defesa" as AuthPageKey },
   { href: "/acic", label: "ACICs", icon: AlertTriangle, pageKey: "acic" as AuthPageKey },
+  {
+    href: "https://geoplano-limpebras.vercel.app/",
+    label: "Plano de trabalho",
+    icon: Map,
+    skipAccessCheck: true,
+    external: true,
+  },
   { href: "/upload", label: "Upload", icon: Upload, pageKey: "upload" as AuthPageKey },
   { href: "/admin/users", label: "Usuários", icon: Users, pageKey: "admin_users" as AuthPageKey },
 ]
@@ -48,6 +60,13 @@ const navItems: SidebarNavItem[] = [
 const iptRestrictedNavItems: SidebarNavItem[] = [
   { href: "/ipt/bateria", label: "Análise de Módulos", icon: ChartColumnStacked, pageKey: "ipt" as AuthPageKey },
   { href: "/ipt", label: "IPT", icon: Activity, pageKey: "ipt" as AuthPageKey, match: "exact" as const },
+  {
+    href: "https://geoplano-limpebras.vercel.app/",
+    label: "GeoPlano / Plano de trabalho",
+    icon: Map,
+    skipAccessCheck: true,
+    external: true,
+  },
   { href: "/upload", label: "Uploads", icon: Upload, pageKey: "upload" as AuthPageKey },
 ]
 
@@ -59,7 +78,9 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
   const pathname = usePathname()
   const { user, hasPageAccess, logout, isIptRestrictedUser, getDefaultAuthorizedPath } = useAuth()
   const sourceItems = isIptRestrictedUser ? iptRestrictedNavItems : navItems
-  const visibleItems = sourceItems.filter((item) => hasPageAccess(item.pageKey))
+  const visibleItems = sourceItems.filter(
+    (item) => item.skipAccessCheck === true || (item.pageKey != null && hasPageAccess(item.pageKey))
+  )
 
   return (
     <aside
@@ -96,22 +117,36 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
         <nav className="flex-1 min-h-0 space-y-2 overflow-y-auto p-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {visibleItems.map((item) => {
             const Icon = item.icon
-            const isActive =
-              item.match === "exact"
+            const isActive = item.external
+              ? false
+              : item.match === "exact"
                 ? pathname === item.href
                 : pathname === item.href || pathname.startsWith(`${item.href}/`)
+            const className = cn(
+              "group flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold transition-all duration-200",
+              isActive
+                ? "bg-linear-to-r from-indigo-600/20 to-cyan-500/20 text-foreground border border-indigo-500/35 shadow-sm"
+                : "text-muted-foreground hover:bg-accent/70 hover:text-accent-foreground border border-transparent hover:border-violet-500/15"
+            )
+            if (item.external) {
+              return (
+                <a
+                  key={item.href}
+                  href={item.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={className}
+                >
+                  <Icon className="h-5 w-5 shrink-0 transition-transform group-hover:scale-110" />
+                  {item.label}
+                </a>
+              )
+            }
             return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={cn(
-                  "group flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold transition-all duration-200",
-                  isActive
-                    ? "bg-linear-to-r from-indigo-600/20 to-cyan-500/20 text-foreground border border-indigo-500/35 shadow-sm"
-                    : "text-muted-foreground hover:bg-accent/70 hover:text-accent-foreground border border-transparent hover:border-violet-500/15"
-                )}
-              >
-                <Icon className={cn("h-5 w-5 transition-transform group-hover:scale-110", isActive ? "text-blue-500" : "")} />
+              <Link key={item.href} href={item.href} className={className}>
+                <Icon
+                  className={cn("h-5 w-5 transition-transform group-hover:scale-110", isActive ? "text-blue-500" : "")}
+                />
                 {item.label}
               </Link>
             )

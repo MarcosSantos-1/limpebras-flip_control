@@ -27,6 +27,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -50,7 +51,7 @@ type UploadKey =
   | "iptStatusBateria"
   | "iptCronograma"
   | "iptModulosBateria";
-type IptReferenceMode = "d_minus_1" | "fim_de_semana" | "mensal" | "personalizado";
+type IptReferenceMode = "d_minus_1" | "fim_de_semana" | "personalizado";
 
 interface UploadApiError {
   response?: {
@@ -148,7 +149,6 @@ interface IptReferenceOption {
   label: string;
   periodoInicial: string;
   periodoFinal: string;
-  mesReferencia?: string;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -193,17 +193,6 @@ function buildIptReferenceOptions(now = new Date()): IptReferenceOption[] {
   const sextaKey = toDateKey(sextaAnterior);
   const domingoKey = toDateKey(domingoAnterior);
 
-  const mesAtual = now.getMonth();
-  const anoAtual = now.getFullYear();
-  const mesAnterior = mesAtual === 0 ? 11 : mesAtual - 1;
-  const anoMesAnterior = mesAtual === 0 ? anoAtual - 1 : anoAtual;
-  const mesAnteriorStr = `${anoMesAnterior}-${String(mesAnterior + 1).padStart(2, "0")}`;
-  const mesAtualStr = `${anoAtual}-${String(mesAtual + 1).padStart(2, "0")}`;
-  const ultimoDiaMesAnterior = new Date(anoMesAnterior, mesAnterior + 1, 0).getDate();
-
-  const nomeMesAnterior = new Date(anoMesAnterior, mesAnterior, 1).toLocaleDateString("pt-BR", { month: "long" });
-  const nomeMesAtual = new Date(anoAtual, mesAtual, 1).toLocaleDateString("pt-BR", { month: "long" });
-
   return [
     {
       value: "d_minus_1",
@@ -216,20 +205,6 @@ function buildIptReferenceOptions(now = new Date()): IptReferenceOption[] {
       label: `Sexta a domingo (${formatPtDate(sextaKey)} a ${formatPtDate(domingoKey)})`,
       periodoInicial: sextaKey,
       periodoFinal: domingoKey,
-    },
-    {
-      value: "mensal",
-      label: `Mensal - ${nomeMesAnterior} ${anoMesAnterior}`,
-      periodoInicial: `${anoMesAnterior}-${String(mesAnterior + 1).padStart(2, "0")}-01`,
-      periodoFinal: `${anoMesAnterior}-${String(mesAnterior + 1).padStart(2, "0")}-${String(ultimoDiaMesAnterior).padStart(2, "0")}`,
-      mesReferencia: mesAnteriorStr,
-    },
-    {
-      value: "mensal",
-      label: `Mensal - ${nomeMesAtual} ${anoAtual} (ate D-1)`,
-      periodoInicial: `${anoAtual}-${String(mesAtual + 1).padStart(2, "0")}-01`,
-      periodoFinal: dMinus1Key,
-      mesReferencia: mesAtualStr,
     },
     {
       value: "personalizado",
@@ -850,13 +825,18 @@ export default function UploadPage() {
           toast.error("Informe periodo inicial e final.");
           return;
         }
-        const modoRef: IptReferenceMode =
+        if (isCustom && pi > pf) {
+          const msg = "periodo inicial não pode ser maior que periodo final.";
+          setUploadState(key, { status: "error", error: msg });
+          toast.error(msg);
+          return;
+        }
+        const modoRef: "d_minus_1" | "fim_de_semana" =
           selectedReference.value === "personalizado" ? "d_minus_1" : selectedReference.value;
         result = await apiService.uploadIptReportXlsx(file, {
           modoReferencia: modoRef,
           periodoInicial: pi,
           periodoFinal: pf,
-          mesReferencia: selectedReference.mesReferencia,
         });
       } else {
         result = await apiService.uploadIptStatusBateriaXlsx(file);
@@ -1254,21 +1234,19 @@ export default function UploadPage() {
                   {iptReferenceOptions[iptRefIdx]?.value === "personalizado" && (
                     <div className="mt-3 grid grid-cols-2 gap-3">
                       <div>
-                        <Label className="mb-1 block text-xs text-fuchsia-800 dark:text-fuchsia-300">Periodo Inicial</Label>
-                        <input
-                          type="date"
-                          className="w-full rounded-lg border border-slate-200/80 bg-white px-3 py-2 text-sm shadow-sm dark:border-border dark:bg-card"
+                        <Label className="mb-1 block text-xs text-fuchsia-800 dark:text-fuchsia-300">Data inicial</Label>
+                        <DatePicker
                           value={customPeriodoInicial}
-                          onChange={(e) => setCustomPeriodoInicial(e.target.value)}
+                          onChange={setCustomPeriodoInicial}
+                          placeholder="Data inicial"
                         />
                       </div>
                       <div>
-                        <Label className="mb-1 block text-xs text-fuchsia-800 dark:text-fuchsia-300">Periodo Final</Label>
-                        <input
-                          type="date"
-                          className="w-full rounded-lg border border-slate-200/80 bg-white px-3 py-2 text-sm shadow-sm dark:border-border dark:bg-card"
+                        <Label className="mb-1 block text-xs text-fuchsia-800 dark:text-fuchsia-300">Data final</Label>
+                        <DatePicker
                           value={customPeriodoFinal}
-                          onChange={(e) => setCustomPeriodoFinal(e.target.value)}
+                          onChange={setCustomPeriodoFinal}
+                          placeholder="Data final"
                         />
                       </div>
                     </div>
