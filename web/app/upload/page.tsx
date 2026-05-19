@@ -49,9 +49,9 @@ type UploadKey =
   | "ddmxLight"
   | "iptReport"
   | "iptStatusBateria"
-  | "iptCronograma"
-  | "iptModulosBateria";
+  | "iptCronograma";
 type IptReferenceMode = "d_minus_1" | "fim_de_semana" | "personalizado";
+type StatusBateriaReferenceMode = "hoje" | "personalizado";
 
 interface UploadApiError {
   response?: {
@@ -151,6 +151,12 @@ interface IptReferenceOption {
   periodoFinal: string;
 }
 
+interface StatusBateriaReferenceOption {
+  value: StatusBateriaReferenceMode;
+  label: string;
+  dataReferencia: string;
+}
+
 function getErrorMessage(error: unknown): string {
   if (typeof error === "object" && error !== null) {
     const apiError = error as UploadApiError;
@@ -181,6 +187,23 @@ function formatDateTime(value?: string | null): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return "Sem importacao ainda";
   return parsed.toLocaleString("pt-BR");
+}
+
+function buildStatusBateriaReferenceOptions(now = new Date()): StatusBateriaReferenceOption[] {
+  const hojeKey = toDateKey(now);
+
+  return [
+    {
+      value: "hoje",
+      label: `Hoje (${formatPtDate(hojeKey)})`,
+      dataReferencia: hojeKey,
+    },
+    {
+      value: "personalizado",
+      label: "Personalizado (escolher a data da exportação)",
+      dataReferencia: "",
+    },
+  ];
 }
 
 function buildIptReferenceOptions(now = new Date()): IptReferenceOption[] {
@@ -225,7 +248,6 @@ function createInitialStates(): Record<UploadKey, UploadState> {
     iptReport: { status: "idle" },
     iptStatusBateria: { status: "idle" },
     iptCronograma: { status: "idle" },
-    iptModulosBateria: { status: "idle" },
   };
 }
 
@@ -702,12 +724,15 @@ function UploadDropzone({
 export default function UploadPage() {
   const { isIptRestrictedUser } = useAuth();
   const iptReferenceOptions = useMemo(() => buildIptReferenceOptions(), []);
+  const statusBateriaReferenceOptions = useMemo(() => buildStatusBateriaReferenceOptions(), []);
   const defaultIdx = new Date().getDay() === 1 ? 1 : 0;
   const [states, setStates] = useState<Record<UploadKey, UploadState>>(createInitialStates());
   const [overview, setOverview] = useState<UploadOverviewResponse>({});
   const [iptRefIdx, setIptRefIdx] = useState(defaultIdx);
+  const [statusBateriaRefIdx, setStatusBateriaRefIdx] = useState(0);
   const [customPeriodoInicial, setCustomPeriodoInicial] = useState("");
   const [customPeriodoFinal, setCustomPeriodoFinal] = useState("");
+  const [customStatusBateriaData, setCustomStatusBateriaData] = useState("");
   const [cronogramaModalOpen, setCronogramaModalOpen] = useState(false);
   const [expandedHistory, setExpandedHistory] = useState<Record<string, boolean>>({});
 
@@ -839,11 +864,21 @@ export default function UploadPage() {
           periodoFinal: pf,
         });
       } else {
-        result = await apiService.uploadIptStatusBateriaXlsx(file);
+        const selectedRef = statusBateriaReferenceOptions[statusBateriaRefIdx] ?? statusBateriaReferenceOptions[0];
+        const dataReferencia =
+          selectedRef.value === "personalizado"
+            ? customStatusBateriaData
+            : selectedRef.dataReferencia;
+        if (!dataReferencia) {
+          setUploadState(key, { status: "error", error: "Informe a data da exportação SELIMP." });
+          toast.error("Informe a data da exportação SELIMP.");
+          return;
+        }
+        result = await apiService.uploadIptStatusBateriaXlsx(file, dataReferencia);
       }
 
       setUploadState(key, { status: "success", result });
-      toast.success("Upload concluido com sucesso.");
+      toast.success(key === "iptStatusBateria" ? "Status de Bateria importado com sucesso." : "Upload concluido com sucesso.");
       await loadOverview();
     } catch (error) {
       const message = getErrorMessage(error);
@@ -892,30 +927,6 @@ export default function UploadPage() {
     }
   };
 
-  const handleModulosBateriaUpload = async (files: FileList | null) => {
-    const file = files?.[0];
-    if (!file) return;
-
-    if (!file.name.toLowerCase().endsWith(".xlsx")) {
-      const message = "Aceita apenas arquivos XLSX.";
-      setUploadState("iptModulosBateria", { status: "error", error: message });
-      toast.error(message);
-      return;
-    }
-
-    setUploadState("iptModulosBateria", { status: "uploading" });
-    try {
-      const result = await apiService.uploadIptModulosBateria(file);
-      setUploadState("iptModulosBateria", { status: "success", result });
-      toast.success("Baterias x Módulos importado com sucesso.");
-      await loadOverview();
-    } catch (error) {
-      const message = getErrorMessage(error);
-      setUploadState("iptModulosBateria", { status: "error", error: message });
-      toast.error(message);
-    }
-  };
-
   const toggleHistory = (key: string) => {
     setExpandedHistory((prev) => ({ ...prev, [key]: !prev[key] }));
   };
@@ -944,14 +955,14 @@ export default function UploadPage() {
                 <h1 className="mt-1 text-4xl font-bold tracking-tight">Upload de dados</h1>
                 <p className="mt-4 max-w-3xl text-sm leading-relaxed text-indigo-50/95 sm:text-base">
                   {isIptRestrictedUser
-                    ? "Área dedicada ao monitoramento IPT de baterias x módulos."
+                    ? "Importação diária do status de bateria SELIMP (data da exportação = hoje ou personalizada)."
                     : "As importações principais ficam por sessão (FLIP, DDMX, SELIMP). "}
                 </p>
                 {isIptRestrictedUser ? (
                   <ul className="mt-4 flex flex-wrap gap-2 text-[11px] text-indigo-100/90">
                     <li className="rounded-full bg-white/10 px-3 py-1 ring-1 ring-white/15">IPT</li>
-                    <li className="rounded-full bg-white/10 px-3 py-1 ring-1 ring-white/15">Baterias x módulos</li>
-                    <li className="rounded-full bg-white/10 px-3 py-1 ring-1 ring-white/15">Histórico da última carga</li>
+                    <li className="rounded-full bg-white/10 px-3 py-1 ring-1 ring-white/15">Status de bateria</li>
+                    <li className="rounded-full bg-white/10 px-3 py-1 ring-1 ring-white/15">Data da exportação</li>
                   </ul>
                 ) : (
                   <ul className="mt-4 flex flex-wrap gap-2 text-[11px] text-indigo-100/90">
@@ -1021,32 +1032,71 @@ export default function UploadPage() {
             )}
           >
             <div className="mb-5 flex items-start gap-3">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-violet-100 text-violet-800 ring-1 ring-violet-200/80 dark:bg-violet-950/40 dark:text-violet-200 dark:ring-violet-500/25">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200/80 dark:bg-emerald-950/40 dark:text-emerald-200 dark:ring-emerald-500/25">
                 <BatteryFull className="h-4 w-4" />
               </span>
               <div>
-                <div className="text-lg font-semibold tracking-tight">IPT — Baterias x Módulos</div>
+                <div className="text-lg font-semibold tracking-tight">IPT — Status de Bateria</div>
                 <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-                  Planilha completa com dados de todos os módulos: comunicação, bateria, produtividade, dias ON/OFF e status de sinal. Alimenta o dashboard de monitoramento.
+                  Planilha oficial SELIMP do dia. Escolha a data da exportação (hoje ou personalizada) antes de enviar.
                 </p>
               </div>
             </div>
 
+            <div className="mb-5 rounded-2xl border border-emerald-200/70 bg-gradient-to-br from-emerald-50/90 to-white p-4 shadow-sm dark:border-emerald-700/40 dark:bg-gradient-to-br dark:from-emerald-950/40 dark:to-muted/30">
+              <Label className="mb-3 block text-sm font-semibold text-emerald-900 dark:text-emerald-200">
+                Data da exportação SELIMP
+              </Label>
+              <Select value={String(statusBateriaRefIdx)} onValueChange={(value) => setStatusBateriaRefIdx(Number(value))}>
+                <SelectTrigger className="w-full border border-slate-200/80 bg-white shadow-sm dark:border-border dark:bg-card">
+                  <SelectValue placeholder="Selecione a data" />
+                </SelectTrigger>
+                <SelectContent>
+                  {statusBateriaReferenceOptions.map((option, idx) => (
+                    <SelectItem key={idx} value={String(idx)}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {statusBateriaReferenceOptions[statusBateriaRefIdx]?.value === "personalizado" && (
+                <div className="mt-3">
+                  <Label className="mb-1 block text-xs text-emerald-800 dark:text-emerald-300">Data da exportação</Label>
+                  <DatePicker
+                    value={customStatusBateriaData}
+                    onChange={setCustomStatusBateriaData}
+                    placeholder="Data da exportação"
+                  />
+                </div>
+              )}
+              {(() => {
+                const opt = statusBateriaReferenceOptions[statusBateriaRefIdx];
+                const dataKey =
+                  opt?.value === "personalizado" ? customStatusBateriaData : opt?.dataReferencia;
+                if (!dataKey) return null;
+                return (
+                  <div className="mt-2 text-xs text-emerald-700 dark:text-emerald-400">
+                    Será gravado como: {formatPtDate(dataKey)}
+                  </div>
+                );
+              })()}
+            </div>
+
             <UploadDropzone
-              inputId="iptModulosBateria"
+              inputId="iptStatusBateriaRestricted"
               accept=".xlsx"
-              tone="violet"
-              loading={states.iptModulosBateria.status === "uploading"}
-              helperText="Planilha 'baterias x modulos' com dados de todos os módulos IPT (subprefeitura, setor, comunicação, bateria, produtividade)."
-              onFilesSelected={handleModulosBateriaUpload}
+              tone="emerald"
+              loading={states.iptStatusBateria.status === "uploading"}
+              helperText="Arquivo 'Status de Bateria.xlsx' da SELIMP."
+              onFilesSelected={(files) => handleTypedUpload("iptStatusBateria", files)}
             />
             <HistoryBlock
-              title="Última importação módulos"
-              overview={(overview as Record<string, unknown>).iptModulosBateria as LastUploadInfo | undefined}
-              expanded={Boolean(expandedHistory.iptModulosBateria)}
-              onToggle={() => toggleHistory("iptModulosBateria")}
+              title="Último status de bateria importado"
+              overview={overview.iptStatusBateria}
+              expanded={Boolean(expandedHistory.iptStatusBateria)}
+              onToggle={() => toggleHistory("iptStatusBateria")}
             />
-            <SummaryBox state={states.iptModulosBateria} />
+            <SummaryBox state={states.iptStatusBateria} />
           </div>
         ) : (
         <Accordion type="multiple" defaultValue={[]} className="space-y-5">
@@ -1193,8 +1243,8 @@ export default function UploadPage() {
             accent="emerald"
             icon={LayoutDashboard}
             title="SELIMP"
-            subtitle="Três canais fixos: relatório de ordens (com período de referência obrigatório), planilha de status de bateria e baterias x módulos (dashboard de monitoramento)."
-            contentClassName="grid gap-6 pb-6 pt-1 md:grid-cols-2 lg:grid-cols-3"
+            subtitle="Dois canais: relatório de ordens (período de referência) e status de bateria diário (data da exportação SELIMP)."
+            contentClassName="grid gap-6 pb-6 pt-1 md:grid-cols-1 lg:grid-cols-2"
           >
             <div
               className={cn(
@@ -1275,6 +1325,7 @@ export default function UploadPage() {
                 <SummaryBox state={states.iptReport} />
               </div>
 
+
               <div
                 className={cn(
                 "rounded-2xl border p-6 shadow-sm",
@@ -1283,32 +1334,71 @@ export default function UploadPage() {
               )}
             >
                 <div className="mb-5 flex items-start gap-3">
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-violet-100 text-violet-800 ring-1 ring-violet-200/80 dark:bg-violet-950/40 dark:text-violet-200 dark:ring-violet-500/25">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200/80 dark:bg-emerald-950/40 dark:text-emerald-200 dark:ring-emerald-500/25">
                     <BatteryFull className="h-4 w-4" />
                   </span>
                   <div>
-                    <div className="text-lg font-semibold tracking-tight">IPT — Baterias x Módulos</div>
+                    <div className="text-lg font-semibold tracking-tight">IPT — Status de Bateria</div>
                     <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-                      Planilha completa com dados de todos os módulos: comunicação, bateria, produtividade, dias ON/OFF e status de sinal. Alimenta o dashboard de monitoramento.
+                      Planilha oficial SELIMP exportada no dia útil. Informe a data da exportação abaixo (a planilha não traz data embutida). Reimportar no mesmo dia atualiza bateria e comunicação; outro dia gera novas linhas.
                     </p>
                   </div>
                 </div>
 
+                <div className="mb-5 rounded-2xl border border-emerald-200/70 bg-gradient-to-br from-emerald-50/90 to-white p-4 shadow-sm dark:border-emerald-700/40 dark:bg-gradient-to-br dark:from-emerald-950/40 dark:to-muted/30">
+                  <Label className="mb-3 block text-sm font-semibold text-emerald-900 dark:text-emerald-200">
+                    Data da exportação SELIMP
+                  </Label>
+                  <Select value={String(statusBateriaRefIdx)} onValueChange={(value) => setStatusBateriaRefIdx(Number(value))}>
+                    <SelectTrigger className="w-full border border-slate-200/80 bg-white shadow-sm dark:border-border dark:bg-card">
+                      <SelectValue placeholder="Selecione a data" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {statusBateriaReferenceOptions.map((option, idx) => (
+                        <SelectItem key={idx} value={String(idx)}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {statusBateriaReferenceOptions[statusBateriaRefIdx]?.value === "personalizado" && (
+                    <div className="mt-3">
+                      <Label className="mb-1 block text-xs text-emerald-800 dark:text-emerald-300">Data da exportação</Label>
+                      <DatePicker
+                        value={customStatusBateriaData}
+                        onChange={setCustomStatusBateriaData}
+                        placeholder="Data da exportação"
+                      />
+                    </div>
+                  )}
+                  {(() => {
+                    const opt = statusBateriaReferenceOptions[statusBateriaRefIdx];
+                    const dataKey =
+                      opt?.value === "personalizado" ? customStatusBateriaData : opt?.dataReferencia;
+                    if (!dataKey) return null;
+                    return (
+                      <div className="mt-2 text-xs text-emerald-700 dark:text-emerald-400">
+                        Será gravado como: {formatPtDate(dataKey)}
+                      </div>
+                    );
+                  })()}
+                </div>
+
                 <UploadDropzone
-                  inputId="iptModulosBateria"
+                  inputId="iptStatusBateria"
                   accept=".xlsx"
-                  tone="violet"
-                  loading={states.iptModulosBateria.status === "uploading"}
-                  helperText="Planilha 'baterias x modulos' com dados de todos os módulos IPT (subprefeitura, setor, comunicação, bateria, produtividade)."
-                  onFilesSelected={handleModulosBateriaUpload}
+                  tone="emerald"
+                  loading={states.iptStatusBateria.status === "uploading"}
+                  helperText="Arquivo 'Status de Bateria.xlsx' da SELIMP. Colunas: Nome, Comunicação, Bateria, Última Comunicação, Status de Bateria, Dias."
+                  onFilesSelected={(files) => handleTypedUpload("iptStatusBateria", files)}
                 />
                 <HistoryBlock
-                  title="Última importação módulos"
-                  overview={(overview as Record<string, unknown>).iptModulosBateria as LastUploadInfo | undefined}
-                  expanded={Boolean(expandedHistory.iptModulosBateria)}
-                  onToggle={() => toggleHistory("iptModulosBateria")}
+                  title="Último status de bateria importado"
+                  overview={overview.iptStatusBateria}
+                  expanded={Boolean(expandedHistory.iptStatusBateria)}
+                  onToggle={() => toggleHistory("iptStatusBateria")}
                 />
-                <SummaryBox state={states.iptModulosBateria} />
+                <SummaryBox state={states.iptStatusBateria} />
               </div>
           </SessionAccordionItem>
         </Accordion>

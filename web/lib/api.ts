@@ -530,10 +530,12 @@ export const apiService = {
     return data;
   },
 
-  uploadIptStatusBateriaXlsx: async (file: File) => {
+  uploadIptStatusBateriaXlsx: async (file: File, dataReferencia: string) => {
     const formData = new FormData();
     formData.append('file', file);
-    const { data } = await api.post('/upload/ipt-status-bateria', formData, {
+    const params = new URLSearchParams();
+    params.set('data_referencia', dataReferencia);
+    const { data } = await api.post(`/upload/ipt-status-bateria?${params.toString()}`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
       timeout: UPLOAD_REQUEST_TIMEOUT_MS,
     });
@@ -628,6 +630,7 @@ export const apiService = {
     });
     return data;
   },
+
   clearIptModulosBateria: async () => {
     const { data } = await api.post('/upload/clear-ipt-modulos-bateria');
     return data;
