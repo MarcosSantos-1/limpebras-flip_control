@@ -256,8 +256,9 @@ async function carregarDatasConsolidado(
 
   const veicRes = await pool.query(
     `SELECT setor, data_referencia::text AS data_referencia
-     FROM ipt_consolidado_veiculos_dados
-     WHERE data_referencia >= $1::date AND data_referencia <= $2::date`,
+     FROM ipt_imports
+     WHERE file_type = 'ipt_consolidado_veiculos'
+       AND data_referencia >= $1::date AND data_referencia <= $2::date`,
     [inicio, fim],
   );
   for (const row of veicRes.rows) {
@@ -268,8 +269,9 @@ async function carregarDatasConsolidado(
 
   const varrRes = await pool.query(
     `SELECT setor, data_referencia::text AS data_referencia
-     FROM ipt_consolidado_varricao_dados
-     WHERE data_referencia >= $1::date AND data_referencia <= $2::date`,
+     FROM ipt_imports
+     WHERE file_type = 'ipt_consolidado_varricao'
+       AND data_referencia >= $1::date AND data_referencia <= $2::date`,
     [inicio, fim],
   );
   for (const row of varrRes.rows) {

@@ -15,8 +15,9 @@ export const pool = new Pool({
 });
 
 /**
- * Migrations: apenas cria tabelas/índices se não existirem.
- * NUNCA apaga dados – se precisar resetar, faça manualmente no Neon.
+ * Migrations: cria tabelas/índices core se não existirem (CREATE IF NOT EXISTS).
+ * Dados IPT consolidado, módulos bateria e selimp mensal ficam em ipt_imports / ipt_report_linhas —
+ * não recriamos tabelas dedicadas removidas no Neon.
  */
 export async function runMigrations() {
   const client = await pool.connect();
@@ -256,29 +257,6 @@ export async function runMigrations() {
     `);
 
     await client.query(`
-      CREATE TABLE IF NOT EXISTS ipt_selimp_mensal (
-        ano INTEGER NOT NULL,
-        mes INTEGER NOT NULL,
-        ordens JSONB NOT NULL DEFAULT '[]',
-        total_linhas INTEGER NOT NULL DEFAULT 0,
-        total_encerradas INTEGER NOT NULL DEFAULT 0,
-        periodo_inicial DATE,
-        periodo_final DATE,
-        quantidade_esperada INTEGER,
-        validacao_ok BOOLEAN NOT NULL DEFAULT FALSE,
-        source_file TEXT,
-        updated_at TIMESTAMPTZ DEFAULT NOW(),
-        PRIMARY KEY (ano, mes)
-      );
-    `);
-    await client.query("ALTER TABLE ipt_selimp_mensal ADD COLUMN IF NOT EXISTS total_linhas INTEGER NOT NULL DEFAULT 0").catch(() => {});
-    await client.query("ALTER TABLE ipt_selimp_mensal ADD COLUMN IF NOT EXISTS total_encerradas INTEGER NOT NULL DEFAULT 0").catch(() => {});
-    await client.query("ALTER TABLE ipt_selimp_mensal ADD COLUMN IF NOT EXISTS periodo_inicial DATE").catch(() => {});
-    await client.query("ALTER TABLE ipt_selimp_mensal ADD COLUMN IF NOT EXISTS periodo_final DATE").catch(() => {});
-    await client.query("ALTER TABLE ipt_selimp_mensal ADD COLUMN IF NOT EXISTS quantidade_esperada INTEGER").catch(() => {});
-    await client.query("ALTER TABLE ipt_selimp_mensal ADD COLUMN IF NOT EXISTS validacao_ok BOOLEAN NOT NULL DEFAULT FALSE").catch(() => {});
-
-    await client.query(`
       CREATE TABLE IF NOT EXISTS ipt_imports (
         id SERIAL PRIMARY KEY,
         file_type TEXT NOT NULL,
@@ -410,47 +388,6 @@ export async function runMigrations() {
     await client.query("CREATE UNIQUE INDEX IF NOT EXISTS ux_report_linhas_plano_periodo_pos ON ipt_report_linhas(plano, periodo_inicial, periodo_final, posicao_original)").catch(() => {});
 
     await client.query(`
-      CREATE TABLE IF NOT EXISTS ipt_consolidado_veiculos_dados (
-        id SERIAL PRIMARY KEY,
-        placa TEXT,
-        operacao TEXT,
-        motorista TEXT,
-        setor TEXT NOT NULL,
-        data_referencia DATE NOT NULL,
-        liberacao TEXT,
-        saida TEXT,
-        status TEXT,
-        retorno TEXT,
-        tempo_trabalho TEXT,
-        percentual_limpebras NUMERIC(8,4),
-        percentual_selimp NUMERIC(8,4),
-        raw JSONB NOT NULL,
-        source_file TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      );
-    `);
-    await client.query("CREATE INDEX IF NOT EXISTS idx_consol_veic_setor ON ipt_consolidado_veiculos_dados(setor)").catch(() => {});
-    await client.query("CREATE INDEX IF NOT EXISTS idx_consol_veic_data ON ipt_consolidado_veiculos_dados(data_referencia)").catch(() => {});
-
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS ipt_consolidado_varricao_dados (
-        id SERIAL PRIMARY KEY,
-        setor TEXT NOT NULL,
-        frequencia_rotulo TEXT,
-        data_referencia DATE NOT NULL,
-        percentual_selimp NUMERIC(8,4),
-        percentual_ddmx NUMERIC(8,4),
-        raw JSONB NOT NULL,
-        source_file TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      );
-    `);
-    await client.query("CREATE INDEX IF NOT EXISTS idx_consol_varr_setor ON ipt_consolidado_varricao_dados(setor)").catch(() => {});
-    await client.query("CREATE INDEX IF NOT EXISTS idx_consol_varr_data ON ipt_consolidado_varricao_dados(data_referencia)").catch(() => {});
-
-    await client.query(`
       CREATE TABLE IF NOT EXISTS ipt_ddmx_varricao (
         id SERIAL PRIMARY KEY,
         record_key TEXT NOT NULL,
@@ -487,49 +424,32 @@ export async function runMigrations() {
     await client.query("CREATE INDEX IF NOT EXISTS idx_ddmx_veiculos_subtipo ON ipt_ddmx_veiculos(subtipo)").catch(() => {});
 
     await client.query(`
-      CREATE TABLE IF NOT EXISTS ipt_modulos_bateria_batches (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        imported_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        source_file TEXT,
-        total_registros INT NOT NULL DEFAULT 0
+      CREATE TABLE IF NOT EXISTS ipt_dados_bateria (
+        id                    SERIAL PRIMARY KEY,
+        record_key            TEXT NOT NULL UNIQUE,
+        data_exportacao       DATE NOT NULL,
+        nome                  TEXT NOT NULL,
+        tipo_modulo           TEXT NOT NULL DEFAULT 'LUTOCAR',
+        subprefeitura         TEXT,
+        setor                 TEXT,
+        selimp_id             TEXT,
+        dias_execucao         TEXT,
+        status_comunicacao    TEXT,
+        bateria_raw           TEXT,
+        bateria_percentual    NUMERIC(5,2),
+        bateria_desatualizada BOOLEAN DEFAULT FALSE,
+        ultima_comunicacao    TIMESTAMPTZ,
+        status_bateria        TEXT,
+        dias                  TEXT,
+        source_file           TEXT,
+        created_at            TIMESTAMPTZ DEFAULT NOW(),
+        updated_at            TIMESTAMPTZ DEFAULT NOW()
       );
     `);
-
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS ipt_modulos_bateria (
-        id SERIAL PRIMARY KEY,
-        subprefeitura TEXT,
-        setor TEXT NOT NULL,
-        numero_selimp TEXT,
-        dias_execucao TEXT,
-        ultima_comunicacao TIMESTAMPTZ,
-        bateria TEXT,
-        raw JSONB NOT NULL,
-        source_file TEXT,
-        batch_id UUID REFERENCES ipt_modulos_bateria_batches(id) ON DELETE CASCADE,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      );
-    `);
-    // Remove unique constraint on setor — history allows same setor in multiple batches
-    await client.query("DROP INDEX IF EXISTS ux_modulos_bateria_setor").catch(() => {});
-    // Add batch_id column to existing tables that predate this migration
-    await client.query("ALTER TABLE ipt_modulos_bateria ADD COLUMN IF NOT EXISTS batch_id UUID REFERENCES ipt_modulos_bateria_batches(id) ON DELETE CASCADE").catch(() => {});
-    await client.query("CREATE INDEX IF NOT EXISTS idx_modulos_bateria_batch ON ipt_modulos_bateria(batch_id)").catch(() => {});
-    await client.query("CREATE INDEX IF NOT EXISTS idx_modulos_bateria_sub ON ipt_modulos_bateria(subprefeitura)").catch(() => {});
-    // Create a legacy batch for any orphaned records (from before the batch system)
-    await client.query(`
-      WITH orphans AS (SELECT COUNT(*) AS cnt FROM ipt_modulos_bateria WHERE batch_id IS NULL),
-           new_batch AS (
-             INSERT INTO ipt_modulos_bateria_batches (source_file, total_registros)
-             SELECT 'legacy', cnt::int FROM orphans WHERE cnt > 0
-             RETURNING id
-           )
-      UPDATE ipt_modulos_bateria
-        SET batch_id = new_batch.id
-        FROM new_batch
-        WHERE ipt_modulos_bateria.batch_id IS NULL
-    `).catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_dados_bateria_data ON ipt_dados_bateria(data_exportacao)").catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_dados_bateria_subpref ON ipt_dados_bateria(subprefeitura)").catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_dados_bateria_nome ON ipt_dados_bateria(nome)").catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_dados_bateria_tipo ON ipt_dados_bateria(tipo_modulo)").catch(() => {});
 
     const adminEncryptedPassword = encryptPassword("1515");
     const userResult = await client.query<{ id: number }>(

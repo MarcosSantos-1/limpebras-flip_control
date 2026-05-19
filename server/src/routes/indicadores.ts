@@ -43,17 +43,17 @@ async function fetchOrdensConsolidadoNoPeriodo(
   fim: string
 ): Promise<{ ordens: Array<{ percentual: number }>; P: number; R: number; F: number }> {
   const veicRes = await client.query(
-    `SELECT setor, percentual_selimp
-     FROM ipt_consolidado_veiculos_dados
-     WHERE data_referencia >= $1::date AND data_referencia <= $2::date
-       AND percentual_selimp IS NOT NULL`,
+    `SELECT setor, raw
+     FROM ipt_imports
+     WHERE file_type = 'ipt_consolidado_veiculos'
+       AND data_referencia >= $1::date AND data_referencia <= $2::date`,
     [inicio, fim]
   );
   const varrRes = await client.query(
-    `SELECT setor, percentual_selimp
-     FROM ipt_consolidado_varricao_dados
-     WHERE data_referencia >= $1::date AND data_referencia <= $2::date
-       AND percentual_selimp IS NOT NULL`,
+    `SELECT setor, raw
+     FROM ipt_imports
+     WHERE file_type = 'ipt_consolidado_varricao'
+       AND data_referencia >= $1::date AND data_referencia <= $2::date`,
     [inicio, fim]
   );
   const allRows = [...(veicRes.rows ?? []), ...(varrRes.rows ?? [])];
@@ -65,7 +65,8 @@ async function fetchOrdensConsolidadoNoPeriodo(
   for (const row of allRows) {
     const plano = normalizarSetor(String(row.setor ?? "").trim());
     if (!plano) continue;
-    const s = Number(row.percentual_selimp);
+    const raw = (row.raw ?? {}) as Record<string, unknown>;
+    const s = Number(raw.percentual_selimp);
     if (!Number.isFinite(s)) continue;
     const pctDecimal = percentDisplayToDecimal(s > 1 ? s : s * 100);
     const arr = porPlano.get(plano) ?? [];
@@ -990,21 +991,22 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
     return { historico: [] };
   });
 
-  /** Diagnóstico: meses com dados em ipt_selimp_mensal. */
+  /** Diagnóstico: meses com report SELIMP em ipt_report_linhas. */
   fastify.get("/indicadores/ipt-selimp-diagnostico", async (_request, reply) => {
     const client = await pool.connect();
     try {
       const r = await client.query(
         `SELECT
-           ano,
-           mes,
-           total_linhas,
-           total_encerradas,
-           quantidade_esperada,
-           validacao_ok,
-           source_file,
-           updated_at
-         FROM ipt_selimp_mensal
+           EXTRACT(YEAR FROM periodo_inicial)::int AS ano,
+           EXTRACT(MONTH FROM periodo_inicial)::int AS mes,
+           COUNT(*)::int AS total_linhas,
+           COUNT(*) FILTER (
+             WHERE LOWER(COALESCE(status, '')) LIKE '%encerrado%'
+           )::int AS total_encerradas,
+           MAX(source_file) AS source_file,
+           MAX(updated_at) AS updated_at
+         FROM ipt_report_linhas
+         GROUP BY 1, 2
          ORDER BY ano, mes`
       );
       return { meses: r.rows };
@@ -1027,11 +1029,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         const ultimoDia = new Date(ano, m, 0).getDate();
         const fim = `${ano}-${String(m).padStart(2, "0")}-${String(ultimoDia).padStart(2, "0")}`;
         const { ordens } = await fetchOrdensSelimpNoPeriodo(client, inicio, fim);
-        const mensal = await client.query(
-          `SELECT total_linhas FROM ipt_selimp_mensal WHERE ano = $1 AND mes = $2`,
-          [ano, m]
-        );
-        const quantidade = Number(mensal.rows[0]?.total_linhas ?? 0);
+        const quantidade = ordens.length;
         const percentual = quantidade > 0 ? await getAutoIPTFromReport(client, inicio, fim) : null;
         meses.push({
           mes: m,
@@ -1357,38 +1355,45 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
     const cacheResult = await getOrSet(
       cacheKey("ipt_modulos_bateria", {}),
       async () => {
-        // Resolve the latest batch
-        const batchRow = await pool.query<{ id: string; imported_at: Date; source_file: string; total_registros: number }>(
-          `SELECT id, imported_at, source_file, total_registros
-           FROM ipt_modulos_bateria_batches
-           ORDER BY imported_at DESC LIMIT 1`
+        const metaRow = await pool.query<{
+          source_file: string | null;
+          updated_at: Date | null;
+          total_registros: number;
+        }>(
+          `SELECT
+             MAX(source_file) AS source_file,
+             MAX(updated_at) AS updated_at,
+             COUNT(*)::int AS total_registros
+           FROM ipt_imports
+           WHERE file_type = 'ipt_modulos_bateria'`
         );
-        const latestBatch = batchRow.rows[0] ?? null;
+        const meta = metaRow.rows[0];
 
-        // Filter records by latest batch (if one exists); fall back to all for legacy data
         const result = await pool.query(
-          `SELECT m.id, m.subprefeitura, m.setor, m.numero_selimp, m.dias_execucao,
-                  m.ultima_comunicacao, m.bateria, m.raw, m.updated_at, m.batch_id
-           FROM ipt_modulos_bateria m
-           ${latestBatch ? "WHERE m.batch_id = $1" : ""}
-           ORDER BY m.subprefeitura, m.setor`,
-          latestBatch ? [latestBatch.id] : []
+          `SELECT id, setor, raw, source_file, updated_at
+           FROM ipt_imports
+           WHERE file_type = 'ipt_modulos_bateria'
+           ORDER BY setor`
         );
 
         const modules = result.rows.map((r) => {
           const raw = (r.raw ?? {}) as Record<string, unknown>;
+          const ultima = raw.ultima_comunicacao;
           return {
             id: r.id,
-            subprefeitura: r.subprefeitura ?? "",
+            subprefeitura: String(raw.subprefeitura ?? ""),
             setor: r.setor,
-            numeroSelimp: r.numero_selimp ?? "",
-            diasExecucao: r.dias_execucao ?? "",
+            numeroSelimp: String(raw.numero_selimp ?? ""),
+            diasExecucao: String(raw.dias_execucao ?? ""),
             comunicacao: String(raw.comunicacao ?? "OFF"),
-            bateria: r.bateria ?? "",
+            bateria: String(raw.bateria ?? ""),
             bateriaPercentual: Number(raw.bateria_percentual ?? 0),
-            ultimaComunicacao: r.ultima_comunicacao
-              ? new Date(r.ultima_comunicacao).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })
-              : "",
+            ultimaComunicacao:
+              ultima instanceof Date
+                ? ultima.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })
+                : ultima
+                  ? new Date(String(ultima)).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })
+                  : "",
             statusSinalGeral: String(raw.status_sinal_geral ?? ""),
             statusBateria: String(raw.status_bateria ?? ""),
             dataInstalacao: formatDataInstalacaoBr(String(raw.data_instalacao ?? "")),
@@ -1412,20 +1417,20 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
           (m) => m.statusBateria === "BAIXA" || m.bateriaPercentual < 40
         ).length;
 
-        const lastUpdate = latestBatch
-          ? new Date(latestBatch.imported_at).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })
+        const lastUpdate = meta?.updated_at
+          ? new Date(meta.updated_at).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })
           : null;
 
         return {
           modules,
           stats: { total, online, offline, avgProductivity, criticalAlerts, lowBattery },
           lastUpdate,
-          latestBatch: latestBatch
+          latestBatch: meta?.updated_at
             ? {
-                id: latestBatch.id,
-                importedAt: new Date(latestBatch.imported_at).toISOString(),
-                sourceFile: latestBatch.source_file,
-                totalRegistros: latestBatch.total_registros,
+                id: null,
+                importedAt: new Date(meta.updated_at).toISOString(),
+                sourceFile: meta.source_file ?? "",
+                totalRegistros: meta.total_registros,
               }
             : null,
         };

@@ -18,6 +18,7 @@ import { parseConsolidadoVeiculos, parseConsolidadoVarricao } from "../services/
 import { estimarDatasReport, type ReportLinhaRaw } from "../services/estimarDataReport.js";
 import { mergeAcicOverridesAfterImportRow } from "../services/acicImportMerge.js";
 import { parseModulosBateriaWorkbook } from "../services/parseModulosBateria.js";
+import { parseStatusBateria } from "../services/parseStatusBateria.js";
 import { requirePageAccess } from "../auth.js";
 
 function ensureIptRestrictedUploadAccess(
@@ -279,7 +280,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.addHook("preHandler", async (request, reply) => {
     const user = await requirePageAccess(request, reply, "upload");
     if (!user) return reply;
-    if (!ensureIptRestrictedUploadAccess(request, reply, ["/upload/ipt-modulos-bateria", "/upload/last-updates"])) {
+    if (!ensureIptRestrictedUploadAccess(request, reply, ["/upload/ipt-status-bateria", "/upload/last-updates"])) {
       return reply;
     }
   });
@@ -330,7 +331,9 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
     }
   };
 
-  const getLastIptUpdate = async (fileType: IptFileType | "ipt_consolidado_veiculos" | "ipt_consolidado_varricao") => {
+  const getLastIptUpdate = async (
+    fileType: IptFileType | "ipt_consolidado_veiculos" | "ipt_consolidado_varricao" | "ipt_modulos_bateria"
+  ) => {
     if (fileType === "ipt_report_selimp") {
       const last = await pool.query(
         `SELECT
@@ -368,28 +371,6 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         periodo_tipo: r?.periodo_tipo ?? null,
         periodo_inicial: r?.periodo_inicial ?? null,
         periodo_final: r?.periodo_final ?? null,
-      };
-    }
-    if (fileType === "ipt_consolidado_veiculos") {
-      const last = await pool.query(
-        `SELECT source_file, updated_at FROM ipt_consolidado_veiculos_dados ORDER BY updated_at DESC NULLS LAST, id DESC LIMIT 1`
-      );
-      const count = await pool.query(`SELECT COUNT(*)::int AS total FROM ipt_consolidado_veiculos_dados`);
-      return {
-        ultimo_import: last.rows[0]?.updated_at ?? null,
-        source_file: last.rows[0]?.source_file ?? null,
-        total_registros: Number(count.rows[0]?.total ?? 0),
-      };
-    }
-    if (fileType === "ipt_consolidado_varricao") {
-      const last = await pool.query(
-        `SELECT source_file, updated_at FROM ipt_consolidado_varricao_dados ORDER BY updated_at DESC NULLS LAST, id DESC LIMIT 1`
-      );
-      const count = await pool.query(`SELECT COUNT(*)::int AS total FROM ipt_consolidado_varricao_dados`);
-      return {
-        ultimo_import: last.rows[0]?.updated_at ?? null,
-        source_file: last.rows[0]?.source_file ?? null,
-        total_registros: Number(count.rows[0]?.total ?? 0),
       };
     }
     const last = await pool.query(
@@ -964,77 +945,31 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
     try {
       await client.query("BEGIN");
 
-      if (fileType === "ipt_consolidado_veiculos") {
-        const parsed = parseConsolidadoVeiculos(buffer);
-        parse_stats = { ...parsed.stats };
-        if (parsed.rows.length === 0) throw new Error("Nenhum registro valido na planilha");
+      const consolidadoRows =
+        fileType === "ipt_consolidado_veiculos"
+          ? (() => {
+              const parsed = parseConsolidadoVeiculos(buffer);
+              parse_stats = { ...parsed.stats };
+              return parsed.rows;
+            })()
+          : parseConsolidadoVarricao(buffer);
 
-        await client.query(`DELETE FROM ipt_consolidado_veiculos_dados WHERE TRUE`);
-        let inserted = 0;
-        for (const row of parsed.rows) {
-          const raw = row.raw as Record<string, unknown>;
-          await client.query(
-            `INSERT INTO ipt_consolidado_veiculos_dados (
-              placa, operacao, motorista, setor, data_referencia,
-              liberacao, saida, status, retorno, tempo_trabalho,
-              percentual_limpebras, percentual_selimp,
-              raw, source_file, updated_at
-            ) VALUES ($1, $2, $3, $4, $5::date, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, NOW())`,
-            [
-              String(raw.placa_liberada ?? "").trim() || null,
-              String(raw.operacao ?? "").trim() || null,
-              String(raw.motorista ?? "").trim() || null,
-              row.setor,
-              row.dataReferencia,
-              String(raw.liberacao ?? "").trim() || null,
-              String(raw.saida ?? "").trim() || null,
-              String(raw.status ?? "").trim() || null,
-              String(raw.retorno ?? "").trim() || null,
-              String(raw.tempo_trabalho ?? "").trim() || null,
-              typeof raw.percentual_limpebras === "number" ? raw.percentual_limpebras : null,
-              typeof raw.percentual_selimp === "number" ? raw.percentual_selimp : null,
-              JSON.stringify(raw),
-              sourceFile,
-            ]
-          );
-          inserted += 1;
-        }
-        await client.query("COMMIT");
-        invalidatePrefix("ipt_preview");
-        invalidatePrefix("kpis");
-        return {
-          processados: inserted,
-          total: parsed.rows.length,
-          inseridos: inserted,
-          atualizados: 0,
-          duplicados: 0,
-          erros: 0,
-          ultimo_import: new Date().toISOString(),
-          source_file: sourceFile,
-          parse_stats,
-        };
-      }
+      if (consolidadoRows.length === 0) throw new Error("Nenhum registro valido na planilha");
 
-      const rows = parseConsolidadoVarricao(buffer);
-      if (rows.length === 0) throw new Error("Nenhum registro valido na planilha");
-
-      await client.query(`DELETE FROM ipt_consolidado_varricao_dados WHERE TRUE`);
+      await client.query(`DELETE FROM ipt_imports WHERE file_type = $1`, [fileType]);
       let inserted = 0;
-      for (const row of rows) {
-        const raw = row.raw as Record<string, unknown>;
+      for (const row of consolidadoRows) {
         await client.query(
-          `INSERT INTO ipt_consolidado_varricao_dados (
-            setor, frequencia_rotulo, data_referencia,
-            percentual_selimp, percentual_ddmx,
-            raw, source_file, updated_at
-          ) VALUES ($1, $2, $3::date, $4, $5, $6::jsonb, $7, NOW())`,
+          `INSERT INTO ipt_imports (
+            file_type, record_key, setor, data_referencia, servico, raw, source_file, updated_at
+          ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, NOW())`,
           [
+            fileType,
+            row.recordKey,
             row.setor,
-            String(raw.frequencia_rotulo ?? "").trim() || null,
             row.dataReferencia,
-            typeof raw.percentual_selimp === "number" ? raw.percentual_selimp : null,
-            typeof raw.percentual_ddmx === "number" ? raw.percentual_ddmx : null,
-            JSON.stringify(raw),
+            row.servico || null,
+            JSON.stringify(row.raw),
             sourceFile,
           ]
         );
@@ -1045,14 +980,14 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       invalidatePrefix("kpis");
       return {
         processados: inserted,
-        total: rows.length,
+        total: consolidadoRows.length,
         inseridos: inserted,
         atualizados: 0,
         duplicados: 0,
         erros: 0,
         ultimo_import: new Date().toISOString(),
         source_file: sourceFile,
-        parse_stats,
+        ...(parse_stats ? { parse_stats } : {}),
       };
     } catch (e) {
       await client.query("ROLLBACK");
@@ -1731,13 +1666,119 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
-  fastify.post("/upload/ipt-status-bateria", async (request, reply) => {
+  fastify.post<{
+    Querystring: { data_referencia?: string };
+  }>("/upload/ipt-status-bateria", async (request, reply) => {
+    const dataReferencia = String(request.query.data_referencia ?? "").trim();
+    if (!dataReferencia || !isDateKey(dataReferencia)) {
+      return reply.code(400).send({
+        detail: "Informe data_referencia no formato YYYY-MM-DD (dia da exportação SELIMP).",
+      });
+    }
+
+    const data = await request.file();
+    if (!data) return reply.code(400).send({ detail: "Arquivo XLSX obrigatório" });
+    const lower = data.filename.toLowerCase();
+    if (!lower.endsWith(".xlsx") && !lower.endsWith(".xls")) {
+      return reply.code(400).send({ detail: "Aceita apenas arquivos XLSX/XLS." });
+    }
+
     try {
-      const result = await importIptFile("ipt_status_bateria", request);
-      await recordUploadEvent("selimp", "iptStatusBateria", String(result.source_file ?? ""), result);
-      return result;
+      const buffer = await data.toBuffer();
+      const rows = parseStatusBateria(buffer, dataReferencia);
+      if (rows.length === 0) {
+        throw new Error("Nenhum registro válido na planilha Status de Bateria.");
+      }
+
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+
+        let inseridos = 0;
+        let atualizados = 0;
+
+        for (const row of rows) {
+          const ultimaComunicacaoStr = row.ultimaComunicacao ? row.ultimaComunicacao.toISOString() : null;
+          const result = await client.query<{ xmax: string }>(
+            `INSERT INTO ipt_dados_bateria (
+              record_key, data_exportacao, nome, tipo_modulo, subprefeitura,
+              setor, selimp_id, dias_execucao, status_comunicacao,
+              bateria_raw, bateria_percentual, bateria_desatualizada,
+              ultima_comunicacao, status_bateria, dias, source_file, updated_at
+            ) VALUES (
+              $1, $2::date, $3, $4, $5,
+              $6, $7, $8, $9,
+              $10, $11, $12,
+              $13, $14, $15, $16, NOW()
+            )
+            ON CONFLICT (record_key) DO UPDATE SET
+              subprefeitura = COALESCE(NULLIF(EXCLUDED.subprefeitura, ''), ipt_dados_bateria.subprefeitura),
+              setor = COALESCE(NULLIF(EXCLUDED.setor, ''), ipt_dados_bateria.setor),
+              selimp_id = COALESCE(NULLIF(EXCLUDED.selimp_id, ''), ipt_dados_bateria.selimp_id),
+              dias_execucao = COALESCE(NULLIF(EXCLUDED.dias_execucao, ''), ipt_dados_bateria.dias_execucao),
+              status_comunicacao = EXCLUDED.status_comunicacao,
+              bateria_raw = EXCLUDED.bateria_raw,
+              bateria_percentual = EXCLUDED.bateria_percentual,
+              bateria_desatualizada = EXCLUDED.bateria_desatualizada,
+              ultima_comunicacao = EXCLUDED.ultima_comunicacao,
+              status_bateria = EXCLUDED.status_bateria,
+              dias = EXCLUDED.dias,
+              source_file = EXCLUDED.source_file,
+              updated_at = NOW()
+            RETURNING xmax`,
+            [
+              row.recordKey,
+              dataReferencia,
+              row.nome,
+              row.tipoModulo,
+              row.subprefeitura || null,
+              row.setor || null,
+              row.selimpId || null,
+              row.diasExecucao || null,
+              row.statusComunicacao || null,
+              row.bateriaRaw || null,
+              row.bateriaPercentual ?? null,
+              row.bateriaDesatualizada,
+              ultimaComunicacaoStr,
+              row.statusBateria || null,
+              row.dias || null,
+              data.filename,
+            ]
+          );
+          const wasUpdate = result.rows[0] && String(result.rows[0].xmax) !== "0";
+          if (wasUpdate) atualizados++;
+          else inseridos++;
+        }
+
+        await client.query("COMMIT");
+        invalidatePrefix("bateria");
+        invalidatePrefix("ipt_dados_bateria");
+        invalidatePrefix("ipt_preview");
+
+        const referenciaLabel = `Status Bateria (${dataReferencia})`;
+        const summary = {
+          processados: rows.length,
+          total: rows.length,
+          inseridos,
+          atualizados,
+          duplicados: 0,
+          erros: 0,
+          ultimo_import: new Date().toISOString(),
+          source_file: data.filename,
+          referencia_importada: referenciaLabel,
+          periodo_inicial: dataReferencia,
+          periodo_final: dataReferencia,
+        };
+        await recordUploadEvent("selimp", "iptStatusBateria", data.filename, summary);
+        return summary;
+      } catch (e) {
+        await client.query("ROLLBACK");
+        throw e;
+      } finally {
+        client.release();
+      }
     } catch (error: unknown) {
-      const detail = error instanceof Error ? error.message : "Falha no upload IPT";
+      const detail = error instanceof Error ? error.message : "Falha no upload";
       return reply.code(400).send({ detail });
     }
   });
@@ -1757,20 +1798,19 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-
-        // Create a new batch record for this import snapshot
-        const batchResult = await client.query<{ id: string }>(
-          `INSERT INTO ipt_modulos_bateria_batches (source_file, total_registros)
-           VALUES ($1, $2) RETURNING id`,
-          [data.filename, rows.length]
-        );
-        const batchId = batchResult.rows[0].id;
+        await client.query(`DELETE FROM ipt_imports WHERE file_type = 'ipt_modulos_bateria'`);
 
         let inserted = 0;
         for (const row of rows) {
+          const recordKey = `${row.setor}|${row.numero_selimp || "sem_numero"}`;
           const raw: Record<string, unknown> = {
+            subprefeitura: row.subprefeitura,
+            numero_selimp: row.numero_selimp,
+            dias_execucao: row.dias_execucao,
             comunicacao: row.comunicacao,
+            bateria: row.bateria,
             bateria_percentual: row.bateria_percentual,
+            ultima_comunicacao: row.ultima_comunicacao,
             status_sinal_geral: row.status_sinal_geral,
             status_bateria: row.status_bateria,
             data_instalacao: row.data_instalacao,
@@ -1780,21 +1820,10 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
             produtividade: row.produtividade,
           };
           await client.query(
-            `INSERT INTO ipt_modulos_bateria (
-              subprefeitura, setor, numero_selimp, dias_execucao,
-              ultima_comunicacao, bateria, raw, source_file, batch_id, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, NOW())`,
-            [
-              row.subprefeitura || null,
-              row.setor,
-              row.numero_selimp || null,
-              row.dias_execucao || null,
-              row.ultima_comunicacao,
-              row.bateria || null,
-              JSON.stringify(raw),
-              data.filename,
-              batchId,
-            ]
+            `INSERT INTO ipt_imports (
+              file_type, record_key, setor, data_referencia, servico, raw, source_file, updated_at
+            ) VALUES ('ipt_modulos_bateria', $1, $2, NULL, NULL, $3::jsonb, $4, NOW())`,
+            [recordKey, row.setor, JSON.stringify(raw), data.filename]
           );
           inserted++;
         }
@@ -1811,7 +1840,6 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
           atualizados: 0,
           duplicados: 0,
           erros: 0,
-          batch_id: batchId,
           ultimo_import: batchAt,
           source_file: data.filename,
         };
@@ -1841,22 +1869,37 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
     };
   };
 
-  const getLastModulosBateriaUpdate = async () => {
+  const getLastModulosBateriaUpdate = async () => getLastIptUpdate("ipt_modulos_bateria");
+
+  const getLastStatusBateriaUpdate = async () => {
     try {
       const last = await pool.query(
-        `SELECT id, source_file, imported_at, total_registros
-         FROM ipt_modulos_bateria_batches ORDER BY imported_at DESC NULLS LAST LIMIT 1`
+        `SELECT source_file, updated_at, data_exportacao::text AS data_exportacao
+         FROM ipt_dados_bateria
+         ORDER BY updated_at DESC NULLS LAST, id DESC
+         LIMIT 1`
       );
+      const count = await pool.query(`SELECT COUNT(*)::int AS total FROM ipt_dados_bateria`);
+      const r = last.rows[0];
+      const dataRef = r?.data_exportacao ? String(r.data_exportacao).slice(0, 10) : null;
       return {
-        ultimo_import: last.rows[0]?.imported_at ?? null,
-        source_file: last.rows[0]?.source_file ?? null,
-        total_registros: Number(last.rows[0]?.total_registros ?? 0),
-        batch_id: last.rows[0]?.id ?? null,
+        ultimo_import: r?.updated_at ?? null,
+        source_file: r?.source_file ?? null,
+        total_registros: Number(count.rows[0]?.total ?? 0),
+        ultima_referencia: dataRef ? `Status Bateria (${formatPtDateKey(dataRef)})` : null,
+        periodo_inicial: dataRef,
+        periodo_final: dataRef,
       };
     } catch {
-      return { ultimo_import: null, source_file: null, total_registros: 0, batch_id: null };
+      return { ultimo_import: null, source_file: null, total_registros: 0 };
     }
   };
+
+  function formatPtDateKey(dateKey: string): string {
+    const [y, m, d] = dateKey.split("-").map(Number);
+    if (!y || !m || !d) return dateKey;
+    return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("pt-BR", { timeZone: "UTC" });
+  }
 
   fastify.post("/upload/ipt-cronograma", async (request, reply) => {
     const data = await request.file();
@@ -1945,7 +1988,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       getLastDdmxUpdate("ddmx_veiculos_compactadores"),
       getLastDdmxUpdate("ddmx_veiculos_light"),
       getLastIptUpdate("ipt_report_selimp"),
-      getLastIptUpdate("ipt_status_bateria"),
+      getLastStatusBateriaUpdate(),
       getLastCronogramaUpdate(),
       getLastIptUpdate("ipt_consolidado_veiculos"),
       getLastIptUpdate("ipt_consolidado_varricao"),
@@ -2120,7 +2163,6 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
 
   fastify.post("/upload/clear-ipt-report", async (_request, reply) => {
     const r = await pool.query("DELETE FROM ipt_report_linhas RETURNING id");
-    await pool.query("DELETE FROM ipt_selimp_mensal RETURNING ano, mes").catch(() => {});
     await pool.query("DELETE FROM ipt_imports WHERE file_type = 'ipt_report_selimp'").catch(() => {});
     invalidatePrefix("ipt_preview");
     invalidatePrefix("kpis");
@@ -2179,24 +2221,21 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   fastify.post("/upload/clear-ipt-consolidado-veiculos", async (_request, reply) => {
-    const r = await pool.query(`DELETE FROM ipt_consolidado_veiculos_dados RETURNING id`);
-    await pool.query(`DELETE FROM ipt_imports WHERE file_type = 'ipt_consolidado_veiculos'`).catch(() => {});
+    const r = await pool.query(`DELETE FROM ipt_imports WHERE file_type = 'ipt_consolidado_veiculos' RETURNING id`);
     invalidatePrefix("ipt_preview");
     invalidatePrefix("kpis");
     return { deleted: r.rowCount ?? 0 };
   });
 
   fastify.post("/upload/clear-ipt-consolidado-varricao", async (_request, reply) => {
-    const r = await pool.query(`DELETE FROM ipt_consolidado_varricao_dados RETURNING id`);
-    await pool.query(`DELETE FROM ipt_imports WHERE file_type = 'ipt_consolidado_varricao'`).catch(() => {});
+    const r = await pool.query(`DELETE FROM ipt_imports WHERE file_type = 'ipt_consolidado_varricao' RETURNING id`);
     invalidatePrefix("ipt_preview");
     invalidatePrefix("kpis");
     return { deleted: r.rowCount ?? 0 };
   });
 
   fastify.post("/upload/clear-ipt-modulos-bateria", async (_request, reply) => {
-    // Deleting from the batches table cascades to ipt_modulos_bateria via ON DELETE CASCADE
-    const r = await pool.query(`DELETE FROM ipt_modulos_bateria_batches RETURNING id`);
+    const r = await pool.query(`DELETE FROM ipt_imports WHERE file_type = 'ipt_modulos_bateria' RETURNING id`);
     invalidatePrefix("ipt_modulos_bateria");
     invalidatePrefix("kpis");
     return { deleted: r.rowCount ?? 0 };
@@ -2217,7 +2256,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-      const stats = { report: 0, veiculos: 0, varricao: 0 };
+      const stats = { report: 0 };
 
       // 1. Migrar ipt_report_selimp -> ipt_report_linhas
       const reportRows = await client.query(
@@ -2272,69 +2311,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         stats.report += 1;
       }
 
-      // 2. Migrar ipt_consolidado_veiculos -> ipt_consolidado_veiculos_dados
-      const veicRows = await client.query(
-        `SELECT raw, setor, data_referencia, source_file
-         FROM ipt_imports
-         WHERE file_type = 'ipt_consolidado_veiculos'`
-      );
-      for (const row of veicRows.rows) {
-        const raw = (row.raw ?? {}) as Record<string, unknown>;
-        await client.query(
-          `INSERT INTO ipt_consolidado_veiculos_dados (
-            placa, operacao, motorista, setor, data_referencia,
-            liberacao, saida, status, retorno, tempo_trabalho,
-            percentual_limpebras, percentual_selimp,
-            raw, source_file, updated_at
-          ) VALUES ($1,$2,$3,$4,$5::date,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,NOW())`,
-          [
-            String(raw.placa_liberada ?? "").trim() || null,
-            String(raw.operacao ?? "").trim() || null,
-            String(raw.motorista ?? "").trim() || null,
-            row.setor,
-            row.data_referencia,
-            String(raw.liberacao ?? "").trim() || null,
-            String(raw.saida ?? "").trim() || null,
-            String(raw.status ?? "").trim() || null,
-            String(raw.retorno ?? "").trim() || null,
-            String(raw.tempo_trabalho ?? "").trim() || null,
-            typeof raw.percentual_limpebras === "number" ? raw.percentual_limpebras : null,
-            typeof raw.percentual_selimp === "number" ? raw.percentual_selimp : null,
-            JSON.stringify(raw),
-            row.source_file,
-          ]
-        );
-        stats.veiculos += 1;
-      }
-
-      // 3. Migrar ipt_consolidado_varricao -> ipt_consolidado_varricao_dados
-      const varrRows = await client.query(
-        `SELECT raw, setor, data_referencia, source_file
-         FROM ipt_imports
-         WHERE file_type = 'ipt_consolidado_varricao'`
-      );
-      for (const row of varrRows.rows) {
-        const raw = (row.raw ?? {}) as Record<string, unknown>;
-        await client.query(
-          `INSERT INTO ipt_consolidado_varricao_dados (
-            setor, frequencia_rotulo, data_referencia,
-            percentual_selimp, percentual_ddmx,
-            raw, source_file, updated_at
-          ) VALUES ($1,$2,$3::date,$4,$5,$6::jsonb,$7,NOW())`,
-          [
-            row.setor,
-            String(raw.frequencia_rotulo ?? "").trim() || null,
-            row.data_referencia,
-            typeof raw.percentual_selimp === "number" ? raw.percentual_selimp : null,
-            typeof raw.percentual_ddmx === "number" ? raw.percentual_ddmx : null,
-            JSON.stringify(raw),
-            row.source_file,
-          ]
-        );
-        stats.varricao += 1;
-      }
-
-      // 4. Migrar DDMX historico_os -> ipt_ddmx_veiculos (subtipo light)
+      // 2. Migrar DDMX historico_os -> ipt_ddmx_veiculos (subtipo light)
       const ddmxLightRows = await client.query(
         `SELECT record_key, setor, data_referencia, servico, raw, source_file
          FROM ipt_imports WHERE file_type = 'ipt_historico_os'`
@@ -2350,7 +2327,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         ddmxLightCount += 1;
       }
 
-      // 5. Migrar DDMX historico_os_compactadores -> ipt_ddmx_veiculos (subtipo compactadores)
+      // 3. Migrar DDMX historico_os_compactadores -> ipt_ddmx_veiculos (subtipo compactadores)
       const ddmxCompRows = await client.query(
         `SELECT record_key, setor, data_referencia, servico, raw, source_file
          FROM ipt_imports WHERE file_type = 'ipt_historico_os_compactadores'`
@@ -2366,7 +2343,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         ddmxCompCount += 1;
       }
 
-      // 6. Migrar DDMX historico_os_varricao -> ipt_ddmx_varricao
+      // 4. Migrar DDMX historico_os_varricao -> ipt_ddmx_varricao
       const ddmxVarrRows = await client.query(
         `SELECT record_key, setor, data_referencia, servico, raw, source_file
          FROM ipt_imports WHERE file_type = 'ipt_historico_os_varricao'`
@@ -2393,7 +2370,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
           ddmx_compactadores: ddmxCompCount,
           ddmx_varricao: ddmxVarrCount,
         },
-        mensagem: `Migrados: ${stats.report} report, ${stats.veiculos} veiculos, ${stats.varricao} varricao, ${ddmxLightCount} ddmx light, ${ddmxCompCount} ddmx compactadores, ${ddmxVarrCount} ddmx varricao.`,
+        mensagem: `Migrados: ${stats.report} report, ${ddmxLightCount} ddmx light, ${ddmxCompCount} ddmx compactadores, ${ddmxVarrCount} ddmx varricao. Consolidado e modulos bateria permanecem em ipt_imports.`,
       };
     } catch (e) {
       await client.query("ROLLBACK");
