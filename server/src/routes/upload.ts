@@ -1801,44 +1801,48 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         let totalInseridos = 0;
 
         for (const [dateKey, dayRows] of porData) {
-          // Limpa o dia antes de inserir (mesmo padrão de ipt-status-bateria)
+          // Limpa o dia antes de inserir
           await client.query(
             `DELETE FROM ipt_dados_bateria WHERE data_exportacao = $1::date`,
             [dateKey]
           );
 
-          for (const row of dayRows) {
-            const ultimaComunicacaoStr = row.ultimaComunicacao
-              ? row.ultimaComunicacao.toISOString()
-              : null;
-            await client.query(
-              `INSERT INTO ipt_dados_bateria (
-                record_key, data_exportacao, nome, tipo_modulo,
-                selimp_id, status_comunicacao,
-                bateria_raw, bateria_percentual, bateria_desatualizada,
-                ultima_comunicacao, source_file, updated_at
-              ) VALUES (
-                $1, $2::date, $3, $4,
-                $5, $6,
-                $7, $8, $9,
-                $10, $11, NOW()
-              )`,
-              [
-                row.recordKey,
-                dateKey,
-                row.nome,
-                row.tipoModulo,
-                row.selimpId || null,
-                row.statusComunicacao || null,
-                row.bateriaRaw || null,
-                row.bateriaPercentual ?? null,
-                row.bateriaDesatualizada,
-                ultimaComunicacaoStr,
-                data.filename,
-              ]
+          // Bulk insert: monta um único INSERT com todas as linhas do dia
+          // para evitar N roundtrips ao banco (cada linha = 11 params)
+          const COLS = 11;
+          const values: unknown[] = [];
+          const placeholders: string[] = [];
+
+          dayRows.forEach((row, i) => {
+            const base = i * COLS;
+            placeholders.push(
+              `($${base + 1}, $${base + 2}::date, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10}, $${base + 11}, NOW())`
             );
-            totalInseridos++;
-          }
+            values.push(
+              row.recordKey,
+              dateKey,
+              row.nome,
+              row.tipoModulo,
+              row.selimpId || null,
+              row.statusComunicacao || null,
+              row.bateriaRaw || null,
+              row.bateriaPercentual ?? null,
+              row.bateriaDesatualizada,
+              row.ultimaComunicacao ? row.ultimaComunicacao.toISOString() : null,
+              data.filename,
+            );
+          });
+
+          await client.query(
+            `INSERT INTO ipt_dados_bateria (
+              record_key, data_exportacao, nome, tipo_modulo,
+              selimp_id, status_comunicacao,
+              bateria_raw, bateria_percentual, bateria_desatualizada,
+              ultima_comunicacao, source_file, updated_at
+            ) VALUES ${placeholders.join(", ")}`,
+            values
+          );
+          totalInseridos += dayRows.length;
         }
 
         await client.query("COMMIT");

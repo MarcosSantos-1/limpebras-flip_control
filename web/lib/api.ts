@@ -542,6 +542,16 @@ export const apiService = {
     return data;
   },
 
+  uploadIptHistoricoBateriaXlsx: async (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const { data } = await api.post('/upload/ipt-historico-bateria', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 600_000, // 10 min — arquivo histórico pode ter muitas datas
+    });
+    return data;
+  },
+
   uploadIptCronogramaXlsx: async (file: File) => {
     const formData = new FormData();
     formData.append('file', file);

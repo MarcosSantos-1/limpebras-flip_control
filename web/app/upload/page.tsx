@@ -49,6 +49,7 @@ type UploadKey =
   | "ddmxLight"
   | "iptReport"
   | "iptStatusBateria"
+  | "iptHistoricoBateria"
   | "iptCronograma";
 type IptReferenceMode = "d_minus_1" | "fim_de_semana" | "personalizado";
 type StatusBateriaReferenceMode = "hoje" | "personalizado";
@@ -76,6 +77,9 @@ interface UploadResult {
   tipo_detectado?: string;
   tipo_detectado_label?: string;
   source_file?: string;
+  /** Retornado pelo endpoint de histórico de bateria */
+  datas_importadas?: string[];
+  total_datas?: number;
   /** Só importação consolidada veículos — explica diferença linhas Excel vs inseridas */
   parse_stats?: {
     linhas_na_planilha?: number;
@@ -247,6 +251,7 @@ function createInitialStates(): Record<UploadKey, UploadState> {
     ddmxLight: { status: "idle" },
     iptReport: { status: "idle" },
     iptStatusBateria: { status: "idle" },
+    iptHistoricoBateria: { status: "idle" },
     iptCronograma: { status: "idle" },
   };
 }
@@ -376,6 +381,23 @@ function SummaryBox({ state }: { state: UploadState }) {
                 Baixa:{" "}
                 <span className="font-semibold text-red-700 dark:text-red-400">{state.result.estimativa.baixa_confianca ?? 0}</span>
               </div>
+            </div>
+          </div>
+        )}
+        {state.result.datas_importadas && state.result.datas_importadas.length > 0 && (
+          <div className="mt-4 border-t border-emerald-200/70 pt-4 text-xs leading-relaxed text-muted-foreground dark:border-emerald-500/15">
+            <div className="font-semibold text-emerald-900 dark:text-emerald-200">
+              Datas importadas ({state.result.total_datas ?? state.result.datas_importadas.length})
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {state.result.datas_importadas.map((d) => (
+                <span
+                  key={d}
+                  className="rounded-md bg-emerald-100 px-2 py-0.5 font-mono text-[11px] font-medium text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-200"
+                >
+                  {new Date(`${d}T12:00:00`).toLocaleDateString("pt-BR")}
+                </span>
+              ))}
             </div>
           </div>
         )}
@@ -927,6 +949,28 @@ export default function UploadPage() {
     }
   };
 
+  const handleHistoricoBateriaUpload = async (files: FileList | null) => {
+    const file = files?.[0];
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".xlsx") && !file.name.toLowerCase().endsWith(".xls")) {
+      const msg = "Aceita apenas arquivos XLSX/XLS.";
+      setUploadState("iptHistoricoBateria", { status: "error", error: msg });
+      toast.error(msg);
+      return;
+    }
+    setUploadState("iptHistoricoBateria", { status: "uploading" });
+    try {
+      const result = await apiService.uploadIptHistoricoBateriaXlsx(file);
+      setUploadState("iptHistoricoBateria", { status: "success", result });
+      toast.success("Histórico de bateria importado com sucesso.");
+      await loadOverview();
+    } catch (error) {
+      const message = getErrorMessage(error);
+      setUploadState("iptHistoricoBateria", { status: "error", error: message });
+      toast.error(message);
+    }
+  };
+
   const toggleHistory = (key: string) => {
     setExpandedHistory((prev) => ({ ...prev, [key]: !prev[key] }));
   };
@@ -1097,6 +1141,42 @@ export default function UploadPage() {
               onToggle={() => toggleHistory("iptStatusBateria")}
             />
             <SummaryBox state={states.iptStatusBateria} />
+
+            {/* TEMPORÁRIO — Histórico Geral de Bateria (descomentar para reativar)
+            <div
+              className={cn(
+                "mt-6 rounded-2xl border p-6 shadow-sm",
+                "border-amber-200/70 bg-gradient-to-b from-amber-50/60 to-white",
+                "dark:border-amber-800/45 dark:bg-gradient-to-b dark:from-amber-950/35 dark:to-muted/25 dark:shadow-md dark:shadow-black/20",
+              )}
+            >
+              <div className="mb-4 flex items-start gap-3">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-800 ring-1 ring-amber-200/80 dark:bg-amber-950/40 dark:text-amber-200 dark:ring-amber-500/25">
+                  <FileSpreadsheet className="h-4 w-4" />
+                </span>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <div className="text-lg font-semibold tracking-tight">Histórico Geral de Bateria</div>
+                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-900/50 dark:text-amber-200">
+                      Temporário
+                    </span>
+                  </div>
+                  <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+                    Use para carregar o arquivo HISTÓRICO GERAL BATERIA VARRICAO.xlsx — modelo diferente da importação diária. Cada data presente no arquivo é importada separadamente; reimportar substitui o dia inteiro.
+                  </p>
+                </div>
+              </div>
+              <UploadDropzone
+                inputId="iptHistoricoBateriaRestricted"
+                accept=".xlsx,.xls"
+                tone="amber"
+                loading={states.iptHistoricoBateria.status === "uploading"}
+                helperText="Arquivo histórico com múltiplas datas em coluna A. Formato: HISTÓRICO GERAL BATERIA VARRICAO.xlsx"
+                onFilesSelected={handleHistoricoBateriaUpload}
+              />
+              <SummaryBox state={states.iptHistoricoBateria} />
+            </div>
+            */}
           </div>
         ) : (
         <Accordion type="multiple" defaultValue={[]} className="space-y-5">
@@ -1400,6 +1480,42 @@ export default function UploadPage() {
                 />
                 <SummaryBox state={states.iptStatusBateria} />
               </div>
+
+              {/* TEMPORÁRIO — Histórico Geral de Bateria (descomentar para reativar)
+              <div
+                className={cn(
+                  "rounded-2xl border p-6 shadow-sm",
+                  "border-amber-200/70 bg-gradient-to-b from-amber-50/60 to-white",
+                  "dark:border-amber-800/45 dark:bg-gradient-to-b dark:from-amber-950/35 dark:to-muted/25 dark:shadow-md dark:shadow-black/20",
+                )}
+              >
+                <div className="mb-4 flex items-start gap-3">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-800 ring-1 ring-amber-200/80 dark:bg-amber-950/40 dark:text-amber-200 dark:ring-amber-500/25">
+                    <FileSpreadsheet className="h-4 w-4" />
+                  </span>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <div className="text-lg font-semibold tracking-tight">Histórico Geral de Bateria</div>
+                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-900/50 dark:text-amber-200">
+                        Temporário
+                      </span>
+                    </div>
+                    <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+                      Use para carregar o arquivo HISTÓRICO GERAL BATERIA VARRICAO.xlsx — modelo diferente da importação diária. Cada data presente no arquivo é importada separadamente; reimportar substitui o dia inteiro.
+                    </p>
+                  </div>
+                </div>
+                <UploadDropzone
+                  inputId="iptHistoricoBateria"
+                  accept=".xlsx,.xls"
+                  tone="amber"
+                  loading={states.iptHistoricoBateria.status === "uploading"}
+                  helperText="Arquivo histórico com múltiplas datas em coluna A. Formato: HISTÓRICO GERAL BATERIA VARRICAO.xlsx"
+                  onFilesSelected={handleHistoricoBateriaUpload}
+                />
+                <SummaryBox state={states.iptHistoricoBateria} />
+              </div>
+              */}
           </SessionAccordionItem>
         </Accordion>
         )}
