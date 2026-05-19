@@ -5,17 +5,12 @@ export interface StatusBateriaRow {
   recordKey: string;
   nome: string;
   tipoModulo: "LUTOCAR" | "PORTATIL";
-  subprefeitura: string;
-  setor: string;
   selimpId: string;
-  diasExecucao: string;
   statusComunicacao: string;
   bateriaRaw: string;
   bateriaPercentual: number | null;
   bateriaDesatualizada: boolean;
   ultimaComunicacao: Date | null;
-  statusBateria: string;
-  dias: string;
 }
 
 function canonicalHeader(value: string): string {
@@ -80,17 +75,31 @@ function parseDateValue(value: unknown): Date | null {
   return null;
 }
 
+/**
+ * Normaliza o valor bruto da célula bateria antes de armazenar em bateria_raw.
+ * Excel armazena porcentagens como decimal (0.64), não como "64%".
+ * Se o valor for número ou string decimal no range 0–1, converte para "XX%".
+ */
+function normalizeBateriaRaw(value: unknown): string {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1) {
+    return `${Math.round(value * 100)}%`;
+  }
+  const s = String(value ?? "").trim();
+  const num = parseFloat(s);
+  if (!Number.isNaN(num) && num >= 0 && num < 1 && !s.includes("%")) {
+    return `${Math.round(num * 100)}%`;
+  }
+  return s;
+}
+
 function parseBateria(raw: string): { percentual: number | null; desatualizada: boolean } {
   if (!raw) return { percentual: null, desatualizada: false };
-  const desatualizada = raw.toLowerCase().includes("bateria desatualizada");
+  const desatualizada = raw.toLowerCase().includes("desatualizada");
   const percentMatch = raw.match(/(\d+(?:[.,]\d+)?)\s*%/);
   if (percentMatch) {
     return { percentual: parseFloat(percentMatch[1].replace(",", ".")), desatualizada };
   }
   const num = parseFloat(raw.replace(",", "."));
-  if (!Number.isNaN(num) && num >= 0 && num <= 1) {
-    return { percentual: Math.round(num * 10000) / 100, desatualizada };
-  }
   if (!Number.isNaN(num) && num >= 0 && num <= 100) {
     return { percentual: num, desatualizada };
   }
@@ -103,10 +112,14 @@ function extractTipoModulo(nome: string): "LUTOCAR" | "PORTATIL" {
   return "LUTOCAR";
 }
 
-function extractSelimpId(nome: string, selimpRaw: string): string {
-  if (selimpRaw) return selimpRaw;
-  const parts = nome.split("-");
-  return parts[parts.length - 1]?.trim() ?? "";
+/**
+ * Extrai o selimp_id do nome do módulo pegando os dois últimos segmentos separados por "-".
+ * Exemplo: "SMSUB-LUTOCAR-03-0005" → "03-0005"
+ */
+function extractSelimpId(nome: string): string {
+  const parts = nome.split("-").map((s) => s.trim()).filter(Boolean);
+  if (parts.length >= 2) return parts.slice(-2).join("-");
+  return parts[parts.length - 1] ?? "";
 }
 
 function buildRecordKey(dataExportacao: string, nome: string): string {
@@ -115,19 +128,14 @@ function buildRecordKey(dataExportacao: string, nome: string): string {
 
 const HEADER_ALIASES: Record<string, string[]> = {
   nome: ["nome", "placa", "modulo"],
-  subprefeitura: ["subprefeitura", "sub_prefeitura", "regional"],
-  setor: ["setor"],
-  selimp: ["selimp", "numero_selimp", "numero selimp"],
-  dias_execucao: ["dias de execucao", "dias_de_execucao", "dias execucao"],
   status_comunicacao: ["comunicacao", "status comunicacao", "status_comunicacao", "status de comunicacao"],
+  // Apenas "bateria" como alias exato — evita bater em "Status de Bateria" (coluna G)
   bateria: ["bateria", "percentual_bateria", "percentual bateria"],
   ultima_comunicacao: ["ultima comunicacao", "ultima_comunicacao", "data de ultima comunicacao", "data_de_ultima_comunicacao"],
-  status_bateria: ["status de bateria", "status_de_bateria", "status bateria"],
-  dias: ["dias"],
 };
 
 function findHeaderIndex(rawRows: unknown[][]): number {
-  const signals = ["nome", "status_bateria", "bateria", "comunicacao"].map(canonicalHeader);
+  const signals = ["nome", "bateria", "comunicacao"].map(canonicalHeader);
 
   let bestRow = -1;
   let bestScore = -1;
@@ -137,7 +145,7 @@ function findHeaderIndex(rawRows: unknown[][]): number {
     const canonical = row.map((cell) => canonicalHeader(normalizeCell(cell)));
     let score = 0;
     for (const signal of signals) {
-      if (canonical.some((c) => c.includes(signal.replace(/_/g, "")) || c === signal)) score++;
+      if (canonical.some((c) => c === signal)) score++;
     }
     if (score > bestScore) {
       bestScore = score;
@@ -151,10 +159,23 @@ function findHeaderIndex(rawRows: unknown[][]): number {
   return bestRow;
 }
 
+/**
+ * Resolve o índice de coluna por aliases.
+ * Tenta match EXATO primeiro; só usa match parcial se nenhum alias exato foi encontrado.
+ * Isso evita que "Status de Bateria" seja confundida com "Bateria".
+ */
 function resolveColumnIndex(headers: string[], aliases: string[]): number {
+  // 1ª passagem: match exato
   for (const alias of aliases) {
     const canonical = canonicalHeader(alias);
-    const idx = headers.findIndex((h) => h === canonical || h.includes(canonical.replace(/_/g, "")));
+    const idx = headers.findIndex((h) => h === canonical);
+    if (idx >= 0) return idx;
+  }
+  // 2ª passagem: match parcial (fallback)
+  for (const alias of aliases) {
+    const canonical = canonicalHeader(alias);
+    const needle = canonical.replace(/_/g, "");
+    const idx = headers.findIndex((h) => h.replace(/_/g, "").includes(needle));
     if (idx >= 0) return idx;
   }
   return -1;
@@ -179,15 +200,9 @@ export function parseStatusBateria(buffer: Buffer, dataExportacao: string): Stat
   const headerCells = (rawRows[headerRowIdx] ?? []).map((cell) => canonicalHeader(normalizeCell(cell)));
 
   const colNome = resolveColumnIndex(headerCells, HEADER_ALIASES.nome);
-  const colSubprefeitura = resolveColumnIndex(headerCells, HEADER_ALIASES.subprefeitura);
-  const colSetor = resolveColumnIndex(headerCells, HEADER_ALIASES.setor);
-  const colSelimp = resolveColumnIndex(headerCells, HEADER_ALIASES.selimp);
-  const colDiasExecucao = resolveColumnIndex(headerCells, HEADER_ALIASES.dias_execucao);
   const colStatusComunicacao = resolveColumnIndex(headerCells, HEADER_ALIASES.status_comunicacao);
   const colBateria = resolveColumnIndex(headerCells, HEADER_ALIASES.bateria);
   const colUltimaComunicacao = resolveColumnIndex(headerCells, HEADER_ALIASES.ultima_comunicacao);
-  const colStatusBateria = resolveColumnIndex(headerCells, HEADER_ALIASES.status_bateria);
-  const colDias = resolveColumnIndex(headerCells, HEADER_ALIASES.dias);
 
   const getCell = (row: unknown[], colIdx: number, fallback: number): string => {
     const idx = colIdx >= 0 ? colIdx : fallback;
@@ -213,16 +228,9 @@ export function parseStatusBateria(buffer: Buffer, dataExportacao: string): Stat
     if (seen.has(recordKey)) continue;
     seen.add(recordKey);
 
-    const subprefeitura = getCell(row, colSubprefeitura, 1);
-    const setor = getCell(row, colSetor, 2);
-    const selimpRaw = getCell(row, colSelimp, 3);
-    const selimpId = extractSelimpId(nome, selimpRaw);
-    const diasExecucao = getCell(row, colDiasExecucao, 4);
-    const statusComunicacao = getCell(row, colStatusComunicacao, 5);
-    const bateriaRaw = getCell(row, colBateria, 6);
-    const ultimaComunicacao = parseDateValue(getRaw(row, colUltimaComunicacao, 7));
-    const statusBateria = getCell(row, colStatusBateria, 8);
-    const dias = getCell(row, colDias, 9);
+    const statusComunicacao = getCell(row, colStatusComunicacao, 3);
+    const bateriaRaw = normalizeBateriaRaw(colBateria >= 0 ? row[colBateria] : row[4]); // coluna E (0-indexed = 4)
+    const ultimaComunicacao = parseDateValue(getRaw(row, colUltimaComunicacao, 5));
 
     const { percentual: bateriaPercentual, desatualizada: bateriaDesatualizada } = parseBateria(bateriaRaw);
 
@@ -230,17 +238,12 @@ export function parseStatusBateria(buffer: Buffer, dataExportacao: string): Stat
       recordKey,
       nome,
       tipoModulo: extractTipoModulo(nome),
-      subprefeitura,
-      setor,
-      selimpId,
-      diasExecucao,
+      selimpId: extractSelimpId(nome),
       statusComunicacao,
       bateriaRaw,
       bateriaPercentual,
       bateriaDesatualizada,
       ultimaComunicacao,
-      statusBateria,
-      dias,
     });
   }
 

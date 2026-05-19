@@ -439,8 +439,6 @@ export async function runMigrations() {
         bateria_percentual    NUMERIC(5,2),
         bateria_desatualizada BOOLEAN DEFAULT FALSE,
         ultima_comunicacao    TIMESTAMPTZ,
-        status_bateria        TEXT,
-        dias                  TEXT,
         source_file           TEXT,
         created_at            TIMESTAMPTZ DEFAULT NOW(),
         updated_at            TIMESTAMPTZ DEFAULT NOW()

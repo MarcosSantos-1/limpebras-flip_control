@@ -19,6 +19,7 @@ import { estimarDatasReport, type ReportLinhaRaw } from "../services/estimarData
 import { mergeAcicOverridesAfterImportRow } from "../services/acicImportMerge.js";
 import { parseModulosBateriaWorkbook } from "../services/parseModulosBateria.js";
 import { parseStatusBateria } from "../services/parseStatusBateria.js";
+import { parseHistoricoBateria } from "../services/parseHistoricoBateria.js";
 import { requirePageAccess } from "../auth.js";
 
 function ensureIptRestrictedUploadAccess(
@@ -1694,60 +1695,43 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       try {
         await client.query("BEGIN");
 
+        // Apaga todos os registros do mesmo dia antes de inserir (evita duplicatas no reupload)
+        await client.query(
+          `DELETE FROM ipt_dados_bateria WHERE data_exportacao = $1::date`,
+          [dataReferencia]
+        );
+
         let inseridos = 0;
-        let atualizados = 0;
 
         for (const row of rows) {
           const ultimaComunicacaoStr = row.ultimaComunicacao ? row.ultimaComunicacao.toISOString() : null;
-          const result = await client.query<{ xmax: string }>(
+          await client.query(
             `INSERT INTO ipt_dados_bateria (
-              record_key, data_exportacao, nome, tipo_modulo, subprefeitura,
-              setor, selimp_id, dias_execucao, status_comunicacao,
+              record_key, data_exportacao, nome, tipo_modulo,
+              selimp_id, status_comunicacao,
               bateria_raw, bateria_percentual, bateria_desatualizada,
-              ultima_comunicacao, status_bateria, dias, source_file, updated_at
+              ultima_comunicacao, source_file, updated_at
             ) VALUES (
-              $1, $2::date, $3, $4, $5,
-              $6, $7, $8, $9,
-              $10, $11, $12,
-              $13, $14, $15, $16, NOW()
-            )
-            ON CONFLICT (record_key) DO UPDATE SET
-              subprefeitura = COALESCE(NULLIF(EXCLUDED.subprefeitura, ''), ipt_dados_bateria.subprefeitura),
-              setor = COALESCE(NULLIF(EXCLUDED.setor, ''), ipt_dados_bateria.setor),
-              selimp_id = COALESCE(NULLIF(EXCLUDED.selimp_id, ''), ipt_dados_bateria.selimp_id),
-              dias_execucao = COALESCE(NULLIF(EXCLUDED.dias_execucao, ''), ipt_dados_bateria.dias_execucao),
-              status_comunicacao = EXCLUDED.status_comunicacao,
-              bateria_raw = EXCLUDED.bateria_raw,
-              bateria_percentual = EXCLUDED.bateria_percentual,
-              bateria_desatualizada = EXCLUDED.bateria_desatualizada,
-              ultima_comunicacao = EXCLUDED.ultima_comunicacao,
-              status_bateria = EXCLUDED.status_bateria,
-              dias = EXCLUDED.dias,
-              source_file = EXCLUDED.source_file,
-              updated_at = NOW()
-            RETURNING xmax`,
+              $1, $2::date, $3, $4,
+              $5, $6,
+              $7, $8, $9,
+              $10, $11, NOW()
+            )`,
             [
               row.recordKey,
               dataReferencia,
               row.nome,
               row.tipoModulo,
-              row.subprefeitura || null,
-              row.setor || null,
               row.selimpId || null,
-              row.diasExecucao || null,
               row.statusComunicacao || null,
               row.bateriaRaw || null,
               row.bateriaPercentual ?? null,
               row.bateriaDesatualizada,
               ultimaComunicacaoStr,
-              row.statusBateria || null,
-              row.dias || null,
               data.filename,
             ]
           );
-          const wasUpdate = result.rows[0] && String(result.rows[0].xmax) !== "0";
-          if (wasUpdate) atualizados++;
-          else inseridos++;
+          inseridos++;
         }
 
         await client.query("COMMIT");
@@ -1760,7 +1744,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
           processados: rows.length,
           total: rows.length,
           inseridos,
-          atualizados,
+          atualizados: 0,
           duplicados: 0,
           erros: 0,
           ultimo_import: new Date().toISOString(),
@@ -1779,6 +1763,112 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       }
     } catch (error: unknown) {
       const detail = error instanceof Error ? error.message : "Falha no upload";
+      return reply.code(400).send({ detail });
+    }
+  });
+
+  /**
+   * Upload do arquivo histórico de bateria (múltiplas datas em coluna A).
+   * Para cada data presente no arquivo: apaga os registros do dia e insere os novos.
+   */
+  fastify.post("/upload/ipt-historico-bateria", async (request, reply) => {
+    const data = await request.file();
+    if (!data) return reply.code(400).send({ detail: "Arquivo XLSX obrigatório" });
+    const lower = data.filename.toLowerCase();
+    if (!lower.endsWith(".xlsx") && !lower.endsWith(".xls")) {
+      return reply.code(400).send({ detail: "Aceita apenas arquivos XLSX/XLS." });
+    }
+
+    try {
+      const buffer = await data.toBuffer();
+      const rows = parseHistoricoBateria(buffer, data.filename);
+      if (rows.length === 0) {
+        throw new Error("Nenhum registro válido encontrado. Verifique se o arquivo contém coluna de data e nome.");
+      }
+
+      // Agrupa por data_exportacao (string YYYY-MM-DD)
+      const porData = new Map<string, typeof rows>();
+      for (const row of rows) {
+        const dateKey = row.dataExportacao.toISOString().slice(0, 10);
+        const bucket = porData.get(dateKey) ?? [];
+        bucket.push(row);
+        porData.set(dateKey, bucket);
+      }
+
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        let totalInseridos = 0;
+
+        for (const [dateKey, dayRows] of porData) {
+          // Limpa o dia antes de inserir (mesmo padrão de ipt-status-bateria)
+          await client.query(
+            `DELETE FROM ipt_dados_bateria WHERE data_exportacao = $1::date`,
+            [dateKey]
+          );
+
+          for (const row of dayRows) {
+            const ultimaComunicacaoStr = row.ultimaComunicacao
+              ? row.ultimaComunicacao.toISOString()
+              : null;
+            await client.query(
+              `INSERT INTO ipt_dados_bateria (
+                record_key, data_exportacao, nome, tipo_modulo,
+                selimp_id, status_comunicacao,
+                bateria_raw, bateria_percentual, bateria_desatualizada,
+                ultima_comunicacao, source_file, updated_at
+              ) VALUES (
+                $1, $2::date, $3, $4,
+                $5, $6,
+                $7, $8, $9,
+                $10, $11, NOW()
+              )`,
+              [
+                row.recordKey,
+                dateKey,
+                row.nome,
+                row.tipoModulo,
+                row.selimpId || null,
+                row.statusComunicacao || null,
+                row.bateriaRaw || null,
+                row.bateriaPercentual ?? null,
+                row.bateriaDesatualizada,
+                ultimaComunicacaoStr,
+                data.filename,
+              ]
+            );
+            totalInseridos++;
+          }
+        }
+
+        await client.query("COMMIT");
+        invalidatePrefix("bateria");
+        invalidatePrefix("ipt_dados_bateria");
+        invalidatePrefix("ipt_preview");
+
+        const datasImportadas = [...porData.keys()].sort();
+        const summary = {
+          processados: rows.length,
+          total: rows.length,
+          inseridos: totalInseridos,
+          atualizados: 0,
+          duplicados: 0,
+          erros: 0,
+          ultimo_import: new Date().toISOString(),
+          source_file: data.filename,
+          datas_importadas: datasImportadas,
+          total_datas: datasImportadas.length,
+        };
+        await recordUploadEvent("selimp", "iptStatusBateria", data.filename, summary);
+        return summary;
+      } catch (e) {
+        await client.query("ROLLBACK");
+        throw e;
+      } finally {
+        client.release();
+      }
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : "Falha no upload histórico de bateria";
       return reply.code(400).send({ detail });
     }
   });

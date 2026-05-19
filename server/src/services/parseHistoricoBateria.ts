@@ -102,13 +102,35 @@ function parseDateValue(value: unknown): Date | null {
   return null;
 }
 
-/** Extracts numeric battery percentage from raw text like "72%" or "100% (Bateria desatualizada)". */
+/**
+ * Normaliza o valor bruto da célula bateria antes de armazenar em bateria_raw.
+ * Excel armazena porcentagens como decimal (0.64), não como "64%".
+ * Se o valor for número ou string decimal no range 0–1, converte para "XX%".
+ */
+function normalizeBateriaRaw(value: unknown): string {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1) {
+    return `${Math.round(value * 100)}%`;
+  }
+  const s = String(value ?? "").trim();
+  const num = parseFloat(s);
+  if (!Number.isNaN(num) && num >= 0 && num < 1 && !s.includes("%")) {
+    return `${Math.round(num * 100)}%`;
+  }
+  return s;
+}
+
 function parseBateria(raw: string): { percentual: number | null; desatualizada: boolean } {
   if (!raw) return { percentual: null, desatualizada: false };
-  const desatualizada = raw.toLowerCase().includes("bateria desatualizada");
+  const desatualizada = raw.toLowerCase().includes("desatualizada");
   const percentMatch = raw.match(/(\d+(?:[.,]\d+)?)\s*%/);
-  const percentual = percentMatch ? parseFloat(percentMatch[1].replace(",", ".")) : null;
-  return { percentual, desatualizada };
+  if (percentMatch) {
+    return { percentual: parseFloat(percentMatch[1].replace(",", ".")), desatualizada };
+  }
+  const num = parseFloat(raw.replace(",", "."));
+  if (!Number.isNaN(num) && num >= 0 && num <= 100) {
+    return { percentual: num, desatualizada };
+  }
+  return { percentual: null, desatualizada };
 }
 
 /** Extracts tipo_modulo from nome field (LUTOCAR or PORTATIL). */
@@ -118,10 +140,11 @@ function extractTipoModulo(nome: string): "LUTOCAR" | "PORTATIL" {
   return "LUTOCAR";
 }
 
-/** Extracts SELIMP ID = last segment after the last '-' in nome. */
+/** Extrai selimp_id dos dois últimos segmentos do nome: "SMSUB-LUTOCAR-03-0005" → "03-0005". */
 function extractSelimpId(nome: string): string {
-  const parts = nome.split("-");
-  return parts[parts.length - 1]?.trim() ?? "";
+  const parts = nome.split("-").map((s) => s.trim()).filter(Boolean);
+  if (parts.length >= 2) return parts.slice(-2).join("-");
+  return parts[parts.length - 1] ?? "";
 }
 
 const HEADER_ALIASES: Record<string, string[]> = {
@@ -233,7 +256,7 @@ export function parseHistoricoBateria(buffer: Buffer, sourceFile = ""): Historic
     const selimpId = selimpRaw || extractSelimpId(nome);
     const diasExecucao = getCell(row, colDiasExecucao, 5);
     const statusComunicacao = getCell(row, colStatusComunicacao, 6);
-    const bateriaRaw = getCell(row, colBateria, 7);
+    const bateriaRaw = normalizeBateriaRaw(colBateria >= 0 ? row[colBateria] : row[7]);
     const ultimaComunicacaoRawValue = (colUltimaComunicacao >= 0 ? row[colUltimaComunicacao] : row[8]);
 
     const { percentual: bateriaPercentual, desatualizada: bateriaDesatualizada } = parseBateria(bateriaRaw);
