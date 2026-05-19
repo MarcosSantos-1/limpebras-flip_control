@@ -9,7 +9,9 @@ import {
   ChevronUp,
   FileSpreadsheet,
   FileText,
+  CalendarDays,
   LayoutDashboard,
+  MapPin,
   Settings,
   ShieldAlert,
   Table2,
@@ -50,7 +52,8 @@ type UploadKey =
   | "iptReport"
   | "iptStatusBateria"
   | "iptHistoricoBateria"
-  | "iptCronograma";
+  | "iptCronograma"
+  | "iptSetoresModulos";
 type IptReferenceMode = "d_minus_1" | "fim_de_semana" | "personalizado";
 type StatusBateriaReferenceMode = "hoje" | "personalizado";
 
@@ -139,6 +142,7 @@ interface UploadOverviewResponse {
   iptReport?: LastUploadInfo;
   iptStatusBateria?: LastUploadInfo;
   iptCronograma?: LastUploadInfo;
+  iptSetoresModulos?: LastUploadInfo;
   iptHistoricoOs?: DdmxTipoSnapshot;
   iptHistoricoOsVarricao?: DdmxTipoSnapshot;
   iptHistoricoOsCompactadores?: DdmxTipoSnapshot;
@@ -253,10 +257,11 @@ function createInitialStates(): Record<UploadKey, UploadState> {
     iptStatusBateria: { status: "idle" },
     iptHistoricoBateria: { status: "idle" },
     iptCronograma: { status: "idle" },
+    iptSetoresModulos: { status: "idle" },
   };
 }
 
-type SessionAccent = "violet" | "sky" | "emerald";
+type SessionAccent = "violet" | "sky" | "emerald" | "amber" | "slate";
 
 const SESSION_ACCENTS: Record<SessionAccent, { bar: string; icon: string }> = {
   violet: {
@@ -270,6 +275,14 @@ const SESSION_ACCENTS: Record<SessionAccent, { bar: string; icon: string }> = {
   emerald: {
     bar: "border-l-[3px] border-l-emerald-500",
     icon: "bg-emerald-100 text-emerald-800 shadow-sm ring-1 ring-emerald-200/80 dark:bg-emerald-950/80 dark:text-emerald-100 dark:ring-emerald-400/35",
+  },
+  amber: {
+    bar: "border-l-[3px] border-l-amber-500",
+    icon: "bg-amber-100 text-amber-800 shadow-sm ring-1 ring-amber-200/80 dark:bg-amber-950/80 dark:text-amber-100 dark:ring-amber-400/35",
+  },
+  slate: {
+    bar: "border-l-[3px] border-l-slate-500",
+    icon: "bg-slate-100 text-slate-800 shadow-sm ring-1 ring-slate-200/80 dark:bg-slate-950/80 dark:text-slate-100 dark:ring-slate-400/35",
   },
 };
 
@@ -949,6 +962,29 @@ export default function UploadPage() {
     }
   };
 
+  const handleSetoresModulosUpload = async (files: FileList | null) => {
+    const file = files?.[0];
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".xlsx")) {
+      const message = "Setores e módulos aceita apenas arquivos XLSX (SETORES.xlsx).";
+      setUploadState("iptSetoresModulos", { status: "error", error: message });
+      toast.error(message);
+      return;
+    }
+
+    setUploadState("iptSetoresModulos", { status: "uploading" });
+    try {
+      const result = await apiService.uploadIptSetoresModulosXlsx(file);
+      setUploadState("iptSetoresModulos", { status: "success", result });
+      toast.success("Setores e módulos importados com sucesso.");
+      await loadOverview();
+    } catch (error) {
+      const message = getErrorMessage(error);
+      setUploadState("iptSetoresModulos", { status: "error", error: message });
+      toast.error(message);
+    }
+  };
+
   const handleHistoricoBateriaUpload = async (files: FileList | null) => {
     const file = files?.[0];
     if (!file) return;
@@ -1024,11 +1060,11 @@ export default function UploadPage() {
                 variant="secondary"
                 size="icon"
                 className="h-11 w-11 shrink-0 rounded-xl border-0 bg-white/15 text-white shadow-lg shadow-black/20 ring-1 ring-white/20 hover:bg-white/25 hover:text-white"
-                title="Cronograma anual (BL, MT, NH, LM, GO)"
+                title="Importações de referência IPT (cronograma e setores)"
                 onClick={() => setCronogramaModalOpen(true)}
               >
                 <Settings className="h-5 w-5" />
-                <span className="sr-only">Abrir cronograma</span>
+                <span className="sr-only">Abrir importações de referência IPT</span>
               </Button>
             ) : null}
           </div>
@@ -1530,35 +1566,61 @@ export default function UploadPage() {
             )}
           >
             <DialogHeader className="space-y-1 text-left">
-              <DialogTitle className="text-xl">Cronograma — importação anual</DialogTitle>
+              <DialogTitle className="text-xl">Importações de referência IPT</DialogTitle>
               <DialogDescription className="text-xs leading-relaxed">
-                Uso para contratos BL, MT, NH, LM e GO. Você pode soltar vários XLSX de uma vez; cada arquivo é processado em sequência.
+                Importações anuais ou esporádicas: cronograma por contrato e cadastro de setores com módulos SELIMP e DDMX.
               </DialogDescription>
             </DialogHeader>
 
-            <div
-              className={cn(
-                "rounded-2xl border p-6 shadow-inner",
-                "border-slate-200/80 bg-gradient-to-b from-slate-50/60 to-white",
-                "dark:border-border dark:bg-muted/25 dark:shadow-none",
-              )}
-            >
-              <UploadDropzone
-                inputId="iptCronograma"
-                accept=".xlsx"
-                tone="neutral"
-                loading={states.iptCronograma.status === "uploading"}
-                helperText="Um ou mais arquivos: BL, MT, NH, LM e GO no formato XLSX de cronograma já utilizado no fluxo IPT."
-                onFilesSelected={handleCronogramaUpload}
-              />
-              <HistoryBlock
-                title="Último cronograma importado"
-                overview={overview.iptCronograma}
-                expanded={Boolean(expandedHistory.iptCronograma)}
-                onToggle={() => toggleHistory("iptCronograma")}
-              />
-              <SummaryBox state={states.iptCronograma} />
-            </div>
+            <Accordion type="multiple" defaultValue={[]} className="space-y-4">
+              <SessionAccordionItem
+                value="cronograma"
+                accent="slate"
+                icon={CalendarDays}
+                title="Cronograma — importação anual"
+                subtitle="Contratos BL, MT, NH, LM e GO. Vários XLSX podem ser enviados em sequência."
+              >
+                <UploadDropzone
+                  inputId="iptCronograma"
+                  accept=".xlsx"
+                  tone="neutral"
+                  loading={states.iptCronograma.status === "uploading"}
+                  helperText="Um ou mais arquivos: BL, MT, NH, LM e GO no formato XLSX de cronograma já utilizado no fluxo IPT."
+                  onFilesSelected={handleCronogramaUpload}
+                />
+                <HistoryBlock
+                  title="Último cronograma importado"
+                  overview={overview.iptCronograma}
+                  expanded={Boolean(expandedHistory.iptCronograma)}
+                  onToggle={() => toggleHistory("iptCronograma")}
+                />
+                <SummaryBox state={states.iptCronograma} />
+              </SessionAccordionItem>
+
+              <SessionAccordionItem
+                value="setores"
+                accent="amber"
+                icon={MapPin}
+                title="Setores e módulos — SELIMP × DDMX"
+                subtitle="Catálogo SETORES.xlsx: varrição manual, praças, vínculo de módulos, frequência e KM produtivo."
+              >
+                <UploadDropzone
+                  inputId="iptSetoresModulos"
+                  accept=".xlsx"
+                  tone="amber"
+                  loading={states.iptSetoresModulos.status === "uploading"}
+                  helperText="Arquivo SETORES.xlsx (aba SETORES). Substitui o cadastro inteiro a cada importação."
+                  onFilesSelected={handleSetoresModulosUpload}
+                />
+                <HistoryBlock
+                  title="Última importação de setores"
+                  overview={overview.iptSetoresModulos}
+                  expanded={Boolean(expandedHistory.iptSetoresModulos)}
+                  onToggle={() => toggleHistory("iptSetoresModulos")}
+                />
+                <SummaryBox state={states.iptSetoresModulos} />
+              </SessionAccordionItem>
+            </Accordion>
           </DialogContent>
         </Dialog>
         ) : null}

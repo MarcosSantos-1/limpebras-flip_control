@@ -562,6 +562,16 @@ export const apiService = {
     return data;
   },
 
+  uploadIptSetoresModulosXlsx: async (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const { data } = await api.post('/upload/ipt-setores-modulos', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: UPLOAD_REQUEST_TIMEOUT_MS,
+    });
+    return data;
+  },
+
   /** Inclui `dashboard_import_check` (FLIP + Report SELIMP cobrindo “ontem” BRT) para o aviso no Dashboard. */
   getUploadLastUpdates: async () => {
     const { data } = await api.get("/upload/last-updates", {
