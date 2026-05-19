@@ -13,6 +13,7 @@ import {
 } from "../services/parseCsv.js";
 import { detectDdmxWorkbookType, parseIptWorkbook, type IptFileType } from "../services/parseIptXlsx.js";
 import { parseCronogramaWorkbook } from "../services/parseCronogramaIpt.js";
+import { parseSetoresModulosWorkbook } from "../services/parseSetoresModulos.js";
 import { normalizarSetor, parseSetor } from "../constants/ipt.js";
 import { parseConsolidadoVeiculos, parseConsolidadoVarricao } from "../services/parseRelatorioConsolidado.js";
 import { estimarDatasReport, type ReportLinhaRaw } from "../services/estimarDataReport.js";
@@ -1963,6 +1964,22 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
     };
   };
 
+  const getLastSetoresModulosUpdate = async () => {
+    try {
+      const last = await pool.query(
+        `SELECT source_file, updated_at FROM setores_modulos ORDER BY updated_at DESC NULLS LAST LIMIT 1`
+      );
+      const count = await pool.query(`SELECT COUNT(*)::int AS total FROM setores_modulos`);
+      return {
+        ultimo_import: last.rows[0]?.updated_at ?? null,
+        source_file: last.rows[0]?.source_file ?? null,
+        total_registros: Number(count.rows[0]?.total ?? 0),
+      };
+    } catch {
+      return { ultimo_import: null, source_file: null, total_registros: 0 };
+    }
+  };
+
   const getLastModulosBateriaUpdate = async () => getLastIptUpdate("ipt_modulos_bateria");
 
   const getLastStatusBateriaUpdate = async () => {
@@ -2039,6 +2056,80 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
+  fastify.post("/upload/ipt-setores-modulos", async (request, reply) => {
+    const data = await request.file();
+    if (!data) {
+      return reply.code(400).send({ detail: "Arquivo XLSX obrigatório (SETORES.xlsx)" });
+    }
+    const buffer = await data.toBuffer();
+    const sourceFile = data.filename;
+    if (!/\.xlsx?$/i.test(sourceFile)) {
+      return reply.code(400).send({ detail: "Formato inválido. Envie um arquivo .xlsx (SETORES.xlsx)." });
+    }
+
+    const parsed = parseSetoresModulosWorkbook(buffer);
+    if (parsed.rows.length === 0) {
+      return reply.code(400).send({
+        detail:
+          "Nenhum setor válido extraído. Verifique a aba SETORES e as colunas SETOR, SUBPREFEITURA, SERVIÇO, etc.",
+      });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("DELETE FROM setores_modulos");
+
+      let inserted = 0;
+      for (const row of parsed.rows) {
+        const selimpDate = row.selimpInstalacao
+          ? row.selimpInstalacao.toISOString().slice(0, 10)
+          : null;
+        const ddmxDate = row.ddmxInstalacao ? row.ddmxInstalacao.toISOString().slice(0, 10) : null;
+        await client.query(
+          `INSERT INTO setores_modulos (
+            setor, subprefeitura, servico, frequencia, dias_execucao, km_prod,
+            selimp_codigo, selimp_instalacao, ddmx_codigo, ddmx_instalacao,
+            raw, source_file, updated_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::date, $9, $10::date, $11::jsonb, $12, NOW())`,
+          [
+            row.setor,
+            row.subprefeitura,
+            row.servico,
+            row.frequencia,
+            row.diasExecucao,
+            row.kmProd,
+            row.selimpCodigo,
+            selimpDate,
+            row.ddmxCodigo,
+            ddmxDate,
+            JSON.stringify(row.raw),
+            sourceFile,
+          ]
+        );
+        inserted += 1;
+      }
+      await client.query("COMMIT");
+      invalidatePrefix("ipt_preview");
+      return {
+        processados: inserted,
+        total: parsed.totalPlanilha,
+        inseridos: inserted,
+        atualizados: 0,
+        duplicados: 0,
+        erros: 0,
+        ignoradas: parsed.ignoradas,
+        ultimo_import: new Date().toISOString(),
+        source_file: sourceFile,
+      };
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  });
+
   const getLastCncsUpdate = async () => {
     try {
       return await getLastUpdate("cncs");
@@ -2065,6 +2156,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       iptReport,
       iptStatusBateria,
       iptCronograma,
+      iptSetoresModulos,
       iptConsolidadoVeiculos,
       iptConsolidadoVarricao,
       iptModulosBateria,
@@ -2084,6 +2176,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       getLastIptUpdate("ipt_report_selimp"),
       getLastStatusBateriaUpdate(),
       getLastCronogramaUpdate(),
+      getLastSetoresModulosUpdate(),
       getLastIptUpdate("ipt_consolidado_veiculos"),
       getLastIptUpdate("ipt_consolidado_varricao"),
       getLastModulosBateriaUpdate(),
@@ -2214,6 +2307,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       iptReport,
       iptStatusBateria,
       iptCronograma,
+      iptSetoresModulos,
       iptConsolidadoVeiculos,
       iptConsolidadoVarricao,
       iptModulosBateria,

@@ -327,6 +327,29 @@ export async function runMigrations() {
     await client.query("CREATE INDEX IF NOT EXISTS idx_ipt_cronograma_data ON ipt_cronograma(data_esperada)").catch(() => {});
 
     await client.query(`
+      CREATE TABLE IF NOT EXISTS setores_modulos (
+        id SERIAL PRIMARY KEY,
+        setor TEXT NOT NULL UNIQUE,
+        subprefeitura TEXT,
+        servico TEXT,
+        frequencia TEXT,
+        dias_execucao TEXT,
+        km_prod NUMERIC(12,6),
+        selimp_codigo TEXT,
+        selimp_instalacao DATE,
+        ddmx_codigo TEXT,
+        ddmx_instalacao DATE,
+        raw JSONB NOT NULL,
+        source_file TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client.query("CREATE INDEX IF NOT EXISTS idx_setores_modulos_subpref ON setores_modulos(subprefeitura)").catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_setores_modulos_selimp ON setores_modulos(selimp_codigo)").catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_setores_modulos_ddmx ON setores_modulos(ddmx_codigo)").catch(() => {});
+
+    await client.query(`
       CREATE TABLE IF NOT EXISTS ipt_observacoes_globais (
         id SERIAL PRIMARY KEY,
         setor TEXT NOT NULL,
