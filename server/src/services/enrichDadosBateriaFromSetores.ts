@@ -36,14 +36,14 @@ export async function enrichDadosBateriaFromSetoresModulos(
        dias_execucao = s.dias_execucao,
        updated_at = NOW()
      FROM (
-       SELECT DISTINCT ON (TRIM(selimp_codigo))
+       SELECT
          TRIM(selimp_codigo) AS selimp_codigo,
-         subprefeitura,
-         setor,
-         dias_execucao
+         string_agg(DISTINCT subprefeitura, '/' ORDER BY subprefeitura) AS subprefeitura,
+         string_agg(setor, '/' ORDER BY setor) AS setor,
+         string_agg(DISTINCT dias_execucao, '/' ORDER BY dias_execucao) AS dias_execucao
        FROM setores_modulos
        WHERE selimp_codigo IS NOT NULL AND TRIM(selimp_codigo) <> ''
-       ORDER BY TRIM(selimp_codigo), setor
+       GROUP BY TRIM(selimp_codigo)
      ) s
      WHERE TRIM(b.selimp_id) = s.selimp_codigo
        AND b.selimp_id IS NOT NULL

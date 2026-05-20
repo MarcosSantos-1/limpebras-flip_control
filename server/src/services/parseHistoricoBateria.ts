@@ -253,7 +253,6 @@ export function parseHistoricoBateria(buffer: Buffer, sourceFile = ""): Historic
     const subprefeitura = getCell(row, colSubprefeitura, 2);
     const setor = getCell(row, colSetor, 3);
     const selimpRaw = getCell(row, colSelimp, 4);
-    const selimpId = selimpRaw || extractSelimpId(nome);
     const diasExecucao = getCell(row, colDiasExecucao, 5);
     const statusComunicacao = getCell(row, colStatusComunicacao, 6);
     const bateriaRaw = normalizeBateriaRaw(colBateria >= 0 ? row[colBateria] : row[7]);
@@ -262,6 +261,8 @@ export function parseHistoricoBateria(buffer: Buffer, sourceFile = ""): Historic
     const { percentual: bateriaPercentual, desatualizada: bateriaDesatualizada } = parseBateria(bateriaRaw);
     const ultimaComunicacao = parseDateValue(ultimaComunicacaoRawValue);
     const tipoModulo = extractTipoModulo(nome);
+    const selimpId =
+      tipoModulo === "PORTATIL" ? "" : selimpRaw || extractSelimpId(nome);
 
     out.push({
       recordKey,

@@ -985,6 +985,25 @@ export default function UploadPage() {
     }
   };
 
+  const handleClearDadosBateria = async () => {
+    const ok = window.confirm(
+      "Isso apaga TODOS os registros de ipt_dados_bateria e reinicia o contador de ID (próximo import começa em 1). Continuar?"
+    );
+    if (!ok) return;
+    try {
+      const result = await apiService.clearIptDadosBateria();
+      const deleted = Number(result?.deleted ?? 0);
+      toast.success(
+        deleted > 0
+          ? `${deleted} registros removidos. IDs reiniciados — pode importar o histórico.`
+          : "Tabela já estava vazia. IDs reiniciados."
+      );
+      await loadOverview();
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
+
   const handleHistoricoBateriaUpload = async (files: FileList | null) => {
     const file = files?.[0];
     if (!file) return;
@@ -1178,7 +1197,7 @@ export default function UploadPage() {
             />
             <SummaryBox state={states.iptStatusBateria} />
 
-            {/* TEMPORÁRIO — Histórico Geral de Bateria (descomentar para reativar)
+            {/* Histórico Geral de Bateria — descomentar para reativar
             <div
               className={cn(
                 "mt-6 rounded-2xl border p-6 shadow-sm",
@@ -1190,17 +1209,23 @@ export default function UploadPage() {
                 <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-800 ring-1 ring-amber-200/80 dark:bg-amber-950/40 dark:text-amber-200 dark:ring-amber-500/25">
                   <FileSpreadsheet className="h-4 w-4" />
                 </span>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <div className="text-lg font-semibold tracking-tight">Histórico Geral de Bateria</div>
-                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-900/50 dark:text-amber-200">
-                      Temporário
-                    </span>
-                  </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-lg font-semibold tracking-tight">Histórico Geral de Bateria</div>
                   <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-                    Use para carregar o arquivo HISTÓRICO GERAL BATERIA VARRICAO.xlsx — modelo diferente da importação diária. Cada data presente no arquivo é importada separadamente; reimportar substitui o dia inteiro.
+                    Arquivo HISTÓRICO GERAL BATERIA VARRICAO.xlsx — várias datas na coluna A. Reimportar substitui cada dia.
                   </p>
                 </div>
+              </div>
+              <div className="mb-4 flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="border-amber-300/80 text-amber-900 hover:bg-amber-50 dark:border-amber-700 dark:text-amber-100 dark:hover:bg-amber-950/40"
+                  onClick={handleClearDadosBateria}
+                >
+                  Limpar tabela e reiniciar IDs
+                </Button>
               </div>
               <UploadDropzone
                 inputId="iptHistoricoBateriaRestricted"
@@ -1517,7 +1542,7 @@ export default function UploadPage() {
                 <SummaryBox state={states.iptStatusBateria} />
               </div>
 
-              {/* TEMPORÁRIO — Histórico Geral de Bateria (descomentar para reativar)
+              {/* Histórico Geral de Bateria — descomentar para reativar
               <div
                 className={cn(
                   "rounded-2xl border p-6 shadow-sm",
@@ -1529,17 +1554,23 @@ export default function UploadPage() {
                   <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-800 ring-1 ring-amber-200/80 dark:bg-amber-950/40 dark:text-amber-200 dark:ring-amber-500/25">
                     <FileSpreadsheet className="h-4 w-4" />
                   </span>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <div className="text-lg font-semibold tracking-tight">Histórico Geral de Bateria</div>
-                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-900/50 dark:text-amber-200">
-                        Temporário
-                      </span>
-                    </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-lg font-semibold tracking-tight">Histórico Geral de Bateria</div>
                     <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-                      Use para carregar o arquivo HISTÓRICO GERAL BATERIA VARRICAO.xlsx — modelo diferente da importação diária. Cada data presente no arquivo é importada separadamente; reimportar substitui o dia inteiro.
+                      Arquivo HISTÓRICO GERAL BATERIA VARRICAO.xlsx — várias datas na coluna A. Reimportar substitui cada dia.
                     </p>
                   </div>
+                </div>
+                <div className="mb-4 flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="border-amber-300/80 text-amber-900 hover:bg-amber-50 dark:border-amber-700 dark:text-amber-100 dark:hover:bg-amber-950/40"
+                    onClick={handleClearDadosBateria}
+                  >
+                    Limpar tabela e reiniciar IDs
+                  </Button>
                 </div>
                 <UploadDropzone
                   inputId="iptHistoricoBateria"

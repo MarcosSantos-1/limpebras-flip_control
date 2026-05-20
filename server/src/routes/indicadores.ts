@@ -1364,43 +1364,58 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
              MAX(source_file) AS source_file,
              MAX(updated_at) AS updated_at,
              COUNT(*)::int AS total_registros
-           FROM ipt_imports
-           WHERE file_type = 'ipt_modulos_bateria'`
+           FROM modulo_selimp`
         );
         const meta = metaRow.rows[0];
 
         const result = await pool.query(
-          `SELECT id, setor, raw, source_file, updated_at
-           FROM ipt_imports
-           WHERE file_type = 'ipt_modulos_bateria'
-           ORDER BY setor`
+          `SELECT
+             id,
+             modulo_selimp,
+             setores,
+             sub,
+             dias_execucao,
+             comunicacao,
+             ultima_comunicacao,
+             bateria_raw,
+             bateria_percentual,
+             status_bateria,
+             data_selimp::text AS data_selimp,
+             qtd_trocas,
+             dias_on,
+             dias_off,
+             produtividade_bateria,
+             status_sinal_calculado,
+             status_sinal_manual
+           FROM modulo_selimp
+           ORDER BY setores NULLS LAST, modulo_selimp`
         );
 
         const modules = result.rows.map((r) => {
-          const raw = (r.raw ?? {}) as Record<string, unknown>;
-          const ultima = raw.ultima_comunicacao;
+          const ultima = r.ultima_comunicacao;
+          const statusSinal = String(r.status_sinal_manual ?? r.status_sinal_calculado ?? "");
           return {
             id: r.id,
-            subprefeitura: String(raw.subprefeitura ?? ""),
-            setor: r.setor,
-            numeroSelimp: String(raw.numero_selimp ?? ""),
-            diasExecucao: String(raw.dias_execucao ?? ""),
-            comunicacao: String(raw.comunicacao ?? "OFF"),
-            bateria: String(raw.bateria ?? ""),
-            bateriaPercentual: Number(raw.bateria_percentual ?? 0),
+            subprefeitura: String(r.sub ?? ""),
+            setor: String(r.setores ?? ""),
+            numeroSelimp: String(r.modulo_selimp ?? ""),
+            diasExecucao: String(r.dias_execucao ?? ""),
+            comunicacao: String(r.comunicacao ?? "OFF"),
+            bateria: String(r.bateria_raw ?? ""),
+            bateriaPercentual: Number(r.bateria_percentual ?? 0),
             ultimaComunicacao:
               ultima instanceof Date
                 ? ultima.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })
                 : ultima
                   ? new Date(String(ultima)).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })
                   : "",
-            statusSinalGeral: String(raw.status_sinal_geral ?? ""),
-            statusBateria: String(raw.status_bateria ?? ""),
-            dataInstalacao: formatDataInstalacaoBr(String(raw.data_instalacao ?? "")),
-            quantidadeTrocas: Number(raw.quantidade_trocas ?? 0),
-            diasOn: Number(raw.dias_on ?? 0),
-            diasOff: Number(raw.dias_off ?? 0),
-            produtividade: Number(raw.produtividade ?? 0),
+            statusSinalGeral: statusSinal,
+            statusBateria: String(r.status_bateria ?? ""),
+            dataInstalacao: formatDataInstalacaoBr(String(r.data_selimp ?? "")),
+            quantidadeTrocas: Number(r.qtd_trocas ?? 0),
+            diasOn: Number(r.dias_on ?? 0),
+            diasOff: Number(r.dias_off ?? 0),
+            produtividade: Number(r.produtividade_bateria ?? 0),
           };
         });
 

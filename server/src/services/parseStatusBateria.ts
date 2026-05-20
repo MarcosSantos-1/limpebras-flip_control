@@ -234,11 +234,12 @@ export function parseStatusBateria(buffer: Buffer, dataExportacao: string): Stat
 
     const { percentual: bateriaPercentual, desatualizada: bateriaDesatualizada } = parseBateria(bateriaRaw);
 
+    const tipoModulo = extractTipoModulo(nome);
     out.push({
       recordKey,
       nome,
-      tipoModulo: extractTipoModulo(nome),
-      selimpId: extractSelimpId(nome),
+      tipoModulo,
+      selimpId: tipoModulo === "PORTATIL" ? "" : extractSelimpId(nome),
       statusComunicacao,
       bateriaRaw,
       bateriaPercentual,

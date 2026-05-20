@@ -22,6 +22,7 @@ import { mergeAcicOverridesAfterImportRow } from "../services/acicImportMerge.js
 import { parseModulosBateriaWorkbook } from "../services/parseModulosBateria.js";
 import { parseStatusBateria } from "../services/parseStatusBateria.js";
 import { parseHistoricoBateria } from "../services/parseHistoricoBateria.js";
+import { refreshModuloSelimp } from "../services/refreshModuloSelimp.js";
 import { requirePageAccess } from "../auth.js";
 
 function ensureIptRestrictedUploadAccess(
@@ -283,7 +284,14 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.addHook("preHandler", async (request, reply) => {
     const user = await requirePageAccess(request, reply, "upload");
     if (!user) return reply;
-    if (!ensureIptRestrictedUploadAccess(request, reply, ["/upload/ipt-status-bateria", "/upload/last-updates"])) {
+    if (
+      !ensureIptRestrictedUploadAccess(request, reply, [
+        "/upload/ipt-status-bateria",
+        "/upload/ipt-historico-bateria",
+        "/upload/clear-ipt-dados-bateria",
+        "/upload/last-updates",
+      ])
+    ) {
       return reply;
     }
   });
@@ -1739,10 +1747,12 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         const { atualizados: enriquecidosSetores } = await enrichDadosBateriaFromSetoresModulos(client, {
           dataExportacao: dataReferencia,
         });
+        const moduloSelimp = await refreshModuloSelimp(client);
 
         await client.query("COMMIT");
         invalidatePrefix("bateria");
         invalidatePrefix("ipt_dados_bateria");
+        invalidatePrefix("ipt_modulos_bateria");
         invalidatePrefix("ipt_preview");
 
         const referenciaLabel = `Status Bateria (${dataReferencia})`;
@@ -1752,6 +1762,8 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
           inseridos,
           atualizados: enriquecidosSetores,
           enriquecidos_setores: enriquecidosSetores,
+          modulo_selimp_atualizados: moduloSelimp.atualizados,
+          modulo_selimp_removidos: moduloSelimp.removidos,
           duplicados: 0,
           erros: 0,
           ultimo_import: new Date().toISOString(),
@@ -1856,10 +1868,12 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         const { atualizados: enriquecidosSetores } = await enrichDadosBateriaFromSetoresModulos(client, {
           dataExportacoes: datasImportadas,
         });
+        const moduloSelimp = await refreshModuloSelimp(client);
 
         await client.query("COMMIT");
         invalidatePrefix("bateria");
         invalidatePrefix("ipt_dados_bateria");
+        invalidatePrefix("ipt_modulos_bateria");
         invalidatePrefix("ipt_preview");
         const summary = {
           processados: rows.length,
@@ -1867,6 +1881,8 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
           inseridos: totalInseridos,
           atualizados: enriquecidosSetores,
           enriquecidos_setores: enriquecidosSetores,
+          modulo_selimp_atualizados: moduloSelimp.atualizados,
+          modulo_selimp_removidos: moduloSelimp.removidos,
           duplicados: 0,
           erros: 0,
           ultimo_import: new Date().toISOString(),
@@ -2120,7 +2136,9 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         inserted += 1;
       }
 
+      const moduloSelimp = await refreshModuloSelimp(client);
       await client.query("COMMIT");
+      invalidatePrefix("ipt_modulos_bateria");
       invalidatePrefix("ipt_preview");
       return {
         processados: inserted,
@@ -2130,6 +2148,8 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         duplicados: 0,
         erros: 0,
         ignoradas: parsed.ignoradas,
+        modulo_selimp_atualizados: moduloSelimp.atualizados,
+        modulo_selimp_removidos: moduloSelimp.removidos,
         ultimo_import: new Date().toISOString(),
         source_file: sourceFile,
       };
@@ -2438,6 +2458,34 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
     invalidatePrefix("ipt_modulos_bateria");
     invalidatePrefix("kpis");
     return { deleted: r.rowCount ?? 0 };
+  });
+
+  /** Esvazia ipt_dados_bateria e reinicia o serial id (próximo import começa em 1). */
+  fastify.post("/upload/clear-ipt-dados-bateria", async (_request, reply) => {
+    const countBefore = await pool.query(`SELECT COUNT(*)::int AS total FROM ipt_dados_bateria`);
+    const client = await pool.connect();
+    let moduloSelimp = { atualizados: 0, removidos: 0 };
+    try {
+      await client.query("BEGIN");
+      await client.query(`TRUNCATE TABLE ipt_dados_bateria RESTART IDENTITY`);
+      moduloSelimp = await refreshModuloSelimp(client);
+      await client.query("COMMIT");
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+    invalidatePrefix("bateria");
+    invalidatePrefix("ipt_dados_bateria");
+    invalidatePrefix("ipt_modulos_bateria");
+    invalidatePrefix("ipt_preview");
+    return {
+      deleted: Number(countBefore.rows[0]?.total ?? 0),
+      modulo_selimp_atualizados: moduloSelimp.atualizados,
+      modulo_selimp_removidos: moduloSelimp.removidos,
+      sequence_reset: true,
+    };
   });
 
   /** Remove registros manuais de IPT (ipt_registros). Não utilizado mais – IPT vem da planilha ou oficial. */

@@ -229,6 +229,44 @@ export interface IptPreviewResponse {
   }>;
 }
 
+export interface IptModuloBateriaModule {
+  id: number;
+  subprefeitura: string;
+  setor: string;
+  numeroSelimp: string;
+  diasExecucao: string;
+  comunicacao: "ON" | "OFF" | string;
+  bateria: string;
+  bateriaPercentual: number;
+  ultimaComunicacao: string;
+  statusSinalGeral: string;
+  statusBateria: string;
+  dataInstalacao: string;
+  quantidadeTrocas: number;
+  diasOn: number;
+  diasOff: number;
+  produtividade: number;
+}
+
+export interface IptModulosBateriaResponse {
+  modules: IptModuloBateriaModule[];
+  stats: {
+    total: number;
+    online: number;
+    offline: number;
+    avgProductivity: number;
+    criticalAlerts: number;
+    lowBattery: number;
+  };
+  lastUpdate: string | null;
+  latestBatch?: {
+    id: null;
+    importedAt: string;
+    sourceFile: string;
+    totalRegistros: number;
+  } | null;
+}
+
 // API calls
 export const apiService = {
   extractErrorMessage: getErrorMessage,
@@ -655,7 +693,13 @@ export const apiService = {
     const { data } = await api.post('/upload/clear-ipt-modulos-bateria');
     return data;
   },
-  getIptModulosBateria: async () => {
+
+  /** TRUNCATE ipt_dados_bateria + reinicia serial id (ids voltam a partir de 1). */
+  clearIptDadosBateria: async () => {
+    const { data } = await api.post('/upload/clear-ipt-dados-bateria');
+    return data;
+  },
+  getIptModulosBateria: async (): Promise<IptModulosBateriaResponse> => {
     const { data } = await api.get('/dashboard/ipt-modulos-bateria');
     return data;
   },

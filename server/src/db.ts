@@ -472,6 +472,45 @@ export async function runMigrations() {
     await client.query("CREATE INDEX IF NOT EXISTS idx_dados_bateria_nome ON ipt_dados_bateria(nome)").catch(() => {});
     await client.query("CREATE INDEX IF NOT EXISTS idx_dados_bateria_tipo ON ipt_dados_bateria(tipo_modulo)").catch(() => {});
     await client.query("CREATE INDEX IF NOT EXISTS idx_dados_bateria_selimp ON ipt_dados_bateria(selimp_id)").catch(() => {});
+    await client.query(
+      `UPDATE ipt_dados_bateria SET selimp_id = NULL, updated_at = NOW()
+       WHERE tipo_modulo = 'PORTATIL' AND selimp_id IS NOT NULL`
+    ).catch(() => {});
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS modulo_selimp (
+        id                         SERIAL PRIMARY KEY,
+        modulo_selimp              TEXT NOT NULL UNIQUE,
+        nome                       TEXT,
+        setores                    TEXT,
+        sub                        TEXT,
+        dias_execucao              TEXT,
+        comunicacao                TEXT,
+        ultima_comunicacao         TIMESTAMPTZ,
+        bateria_raw                TEXT,
+        bateria_percentual         NUMERIC(5,2),
+        status_bateria             TEXT,
+        data_selimp                DATE,
+        qtd_trocas                 INTEGER NOT NULL DEFAULT 0,
+        dias_on                    INTEGER NOT NULL DEFAULT 0,
+        dias_off                   INTEGER NOT NULL DEFAULT 0,
+        produtividade_bateria      NUMERIC(7,2) NOT NULL DEFAULT 0,
+        status_sinal_calculado     TEXT NOT NULL DEFAULT 'SEM SINAL',
+        status_sinal_manual        TEXT,
+        latest_data_exportacao     DATE,
+        source_file                TEXT,
+        created_at                 TIMESTAMPTZ DEFAULT NOW(),
+        updated_at                 TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client.query("CREATE INDEX IF NOT EXISTS idx_modulo_selimp_sub ON modulo_selimp(sub)").catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_modulo_selimp_comunicacao ON modulo_selimp(comunicacao)").catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_modulo_selimp_status_bateria ON modulo_selimp(status_bateria)").catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_modulo_selimp_data_selimp ON modulo_selimp(data_selimp)").catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_modulo_selimp_produtividade ON modulo_selimp(produtividade_bateria)").catch(() => {});
+    await client.query(
+      "CREATE INDEX IF NOT EXISTS idx_modulo_selimp_status_sinal ON modulo_selimp((COALESCE(status_sinal_manual, status_sinal_calculado)))"
+    ).catch(() => {});
 
     const adminEncryptedPassword = encryptPassword("1515");
     const userResult = await client.query<{ id: number }>(

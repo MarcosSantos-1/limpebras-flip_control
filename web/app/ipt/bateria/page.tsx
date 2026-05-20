@@ -196,9 +196,10 @@ function summarizeModuleServicoSplit(modules: ModuleData[]): {
 
 function getBatteryDistribution(data: ModuleData[]) {
   const labels: Record<string, string> = {
-    CHEIA: "Cheia",
-    OPERACIONAL: "Operacional",
+    ALTA: "Alta",
+    REGULAR: "Regular",
     BAIXA: "Baixa",
+    CRÍTICA: "Crítica",
     DESATUALIZADA: "Desatualizada",
   };
   return Object.entries(labels).map(([key, label]) => ({
@@ -226,7 +227,11 @@ function getProductivityDistribution(data: ModuleData[]) {
 
 function getCriticalModules(data: ModuleData[]) {
   return data.filter(
-    (m) => m.comunicacao === "OFF" || m.statusBateria === "DESATUALIZADA" || m.produtividade < 50
+    (m) =>
+      m.comunicacao === "OFF" ||
+      m.statusBateria === "DESATUALIZADA" ||
+      m.statusBateria === "CRÍTICA" ||
+      m.produtividade < 50
   );
 }
 
@@ -1100,9 +1105,9 @@ export default function BateriaDashboardPage() {
                             </TableCell>
                             <TableCell>
                               <Badge className={
-                                m.statusBateria === "CHEIA"
+                                m.statusBateria === "ALTA"
                                   ? "bg-emerald-500/15 text-emerald-600 border-emerald-500/30 dark:text-emerald-400"
-                                  : m.statusBateria === "OPERACIONAL"
+                                  : m.statusBateria === "REGULAR"
                                   ? "bg-blue-500/15 text-blue-600 border-blue-500/30 dark:text-blue-400"
                                   : m.statusBateria === "BAIXA"
                                   ? "bg-yellow-500/15 text-yellow-600 border-yellow-500/30 dark:text-yellow-400"
