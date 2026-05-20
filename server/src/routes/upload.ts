@@ -14,6 +14,7 @@ import {
 import { detectDdmxWorkbookType, parseIptWorkbook, type IptFileType } from "../services/parseIptXlsx.js";
 import { parseCronogramaWorkbook } from "../services/parseCronogramaIpt.js";
 import { parseSetoresModulosWorkbook } from "../services/parseSetoresModulos.js";
+import { enrichDadosBateriaFromSetoresModulos } from "../services/enrichDadosBateriaFromSetores.js";
 import { normalizarSetor, parseSetor } from "../constants/ipt.js";
 import { parseConsolidadoVeiculos, parseConsolidadoVarricao } from "../services/parseRelatorioConsolidado.js";
 import { estimarDatasReport, type ReportLinhaRaw } from "../services/estimarDataReport.js";
@@ -1735,6 +1736,10 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
           inseridos++;
         }
 
+        const { atualizados: enriquecidosSetores } = await enrichDadosBateriaFromSetoresModulos(client, {
+          dataExportacao: dataReferencia,
+        });
+
         await client.query("COMMIT");
         invalidatePrefix("bateria");
         invalidatePrefix("ipt_dados_bateria");
@@ -1745,7 +1750,8 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
           processados: rows.length,
           total: rows.length,
           inseridos,
-          atualizados: 0,
+          atualizados: enriquecidosSetores,
+          enriquecidos_setores: enriquecidosSetores,
           duplicados: 0,
           erros: 0,
           ultimo_import: new Date().toISOString(),
@@ -1846,17 +1852,21 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
           totalInseridos += dayRows.length;
         }
 
+        const datasImportadas = [...porData.keys()].sort();
+        const { atualizados: enriquecidosSetores } = await enrichDadosBateriaFromSetoresModulos(client, {
+          dataExportacoes: datasImportadas,
+        });
+
         await client.query("COMMIT");
         invalidatePrefix("bateria");
         invalidatePrefix("ipt_dados_bateria");
         invalidatePrefix("ipt_preview");
-
-        const datasImportadas = [...porData.keys()].sort();
         const summary = {
           processados: rows.length,
           total: rows.length,
           inseridos: totalInseridos,
-          atualizados: 0,
+          atualizados: enriquecidosSetores,
+          enriquecidos_setores: enriquecidosSetores,
           duplicados: 0,
           erros: 0,
           ultimo_import: new Date().toISOString(),
@@ -2109,6 +2119,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         );
         inserted += 1;
       }
+
       await client.query("COMMIT");
       invalidatePrefix("ipt_preview");
       return {

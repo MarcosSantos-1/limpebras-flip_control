@@ -471,6 +471,7 @@ export async function runMigrations() {
     await client.query("CREATE INDEX IF NOT EXISTS idx_dados_bateria_subpref ON ipt_dados_bateria(subprefeitura)").catch(() => {});
     await client.query("CREATE INDEX IF NOT EXISTS idx_dados_bateria_nome ON ipt_dados_bateria(nome)").catch(() => {});
     await client.query("CREATE INDEX IF NOT EXISTS idx_dados_bateria_tipo ON ipt_dados_bateria(tipo_modulo)").catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_dados_bateria_selimp ON ipt_dados_bateria(selimp_id)").catch(() => {});
 
     const adminEncryptedPassword = encryptPassword("1515");
     const userResult = await client.query<{ id: number }>(
