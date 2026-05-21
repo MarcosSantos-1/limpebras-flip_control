@@ -140,13 +140,59 @@ export interface IptPreviewRow {
     status_bateria: string;
     status_comunicacao: string;
     bateria: string;
+    bateria_percentual?: number | null;
+    produtividade_bateria?: number;
+    dias_on?: number;
+    dias_off?: number;
     dias_sem_comunicacao: number | null;
-    data_ultima_comunicacao: string;
+    data_ultima_comunicacao: string | null;
     ativo: boolean;
   }>;
   plano_ativo: boolean;
   sem_status_bateria: boolean;
   atualizado_em: string;
+}
+
+export interface IptPreviewModuloBateria {
+  codigo: string;
+  numero_selimp: string;
+  nome: string;
+  setor: string;
+  tipo: "lutocar" | "portatil";
+  status_bateria: string;
+  status_sinal: string;
+  comunicacao: string;
+  bateria: string;
+  bateria_percentual: number | null;
+  ultima_comunicacao: string | null;
+  dias_on: number;
+  dias_off: number;
+  produtividade_bateria: number;
+}
+
+export interface IptPreviewBateriaResumoSetor {
+  total: number;
+  produtividade_media: number | null;
+  com_sinal: number;
+  sem_sinal: number;
+  criticos: number;
+  alerta: number;
+}
+
+export interface IptPreviewBateriaModuloDia {
+  numero_selimp: string;
+  status_comunicacao: string;
+  bateria_raw: string;
+  bateria_percentual: number | null;
+  bateria_desatualizada: boolean;
+  ultima_comunicacao: string | null;
+}
+
+export interface IptPreviewBateriaSetorDia {
+  total: number;
+  desatualizadas: number;
+  media_percentual: number | null;
+  modulos: IptPreviewBateriaModuloDia[];
 }
 
 export interface IptPreviewResponse {
@@ -161,6 +207,7 @@ export interface IptPreviewResponse {
     media_com_zerados?: number | null;
     media_sem_zerados?: number | null;
     percentual_medio_ddmx?: number | null;
+    produtividade_bateria_media?: number | null;
     total_modulos_relacionados: number;
     total_modulos_ativos: number;
     total_modulos_inativos: number;
@@ -214,6 +261,20 @@ export interface IptPreviewResponse {
     percentual_nosso: number | null;
     origem: "ambos" | "somente_selimp" | "somente_nosso";
     equipamentos: string[];
+    modulos_bateria?: IptPreviewModuloBateria[];
+    produtividade_bateria_media?: number | null;
+    bateria_resumo_setor?: IptPreviewBateriaResumoSetor;
+    bateria_por_equipamento?: Record<string, {
+      status_bateria: string;
+      bateria?: string;
+      data_ultima_comunicacao?: string;
+      dias?: string;
+      dias_on?: number;
+      dias_off?: number;
+      produtividade_bateria?: number;
+      status_sinal?: string;
+      numero_selimp?: string;
+    }>;
     frequencia: string | null;
     proxima_programacao: string | null;
     cronograma_preview?: string[];
@@ -225,6 +286,7 @@ export interface IptPreviewResponse {
       despachos_selimp: number;
       despachos_nosso: number;
       data_estimada?: boolean;
+      bateria_setor_dia?: IptPreviewBateriaSetorDia | null;
     }>;
   }>;
 }

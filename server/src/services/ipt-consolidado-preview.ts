@@ -139,7 +139,52 @@ export async function buildIptPreviewFromConsolidado(
      WHERE TRUE ${ddmxNewDateFilter}
      ORDER BY setor, data_referencia`;
 
-  const [reportRes, ddmxLegacyRes, bateriaRows] = await Promise.all([
+  const modulosSetoresQuery = `SELECT
+      sm.setor,
+      TRIM(sm.selimp_codigo) AS selimp_codigo,
+      TRIM(sm.ddmx_codigo) AS ddmx_codigo,
+      m.modulo_selimp,
+      m.nome,
+      m.comunicacao,
+      m.ultima_comunicacao,
+      m.bateria_raw,
+      m.bateria_percentual::float8 AS bateria_percentual,
+      m.status_bateria,
+      m.dias_on,
+      m.dias_off,
+      m.produtividade_bateria::float8 AS produtividade_bateria,
+      COALESCE(m.status_sinal_manual, m.status_sinal_calculado) AS status_sinal
+    FROM setores_modulos sm
+    LEFT JOIN modulo_selimp m
+      ON TRIM(m.modulo_selimp) = TRIM(sm.selimp_codigo)
+    WHERE sm.selimp_codigo IS NOT NULL
+      AND TRIM(sm.selimp_codigo) <> ''
+    ORDER BY sm.setor, sm.selimp_codigo`;
+
+  let bateriaHistoricoDateFilter = "";
+  const bateriaHistoricoParams: unknown[] = [];
+  if (escopo === "dia_anterior" && scopeStart) {
+    bateriaHistoricoParams.push(scopeStart);
+    bateriaHistoricoDateFilter = ` AND data_exportacao = $${bateriaHistoricoParams.length}::date`;
+  } else if (escopo === "periodo" && scopeStart && scopeEnd) {
+    bateriaHistoricoParams.push(scopeStart, scopeEnd);
+    bateriaHistoricoDateFilter = ` AND data_exportacao >= $1::date AND data_exportacao <= $2::date`;
+  }
+  const bateriaHistoricoQuery = `SELECT DISTINCT ON (TRIM(selimp_id), data_exportacao)
+      TRIM(selimp_id) AS selimp_id,
+      data_exportacao::text AS data_exportacao,
+      status_comunicacao,
+      bateria_raw,
+      bateria_percentual::float8 AS bateria_percentual,
+      bateria_desatualizada,
+      ultima_comunicacao
+    FROM ipt_dados_bateria
+    WHERE selimp_id IS NOT NULL
+      AND TRIM(selimp_id) <> ''
+      ${bateriaHistoricoDateFilter}
+    ORDER BY TRIM(selimp_id), data_exportacao, updated_at DESC, id DESC`;
+
+  const [reportRes, ddmxLegacyRes, bateriaRows, modulosSetoresRes, bateriaHistoricoRes] = await Promise.all([
     client.query(reportQuery, rparams),
     client.query(ddmxLegacyQuery, dparams),
     client.query(
@@ -148,6 +193,8 @@ export async function buildIptPreviewFromConsolidado(
        WHERE file_type = 'ipt_status_bateria'
        ORDER BY updated_at DESC`
     ),
+    client.query(modulosSetoresQuery),
+    client.query(bateriaHistoricoQuery, bateriaHistoricoParams),
   ]);
 
   type DdmxRow = {
@@ -218,6 +265,171 @@ export async function buildIptPreviewFromConsolidado(
       nivel,
     });
   }
+
+  type ModuloBateriaPreview = {
+    codigo: string;
+    numero_selimp: string;
+    nome: string;
+    setor: string;
+    tipo: "lutocar" | "portatil";
+    status_bateria: string;
+    status_sinal: string;
+    comunicacao: string;
+    bateria: string;
+    bateria_percentual: number | null;
+    ultima_comunicacao: string | null;
+    dias_on: number;
+    dias_off: number;
+    produtividade_bateria: number;
+  };
+
+  type BateriaResumoSetor = {
+    total: number;
+    produtividade_media: number | null;
+    com_sinal: number;
+    sem_sinal: number;
+    criticos: number;
+    alerta: number;
+  };
+
+  type BateriaModuloDia = {
+    numero_selimp: string;
+    status_comunicacao: string;
+    bateria_raw: string;
+    bateria_percentual: number | null;
+    bateria_desatualizada: boolean;
+    ultima_comunicacao: string | null;
+  };
+
+  type BateriaSetorDia = {
+    total: number;
+    desatualizadas: number;
+    media_percentual: number | null;
+    modulos: BateriaModuloDia[];
+  };
+
+  const modulosBySetor = new Map<string, ModuloBateriaPreview[]>();
+  const moduloByDdmx = new Map<string, ModuloBateriaPreview>();
+  const bateriaHistoricoByModuloDate = new Map<string, BateriaModuloDia>();
+
+  const pushModuloSetor = (setor: string, modulo: ModuloBateriaPreview) => {
+    const key = normalizarSetor(setor);
+    if (!key) return;
+    const current = modulosBySetor.get(key) ?? [];
+    if (!current.some((m) => m.numero_selimp === modulo.numero_selimp)) {
+      current.push(modulo);
+    }
+    modulosBySetor.set(key, current);
+  };
+
+  for (const row of (modulosSetoresRes.rows ?? []) as Array<{
+    setor: string | null;
+    selimp_codigo: string | null;
+    ddmx_codigo: string | null;
+    modulo_selimp: string | null;
+    nome: string | null;
+    comunicacao: string | null;
+    ultima_comunicacao: string | Date | null;
+    bateria_raw: string | null;
+    bateria_percentual: number | null;
+    status_bateria: string | null;
+    dias_on: number | null;
+    dias_off: number | null;
+    produtividade_bateria: number | null;
+    status_sinal: string | null;
+  }>) {
+    const setor = normalizarSetor(String(row.setor ?? "").trim());
+    const numeroSelimp = String(row.modulo_selimp ?? row.selimp_codigo ?? "").trim();
+    if (!setor || !numeroSelimp) continue;
+
+    const modulo: ModuloBateriaPreview = {
+      codigo: numeroSelimp,
+      numero_selimp: numeroSelimp,
+      nome: String(row.nome ?? ""),
+      setor,
+      tipo: "lutocar",
+      status_bateria: String(row.status_bateria ?? ""),
+      status_sinal: String(row.status_sinal ?? ""),
+      comunicacao: String(row.comunicacao ?? ""),
+      bateria: String(row.bateria_raw ?? ""),
+      bateria_percentual: row.bateria_percentual == null ? null : Number(row.bateria_percentual),
+      ultima_comunicacao: row.ultima_comunicacao ? String(row.ultima_comunicacao) : null,
+      dias_on: Number(row.dias_on ?? 0),
+      dias_off: Number(row.dias_off ?? 0),
+      produtividade_bateria: Number(row.produtividade_bateria ?? 0),
+    };
+
+    pushModuloSetor(setor, modulo);
+    const ddmxKey = normalizeModuleCode(String(row.ddmx_codigo ?? ""));
+    if (ddmxKey) moduloByDdmx.set(ddmxKey, modulo);
+  }
+
+  for (const row of (bateriaHistoricoRes.rows ?? []) as Array<{
+    selimp_id: string | null;
+    data_exportacao: string | null;
+    status_comunicacao: string | null;
+    bateria_raw: string | null;
+    bateria_percentual: number | null;
+    bateria_desatualizada: boolean | null;
+    ultima_comunicacao: string | Date | null;
+  }>) {
+    const selimpId = String(row.selimp_id ?? "").trim();
+    const dataExportacao = String(row.data_exportacao ?? "").slice(0, 10);
+    if (!selimpId || !dataExportacao) continue;
+    bateriaHistoricoByModuloDate.set(`${selimpId}|${dataExportacao}`, {
+      numero_selimp: selimpId,
+      status_comunicacao: String(row.status_comunicacao ?? ""),
+      bateria_raw: String(row.bateria_raw ?? ""),
+      bateria_percentual: row.bateria_percentual == null ? null : Number(row.bateria_percentual),
+      bateria_desatualizada: Boolean(row.bateria_desatualizada),
+      ultima_comunicacao: row.ultima_comunicacao ? String(row.ultima_comunicacao) : null,
+    });
+  }
+
+  const summarizeModulosBateria = (modulos: ModuloBateriaPreview[]): BateriaResumoSetor => {
+    const total = modulos.length;
+    const produtividadeVals = modulos
+      .map((m) => Number(m.produtividade_bateria))
+      .filter((n) => Number.isFinite(n));
+    const produtividadeMedia =
+      produtividadeVals.length > 0
+        ? Number((produtividadeVals.reduce((sum, n) => sum + n, 0) / produtividadeVals.length).toFixed(2))
+        : null;
+
+    return {
+      total,
+      produtividade_media: produtividadeMedia,
+      com_sinal: modulos.filter((m) => normalizeText(m.status_sinal) === "com sinal").length,
+      sem_sinal: modulos.filter((m) => normalizeText(m.status_sinal) === "sem sinal").length,
+      criticos: modulos.filter((m) => normalizeText(m.status_bateria).includes("critica")).length,
+      alerta: modulos.filter((m) => {
+        const status = normalizeText(m.status_bateria);
+        return status.includes("baixa") || status.includes("desatualizada");
+      }).length,
+    };
+  };
+
+  const summarizeBateriaDia = (modulos: ModuloBateriaPreview[], dateKey: string): BateriaSetorDia | null => {
+    const historico = modulos
+      .map((modulo) => bateriaHistoricoByModuloDate.get(`${modulo.numero_selimp}|${dateKey}`))
+      .filter((item): item is BateriaModuloDia => item != null);
+    if (historico.length === 0) return null;
+
+    const percentuais = historico
+      .map((item) => item.bateria_percentual)
+      .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+    return {
+      total: historico.length,
+      desatualizadas: historico.filter(
+        (item) => item.bateria_desatualizada || normalizeText(item.bateria_raw).includes("desatualizada")
+      ).length,
+      media_percentual:
+        percentuais.length > 0
+          ? Number((percentuais.reduce((sum, value) => sum + value, 0) / percentuais.length).toFixed(2))
+          : null,
+      modulos: historico,
+    };
+  };
 
   // --- Estrutura por plano ---
   type Bucket = {
@@ -438,6 +650,18 @@ export async function buildIptPreviewFromConsolidado(
       if (!mostrar) return null;
 
       const tipoServicoFinal = resolveTipoServicoExibicao(item.plano, item.tipo_servico);
+      const modulosDoSetor = [...(modulosBySetor.get(normalizarSetor(item.plano)) ?? [])];
+      for (const equipamento of item.equipamentos) {
+        const modulo = moduloByDdmx.get(normalizeModuleCode(equipamento));
+        if (modulo && !modulosDoSetor.some((m) => m.numero_selimp === modulo.numero_selimp)) {
+          modulosDoSetor.push(modulo);
+        }
+      }
+      const bateriaResumoSetor = summarizeModulosBateria(modulosDoSetor);
+      const detalhesComBateria = detalhes.map((detalhe) => ({
+        ...detalhe,
+        bateria_setor_dia: summarizeBateriaDia(modulosDoSetor, detalhe.data),
+      }));
 
       return {
         plano: item.plano,
@@ -460,15 +684,30 @@ export async function buildIptPreviewFromConsolidado(
         bateria_por_equipamento: Object.fromEntries(
           Array.from(item.equipamentos)
             .map((codigo) => {
-              const info = bateriaMap.get(normalizeModuleCode(codigo));
+              const modulo = moduloByDdmx.get(normalizeModuleCode(codigo));
+              const info = modulo
+                ? {
+                    status_bateria: modulo.status_bateria,
+                    bateria: modulo.bateria || (modulo.bateria_percentual == null ? undefined : `${modulo.bateria_percentual}%`),
+                    data_ultima_comunicacao: modulo.ultima_comunicacao ?? undefined,
+                    dias_on: modulo.dias_on,
+                    dias_off: modulo.dias_off,
+                    produtividade_bateria: modulo.produtividade_bateria,
+                    status_sinal: modulo.status_sinal,
+                    numero_selimp: modulo.numero_selimp,
+                  }
+                : bateriaMap.get(normalizeModuleCode(codigo));
               return info ? [codigo, info] : null;
             })
             .filter((x): x is [string, { status_bateria: string; bateria?: string }] => x != null)
         ),
+        modulos_bateria: modulosDoSetor,
+        produtividade_bateria_media: bateriaResumoSetor.produtividade_media,
+        bateria_resumo_setor: bateriaResumoSetor,
         proxima_programacao: null as string | null,
         cronograma_preview: [] as string[],
         data_estimativa_count: estimados,
-        detalhes_diarios: detalhes,
+        detalhes_diarios: detalhesComBateria,
         _fonte_preview: origem === "ambos" ? "report+ddmx" : despachosSelimp > 0 ? "report" : "ddmx",
       };
     })
@@ -569,6 +808,18 @@ export async function buildIptPreviewFromConsolidado(
   );
   const percentualMedioDdmx =
     ddmxCountPond > 0 ? Number((ddmxSumPond / ddmxCountPond).toFixed(2)) : null;
+  const produtividadeBateriaVals = rowsFiltered
+    .map((r) => r.produtividade_bateria_media)
+    .filter((n): n is number => typeof n === "number" && Number.isFinite(n));
+  const produtividadeBateriaMedia =
+    produtividadeBateriaVals.length > 0
+      ? Number((produtividadeBateriaVals.reduce((sum, n) => sum + n, 0) / produtividadeBateriaVals.length).toFixed(2))
+      : null;
+  const totalModulosBateriaRelacionados = rowsFiltered.reduce((acc, r) => acc + r.modulos_bateria.length, 0);
+  const totalModulosComSinal = rowsFiltered.reduce((acc, r) => acc + r.bateria_resumo_setor.com_sinal, 0);
+  const totalModulosSemSinal = rowsFiltered.reduce((acc, r) => acc + r.bateria_resumo_setor.sem_sinal, 0);
+  const totalModulosCriticos = rowsFiltered.reduce((acc, r) => acc + r.bateria_resumo_setor.criticos, 0);
+  const totalModulosAlerta = rowsFiltered.reduce((acc, r) => acc + r.bateria_resumo_setor.alerta, 0);
 
   const legacySubMap = new Map<string, { quantidade: number; despachoSum: number; despachoCount: number; despachoNonzeroCount: number }>();
   const legacyServMap = new Map<string, { quantidade: number; despachoSum: number; despachoCount: number; despachoNonzeroCount: number }>();
@@ -613,9 +864,20 @@ export async function buildIptPreviewFromConsolidado(
     status_execucao: r.despachos_selimp > 0 ? "Despachado" : "Não despachado",
     percentual_execucao: r.percentual_selimp,
     equipamentos: r.equipamentos,
-    modulos_status: [] as Array<Record<string, unknown>>,
+    modulos_status: r.modulos_bateria.map((m) => ({
+      codigo: m.numero_selimp,
+      status_bateria: m.status_bateria,
+      status_comunicacao: m.comunicacao,
+      bateria: m.bateria,
+      bateria_percentual: m.bateria_percentual,
+      produtividade_bateria: m.produtividade_bateria,
+      dias_on: m.dias_on,
+      dias_off: m.dias_off,
+      data_ultima_comunicacao: m.ultima_comunicacao,
+      ativo: normalizeText(m.status_sinal) === "com sinal",
+    })),
     plano_ativo: r.despachos_selimp > 0 || r.despachos_nosso > 0,
-    sem_status_bateria: false,
+    sem_status_bateria: r.modulos_bateria.length === 0,
     atualizado_em: new Date().toISOString(),
   }));
 
@@ -658,13 +920,14 @@ export async function buildIptPreviewFromConsolidado(
       media_com_zerados: iptMedioSelimp,
       media_sem_zerados: iptMedioSelimpSemZerados,
       percentual_medio_ddmx: percentualMedioDdmx,
-      total_modulos_relacionados: rowsFiltered.reduce((acc, r) => acc + r.equipamentos.length, 0),
-      total_modulos_ativos: rowsFiltered.reduce((acc, r) => acc + r.equipamentos.length, 0),
-      total_modulos_inativos: 0,
-      sem_status_bateria: rowsFiltered.filter((r) => r.equipamentos.length === 0).length,
-      comunicacao_off: 0,
-      bateria_critica: 0,
-      bateria_alerta: 0,
+      produtividade_bateria_media: produtividadeBateriaMedia,
+      total_modulos_relacionados: totalModulosBateriaRelacionados,
+      total_modulos_ativos: totalModulosComSinal,
+      total_modulos_inativos: totalModulosSemSinal,
+      sem_status_bateria: rowsFiltered.filter((r) => r.modulos_bateria.length === 0).length,
+      comunicacao_off: totalModulosSemSinal,
+      bateria_critica: totalModulosCriticos,
+      bateria_alerta: totalModulosAlerta,
       total_setores: rowsFiltered.length,
       total_despachos_selimp: totalDespachosSelimp,
       total_despachos_nosso: totalDespachosNosso,

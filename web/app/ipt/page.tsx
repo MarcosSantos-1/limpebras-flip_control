@@ -63,7 +63,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { apiService, type IptPreviewResponse } from "@/lib/api";
+import {
+  apiService,
+  type IptPreviewBateriaResumoSetor,
+  type IptPreviewBateriaSetorDia,
+  type IptPreviewModuloBateria,
+} from "@/lib/api";
 import { useIptData } from "@/lib/use-ipt-data";
 import { getSortKey, getSubFromPlano } from "@/lib/ipt-utils";
 import {
@@ -452,7 +457,7 @@ export default function IPTPage() {
       ...(iptPreviewTable?.subprefeituras ?? []),
     ].map((item) => item.subprefeitura).filter(Boolean);
     return Array.from(new Set(values)).sort((a, b) => a.localeCompare(b, "pt-BR"));
-  }, [iptPreviewTable]);
+  }, [iptPreviewCards?.subprefeituras, iptPreviewTable?.subprefeituras]);
 
   const sourceRows = useMemo(
     () =>
@@ -465,7 +470,20 @@ export default function IPTPage() {
         origem: "ambos" | "somente_selimp" | "somente_nosso";
         despachos_selimp?: number;
         equipamentos?: string[];
-        bateria_por_equipamento?: Record<string, { status_bateria: string; bateria?: string }>;
+        modulos_bateria?: IptPreviewModuloBateria[];
+        produtividade_bateria_media?: number | null;
+        bateria_resumo_setor?: IptPreviewBateriaResumoSetor;
+        bateria_por_equipamento?: Record<string, {
+          status_bateria: string;
+          bateria?: string;
+          data_ultima_comunicacao?: string;
+          dias?: string;
+          dias_on?: number;
+          dias_off?: number;
+          produtividade_bateria?: number;
+          status_sinal?: string;
+          numero_selimp?: string;
+        }>;
         frequencia?: string | null;
         proxima_programacao?: string | null;
         cronograma_preview?: string[];
@@ -477,6 +495,7 @@ export default function IPTPage() {
           despachos_selimp: number;
           despachos_nosso: number;
           data_estimada?: boolean;
+          bateria_setor_dia?: IptPreviewBateriaSetorDia | null;
         }>;
       }>,
     [iptPreviewTable]
@@ -489,6 +508,7 @@ export default function IPTPage() {
 
   useEffect(() => {
     if (!serviceFilterInitialized && serviceOptions.length > 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setServiceFilterValues(serviceOptions);
       setServiceFilterInitialized(true);
     }
@@ -2035,6 +2055,7 @@ export default function IPTPage() {
                     const hasDetails = true;
                     const hasAnyDetails =
                       (row.equipamentos && row.equipamentos.length > 0) ||
+                      (row.modulos_bateria && row.modulos_bateria.length > 0) ||
                       row.frequencia ||
                       row.proxima_programacao ||
                       (row.detalhes_diarios && row.detalhes_diarios.length > 0);
@@ -2272,6 +2293,53 @@ export default function IPTPage() {
                                     </div>
                                   </div>
                                 )}
+                                {row.modulos_bateria && row.modulos_bateria.length > 0 && (
+                                  <div className="rounded-xl bg-fuchsia-500/10 border border-fuchsia-500/30 p-3 shadow-sm">
+                                    <div className="mb-2 flex items-center justify-between gap-2">
+                                      <p className="text-xs font-semibold text-fuchsia-700 dark:text-fuchsia-300 flex items-center gap-1.5">
+                                        <BatteryWarning className="h-4 w-4" />
+                                        Produtividade bateria
+                                      </p>
+                                      {row.produtividade_bateria_media != null && (
+                                        <span className={`text-xs font-bold ${getPercentualTextClass(row.produtividade_bateria_media)}`}>
+                                          média {pct(row.produtividade_bateria_media)}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="space-y-1.5">
+                                      {row.modulos_bateria.map((modulo) => (
+                                        <div
+                                          key={`${row.plano}-${modulo.numero_selimp}`}
+                                          className="rounded-lg bg-background/70 px-2.5 py-2 text-xs ring-1 ring-fuchsia-500/15"
+                                          title={[
+                                            `Bateria: ${modulo.bateria || modulo.status_bateria || "--"}`,
+                                            `Sinal: ${modulo.status_sinal || "--"}`,
+                                            `Dias ON/OFF: ${modulo.dias_on}/${modulo.dias_off}`,
+                                          ].join(" · ")}
+                                        >
+                                          <div className="flex items-center justify-between gap-2">
+                                            <span className="font-mono font-semibold text-fuchsia-800 dark:text-fuchsia-200">
+                                              {modulo.numero_selimp}
+                                            </span>
+                                            <span className={`font-bold ${getPercentualTextClass(modulo.produtividade_bateria)}`}>
+                                              {pct(modulo.produtividade_bateria)}
+                                            </span>
+                                          </div>
+                                          <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted/60">
+                                            <div
+                                              className={`h-full rounded-full ${getPercentualBarFill(modulo.produtividade_bateria)}`}
+                                              style={{ width: `${clamp(modulo.produtividade_bateria)}%` }}
+                                            />
+                                          </div>
+                                          <div className="mt-0.5 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
+                                            <span>{modulo.status_bateria || "Sem status"}</span>
+                                            <span>{modulo.status_sinal || modulo.comunicacao || "--"}</span>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
                                 {row.proxima_programacao && (
                                   <div className="rounded-xl bg-emerald-500/15 border border-emerald-500/40 p-3 shadow-sm relative group">
                                     <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-300 mb-1 flex items-center gap-1.5">
@@ -2366,6 +2434,9 @@ export default function IPTPage() {
                                               <th className="text-left py-2 px-2">
                                                 <span className="flex items-center gap-1"><Truck className="h-3.5 w-3.5" /> Des. DDMX?</span>
                                               </th>
+                                              <th className="text-left py-2 px-2">
+                                                <span className="flex items-center gap-1"><Battery className="h-3.5 w-3.5" /> Bat. setor</span>
+                                              </th>
                                               <th className="text-left py-2 px-2 w-20">Obs</th>
                                             </tr>
                                           </thead>
@@ -2430,6 +2501,45 @@ export default function IPTPage() {
                                                         Não
                                                       </span>
                                                     )}
+                                                  </td>
+                                                  <td className="py-2 px-2">
+                                                    {(() => {
+                                                      const bateriaDia = d.bateria_setor_dia;
+                                                      const firstModulo = bateriaDia?.modulos[0];
+                                                      const hasDesatualizada = (bateriaDia?.desatualizadas ?? 0) > 0;
+                                                      const label = hasDesatualizada
+                                                        ? "Desatual."
+                                                        : bateriaDia?.media_percentual != null
+                                                        ? `${bateriaDia.media_percentual.toFixed(0)}%`
+                                                        : firstModulo?.bateria_raw || "--";
+                                                      const title = bateriaDia
+                                                        ? bateriaDia.modulos
+                                                            .map((modulo) =>
+                                                              `${modulo.numero_selimp}: ${modulo.bateria_raw || "--"}${
+                                                                modulo.bateria_desatualizada ? " (desatualizada)" : ""
+                                                              }`
+                                                            )
+                                                            .join(" · ")
+                                                        : "Sem dado de bateria para a data do despacho";
+                                                      const colorClass = !bateriaDia
+                                                        ? "bg-slate-500/15 text-muted-foreground"
+                                                        : hasDesatualizada
+                                                        ? "bg-amber-500/15 text-amber-800 dark:text-amber-200"
+                                                        : (bateriaDia.media_percentual ?? 0) <= 15
+                                                        ? "bg-red-500/15 text-red-800 dark:text-red-200"
+                                                        : (bateriaDia.media_percentual ?? 0) <= 30
+                                                        ? "bg-yellow-500/15 text-yellow-800 dark:text-yellow-200"
+                                                        : "bg-emerald-500/15 text-emerald-800 dark:text-emerald-200";
+                                                      return (
+                                                        <span
+                                                          className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 font-semibold ${colorClass}`}
+                                                          title={title}
+                                                        >
+                                                          <Battery className="h-3.5 w-3.5 shrink-0" />
+                                                          {label}
+                                                        </span>
+                                                      );
+                                                    })()}
                                                   </td>
                                                   <td className="py-2 px-2">
                                                     {(() => {
