@@ -12,7 +12,8 @@ export type EnrichDadosBateriaOptions =
 /**
  * Preenche subprefeitura, setor e dias_execucao em ipt_dados_bateria
  * cruzando selimp_id com selimp_codigo em setores_modulos.
- * Atualiza somente registros das datas informadas (importação corrente).
+ * Atualiza somente registros das datas informadas (importação corrente)
+ * e criados após o último upload de SETORES (preserva histórico anterior).
  */
 export async function enrichDadosBateriaFromSetoresModulos(
   client: PoolClient,
@@ -48,7 +49,11 @@ export async function enrichDadosBateriaFromSetoresModulos(
      WHERE TRIM(b.selimp_id) = s.selimp_codigo
        AND b.selimp_id IS NOT NULL
        AND TRIM(b.selimp_id) <> ''
-       AND b.data_exportacao = ANY($1::date[])`,
+       AND b.data_exportacao = ANY($1::date[])
+       AND b.created_at >= (
+         SELECT COALESCE(MAX(updated_at), '-infinity'::timestamptz)
+         FROM setores_modulos
+       )`,
     [uniqueDates]
   );
 

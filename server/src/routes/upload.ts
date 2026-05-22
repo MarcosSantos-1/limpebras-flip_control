@@ -2082,6 +2082,10 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
+  /**
+   * Substitui o cadastro em setores_modulos e recalcula modulo_selimp.
+   * Não chama enrichDadosBateriaFromSetoresModulos — ipt_dados_bateria existente permanece intacto.
+   */
   fastify.post("/upload/ipt-setores-modulos", async (request, reply) => {
     const data = await request.file();
     if (!data) {
@@ -2148,6 +2152,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         duplicados: 0,
         erros: 0,
         ignoradas: parsed.ignoradas,
+        ipt_dados_bateria_alterados: 0,
         modulo_selimp_atualizados: moduloSelimp.atualizados,
         modulo_selimp_removidos: moduloSelimp.removidos,
         ultimo_import: new Date().toISOString(),

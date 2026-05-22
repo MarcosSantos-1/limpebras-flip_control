@@ -1633,14 +1633,14 @@ export default function UploadPage() {
                 accent="amber"
                 icon={MapPin}
                 title="Setores e módulos — SELIMP × DDMX"
-                subtitle="Catálogo SETORES.xlsx: varrição manual, praças, vínculo de módulos, frequência e KM produtivo."
+                subtitle="Catálogo SETORES.xlsx: varrição manual, praças, vínculo de módulos, frequência e KM produtivo. Substitui o cadastro vigente; não altera o histórico já importado em ipt_dados_bateria — próximos uploads de Status Bateria usarão o novo mapeamento."
               >
                 <UploadDropzone
                   inputId="iptSetoresModulos"
                   accept=".xlsx"
                   tone="amber"
                   loading={states.iptSetoresModulos.status === "uploading"}
-                  helperText="Arquivo SETORES.xlsx (aba SETORES). Substitui o cadastro inteiro a cada importação."
+                  helperText="Arquivo SETORES.xlsx (aba SETORES). Substitui setores_modulos e recalcula módulos; ipt_dados_bateria existente não é reescrito."
                   onFilesSelected={handleSetoresModulosUpload}
                 />
                 <HistoryBlock
