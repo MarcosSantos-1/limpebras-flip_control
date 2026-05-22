@@ -118,6 +118,41 @@ export interface Indicador {
   pontuacao: number;
 }
 
+export type IndicatorHistoryType = "IA" | "IRD" | "IF" | "IPT" | "ADC";
+
+export interface IndicatorHistoryPoint {
+  id?: number;
+  data: string;
+  tipo: IndicatorHistoryType;
+  valor: number | null;
+  percentual?: number | null;
+  pontuacao: number | null;
+  periodo_inicial?: string;
+  periodo_final?: string;
+  periodo_tipo?: string;
+  quantidade_base?: number;
+  source_file?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface IptServiceSnapshotPoint {
+  id: number;
+  snapshot_at: string;
+  metric_key: string;
+  metric_label: string;
+  periodo_inicial: string;
+  periodo_final: string;
+  periodo_tipo: string;
+  percentual: number | null;
+  media_sem_zerados: number | null;
+  quantidade_planos: number;
+  total_despachos: number;
+  despachos_zerados: number;
+  source_file: string | null;
+  metadata: Record<string, unknown>;
+  updated_at: string;
+}
+
 export interface KPIs {
   indicadores: {
     ird: Indicador;
@@ -786,6 +821,20 @@ export const apiService = {
     const { data } = await api.get('/ipt/report-diario', { params: { inicio, fim } });
     return data;
   },
+  getIptServiceSnapshots: async (
+    tipoServico: string,
+    periodoInicial: string,
+    periodoFinal: string
+  ): Promise<{ tipo_servico: string; periodo: { inicial: string; final: string }; pontos: IptServiceSnapshotPoint[] }> => {
+    const { data } = await api.get('/ipt/snapshots/servicos', {
+      params: {
+        tipo_servico: tipoServico,
+        periodo_inicial: periodoInicial,
+        periodo_final: periodoFinal,
+      },
+    });
+    return data;
+  },
   
   // Indicadores
   getKPIs: async (periodoInicial?: string, periodoFinal?: string) => {
@@ -874,12 +923,22 @@ export const apiService = {
     return data;
   },
 
-  getIndicadoresHistorico: async (periodoInicial?: string, periodoFinal?: string) => {
+  getIndicadoresHistorico: async (
+    tipoOrPeriodoInicial?: IndicatorHistoryType | string,
+    periodoInicial?: string,
+    periodoFinal?: string
+  ): Promise<{ tipo?: IndicatorHistoryType; periodo?: { inicial: string; final: string }; historico: IndicatorHistoryPoint[] }> => {
+    const params: Record<string, string | undefined> = {};
+    if (tipoOrPeriodoInicial && /^\d{4}-\d{2}-\d{2}$/.test(tipoOrPeriodoInicial)) {
+      params.periodo_inicial = tipoOrPeriodoInicial;
+      params.periodo_final = periodoInicial;
+    } else {
+      params.tipo = tipoOrPeriodoInicial;
+      params.periodo_inicial = periodoInicial;
+      params.periodo_final = periodoFinal;
+    }
     const { data } = await api.get('/dashboard/indicadores/historico', {
-      params: {
-        periodo_inicial: periodoInicial,
-        periodo_final: periodoFinal,
-      },
+      params,
     });
     return data;
   },
@@ -901,4 +960,3 @@ export const apiService = {
     return data;
   },
 };
-

@@ -24,6 +24,10 @@ import { parseStatusBateria } from "../services/parseStatusBateria.js";
 import { parseHistoricoBateria } from "../services/parseHistoricoBateria.js";
 import { refreshModuloSelimp } from "../services/refreshModuloSelimp.js";
 import { requirePageAccess } from "../auth.js";
+import { pontuacaoIA, pontuacaoIRD, pontuacaoIFFromPercentual, pontuacaoIPT } from "../services/indicadores.js";
+import { calcularPF } from "../services/ipt-pf-algoritmo.js";
+import { BFS_IF_EXCLUSAO_SQL, sqlBfsFiscalNaoEhSelimp } from "../constants/bfs.js";
+import { SUB_SIGLAS, regionalToSigla } from "../constants/regionais.js";
 
 function ensureIptRestrictedUploadAccess(
   request: FastifyRequest,
@@ -171,6 +175,451 @@ function extractOrdensFromReportRows(rows: { raw?: Record<string, string> }[]): 
   return ordens;
 }
 
+function normalizeSnapshotKey(value: string): string {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 160);
+}
+
+function isReportStatusEncerrado(status: string | null | undefined): boolean {
+  return String(status ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .includes("encerrado");
+}
+
+function toDateKeyFromDate(value: Date | null | undefined): string | null {
+  if (!(value instanceof Date) || Number.isNaN(value.getTime())) return null;
+  return value.toISOString().slice(0, 10);
+}
+
+function getImportDateRange(values: Array<Date | null | undefined>): { inicio: string; fim: string } | null {
+  const keys = values.map(toDateKeyFromDate).filter((v): v is string => Boolean(v));
+  if (keys.length === 0) return null;
+  keys.sort();
+  return { inicio: keys[0], fim: keys[keys.length - 1] };
+}
+
+async function insertMetricSnapshot(
+  client: PoolClient,
+  opts: {
+    snapshotType: string;
+    metricKey: string;
+    metricLabel: string;
+    periodoInicial: string;
+    periodoFinal: string;
+    periodoTipo: string;
+    valor?: number | null;
+    percentual?: number | null;
+    pontuacao?: number | null;
+    mediaSemZerados?: number | null;
+    quantidadePlanos?: number;
+    quantidadeBase?: number;
+    totalDespachos?: number;
+    despachosZerados?: number;
+    sourceFile: string;
+    metadata?: Record<string, unknown>;
+  }
+): Promise<void> {
+  await client.query(
+    `INSERT INTO metric_snapshots (
+       snapshot_type, metric_key, metric_label, snapshot_at,
+       periodo_inicial, periodo_final, periodo_tipo,
+       valor, percentual, pontuacao, media_sem_zerados,
+       quantidade_planos, quantidade_base, total_despachos, despachos_zerados,
+       source_file, metadata, updated_at
+     ) VALUES (
+       $1, $2, $3, NOW(),
+       $4::date, $5::date, $6,
+       $7, $8, $9, $10,
+       $11, $12, $13, $14,
+       $15, $16::jsonb, NOW()
+     )`,
+    [
+      opts.snapshotType,
+      opts.metricKey,
+      opts.metricLabel,
+      opts.periodoInicial,
+      opts.periodoFinal,
+      opts.periodoTipo,
+      opts.valor ?? null,
+      opts.percentual ?? null,
+      opts.pontuacao ?? null,
+      opts.mediaSemZerados ?? null,
+      opts.quantidadePlanos ?? 0,
+      opts.quantidadeBase ?? 0,
+      opts.totalDespachos ?? 0,
+      opts.despachosZerados ?? 0,
+      opts.sourceFile,
+      JSON.stringify(opts.metadata ?? {}),
+    ]
+  );
+}
+
+async function insertIptServiceSnapshots(
+  client: PoolClient,
+  opts: {
+    periodoInicial: string;
+    periodoFinal: string;
+    periodoTipo: ReportReferenceMode;
+    sourceFile: string;
+  }
+): Promise<number> {
+  const res = await client.query<{
+    tipo_servico: string | null;
+    quantidade_planos: string;
+    total_despachos: string;
+    despachos_zerados: string;
+    percentual: string | null;
+    media_sem_zerados: string | null;
+  }>(
+    `SELECT
+       COALESCE(NULLIF(TRIM(tipo_servico), ''), 'Nao informado') AS tipo_servico,
+       COUNT(DISTINCT plano)::int AS quantidade_planos,
+       COUNT(*)::int AS total_despachos,
+       COUNT(*) FILTER (WHERE COALESCE(percentual_execucao, 0) <= 0)::int AS despachos_zerados,
+       ROUND(AVG(percentual_execucao), 4) AS percentual,
+       ROUND(AVG(percentual_execucao) FILTER (WHERE percentual_execucao > 0), 4) AS media_sem_zerados
+     FROM ipt_report_linhas
+     WHERE periodo_inicial = $1::date
+       AND periodo_final = $2::date
+       AND periodo_tipo = $3
+       AND LOWER(COALESCE(status, '')) LIKE '%encerrado%'
+       AND percentual_execucao IS NOT NULL
+     GROUP BY 1
+     ORDER BY 1`,
+    [opts.periodoInicial, opts.periodoFinal, opts.periodoTipo]
+  );
+
+  let upserted = 0;
+  for (const row of res.rows) {
+    const label = row.tipo_servico || "Nao informado";
+    const key = normalizeSnapshotKey(label) || "nao_informado";
+    await insertMetricSnapshot(client, {
+      snapshotType: "ipt_servico",
+      metricKey: key,
+      metricLabel: label,
+      periodoInicial: opts.periodoInicial,
+      periodoFinal: opts.periodoFinal,
+      periodoTipo: opts.periodoTipo,
+      valor: row.percentual != null ? Number(row.percentual) : null,
+      percentual: row.percentual != null ? Number(row.percentual) : null,
+      mediaSemZerados: row.media_sem_zerados != null ? Number(row.media_sem_zerados) : null,
+      quantidadePlanos: Number(row.quantidade_planos ?? 0),
+      totalDespachos: Number(row.total_despachos ?? 0),
+      despachosZerados: Number(row.despachos_zerados ?? 0),
+      sourceFile: opts.sourceFile,
+      metadata: { generated_from: "ipt_report_linhas" },
+    });
+    upserted += 1;
+  }
+  return upserted;
+}
+
+function calcularMediaIfPorSubprefeituraSnapshot(
+  bySigla: Record<string, { total: number; sem_irregularidade: number }>
+): number {
+  const percentuais = SUB_SIGLAS.map((sigla) => {
+    const { total, sem_irregularidade } = bySigla[sigla];
+    return total > 0 ? (sem_irregularidade / total) * 100 : 0;
+  });
+  const somaPercentuais = percentuais.reduce((acc, value) => acc + value, 0);
+  const divisor = percentuais.some((value) => value === 0) ? 3 : 4;
+  return somaPercentuais / divisor;
+}
+
+async function getIptPercentFromReportSnapshot(
+  client: PoolClient,
+  inicio: string,
+  fim: string
+): Promise<{ percentual: number; base: number } | null> {
+  const reportRes = await client.query(
+    `SELECT plano, percentual_execucao, status
+     FROM ipt_report_linhas
+     WHERE data_estimada >= $1::date AND data_estimada <= $2::date`,
+    [inicio, fim]
+  );
+  const porPlano = new Map<string, number[]>();
+  for (const row of reportRes.rows as Array<{ plano: string; percentual_execucao: string | number | null; status: string | null }>) {
+    if (!isReportStatusEncerrado(row.status)) continue;
+    const plano = normalizarSetor(String(row.plano ?? "").trim());
+    if (!plano) continue;
+    const pctRaw = Number(row.percentual_execucao);
+    if (!Number.isFinite(pctRaw)) continue;
+    const pctDecimal = Math.min(1, Math.max(0, pctRaw > 1 ? pctRaw / 100 : pctRaw));
+    const arr = porPlano.get(plano) ?? [];
+    arr.push(pctDecimal);
+    porPlano.set(plano, arr);
+  }
+  const ordens: Array<{ percentual: number }> = [];
+  for (const arr of porPlano.values()) {
+    const max = Math.max(...arr);
+    const media = arr.reduce((a, b) => a + b, 0) / arr.length;
+    const blend = 0.48 * max + 0.52 * media;
+    ordens.push({ percentual: Math.min(1, Math.max(0, blend)) });
+  }
+  if (ordens.length === 0) return null;
+  const pf = calcularPF({ P: ordens.length, R: 1, F: 1, ordens });
+  if (pf == null) return null;
+  return { percentual: Number((pf * 100).toFixed(2)), base: ordens.length };
+}
+
+async function snapshotIndicadoresFromDb(
+  client: PoolClient,
+  opts: {
+    periodoInicial: string;
+    periodoFinal: string;
+    periodoTipo: string;
+    sourceFile: string;
+    includeIaIrd?: boolean;
+    includeIf?: boolean;
+    includeIpt?: boolean;
+  }
+): Promise<number> {
+  let saved = 0;
+  let iaPontuacao: number | null = null;
+  let irdPontuacao: number | null = null;
+  let ifPontuacao: number | null = null;
+  let iptPontuacao: number | null = null;
+  let hasSacSource = false;
+  let hasIfSource = false;
+  let hasIptSource = false;
+
+  if (opts.includeIaIrd) {
+    const iaTotal = await client.query(
+      `SELECT COUNT(*) AS total,
+              COUNT(*) FILTER (WHERE UPPER(TRIM(COALESCE(responsividade_execucao, ''))) = 'SIM') AS no_prazo,
+              COUNT(*) FILTER (WHERE UPPER(TRIM(COALESCE(responsividade_execucao, ''))) = 'NÃƒO') AS fora_prazo
+       FROM sacs
+       WHERE data_registro >= $1::date AND data_registro < ($2::date + interval '1 day')
+         AND source_file = $3
+         AND (finalizado_fora_de_escopo IS NULL OR UPPER(TRIM(finalizado_fora_de_escopo)) = 'NÃƒO')
+         AND TRIM(classificacao_do_servico) = 'SolicitaÃ§Ã£o'`,
+      [opts.periodoInicial, opts.periodoFinal, opts.sourceFile]
+    );
+    const iaRow = iaTotal.rows[0];
+    const noPrazo = Number(iaRow?.no_prazo ?? 0);
+    const foraPrazo = Number(iaRow?.fora_prazo ?? 0);
+    const totalCalculoIA = noPrazo + foraPrazo;
+    hasSacSource = Number(iaRow?.total ?? 0) > 0;
+    if (hasSacSource && totalCalculoIA > 0) {
+      const ia = pontuacaoIA(noPrazo, totalCalculoIA);
+      iaPontuacao = ia.pontuacao;
+      await insertMetricSnapshot(client, {
+        snapshotType: "indicador",
+        metricKey: "IA",
+        metricLabel: "IA",
+        periodoInicial: opts.periodoInicial,
+        periodoFinal: opts.periodoFinal,
+        periodoTipo: opts.periodoTipo,
+        valor: ia.valor,
+        percentual: ia.percentual ?? ia.valor,
+        pontuacao: ia.pontuacao,
+        quantidadeBase: totalCalculoIA,
+        sourceFile: opts.sourceFile,
+        metadata: { no_prazo: noPrazo, fora_prazo: foraPrazo },
+      });
+      saved += 1;
+    }
+
+    const irdCount = await client.query(
+      `SELECT COUNT(*) AS total FROM sacs
+       WHERE data_registro >= $1::date AND data_registro < ($2::date + interval '1 day')
+         AND source_file = $3
+         AND (finalizado_fora_de_escopo IS NULL OR UPPER(TRIM(finalizado_fora_de_escopo)) = 'NÃƒO')
+         AND TRIM(classificacao_do_servico) = 'ReclamaÃ§Ã£o'
+         AND (procedente_por_status IS NOT NULL AND UPPER(TRIM(procedente_por_status)) = 'PROCEDE')`,
+      [opts.periodoInicial, opts.periodoFinal, opts.sourceFile]
+    );
+    if (hasSacSource) {
+      const reclamacoes = Number(irdCount.rows[0]?.total ?? 0);
+      const ird = pontuacaoIRD(reclamacoes);
+      irdPontuacao = ird.pontuacao;
+      await insertMetricSnapshot(client, {
+        snapshotType: "indicador",
+        metricKey: "IRD",
+        metricLabel: "IRD",
+        periodoInicial: opts.periodoInicial,
+        periodoFinal: opts.periodoFinal,
+        periodoTipo: opts.periodoTipo,
+        valor: ird.valor,
+        pontuacao: ird.pontuacao,
+        quantidadeBase: reclamacoes,
+        sourceFile: opts.sourceFile,
+        metadata: { reclamacoes_procedentes: reclamacoes },
+      });
+      saved += 1;
+    }
+  }
+
+  if (opts.includeIf) {
+    const ifExcludeSql = BFS_IF_EXCLUSAO_SQL.map((_, i) => `tipo_servico NOT ILIKE $${4 + i}`).join(" AND ");
+    const ifFiscalSql = sqlBfsFiscalNaoEhSelimp();
+    const ifByRegional = await client.query(
+      `SELECT regional,
+              COUNT(*) AS total,
+              COUNT(*) FILTER (WHERE TRIM(status) = 'Sem Irregularidades') AS sem_irregularidade
+       FROM bfs
+       WHERE data_fiscalizacao >= $1::date AND data_fiscalizacao < ($2::date + interval '1 day')
+         AND source_file = $3
+         AND ${ifExcludeSql}
+         AND ${ifFiscalSql}
+       GROUP BY regional`,
+      [opts.periodoInicial, opts.periodoFinal, opts.sourceFile, ...BFS_IF_EXCLUSAO_SQL]
+    );
+    const bySigla: Record<string, { total: number; sem_irregularidade: number }> = {};
+    for (const sigla of SUB_SIGLAS) bySigla[sigla] = { total: 0, sem_irregularidade: 0 };
+    for (const row of ifByRegional.rows as Array<{ regional: string; total: string; sem_irregularidade: string }>) {
+      const sigla = regionalToSigla(row.regional);
+      if (sigla && bySigla[sigla]) {
+        bySigla[sigla].total += Number(row.total ?? 0);
+        bySigla[sigla].sem_irregularidade += Number(row.sem_irregularidade ?? 0);
+      }
+    }
+    const totalBfs = Object.values(bySigla).reduce((a, x) => a + x.total, 0);
+    hasIfSource = totalBfs > 0;
+    if (hasIfSource) {
+      const semIrregularidade = Object.values(bySigla).reduce((a, x) => a + x.sem_irregularidade, 0);
+      const percentual = calcularMediaIfPorSubprefeituraSnapshot(bySigla);
+      const ifInd = pontuacaoIFFromPercentual(percentual);
+      ifPontuacao = ifInd.pontuacao;
+      await insertMetricSnapshot(client, {
+        snapshotType: "indicador",
+        metricKey: "IF",
+        metricLabel: "IF",
+        periodoInicial: opts.periodoInicial,
+        periodoFinal: opts.periodoFinal,
+        periodoTipo: opts.periodoTipo,
+        valor: ifInd.valor,
+        percentual: ifInd.percentual ?? percentual,
+        pontuacao: ifInd.pontuacao,
+        quantidadeBase: totalBfs,
+        sourceFile: opts.sourceFile,
+        metadata: { sem_irregularidade: semIrregularidade, if_por_sub: bySigla },
+      });
+      saved += 1;
+    }
+  }
+
+  if (opts.includeIpt) {
+    const iptPercent = await getIptPercentFromReportSnapshot(client, opts.periodoInicial, opts.periodoFinal);
+    hasIptSource = iptPercent != null;
+    if (iptPercent) {
+      const ipt = pontuacaoIPT(iptPercent.percentual);
+      iptPontuacao = ipt.pontuacao;
+      await insertMetricSnapshot(client, {
+        snapshotType: "indicador",
+        metricKey: "IPT",
+        metricLabel: "IPT",
+        periodoInicial: opts.periodoInicial,
+        periodoFinal: opts.periodoFinal,
+        periodoTipo: opts.periodoTipo,
+        valor: ipt.valor,
+        percentual: ipt.percentual,
+        pontuacao: ipt.pontuacao,
+        quantidadeBase: iptPercent.base,
+        sourceFile: opts.sourceFile,
+        metadata: { generated_from: "ipt_report_linhas" },
+      });
+      saved += 1;
+    }
+  }
+
+  saved += await snapshotAdcIfComplete(client, {
+    periodoInicial: opts.periodoInicial,
+    periodoFinal: opts.periodoFinal,
+    periodoTipo: opts.periodoTipo,
+    sourceFile: opts.sourceFile,
+  });
+
+  return saved;
+}
+
+async function snapshotAdcIfComplete(
+  client: PoolClient,
+  opts: {
+    periodoInicial: string;
+    periodoFinal: string;
+    periodoTipo: string;
+    sourceFile: string;
+  }
+): Promise<number> {
+  const r = await client.query(
+    `SELECT DISTINCT ON (metric_key)
+       id,
+       metric_key,
+       pontuacao,
+       snapshot_at
+     FROM metric_snapshots
+     WHERE snapshot_type = 'indicador'
+       AND metric_key IN ('IA', 'IRD', 'IF', 'IPT')
+       AND periodo_final >= $1::date
+       AND periodo_inicial <= $2::date
+       AND pontuacao IS NOT NULL
+     ORDER BY metric_key, snapshot_at DESC, id DESC`,
+    [opts.periodoInicial, opts.periodoFinal]
+  );
+  const byKey = new Map<string, { id: number; pontuacao: number; snapshot_at: Date | string }>();
+  for (const row of r.rows as Array<{ id: number; metric_key: string; pontuacao: string | number; snapshot_at: Date | string }>) {
+    const pontuacao = Number(row.pontuacao);
+    if (!Number.isFinite(pontuacao)) continue;
+    byKey.set(row.metric_key, { id: Number(row.id), pontuacao, snapshot_at: row.snapshot_at });
+  }
+  const ia = byKey.get("IA");
+  const ird = byKey.get("IRD");
+  const ifInd = byKey.get("IF");
+  const ipt = byKey.get("IPT");
+  if (!ia || !ird || !ifInd || !ipt) return 0;
+
+  const total = Math.min(ia.pontuacao, 20) + Math.min(ird.pontuacao, 20) + Math.min(ifInd.pontuacao, 20) + ipt.pontuacao;
+  const latestSourceSnapshot = [ia, ird, ifInd, ipt]
+    .map((item) => (item.snapshot_at instanceof Date ? item.snapshot_at.getTime() : new Date(item.snapshot_at).getTime()))
+    .filter((time) => Number.isFinite(time))
+    .sort((a, b) => b - a)[0];
+  const latestSourceIso = latestSourceSnapshot ? new Date(latestSourceSnapshot).toISOString() : null;
+  const alreadyExists = await client.query(
+    `SELECT 1
+     FROM metric_snapshots
+     WHERE snapshot_type = 'indicador'
+       AND metric_key = 'ADC'
+       AND periodo_inicial = $1::date
+       AND periodo_final = $2::date
+       AND metadata->>'latest_component_snapshot_at' = $3
+     LIMIT 1`,
+    [opts.periodoInicial, opts.periodoFinal, latestSourceIso]
+  );
+  if ((alreadyExists.rowCount ?? 0) > 0) return 0;
+
+    await insertMetricSnapshot(client, {
+      snapshotType: "indicador",
+      metricKey: "ADC",
+      metricLabel: "ADC",
+      periodoInicial: opts.periodoInicial,
+      periodoFinal: opts.periodoFinal,
+      periodoTipo: opts.periodoTipo,
+      valor: total,
+      pontuacao: total,
+      sourceFile: opts.sourceFile,
+      metadata: {
+        ia_snapshot_id: ia.id,
+        ird_snapshot_id: ird.id,
+        if_snapshot_id: ifInd.id,
+        ipt_snapshot_id: ipt.id,
+        ia: ia.pontuacao,
+        ird: ird.pontuacao,
+        if: ifInd.pontuacao,
+        ipt: ipt.pontuacao,
+        latest_component_snapshot_at: latestSourceIso,
+      },
+    });
+  return 1;
+}
+
 type ReportReferenceMode = "d_minus_1" | "fim_de_semana" | "mensal";
 type SessionUploadType =
   | "sacs"
@@ -205,6 +654,8 @@ interface UploadSummary {
   periodo_inicial?: string;
   periodo_final?: string;
   ordens_encerradas?: number;
+  snapshots_indicadores?: number;
+  snapshots_servicos?: number;
   tipo_detectado?: SessionUploadType;
   sessao?: SessionKey;
   source_file?: string;
@@ -426,6 +877,8 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
           periodo_inicial: summary.periodo_inicial ?? null,
           periodo_final: summary.periodo_final ?? null,
           ordens_encerradas: summary.ordens_encerradas ?? null,
+          snapshots_indicadores: summary.snapshots_indicadores ?? null,
+          snapshots_servicos: summary.snapshots_servicos ?? null,
         }),
       ]
     );
@@ -573,6 +1026,16 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         }
         invalidatePrefix("sacs");
         invalidatePrefix("kpis");
+        const range = getImportDateRange(rows.map((r) => r.data_registro));
+        const snapshotsIndicadores = range
+          ? await snapshotIndicadoresFromDb(client, {
+              periodoInicial: range.inicio,
+              periodoFinal: range.fim,
+              periodoTipo: "importacao",
+              sourceFile,
+              includeIaIrd: true,
+            })
+          : 0;
         return {
           processados: inserted + updated,
           total: rows.length,
@@ -581,6 +1044,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
           duplicados: 0,
           erros: 0,
           ultimo_import: new Date().toISOString(),
+          snapshots_indicadores: snapshotsIndicadores,
         };
       } finally {
         client.release();
@@ -646,6 +1110,16 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         invalidatePrefix("cnc");
         invalidatePrefix("cnc_defesa");
         invalidatePrefix("kpis");
+        const range = getImportDateRange(rows.map((r) => r.data_fiscalizacao));
+        const snapshotsIndicadores = range
+          ? await snapshotIndicadoresFromDb(client, {
+              periodoInicial: range.inicio,
+              periodoFinal: range.fim,
+              periodoTipo: "importacao",
+              sourceFile,
+              includeIf: true,
+            })
+          : 0;
         return {
           processados: inserted + updated,
           total: rows.length,
@@ -654,6 +1128,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
           duplicados: 0,
           erros: 0,
           ultimo_import: new Date().toISOString(),
+          snapshots_indicadores: snapshotsIndicadores,
         };
       } finally {
         client.release();
@@ -1632,13 +2107,25 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
           inserted += 1;
         }
 
+        const snapshotsGerados = await insertIptServiceSnapshots(client, {
+          periodoInicial: inicio,
+          periodoFinal: fim,
+          periodoTipo: modoReferencia,
+          sourceFile,
+        });
+        const snapshotsIndicadores = await snapshotIndicadoresFromDb(client, {
+          periodoInicial: inicio,
+          periodoFinal: fim,
+          periodoTipo: modoReferencia,
+          sourceFile,
+          includeIpt: true,
+        });
+
         await client.query("COMMIT");
         invalidatePrefix("ipt_preview");
         invalidatePrefix("kpis");
 
-        const encerradas = linhasComData.filter(
-          (l) => l.status.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").includes("encerrado")
-        ).length;
+        const encerradas = linhasComData.filter((l) => isReportStatusEncerrado(l.status)).length;
         const altaConfianca = linhasComData.filter((l) => l.confianca_estimativa === "alta").length;
         const mediaConfianca = linhasComData.filter((l) => l.confianca_estimativa === "media").length;
         const baixaConfianca = linhasComData.filter((l) => l.confianca_estimativa === "baixa").length;
@@ -1656,6 +2143,8 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
           periodo_inicial: inicio,
           periodo_final: fim,
           ordens_encerradas: encerradas,
+          snapshots_servicos: snapshotsGerados,
+          snapshots_indicadores: snapshotsIndicadores,
           source_file: sourceFile,
           estimativa: {
             alta_confianca: altaConfianca,

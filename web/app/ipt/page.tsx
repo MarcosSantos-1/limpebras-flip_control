@@ -47,6 +47,7 @@ import { Label } from "@/components/ui/label";
 import { Button as UiButton } from "@/components/ui/button";
 import { DateRangePicker, getEsteMesRange } from "@/components/ui/date-range-picker";
 import { MainLayout } from "@/components/layout/main-layout";
+import { EvolutionChartModal, type EvolutionSeriesPoint } from "@/components/evolution-chart-modal";
 import {
   Select,
   SelectContent,
@@ -418,6 +419,10 @@ export default function IPTPage() {
   const [recentlySavedKeys, setRecentlySavedKeys] = useState<Set<string>>(new Set());
   /** Menu ações da obs. diária: `plano::YYYY-MM-DD` — um menu aberto por vez */
   const [obsDiariaMenuKey, setObsDiariaMenuKey] = useState<string | null>(null);
+  const [serviceEvolutionOpen, setServiceEvolutionOpen] = useState(false);
+  const [serviceEvolutionTitle, setServiceEvolutionTitle] = useState("");
+  const [serviceEvolutionPoints, setServiceEvolutionPoints] = useState<EvolutionSeriesPoint[]>([]);
+  const [serviceEvolutionLoading, setServiceEvolutionLoading] = useState(false);
   const { previewCards: iptPreviewCards, previewTable: iptPreviewTable, observacoes, kpis: kpisData, isLoading: loading, mutate: loadData } = useIptData(
     selectedMonth,
     tableScope,
@@ -432,6 +437,35 @@ export default function IPTPage() {
     }),
     [kpisData]
   );
+
+  const handleServiceEvolutionClick = async (tipoServico: string) => {
+    const label = tipoServico || "Não informado";
+    const year = selectedMonth.getFullYear();
+    const month = selectedMonth.getMonth() + 1;
+    const lastDay = new Date(year, month, 0).getDate();
+    const inicio = `${year}-01-01`;
+    const fim = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+    setServiceEvolutionTitle(label);
+    setServiceEvolutionOpen(true);
+    setServiceEvolutionLoading(true);
+    setServiceEvolutionPoints([]);
+    try {
+      const response = await apiService.getIptServiceSnapshots(label, inicio, fim);
+      setServiceEvolutionPoints(
+        response.pontos.map((point) => ({
+          date: point.snapshot_at || point.periodo_final,
+          value: point.percentual,
+          secondaryValue: point.media_sem_zerados,
+          count: point.total_despachos,
+          meta: `${point.quantidade_planos} planos | ${point.despachos_zerados} zerados`,
+        }))
+      );
+    } catch {
+      setServiceEvolutionPoints([]);
+    } finally {
+      setServiceEvolutionLoading(false);
+    }
+  };
 
   useEffect(() => {
     const handlePointerDown = (event: MouseEvent) => {
@@ -1568,9 +1602,11 @@ export default function IPTPage() {
             <CardContent>
               <div className="space-y-2">
                 {topServicos.map((item) => (
-                  <div
+                  <button
+                    type="button"
                     key={item.tipo_servico}
-                    className="group rounded-xl bg-background/60 p-3 shadow-sm transition-all hover:shadow-md hover:bg-cyan-500/5 hover:ring-1 hover:ring-cyan-500/20 cursor-default"
+                    onClick={() => handleServiceEvolutionClick(item.tipo_servico || "Não informado")}
+                    className="group w-full rounded-xl bg-background/60 p-3 text-left shadow-sm transition-all hover:shadow-md hover:bg-cyan-500/5 hover:ring-1 hover:ring-cyan-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
                     title={`${item.total_despachos ?? 0} despachos SELIMP no mês${item.despachos_zerados != null ? ` · ${item.despachos_zerados} com 0%` : ""}`}
                   >
                     <div className="mb-2 flex items-center justify-between gap-2">
@@ -1606,7 +1642,7 @@ export default function IPTPage() {
                         {item.total_despachos ?? 0} despachos
                       </span>
                     </div>
-                  </div>
+                  </button>
                 ))}
               </div>
               {!loading && topServicos.length === 0 && (
@@ -1615,6 +1651,18 @@ export default function IPTPage() {
             </CardContent>
           </Card>
         </div>
+
+        <EvolutionChartModal
+          open={serviceEvolutionOpen}
+          onOpenChange={setServiceEvolutionOpen}
+          title={`Evolução do serviço - ${serviceEvolutionTitle}`}
+          description="Snapshots salvos nas importações do Report SELIMP para o ano do mês selecionado."
+          primaryLabel="% com zerados"
+          secondaryLabel="% sem zerados"
+          points={serviceEvolutionPoints}
+          loading={serviceEvolutionLoading}
+          emptyMessage="Ainda não há snapshots para este serviço no período."
+        />
 
         <Card className="border-0 shadow-lg">
           <CardHeader>

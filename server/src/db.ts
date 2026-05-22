@@ -410,6 +410,59 @@ export async function runMigrations() {
     await client.query("CREATE INDEX IF NOT EXISTS idx_report_linhas_status ON ipt_report_linhas(status)").catch(() => {});
     await client.query("CREATE UNIQUE INDEX IF NOT EXISTS ux_report_linhas_plano_periodo_pos ON ipt_report_linhas(plano, periodo_inicial, periodo_final, posicao_original)").catch(() => {});
 
+    await client
+      .query(
+        `DO $$
+         BEGIN
+           IF to_regclass('public.metric_snapshots') IS NULL
+              AND to_regclass('public.ipt_metric_snapshots') IS NOT NULL THEN
+             ALTER TABLE ipt_metric_snapshots RENAME TO metric_snapshots;
+           END IF;
+         END $$;`
+      )
+      .catch(() => {});
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS metric_snapshots (
+        id SERIAL PRIMARY KEY,
+        snapshot_type TEXT NOT NULL,
+        metric_key TEXT NOT NULL,
+        metric_label TEXT NOT NULL,
+        snapshot_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        periodo_inicial DATE NOT NULL,
+        periodo_final DATE NOT NULL,
+        periodo_tipo TEXT NOT NULL,
+        valor NUMERIC(12,4),
+        percentual NUMERIC(8,4),
+        pontuacao NUMERIC(8,4),
+        media_sem_zerados NUMERIC(8,4),
+        quantidade_planos INTEGER NOT NULL DEFAULT 0,
+        quantidade_base INTEGER NOT NULL DEFAULT 0,
+        total_despachos INTEGER NOT NULL DEFAULT 0,
+        despachos_zerados INTEGER NOT NULL DEFAULT 0,
+        source_file TEXT,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client.query("ALTER TABLE metric_snapshots ADD COLUMN IF NOT EXISTS snapshot_at TIMESTAMPTZ NOT NULL DEFAULT NOW()").catch(() => {});
+    await client.query("ALTER TABLE metric_snapshots ADD COLUMN IF NOT EXISTS valor NUMERIC(12,4)").catch(() => {});
+    await client.query("ALTER TABLE metric_snapshots ADD COLUMN IF NOT EXISTS pontuacao NUMERIC(8,4)").catch(() => {});
+    await client.query("ALTER TABLE metric_snapshots ADD COLUMN IF NOT EXISTS quantidade_base INTEGER NOT NULL DEFAULT 0").catch(() => {});
+    await client
+      .query(
+        `CREATE INDEX IF NOT EXISTS idx_metric_snapshots_lookup
+         ON metric_snapshots(snapshot_type, metric_key, snapshot_at)`
+      )
+      .catch(() => {});
+    await client
+      .query(
+        `CREATE INDEX IF NOT EXISTS idx_metric_snapshots_periodo
+         ON metric_snapshots(snapshot_type, periodo_inicial, periodo_final)`
+      )
+      .catch(() => {});
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS ipt_ddmx_varricao (
         id SERIAL PRIMARY KEY,

@@ -439,6 +439,8 @@ function calcularMediaIfPorSubprefeitura(
   return somaPercentuais / divisor;
 }
 
+type DashboardIndicadorTipo = "IA" | "IRD" | "IF" | "IPT" | "ADC";
+
 export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
   /** KPIs do dashboard: contagens e indicadores no período */
   fastify.get<{
@@ -987,8 +989,124 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
-  fastify.get("/dashboard/indicadores/historico", async (_request, _reply) => {
-    return { historico: [] };
+  fastify.get<{
+    Querystring: { tipo?: DashboardIndicadorTipo; periodo_inicial?: string; periodo_final?: string };
+  }>("/dashboard/indicadores/historico", async (request, reply) => {
+    const tipo = String(request.query.tipo ?? "ADC").toUpperCase() as DashboardIndicadorTipo;
+    const inicio = String(request.query.periodo_inicial ?? "").trim();
+    const fim = String(request.query.periodo_final ?? "").trim();
+    if (!["IA", "IRD", "IF", "IPT", "ADC"].includes(tipo)) {
+      return reply.code(400).send({ detail: "tipo deve ser IA, IRD, IF, IPT ou ADC." });
+    }
+    if (!isDateYmd(inicio) || !isDateYmd(fim) || inicio > fim) {
+      return reply.code(400).send({ detail: "Informe periodo_inicial e periodo_final validos (YYYY-MM-DD)." });
+    }
+
+    const client = await pool.connect();
+    try {
+      const r = await client.query(
+        `SELECT
+           id,
+           snapshot_at,
+           periodo_inicial::text AS periodo_inicial,
+           periodo_final::text AS periodo_final,
+           periodo_tipo,
+           valor,
+           percentual,
+           pontuacao,
+           quantidade_base,
+           source_file,
+           metadata
+         FROM metric_snapshots
+         WHERE snapshot_type = 'indicador'
+           AND metric_key = $1
+           AND periodo_final >= $2::date
+           AND periodo_inicial <= $3::date
+         ORDER BY snapshot_at, id`,
+        [tipo, inicio, fim]
+      );
+      const historico = r.rows.map((row: any) => ({
+        id: Number(row.id),
+        data: row.snapshot_at instanceof Date ? row.snapshot_at.toISOString() : row.snapshot_at,
+        tipo,
+        valor: row.valor != null ? Number(row.valor) : row.percentual != null ? Number(row.percentual) : null,
+        percentual: row.percentual != null ? Number(row.percentual) : null,
+        pontuacao: row.pontuacao != null ? Number(row.pontuacao) : null,
+        periodo_inicial: row.periodo_inicial,
+        periodo_final: row.periodo_final,
+        periodo_tipo: row.periodo_tipo,
+        quantidade_base: Number(row.quantidade_base ?? 0),
+        source_file: row.source_file,
+        metadata: row.metadata ?? {},
+      }));
+      return { tipo, periodo: { inicial: inicio, final: fim }, historico };
+    } finally {
+      client.release();
+    }
+  });
+
+  fastify.get<{
+    Querystring: { tipo_servico?: string; periodo_inicial?: string; periodo_final?: string };
+  }>("/ipt/snapshots/servicos", async (request, reply) => {
+    const tipoServico = String(request.query.tipo_servico ?? "").trim();
+    const inicio = String(request.query.periodo_inicial ?? "").trim();
+    const fim = String(request.query.periodo_final ?? "").trim();
+    if (!tipoServico) return reply.code(400).send({ detail: "tipo_servico e obrigatorio." });
+    if (!isDateYmd(inicio) || !isDateYmd(fim) || inicio > fim) {
+      return reply.code(400).send({ detail: "Informe periodo_inicial e periodo_final validos (YYYY-MM-DD)." });
+    }
+
+    const client = await pool.connect();
+    try {
+      const r = await client.query(
+        `SELECT
+           id,
+           snapshot_at,
+           metric_key,
+           metric_label,
+           periodo_inicial::text AS periodo_inicial,
+           periodo_final::text AS periodo_final,
+           periodo_tipo,
+           percentual,
+           media_sem_zerados,
+           quantidade_planos,
+           total_despachos,
+           despachos_zerados,
+           source_file,
+           metadata,
+           updated_at
+         FROM metric_snapshots
+         WHERE snapshot_type = 'ipt_servico'
+           AND metric_label = $1
+           AND periodo_final >= $2::date
+           AND periodo_inicial <= $3::date
+         ORDER BY snapshot_at, id`,
+        [tipoServico, inicio, fim]
+      );
+      return {
+        tipo_servico: tipoServico,
+        periodo: { inicial: inicio, final: fim },
+        pontos: r.rows.map((row: any) => ({
+          id: Number(row.id),
+          snapshot_at: row.snapshot_at instanceof Date ? row.snapshot_at.toISOString() : row.snapshot_at,
+          metric_key: row.metric_key,
+          metric_label: row.metric_label,
+          periodo_inicial: row.periodo_inicial,
+          periodo_final: row.periodo_final,
+          periodo_tipo: row.periodo_tipo,
+          percentual: row.percentual != null ? Number(row.percentual) : null,
+          media_sem_zerados: row.media_sem_zerados != null ? Number(row.media_sem_zerados) : null,
+          quantidade_planos: Number(row.quantidade_planos ?? 0),
+          total_despachos: Number(row.total_despachos ?? 0),
+          despachos_zerados: Number(row.despachos_zerados ?? 0),
+          source_file: row.source_file,
+          metadata: row.metadata ?? {},
+          updated_at: row.updated_at,
+        })),
+      };
+    } finally {
+      client.release();
+    }
   });
 
   /** Diagnóstico: meses com report SELIMP em ipt_report_linhas. */
