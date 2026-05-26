@@ -731,7 +731,7 @@ export default function ExplicacaoIndicadoresPage() {
                 IF por sub = (sem irregularidades / total BFS escalonados) × 100
               </div>
               <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-2">
-                Média dos 4 percentuais (JT, CV, ST, MG) = IF final. BFS do período, exceto 3 serviços excluídos e exceto fiscalizações em que o fiscal (coluna Fiscal) começa por &quot;SELIMP -&quot;.
+                Média dos 4 percentuais (JT, CV, ST, MG) = IF final. BFS do período, exceto 5 serviços excluídos e exceto fiscalizações em que o fiscal (coluna Fiscal) começa por &quot;SELIMP -&quot;.
               </p>
             </div>
 
