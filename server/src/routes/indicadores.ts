@@ -1198,19 +1198,22 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
            periodo_final::text AS periodo_final,
            periodo_tipo,
            percentual,
+           percentual_dia,
            media_sem_zerados,
            quantidade_planos,
            total_despachos,
+           total_despachos_dia,
            despachos_zerados,
+           despachos_zerados_dia,
            source_file,
            metadata,
            updated_at
          FROM metric_snapshots
-         WHERE snapshot_type = 'ipt_servico'
+         WHERE snapshot_type = 'ipt_servico_acc'
            AND metric_label = $1
            AND periodo_final >= $2::date
-           AND periodo_inicial <= $3::date
-         ORDER BY snapshot_at, id`,
+           AND periodo_final <= $3::date
+         ORDER BY periodo_final, id`,
         [tipoServico, inicio, fim]
       );
       return {
@@ -1225,10 +1228,13 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
           periodo_final: row.periodo_final,
           periodo_tipo: row.periodo_tipo,
           percentual: row.percentual != null ? Number(row.percentual) : null,
+          percentual_dia: row.percentual_dia != null ? Number(row.percentual_dia) : null,
           media_sem_zerados: row.media_sem_zerados != null ? Number(row.media_sem_zerados) : null,
           quantidade_planos: Number(row.quantidade_planos ?? 0),
           total_despachos: Number(row.total_despachos ?? 0),
+          total_despachos_dia: Number(row.total_despachos_dia ?? 0),
           despachos_zerados: Number(row.despachos_zerados ?? 0),
+          despachos_zerados_dia: Number(row.despachos_zerados_dia ?? 0),
           source_file: row.source_file,
           metadata: row.metadata ?? {},
           updated_at: row.updated_at,
@@ -1346,22 +1352,25 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
       }
       const r = await client.query(
         `SELECT
-           periodo_inicial::text AS data,
+           periodo_final::text AS data,
            metric_key,
            metric_label AS tipo_servico,
            percentual,
+           percentual_dia,
            media_sem_zerados,
            quantidade_planos,
            total_despachos,
+           total_despachos_dia,
            despachos_zerados,
+           despachos_zerados_dia,
            source_file,
            snapshot_at
          FROM metric_snapshots
-         WHERE snapshot_type = 'ipt_servico_diario'
-           AND periodo_inicial >= $1::date
+         WHERE snapshot_type = 'ipt_servico_acc'
+           AND periodo_final >= $1::date
            AND periodo_final <= $2::date
            ${filterServico}
-         ORDER BY periodo_inicial, metric_label`,
+         ORDER BY periodo_final, metric_label`,
         params,
       );
       return {
@@ -1372,10 +1381,13 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
           tipo_servico: row.tipo_servico,
           metric_key: row.metric_key,
           percentual_com_zeros: row.percentual != null ? Number(row.percentual) : null,
+          percentual_dia: row.percentual_dia != null ? Number(row.percentual_dia) : null,
           percentual_sem_zeros: row.media_sem_zerados != null ? Number(row.media_sem_zerados) : null,
           planos: Number(row.quantidade_planos ?? 0),
           despachos: Number(row.total_despachos ?? 0),
+          despachos_dia: Number(row.total_despachos_dia ?? 0),
           zerados: Number(row.despachos_zerados ?? 0),
+          zerados_dia: Number(row.despachos_zerados_dia ?? 0),
           source_file: row.source_file,
           snapshot_at: row.snapshot_at,
         })),
@@ -1401,8 +1413,8 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
       const r = await client.query(
         `SELECT DISTINCT metric_label AS tipo_servico, metric_key
          FROM metric_snapshots
-         WHERE snapshot_type = 'ipt_servico_diario'
-           AND periodo_inicial >= $1::date
+         WHERE snapshot_type = 'ipt_servico_acc'
+           AND periodo_final >= $1::date
            AND periodo_final <= $2::date
          ORDER BY 1`,
         [inicio, fim],

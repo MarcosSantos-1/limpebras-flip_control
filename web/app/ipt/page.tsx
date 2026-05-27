@@ -11,12 +11,14 @@ import {
   AlertTriangle,
   BarChart2,
   Battery,
+  BatteryLow,
   BatteryWarning,
   Calendar,
   Check,
   ChevronDown,
   ChevronRight,
   ChevronUp,
+  Clock,
   CloudRain,
   Cpu,
   Flag,
@@ -26,6 +28,7 @@ import {
   MessageSquare,
   Package,
   Pencil,
+  Percent,
   Plus,
   RotateCcw,
   Search,
@@ -283,22 +286,31 @@ const OBS_GLOBAL_CATEGORIES = [
     template: "Problema recorrente de bateria nos módulos deste setor. Impacto contínuo no IPT.",
   },
   {
-    id: "veiculo_inativo",
-    label: "Veículo / Módulo inativo",
-    Icon: Truck,
+    id: "nunca_pontuou",
+    label: "Nunca Pontuou",
+    Icon: Percent,
+    colorClass: "border-red-500/50 bg-red-500/10 text-red-700 dark:text-red-300 hover:bg-red-500/20",
+    activeClass: "border-red-500 bg-red-500/25 text-red-700 dark:text-red-200 ring-2 ring-red-500/40",
+    tableIconClass: "text-red-500",
+    template: "Setor nunca pontuou: percentual de execução zerado em todo o período avaliado.",
+  },
+  {
+    id: "sem_bateria",
+    label: "Sem bateria atrelada",
+    Icon: BatteryLow,
     colorClass: "border-orange-500/50 bg-orange-500/10 text-orange-700 dark:text-orange-300 hover:bg-orange-500/20",
     activeClass: "border-orange-500 bg-orange-500/25 text-orange-700 dark:text-orange-200 ring-2 ring-orange-500/40",
     tableIconClass: "text-orange-500",
-    template: "Veículo ou módulo GPS inativo neste setor. Dados ausentes por período prolongado.",
+    template: "Setor sem módulo de bateria atrelado. Não há acompanhamento de carga/comunicação.",
   },
   {
-    id: "demanda_sub",
-    label: "Demanda subprefeito",
-    Icon: Flag,
+    id: "alteracao_pendente",
+    label: "Alteração pendente",
+    Icon: Clock,
     colorClass: "border-blue-500/50 bg-blue-500/10 text-blue-700 dark:text-blue-300 hover:bg-blue-500/20",
     activeClass: "border-blue-500 bg-blue-500/25 text-blue-700 dark:text-blue-200 ring-2 ring-blue-500/40",
     tableIconClass: "text-blue-500",
-    template: "Setor com demanda especial solicitada pela subprefeitura. Execução diferenciada.",
+    template: "Alteração pendente para este setor (cadastro, cronograma ou base). Aguardando atualização.",
   },
   {
     id: "endereco_errado",
@@ -336,10 +348,14 @@ const getObsDiariaCategory = (titulo: string) => {
 
 const getObsGlobalCategory = (titulo: string) => {
   const t = (titulo ?? "").toLowerCase();
-  if (t.includes("setor incorreto") || t.includes("incorreto") || t.includes("selimp")) return OBS_GLOBAL_CATEGORIES.find((c) => c.id === "setor_incorreto")!;
-  if (t.includes("bateria")) return OBS_GLOBAL_CATEGORIES.find((c) => c.id === "bateria_recorrente")!;
-  if (t.includes("veículo") || t.includes("veiculo") || t.includes("módulo") || t.includes("modulo") || t.includes("inativo")) return OBS_GLOBAL_CATEGORIES.find((c) => c.id === "veiculo_inativo")!;
-  if (t.includes("subprefeito") || t.includes("subprefeitura") || t.includes("demanda")) return OBS_GLOBAL_CATEGORIES.find((c) => c.id === "demanda_sub")!;
+  if (t.includes("setor incorreto") || (t.includes("incorreto") && t.includes("selimp")) || t.startsWith("selimp")) return OBS_GLOBAL_CATEGORIES.find((c) => c.id === "setor_incorreto")!;
+  if (t.includes("nunca") && (t.includes("pontu") || t.includes("zerado") || t.includes("zero"))) return OBS_GLOBAL_CATEGORIES.find((c) => c.id === "nunca_pontuou")!;
+  if (t.includes("sem bateria") || t.includes("sem modulo") || t.includes("sem módulo") || (t.includes("bateria") && (t.includes("atrelad") || t.includes("ausen") || t.includes("sem ")))) return OBS_GLOBAL_CATEGORIES.find((c) => c.id === "sem_bateria")!;
+  if (t.includes("bateria recorrente") || t.includes("bateria")) return OBS_GLOBAL_CATEGORIES.find((c) => c.id === "bateria_recorrente")!;
+  if (t.includes("alteração pendente") || t.includes("alteracao pendente") || t.includes("pendente") || t.includes("aguardando") || t.includes("alteracao") || t.includes("alteração")) return OBS_GLOBAL_CATEGORIES.find((c) => c.id === "alteracao_pendente")!;
+  // Compat: títulos antigos ("Veículo / Módulo inativo", "Demanda subprefeito") caem em categorias atuais
+  if (t.includes("veículo") || t.includes("veiculo") || t.includes("módulo inativo") || t.includes("modulo inativo") || t.includes("inativo")) return OBS_GLOBAL_CATEGORIES.find((c) => c.id === "nunca_pontuou")!;
+  if (t.includes("subprefeito") || t.includes("subprefeitura") || t.includes("demanda")) return OBS_GLOBAL_CATEGORIES.find((c) => c.id === "alteracao_pendente")!;
   if (t.includes("endereço") || t.includes("endereco") || t.includes("errado")) return OBS_GLOBAL_CATEGORIES.find((c) => c.id === "endereco_errado")!;
   return OBS_GLOBAL_CATEGORIES.find((c) => c.id === "outro")!;
 };
@@ -455,7 +471,7 @@ export default function IPTPage() {
     const year = selectedMonth.getFullYear();
     const month = selectedMonth.getMonth() + 1;
     const lastDay = new Date(year, month, 0).getDate();
-    const inicio = `${year}-01-01`;
+    const inicio = format(startOfMonth(selectedMonth), "yyyy-MM-dd");
     const fim = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
     setServiceEvolutionTitle(label);
     setServiceEvolutionOpen(true);
@@ -465,11 +481,15 @@ export default function IPTPage() {
       const response = await apiService.getIptServiceSnapshots(label, inicio, fim);
       setServiceEvolutionPoints(
         response.pontos.map((point) => ({
-          date: point.snapshot_at || point.periodo_final,
+          date: point.periodo_final,
           value: point.percentual,
           secondaryValue: point.media_sem_zerados,
+          dayValue: point.percentual_dia,
           count: point.total_despachos,
-          meta: `${point.quantidade_planos} planos | ${point.despachos_zerados} zerados`,
+          dayCount: point.total_despachos_dia,
+          zeroCount: point.despachos_zerados,
+          dayZeroCount: point.despachos_zerados_dia,
+          meta: `${point.quantidade_planos} planos | ${point.despachos_zerados} zerados acumulados`,
         }))
       );
     } catch {
@@ -621,15 +641,27 @@ export default function IPTPage() {
       const byDirection = (base: number) => (dir === "asc" ? base : -base);
       let sortBase = 0;
       if (tableSort.column === "plano" || tableSort.column === "sub" || tableSort.column === "servico") {
+        // compareByPlanoStructure já aplica direção internamente
         sortBase = compareByPlanoStructure(a, b, tableSort.column, dir);
       } else if (tableSort.column === "selimp") {
-        sortBase = (toNum(a.percentual_selimp) ?? -1) - (toNum(b.percentual_selimp) ?? -1);
+        const va = toNum(a.percentual_selimp);
+        const vb = toNum(b.percentual_selimp);
+        // Nulos sempre no fim, independente da direção
+        if (va == null && vb == null) sortBase = 0;
+        else if (va == null) sortBase = 1;
+        else if (vb == null) sortBase = -1;
+        else sortBase = byDirection(va - vb);
       } else if (tableSort.column === "nossa") {
-        sortBase = (toNum(a.percentual_nosso) ?? -1) - (toNum(b.percentual_nosso) ?? -1);
+        const va = toNum(a.percentual_nosso);
+        const vb = toNum(b.percentual_nosso);
+        if (va == null && vb == null) sortBase = 0;
+        else if (va == null) sortBase = 1;
+        else if (vb == null) sortBase = -1;
+        else sortBase = byDirection(va - vb);
       } else {
         const aOrig = (a.percentual_selimp == null && a.percentual_nosso == null ? "sem_despacho" : a.origem) as string;
         const bOrig = (b.percentual_selimp == null && b.percentual_nosso == null ? "sem_despacho" : b.origem) as string;
-        sortBase = aOrig.localeCompare(bOrig, "pt-BR");
+        sortBase = byDirection(aOrig.localeCompare(bOrig, "pt-BR"));
       }
       if (sortBase !== 0) return sortBase;
 
@@ -1646,7 +1678,7 @@ export default function IPTPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <CardTitle className="text-base">Serviços (ativos)</CardTitle>
-                  <CardDescription>Todos os serviços com execução média no mês selecionado.</CardDescription>
+                  <CardDescription>Serviços com execução acumulada no mês selecionado até a data.</CardDescription>
                 </div>
                 <span className="text-xs font-medium text-muted-foreground bg-muted/50 px-2 py-1 rounded-full">
                   {topServicos.length} serviços
@@ -1661,7 +1693,7 @@ export default function IPTPage() {
                     key={item.tipo_servico}
                     onClick={() => handleServiceEvolutionClick(item.tipo_servico || "Não informado")}
                     className="group w-full rounded-xl bg-background/60 p-3 text-left shadow-sm transition-all hover:shadow-md hover:bg-cyan-500/5 hover:ring-1 hover:ring-cyan-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
-                    title={`${item.total_despachos ?? 0} despachos SELIMP no mês${item.despachos_zerados != null ? ` · ${item.despachos_zerados} com 0%` : ""}`}
+                    title={`${item.total_despachos ?? 0} despachos SELIMP acumulados no mês${item.despachos_zerados != null ? ` · ${item.despachos_zerados} com 0%` : ""}`}
                   >
                     <div className="mb-2 flex items-center justify-between gap-2">
                       <span className="truncate font-semibold text-sm group-hover:text-cyan-700 dark:group-hover:text-cyan-300 min-w-0">
@@ -1670,7 +1702,7 @@ export default function IPTPage() {
                       <div className="flex items-center gap-1.5 shrink-0">
                         <span
                           className="text-lg font-bold tabular-nums text-cyan-600 dark:text-cyan-400 underline decoration-dotted decoration-cyan-600/50 underline-offset-2 cursor-help"
-                          title="Com zerados: média do percentual SELIMP em todos os despachos do período (inclui execução 0%)."
+                          title="Com zerados: média acumulada do percentual SELIMP em todos os despachos do mês até a data (inclui execução 0%)."
                         >
                           {pct(item.media_execucao)}
                         </span>
@@ -1679,7 +1711,7 @@ export default function IPTPage() {
                         </span>
                         <span
                           className="text-base font-bold tabular-nums text-emerald-600 dark:text-emerald-400 underline decoration-dotted decoration-emerald-600/50 underline-offset-2 cursor-help"
-                          title="Sem zerados: média apenas nos despachos SELIMP com percentual maior que 0%."
+                          title="Sem zerados: média acumulada apenas nos despachos SELIMP com percentual maior que 0%."
                         >
                           {pct(item.media_sem_zerados ?? null)}
                         </span>
@@ -1710,11 +1742,12 @@ export default function IPTPage() {
           open={serviceEvolutionOpen}
           onOpenChange={setServiceEvolutionOpen}
           title={`Evolução do serviço - ${serviceEvolutionTitle}`}
-          description="Snapshots salvos nas importações do Report SELIMP para o ano do mês selecionado."
-          primaryLabel="% com zerados"
-          secondaryLabel="% sem zerados"
+          description="Percentual acumulado do Report SELIMP no mês selecionado, do dia 01 até cada data com despacho."
+          primaryLabel="% acumulado com zerados"
+          secondaryLabel="% acumulado sem zerados"
           points={serviceEvolutionPoints}
           loading={serviceEvolutionLoading}
+          showPointDetails
           emptyMessage="Ainda não há snapshots para este serviço no período."
         />
 
@@ -1738,8 +1771,8 @@ export default function IPTPage() {
                   <Truck className="h-3.5 w-3.5" />
                   Total despachos (SELIMP)
                 </p>
-                <p className="text-2xl font-bold mt-1">{iptPreviewTable?.resumo?.total_despachos_selimp ?? 0}</p>
-                <p className="text-xs font-medium opacity-80 mt-1">No período</p>
+                <p className="text-2xl font-bold mt-1">{filteredComparativo.reduce((acc, r) => acc + (r.despachos_selimp ?? 0), 0)}</p>
+                <p className="text-xs font-medium opacity-80 mt-1">Conforme filtros</p>
               </button>
               <button
                 type="button"

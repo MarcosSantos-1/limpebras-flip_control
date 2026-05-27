@@ -25,7 +25,11 @@ export type EvolutionSeriesPoint = {
   date: string
   value: number | null
   secondaryValue?: number | null
+  dayValue?: number | null
   count?: number
+  dayCount?: number
+  zeroCount?: number
+  dayZeroCount?: number
   meta?: string
 }
 
@@ -40,6 +44,7 @@ type EvolutionChartModalProps = {
   loading?: boolean
   emptyMessage?: string
   valueSuffix?: string
+  showPointDetails?: boolean
 }
 
 function formatDateLabel(value: string) {
@@ -59,6 +64,7 @@ export function EvolutionChartModal({
   loading,
   emptyMessage = "Sem pontos históricos para este período.",
   valueSuffix = "%",
+  showPointDetails = false,
 }: EvolutionChartModalProps) {
   const { theme } = useTheme()
 
@@ -170,6 +176,10 @@ export function EvolutionChartModal({
   }
 
   const hasData = sortedPoints.some((point) => point.value != null || point.secondaryValue != null)
+  const formatValue = (value: number | null | undefined) => {
+    if (value == null || !Number.isFinite(value)) return "--"
+    return `${value.toFixed(2)}${valueSuffix}`
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -189,9 +199,41 @@ export function EvolutionChartModal({
               {emptyMessage}
             </div>
           ) : (
-            <div className="h-[320px]">
-              <Line data={chartData} options={options} />
-            </div>
+            <>
+              <div className="h-[320px]">
+                <Line data={chartData} options={options} />
+              </div>
+              {showPointDetails && (
+                <div className="mt-4 max-h-64 overflow-auto rounded-lg border border-border/80">
+                  <table className="w-full min-w-[720px] text-xs">
+                    <thead className="sticky top-0 bg-muted text-muted-foreground">
+                      <tr>
+                        <th className="px-3 py-2 text-left font-semibold">Data</th>
+                        <th className="px-3 py-2 text-right font-semibold">% dia</th>
+                        <th className="px-3 py-2 text-right font-semibold">% acum. c/ zeros</th>
+                        <th className="px-3 py-2 text-right font-semibold">% acum. s/ zeros</th>
+                        <th className="px-3 py-2 text-right font-semibold">Desp. dia</th>
+                        <th className="px-3 py-2 text-right font-semibold">Desp. acum.</th>
+                        <th className="px-3 py-2 text-right font-semibold">Zerados acum.</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/70">
+                      {sortedPoints.map((point) => (
+                        <tr key={`${point.date}-${point.count ?? 0}`} className="bg-background/70">
+                          <td className="px-3 py-2 font-medium">{formatDateLabel(point.date)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{formatValue(point.dayValue)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{formatValue(point.value)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{formatValue(point.secondaryValue)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{point.dayCount ?? "--"}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{point.count ?? "--"}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{point.zeroCount ?? "--"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
           )}
         </div>
       </DialogContent>

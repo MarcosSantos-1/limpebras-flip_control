@@ -144,10 +144,13 @@ export interface IptServiceSnapshotPoint {
   periodo_final: string;
   periodo_tipo: string;
   percentual: number | null;
+  percentual_dia: number | null;
   media_sem_zerados: number | null;
   quantidade_planos: number;
   total_despachos: number;
+  total_despachos_dia: number;
   despachos_zerados: number;
+  despachos_zerados_dia: number;
   source_file: string | null;
   metadata: Record<string, unknown>;
   updated_at: string;
@@ -1007,7 +1010,7 @@ export const apiService = {
     };
   },
 
-  /** Evolucao diaria do percentual de um servico (snapshots ipt_servico_diario). */
+  /** Evolucao acumulada do percentual de um servico (snapshots ipt_servico_acc). */
   getIptServicoEvolucao: async (periodoInicial: string, periodoFinal: string, tipoServico?: string) => {
     const { data } = await api.get("/indicadores/ipt-servico-evolucao", {
       params: {
@@ -1024,10 +1027,13 @@ export const apiService = {
         tipo_servico: string;
         metric_key: string;
         percentual_com_zeros: number | null;
+        percentual_dia: number | null;
         percentual_sem_zeros: number | null;
         planos: number;
         despachos: number;
+        despachos_dia: number;
         zerados: number;
+        zerados_dia: number;
         source_file: string;
         snapshot_at: string;
       }>;

@@ -28,7 +28,19 @@ export function useIptData(
   subprefeituraFilter: string
 ) {
   const periodoKpisInicio = format(startOfMonth(selectedMonth), "yyyy-MM-dd");
-  const periodoKpisFim = format(endOfMonth(selectedMonth), "yyyy-MM-dd");
+  /**
+   * Cards: acumulado do dia 01 do mês até HOJE (cap em endOfMonth para meses passados/futuros).
+   *
+   * Sem o cap a média acumulada do mês corrente fica distorcida pelas linhas com
+   * data_estimada > hoje (despachos planejados ainda não executados, normalmente 0%),
+   * o que reduz artificialmente a média do serviço.
+   */
+  const endOfSelectedMonth = endOfMonth(selectedMonth);
+  const hojeDate = new Date();
+  const cardsFimDate = hojeDate < endOfSelectedMonth ? hojeDate : endOfSelectedMonth;
+  const periodoKpisFim = format(cardsFimDate, "yyyy-MM-dd");
+  // Janela mensal completa (usada apenas para chaves auxiliares que dependem do mês cheio)
+  const periodoMesFim = format(endOfSelectedMonth, "yyyy-MM-dd");
 
   let tableKey: string;
   if (tableScope === "periodo" && tablePeriodRange) {
@@ -39,8 +51,9 @@ export function useIptData(
   }
 
   const cardsKey = `ipt:cards:${periodoKpisInicio}:${periodoKpisFim}:${subprefeituraFilter}`;
-  const kpisKey = `kpis:${periodoKpisInicio}:${periodoKpisFim}`;
-  const reportDiarioKey = `ipt:report-diario:${periodoKpisInicio}:${periodoKpisFim}`;
+  // KPIs e Report diário usam a janela completa do mês para preservar dias planejados
+  const kpisKey = `kpis:${periodoKpisInicio}:${periodoMesFim}`;
+  const reportDiarioKey = `ipt:report-diario:${periodoKpisInicio}:${periodoMesFim}`;
 
   let obsScopeStart: string | undefined;
   let obsScopeEnd: string | undefined;
@@ -84,11 +97,11 @@ export function useIptData(
     swrReadOpts
   );
 
-  const kpisSwr = useSWR(kpisKey, () => apiService.getKPIs(periodoKpisInicio, periodoKpisFim), swrReadOpts);
+  const kpisSwr = useSWR(kpisKey, () => apiService.getKPIs(periodoKpisInicio, periodoMesFim), swrReadOpts);
 
   const reportDiarioSwr = useSWR<ReportDiarioResponse>(
     reportDiarioKey,
-    () => apiService.getIptReportDiario(periodoKpisInicio, periodoKpisFim),
+    () => apiService.getIptReportDiario(periodoKpisInicio, periodoMesFim),
     swrReadOpts
   );
 

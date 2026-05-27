@@ -15,7 +15,7 @@ import { detectDdmxWorkbookType, parseIptWorkbook, type IptFileType } from "../s
 import { parseCronogramaWorkbook } from "../services/parseCronogramaIpt.js";
 import { parseSetoresModulosWorkbook } from "../services/parseSetoresModulos.js";
 import { enrichDadosBateriaFromSetoresModulos } from "../services/enrichDadosBateriaFromSetores.js";
-import { normalizarSetor, parseSetor } from "../constants/ipt.js";
+import { normalizarSetor, parseSetor, resolveTipoServicoExibicao } from "../constants/ipt.js";
 import { parseConsolidadoVeiculos, parseConsolidadoVarricao } from "../services/parseRelatorioConsolidado.js";
 import { estimarDatasReport, type ReportLinhaRaw } from "../services/estimarDataReport.js";
 import { mergeAcicOverridesAfterImportRow } from "../services/acicImportMerge.js";
@@ -205,6 +205,30 @@ function getImportDateRange(values: Array<Date | null | undefined>): { inicio: s
   return { inicio: keys[0], fim: keys[keys.length - 1] };
 }
 
+function getMonthStartKey(dateKey: string): string {
+  return `${dateKey.slice(0, 7)}-01`;
+}
+
+function getMonthEndKey(monthStart: string): string {
+  const [yearRaw, monthRaw] = monthStart.split("-");
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+  const last = new Date(Date.UTC(year, month, 0));
+  return `${last.getUTCFullYear()}-${String(last.getUTCMonth() + 1).padStart(2, "0")}-${String(
+    last.getUTCDate()
+  ).padStart(2, "0")}`;
+}
+
+function getMonthStartKeysInRange(inicio: string, fim: string): string[] {
+  const start = new Date(`${getMonthStartKey(inicio)}T00:00:00.000Z`);
+  const end = new Date(`${getMonthStartKey(fim)}T00:00:00.000Z`);
+  const out: string[] = [];
+  for (const cursor = new Date(start); cursor <= end; cursor.setUTCMonth(cursor.getUTCMonth() + 1)) {
+    out.push(`${cursor.getUTCFullYear()}-${String(cursor.getUTCMonth() + 1).padStart(2, "0")}-01`);
+  }
+  return out;
+}
+
 async function insertMetricSnapshot(
   client: PoolClient,
   opts: {
@@ -216,12 +240,15 @@ async function insertMetricSnapshot(
     periodoTipo: string;
     valor?: number | null;
     percentual?: number | null;
+    percentualDia?: number | null;
     pontuacao?: number | null;
     mediaSemZerados?: number | null;
     quantidadePlanos?: number;
     quantidadeBase?: number;
     totalDespachos?: number;
+    totalDespachosDia?: number;
     despachosZerados?: number;
+    despachosZeradosDia?: number;
     sourceFile: string;
     metadata?: Record<string, unknown>;
   }
@@ -230,15 +257,17 @@ async function insertMetricSnapshot(
     `INSERT INTO metric_snapshots (
        snapshot_type, metric_key, metric_label, snapshot_at,
        periodo_inicial, periodo_final, periodo_tipo,
-       valor, percentual, pontuacao, media_sem_zerados,
-       quantidade_planos, quantidade_base, total_despachos, despachos_zerados,
+       valor, percentual, percentual_dia, pontuacao, media_sem_zerados,
+       quantidade_planos, quantidade_base, total_despachos, total_despachos_dia,
+       despachos_zerados, despachos_zerados_dia,
        source_file, metadata, updated_at
      ) VALUES (
        $1, $2, $3, NOW(),
        $4::date, $5::date, $6,
-       $7, $8, $9, $10,
-       $11, $12, $13, $14,
-       $15, $16::jsonb, NOW()
+       $7, $8, $9, $10, $11,
+       $12, $13, $14, $15,
+       $16, $17,
+       $18, $19::jsonb, NOW()
      )
      ON CONFLICT (snapshot_type, metric_key, periodo_inicial, periodo_final, periodo_tipo)
      DO UPDATE SET
@@ -246,12 +275,15 @@ async function insertMetricSnapshot(
        snapshot_at = NOW(),
        valor = EXCLUDED.valor,
        percentual = EXCLUDED.percentual,
+       percentual_dia = EXCLUDED.percentual_dia,
        pontuacao = EXCLUDED.pontuacao,
        media_sem_zerados = EXCLUDED.media_sem_zerados,
        quantidade_planos = EXCLUDED.quantidade_planos,
        quantidade_base = EXCLUDED.quantidade_base,
        total_despachos = EXCLUDED.total_despachos,
+       total_despachos_dia = EXCLUDED.total_despachos_dia,
        despachos_zerados = EXCLUDED.despachos_zerados,
+       despachos_zerados_dia = EXCLUDED.despachos_zerados_dia,
        source_file = EXCLUDED.source_file,
        metadata = EXCLUDED.metadata,
        updated_at = NOW()`,
@@ -264,12 +296,15 @@ async function insertMetricSnapshot(
       opts.periodoTipo,
       opts.valor ?? null,
       opts.percentual ?? null,
+      opts.percentualDia ?? null,
       opts.pontuacao ?? null,
       opts.mediaSemZerados ?? null,
       opts.quantidadePlanos ?? 0,
       opts.quantidadeBase ?? 0,
       opts.totalDespachos ?? 0,
+      opts.totalDespachosDia ?? 0,
       opts.despachosZerados ?? 0,
+      opts.despachosZeradosDia ?? 0,
       opts.sourceFile,
       JSON.stringify(opts.metadata ?? {}),
     ]
@@ -285,6 +320,14 @@ async function insertIptServiceSnapshots(
     sourceFile: string;
   }
 ): Promise<number> {
+  /**
+   * Snapshot acumulado por serviço: agrega de `periodo_inicial` até HOJE (ou `periodo_final`,
+   * o menor), excluindo despachos com `data_estimada` futura (planejados ainda sem execução).
+   *
+   * Antes a média incluía linhas estimadas para dias futuros (geralmente com 0%), o que
+   * achatava o percentual exibido nos cards. Agora o snapshot reflete o acumulado real
+   * até a data da importação — exatamente o que o card "Serviços (ativos)" mostra.
+   */
   const res = await client.query<{
     tipo_servico: string | null;
     quantidade_planos: string;
@@ -306,6 +349,7 @@ async function insertIptServiceSnapshots(
        AND periodo_tipo = $3
        AND LOWER(COALESCE(status, '')) LIKE '%encerrado%'
        AND percentual_execucao IS NOT NULL
+       AND (data_estimada IS NULL OR data_estimada <= LEAST(CURRENT_DATE, $2::date))
      GROUP BY 1
      ORDER BY 1`,
     [opts.periodoInicial, opts.periodoFinal, opts.periodoTipo]
@@ -329,11 +373,172 @@ async function insertIptServiceSnapshots(
       totalDespachos: Number(row.total_despachos ?? 0),
       despachosZerados: Number(row.despachos_zerados ?? 0),
       sourceFile: opts.sourceFile,
-      metadata: { generated_from: "ipt_report_linhas" },
+      metadata: { generated_from: "ipt_report_linhas", acumulado_ate: "min(today, periodo_final)" },
     });
     upserted += 1;
   }
   return upserted;
+}
+
+async function rebuildIptServiceAccSnapshotsForMonth(
+  client: PoolClient,
+  opts: { monthStart: string; sourceFile: string; deleteExisting?: boolean }
+): Promise<number> {
+  const monthEnd = getMonthEndKey(opts.monthStart);
+  if (opts.deleteExisting !== false) {
+    await client.query(
+      `DELETE FROM metric_snapshots
+       WHERE snapshot_type = 'ipt_servico_acc'
+         AND periodo_inicial = $1::date
+         AND periodo_final >= $1::date
+         AND periodo_final <= $2::date`,
+      [opts.monthStart, monthEnd]
+    );
+  }
+
+  const res = await client.query<{
+    tipo_servico: string | null;
+    data_ref: string;
+    plano: string;
+    percentual_execucao: string | number;
+  }>(
+    `SELECT
+       COALESCE(NULLIF(TRIM(tipo_servico), ''), 'Nao informado') AS tipo_servico,
+       data_estimada::date::text AS data_ref,
+       plano,
+       percentual_execucao
+     FROM ipt_report_linhas
+     WHERE data_estimada >= $1::date
+       AND data_estimada <= LEAST($2::date, (CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo')::date)
+       AND LOWER(COALESCE(status, '')) LIKE '%encerrad%'
+       AND percentual_execucao IS NOT NULL
+     ORDER BY data_estimada, tipo_servico, plano`,
+    [opts.monthStart, monthEnd]
+  );
+
+  const byService = new Map<string, Map<string, Array<{ plano: string; percentual: number }>>>();
+  for (const row of res.rows) {
+    const plano = normalizarSetor(row.plano);
+    const labelResolved = resolveTipoServicoExibicao(plano, row.tipo_servico ?? "");
+    const label = labelResolved && labelResolved !== "—" ? labelResolved : row.tipo_servico || "Nao informado";
+    const percentual = Number(row.percentual_execucao);
+    if (!Number.isFinite(percentual)) continue;
+    if (!byService.has(label)) byService.set(label, new Map());
+    const byDay = byService.get(label)!;
+    const dayRows = byDay.get(row.data_ref) ?? [];
+    dayRows.push({ plano, percentual });
+    byDay.set(row.data_ref, dayRows);
+  }
+
+  let upserted = 0;
+  for (const [label, byDay] of byService) {
+    const key = normalizeSnapshotKey(label) || "nao_informado";
+    let totalSum = 0;
+    let totalCount = 0;
+    let positiveSum = 0;
+    let positiveCount = 0;
+    let zeroCount = 0;
+    const planos = new Set<string>();
+    for (const day of [...byDay.keys()].sort()) {
+      const dayRows = byDay.get(day) ?? [];
+      let daySum = 0;
+      let dayZeroCount = 0;
+      for (const item of dayRows) {
+        totalSum += item.percentual;
+        totalCount += 1;
+        daySum += item.percentual;
+        planos.add(item.plano);
+        if (item.percentual > 0) {
+          positiveSum += item.percentual;
+          positiveCount += 1;
+        } else {
+          zeroCount += 1;
+          dayZeroCount += 1;
+        }
+      }
+      const percentual = totalCount > 0 ? Number((totalSum / totalCount).toFixed(4)) : null;
+      const percentualDia = dayRows.length > 0 ? Number((daySum / dayRows.length).toFixed(4)) : null;
+      const mediaSemZerados = positiveCount > 0 ? Number((positiveSum / positiveCount).toFixed(4)) : 0;
+      await insertMetricSnapshot(client, {
+        snapshotType: "ipt_servico_acc",
+        metricKey: key,
+        metricLabel: label,
+        periodoInicial: opts.monthStart,
+        periodoFinal: day,
+        periodoTipo: "acumulado",
+        valor: percentual,
+        percentual,
+        percentualDia,
+        mediaSemZerados,
+        quantidadePlanos: planos.size,
+        totalDespachos: totalCount,
+        totalDespachosDia: dayRows.length,
+        despachosZerados: zeroCount,
+        despachosZeradosDia: dayZeroCount,
+        sourceFile: opts.sourceFile,
+        metadata: {
+          generated_from: "ipt_report_linhas",
+          acumulado: true,
+          acumulado_de: opts.monthStart,
+          percentual_dia: "media_com_zerados_do_dia",
+          service_label_strategy: "resolveTipoServicoExibicao",
+        },
+      });
+      upserted += 1;
+    }
+  }
+  return upserted;
+}
+
+async function rebuildIptServiceAccSnapshotsForRange(
+  client: PoolClient,
+  opts: { periodoInicial: string; periodoFinal: string; sourceFile: string }
+): Promise<number> {
+  const months = getMonthStartKeysInRange(opts.periodoInicial, opts.periodoFinal);
+  let total = 0;
+  for (const monthStart of months) {
+    total += await rebuildIptServiceAccSnapshotsForMonth(client, {
+      monthStart,
+      sourceFile: opts.sourceFile,
+      deleteExisting: true,
+    });
+  }
+  return total;
+}
+
+async function rebuildAllIptServiceAccSnapshots(
+  client: PoolClient,
+  sourceFile = "rebuild_ipt_report_linhas"
+): Promise<{ deletedOld: number; deletedAcc: number; upserted: number; months: string[] }> {
+  const deletedOldRes = await client.query(
+    `DELETE FROM metric_snapshots
+     WHERE snapshot_type IN ('ipt_servico', 'ipt_servico_diario')`
+  );
+  const deletedAccRes = await client.query(
+    `DELETE FROM metric_snapshots
+     WHERE snapshot_type = 'ipt_servico_acc'`
+  );
+  const monthsRes = await client.query<{ month_start: string }>(
+    `SELECT DISTINCT date_trunc('month', data_estimada)::date::text AS month_start
+     FROM ipt_report_linhas
+     WHERE data_estimada IS NOT NULL
+     ORDER BY 1`
+  );
+  let upserted = 0;
+  const months = monthsRes.rows.map((row) => row.month_start);
+  for (const monthStart of months) {
+    upserted += await rebuildIptServiceAccSnapshotsForMonth(client, {
+      monthStart,
+      sourceFile,
+      deleteExisting: false,
+    });
+  }
+  return {
+    deletedOld: deletedOldRes.rowCount ?? 0,
+    deletedAcc: deletedAccRes.rowCount ?? 0,
+    upserted,
+    months,
+  };
 }
 
 /**
@@ -1590,7 +1795,6 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         );
         inserted += 1;
       }
-      const snapshotsServicos = await insertIptServiceSnapshotsFromConsolidado(client, { sourceFile });
       await client.query("COMMIT");
       invalidatePrefix("ipt_preview");
       invalidatePrefix("kpis");
@@ -1602,7 +1806,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         duplicados: 0,
         erros: 0,
         ultimo_import: new Date().toISOString(),
-        snapshots_servicos: snapshotsServicos,
+        snapshots_servicos: 0,
         source_file: sourceFile,
         ...(parse_stats ? { parse_stats } : {}),
       };
@@ -2238,10 +2442,9 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
           inserted += 1;
         }
 
-        const snapshotsGerados = await insertIptServiceSnapshots(client, {
+        const snapshotsGerados = await rebuildIptServiceAccSnapshotsForRange(client, {
           periodoInicial: inicio,
           periodoFinal: fim,
-          periodoTipo: modoReferencia,
           sourceFile,
         });
         const snapshotsIndicadores = await snapshotIndicadoresFromDb(client, {
@@ -3011,6 +3214,24 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
     invalidatePrefix("ipt_preview");
     invalidatePrefix("kpis");
     return { deleted: r.rowCount ?? 0 };
+  });
+
+  fastify.post("/upload/rebuild-ipt-service-snapshots", async (_request, reply) => {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await rebuildAllIptServiceAccSnapshots(client);
+      await client.query("COMMIT");
+      invalidatePrefix("ipt_preview");
+      invalidatePrefix("kpis");
+      return result;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      const detail = error instanceof Error ? error.message : "Falha ao recriar snapshots acumulados de serviço.";
+      return reply.code(500).send({ detail });
+    } finally {
+      client.release();
+    }
   });
 
   fastify.post<{

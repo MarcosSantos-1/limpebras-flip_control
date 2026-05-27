@@ -407,6 +407,7 @@ export async function runMigrations() {
     await client.query("CREATE INDEX IF NOT EXISTS idx_report_linhas_plano ON ipt_report_linhas(plano)").catch(() => {});
     await client.query("CREATE INDEX IF NOT EXISTS idx_report_linhas_data ON ipt_report_linhas(data_estimada)").catch(() => {});
     await client.query("CREATE INDEX IF NOT EXISTS idx_report_linhas_periodo ON ipt_report_linhas(periodo_inicial, periodo_final)").catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_report_linhas_servico_data ON ipt_report_linhas(tipo_servico, data_estimada)").catch(() => {});
     await client.query("CREATE INDEX IF NOT EXISTS idx_report_linhas_status ON ipt_report_linhas(status)").catch(() => {});
     await client.query("CREATE UNIQUE INDEX IF NOT EXISTS ux_report_linhas_plano_periodo_pos ON ipt_report_linhas(plano, periodo_inicial, periodo_final, posicao_original)").catch(() => {});
 
@@ -434,12 +435,15 @@ export async function runMigrations() {
         periodo_tipo TEXT NOT NULL,
         valor NUMERIC(12,4),
         percentual NUMERIC(8,4),
+        percentual_dia NUMERIC(8,4),
         pontuacao NUMERIC(8,4),
         media_sem_zerados NUMERIC(8,4),
         quantidade_planos INTEGER NOT NULL DEFAULT 0,
         quantidade_base INTEGER NOT NULL DEFAULT 0,
         total_despachos INTEGER NOT NULL DEFAULT 0,
+        total_despachos_dia INTEGER NOT NULL DEFAULT 0,
         despachos_zerados INTEGER NOT NULL DEFAULT 0,
+        despachos_zerados_dia INTEGER NOT NULL DEFAULT 0,
         source_file TEXT,
         metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
         created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -448,8 +452,11 @@ export async function runMigrations() {
     `);
     await client.query("ALTER TABLE metric_snapshots ADD COLUMN IF NOT EXISTS snapshot_at TIMESTAMPTZ NOT NULL DEFAULT NOW()").catch(() => {});
     await client.query("ALTER TABLE metric_snapshots ADD COLUMN IF NOT EXISTS valor NUMERIC(12,4)").catch(() => {});
+    await client.query("ALTER TABLE metric_snapshots ADD COLUMN IF NOT EXISTS percentual_dia NUMERIC(8,4)").catch(() => {});
     await client.query("ALTER TABLE metric_snapshots ADD COLUMN IF NOT EXISTS pontuacao NUMERIC(8,4)").catch(() => {});
     await client.query("ALTER TABLE metric_snapshots ADD COLUMN IF NOT EXISTS quantidade_base INTEGER NOT NULL DEFAULT 0").catch(() => {});
+    await client.query("ALTER TABLE metric_snapshots ADD COLUMN IF NOT EXISTS total_despachos_dia INTEGER NOT NULL DEFAULT 0").catch(() => {});
+    await client.query("ALTER TABLE metric_snapshots ADD COLUMN IF NOT EXISTS despachos_zerados_dia INTEGER NOT NULL DEFAULT 0").catch(() => {});
     await client
       .query(
         `CREATE INDEX IF NOT EXISTS idx_metric_snapshots_lookup

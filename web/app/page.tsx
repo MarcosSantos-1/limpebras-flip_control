@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { apiService, type SAC, type CNC, type IndicatorHistoryType } from "@/lib/api";
+import { type SAC, type CNC } from "@/lib/api";
 import {
   format,
   startOfMonth,
@@ -18,7 +19,6 @@ import {
 } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { ADCRingChart } from "@/components/adc-ring-chart";
-import { IndicatorTooltip } from "@/components/indicator-tooltip";
 import Lottie from "lottie-react";
 import loadingAnimation from "@/public/Loading.json";
 import { SACsChart } from "@/components/sacs-chart";
@@ -32,7 +32,6 @@ import { useDashboardData } from "@/lib/use-dashboard-data";
 import { LayoutDashboard } from "lucide-react";
 import { UploadReminderToast } from "@/components/upload-reminder-toast";
 import { useAuth } from "@/lib/auth";
-import { EvolutionChartModal, type EvolutionSeriesPoint } from "@/components/evolution-chart-modal";
 
 const SUBPREF_LOOKUP = SUBPREFEITURAS.reduce<Record<string, string>>((acc, sub) => {
   acc[sub.code.toUpperCase()] = sub.code;
@@ -344,10 +343,6 @@ function computeTopBfsServices(items: CNC[], periodStart: Date, periodEnd: Date)
 
 function DashboardContent() {
   const [selectedMonth, setSelectedMonth] = useState(() => startOfMonth(new Date()));
-  const [indicatorEvolutionOpen, setIndicatorEvolutionOpen] = useState(false);
-  const [indicatorEvolutionType, setIndicatorEvolutionType] = useState<IndicatorHistoryType>("ADC");
-  const [indicatorEvolutionPoints, setIndicatorEvolutionPoints] = useState<EvolutionSeriesPoint[]>([]);
-  const [indicatorEvolutionLoading, setIndicatorEvolutionLoading] = useState(false);
 
   const periodStart = startOfMonth(selectedMonth);
   const periodEnd = endOfMonth(selectedMonth);
@@ -430,29 +425,6 @@ function DashboardContent() {
     setSelectedMonth(startOfMonth(new Date(y, m - 1, 1)));
   };
 
-  const handleIndicatorEvolutionClick = async (tipo: IndicatorHistoryType) => {
-    setIndicatorEvolutionType(tipo);
-    setIndicatorEvolutionOpen(true);
-    setIndicatorEvolutionLoading(true);
-    setIndicatorEvolutionPoints([]);
-    try {
-      const response = await apiService.getIndicadoresHistorico(tipo, dataInicio, dataFim);
-      setIndicatorEvolutionPoints(
-        response.historico.map((point) => ({
-          date: point.data,
-          value: tipo === "ADC" ? point.pontuacao : point.valor,
-          secondaryValue: tipo === "ADC" ? undefined : point.pontuacao,
-          count: undefined,
-          meta: tipo === "ADC" ? "Snapshot salvo em importação" : `${(point.pontuacao ?? 0).toFixed(2)} pontos`,
-        }))
-      );
-    } catch {
-      setIndicatorEvolutionPoints([]);
-    } finally {
-      setIndicatorEvolutionLoading(false);
-    }
-  };
-
   return (
     <>
       <UploadReminderToast />
@@ -512,22 +484,12 @@ function DashboardContent() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* Grid 2x2 dos indicadores */}
             <div className="grid grid-cols-2 gap-3 md:col-span-2">
+              <Link href="/sacs" className="block">
               <Card
-                role="button"
-                tabIndex={0}
-                onClick={() => handleIndicatorEvolutionClick("IA")}
-                onKeyDown={(event) => event.key === "Enter" && handleIndicatorEvolutionClick("IA")}
                 className="rounded-xl border-0 bg-linear-to-br from-blue-600 to-blue-800 p-4 text-white shadow-xl shadow-blue-900/25 transition-all duration-200 hover:scale-[1.02] hover:shadow-2xl hover:border-transparent cursor-pointer dark:bg-none dark:bg-card dark:text-card-foreground dark:shadow-md dark:hover:shadow-md"
               >
                 <CardHeader className="p-0 pb-4">
-                  <IndicatorTooltip 
-                    tipo="IA" 
-                    valor={indicators.data?.IA?.valor}
-                    pontuacao={indicators.data?.IA?.pontuacao}
-                    iconClassName="text-white/75 hover:text-white dark:text-zinc-400 dark:hover:text-zinc-300"
-                  >
-                    <CardTitle className="text-sm font-medium text-white/95 dark:text-blue-400">IA - ÍNDICADOR DE ATENDIMENTO</CardTitle>
-                  </IndicatorTooltip>
+                  <CardTitle className="text-sm font-medium text-white/95 dark:text-blue-400">IA - ÍNDICADOR DE ATENDIMENTO</CardTitle>
                 </CardHeader>
                 <CardContent className="p-0">
                   <div className="mb-1 text-lg font-semibold text-white/85 dark:text-muted-foreground">
@@ -538,23 +500,14 @@ function DashboardContent() {
                   </div>
                 </CardContent>
               </Card>
+              </Link>
 
+              <Link href="/sacs" className="block">
               <Card
-                role="button"
-                tabIndex={0}
-                onClick={() => handleIndicatorEvolutionClick("IRD")}
-                onKeyDown={(event) => event.key === "Enter" && handleIndicatorEvolutionClick("IRD")}
                 className="rounded-xl border-0 bg-linear-to-br from-emerald-600 to-emerald-900 p-4 text-white shadow-xl shadow-emerald-900/25 transition-all duration-200 hover:scale-[1.02] hover:shadow-2xl hover:border-transparent cursor-pointer dark:bg-none dark:bg-card dark:text-card-foreground dark:shadow-md dark:hover:shadow-md"
               >
                 <CardHeader className="p-0 pb-4">
-                  <IndicatorTooltip 
-                    tipo="IRD" 
-                    valor={indicators.data?.IRD?.valor}
-                    pontuacao={indicators.data?.IRD?.pontuacao}
-                    iconClassName="text-white/75 hover:text-white dark:text-zinc-400 dark:hover:text-zinc-300"
-                  >
-                    <CardTitle className="text-sm font-medium text-white/95 dark:text-emerald-400">IRD - ÍNDICADOR DE RECLAMAÇÕES POR DOMICÍLIO</CardTitle>
-                  </IndicatorTooltip>
+                  <CardTitle className="text-sm font-medium text-white/95 dark:text-emerald-400">IRD - ÍNDICADOR DE RECLAMAÇÕES POR DOMICÍLIO</CardTitle>
                 </CardHeader>
                 <CardContent className="p-0">
                   <div className="mb-1 text-lg font-semibold text-white/85 dark:text-muted-foreground">
@@ -565,23 +518,14 @@ function DashboardContent() {
                   </div>
                 </CardContent>
               </Card>
+              </Link>
 
+              <Link href="/bfs" className="block">
               <Card
-                role="button"
-                tabIndex={0}
-                onClick={() => handleIndicatorEvolutionClick("IF")}
-                onKeyDown={(event) => event.key === "Enter" && handleIndicatorEvolutionClick("IF")}
                 className="rounded-xl border-0 bg-linear-to-br from-amber-500 to-amber-800 p-4 text-white shadow-xl shadow-amber-900/25 transition-all duration-200 hover:scale-[1.02] hover:shadow-2xl hover:border-transparent cursor-pointer dark:bg-none dark:bg-card dark:text-card-foreground dark:shadow-md dark:hover:shadow-md"
               >
                 <CardHeader className="p-0 pb-4">
-                  <IndicatorTooltip 
-                    tipo="IF" 
-                    valor={indicators.data?.IF?.valor}
-                    pontuacao={indicators.data?.IF?.pontuacao}
-                    iconClassName="text-white/75 hover:text-white dark:text-zinc-400 dark:hover:text-zinc-300"
-                  >
-                    <CardTitle className="text-sm font-medium text-white/95 dark:text-amber-400">IF - ÍNDICADOR DE FISCALIZAÇÃO</CardTitle>
-                  </IndicatorTooltip>
+                  <CardTitle className="text-sm font-medium text-white/95 dark:text-amber-400">IF - ÍNDICADOR DE FISCALIZAÇÃO</CardTitle>
                 </CardHeader>
                 <CardContent className="p-0">
                   <div className="mb-1 text-lg font-semibold text-white/85 dark:text-muted-foreground">
@@ -592,23 +536,14 @@ function DashboardContent() {
                   </div>
                 </CardContent>
               </Card>
+              </Link>
 
+              <Link href="/ipt" className="block">
               <Card 
                 className="rounded-xl border-0 bg-linear-to-br from-violet-600 to-purple-900 p-4 text-white shadow-xl shadow-purple-900/25 transition-all duration-200 hover:scale-[1.02] hover:shadow-2xl hover:border-transparent cursor-pointer dark:bg-none dark:bg-card dark:text-card-foreground dark:shadow-md dark:hover:shadow-md"
-                role="button"
-                tabIndex={0}
-                onClick={() => handleIndicatorEvolutionClick("IPT")}
-                onKeyDown={(event) => event.key === "Enter" && handleIndicatorEvolutionClick("IPT")}
               >
                 <CardHeader className="p-0 pb-4">
-                  <IndicatorTooltip 
-                    tipo="IPT" 
-                    valor={indicators.data?.IPT?.valor ?? undefined}
-                    pontuacao={indicators.data?.IPT?.pontuacao ?? undefined}
-                    iconClassName="text-white/75 hover:text-white dark:text-zinc-400 dark:hover:text-zinc-300"
-                  >
-                    <CardTitle className="text-sm font-medium text-white/95 dark:text-purple-400">IPT - INDICADOR PLANO DE TRABALHO</CardTitle>
-                  </IndicatorTooltip>
+                  <CardTitle className="text-sm font-medium text-white/95 dark:text-purple-400">IPT - INDICADOR PLANO DE TRABALHO</CardTitle>
                 </CardHeader>
                 <CardContent className="p-0">
                   <div className="mb-1 text-lg font-semibold text-white/85 dark:text-muted-foreground">
@@ -629,13 +564,13 @@ function DashboardContent() {
                   </div>
                 </CardContent>
               </Card>
+              </Link>
             </div>
 
             {/* ADC — anel com gradiente forte (sem glow neon) */}
             <div className="flex items-center justify-center">
-              <button
-                type="button"
-                onClick={() => handleIndicatorEvolutionClick("ADC")}
+              <Link
+                href="/indicadores/explicacao"
                 className="group relative rounded-2xl bg-card/40 p-2 shadow-lg shadow-slate-900/12 transition-all hover:scale-[1.02] hover:shadow-xl dark:bg-transparent dark:shadow-none dark:hover:shadow-lg focus-visible:outline-none focus-visible:shadow-xl"
                 title="Clique para ver a explicação detalhada dos indicadores"
               >
@@ -643,10 +578,7 @@ function DashboardContent() {
                   total={indicators.data?.ADC?.total || 0}
                   percentual={indicators.data?.ADC?.percentual || 0}
                 />
-                <span className="pointer-events-none absolute left-1/2 top-full mt-2 -translate-x-1/2 whitespace-nowrap rounded-md bg-popover px-3 py-1 text-xs text-popover-foreground opacity-0 shadow-lg shadow-zinc-900/20 transition-opacity group-hover:opacity-100">
-                  Clique para ver detalhes dos indicadores
-                </span>
-              </button>
+              </Link>
             </div>
           </div>
 
@@ -660,18 +592,6 @@ function DashboardContent() {
         )}
 
         {/* Gráficos operacionais - grid 2x2 */}
-        <EvolutionChartModal
-          open={indicatorEvolutionOpen}
-          onOpenChange={setIndicatorEvolutionOpen}
-          title={`Evolução por importação - ${indicatorEvolutionType}`}
-          description={`Somente snapshots salvos em importações dentro de ${monthLabel}.`}
-          primaryLabel={indicatorEvolutionType === "ADC" ? "ADC (pontos)" : `${indicatorEvolutionType} (%)`}
-          secondaryLabel={indicatorEvolutionType === "ADC" ? undefined : "Pontuação"}
-          points={indicatorEvolutionPoints}
-          loading={indicatorEvolutionLoading}
-          emptyMessage="Sem snapshots salvos para este indicador no período."
-          valueSuffix={indicatorEvolutionType === "ADC" ? " pts" : "%"}
-        />
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <SACsChart
