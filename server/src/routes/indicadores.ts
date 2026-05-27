@@ -10,7 +10,7 @@ import {
   descontoADC,
   type IndicadorResult,
 } from "../services/indicadores.js";
-import { calcularPF, calcularPFComDetalhes, type PfDetalhes } from "../services/ipt-pf-algoritmo.js";
+import { calcularCenariosIPT, calcularPFComDetalhes, type IptCenarios, type PfDetalhes } from "../services/ipt-pf-algoritmo.js";
 import { BFS_IF_EXCLUSAO_SQL, sqlBfsFiscalNaoEhSelimp } from "../constants/bfs.js";
 import { SUB_SIGLAS, DOMICILIOS_POR_REGIONAL, regionalToSigla } from "../constants/regionais.js";
 import {
@@ -41,7 +41,7 @@ async function fetchOrdensConsolidadoNoPeriodo(
   client: any,
   inicio: string,
   fim: string
-): Promise<{ ordens: Array<{ percentual: number }>; P: number; R: number; F: number }> {
+): Promise<{ ordens: Array<{ percentual: number }>; P: number; R: number; F: number; cenarios?: IptCenarios }> {
   const veicRes = await client.query(
     `SELECT setor, raw
      FROM ipt_imports
@@ -80,7 +80,17 @@ async function fetchOrdensConsolidadoNoPeriodo(
     ordens.push({ percentual: Math.min(1, Math.max(0, blend)) });
   }
   const A = ordens.length;
-  return { ordens, P: A, R: 1, F: 1 };
+  const percentualOficial = await getIptOficialMensal(client, inicio, fim);
+  const cenarios = calcularCenariosIPT({
+    ordens,
+    totalLinhas: allRows.length,
+    linhasEncerradas: allRows.length,
+    zerosTotal: ordens.filter((ordem) => ordem.percentual === 0).length,
+    zerosEncerradas: ordens.filter((ordem) => ordem.percentual === 0).length,
+    planosDistintos: ordens.length,
+    percentualOficial,
+  });
+  return { ordens, P: A, R: 1, F: 1, cenarios: cenarios ?? undefined };
 }
 
 /** Extrai data (yyyy-MM-dd) do raw. Checa chaves conhecidas e qualquer chave que contenha "data". */
@@ -131,7 +141,7 @@ async function fetchOrdensSelimpNoPeriodo(
   client: any,
   inicio: string,
   fim: string
-): Promise<{ ordens: Array<{ percentual: number }>; P: number; R: number; F: number }> {
+): Promise<{ ordens: Array<{ percentual: number }>; P: number; R: number; F: number; cenarios?: IptCenarios }> {
   const consolidado = await fetchOrdensConsolidadoNoPeriodo(client, inicio, fim);
   if (consolidado.ordens.length > 0) {
     return consolidado;
@@ -148,14 +158,22 @@ async function fetchOrdensSelimpNoPeriodo(
 
   if ((reportRes.rows?.length ?? 0) > 0) {
     const porPlano = new Map<string, number[]>();
+    let linhasEncerradas = 0;
+    let zerosEncerradas = 0;
+    let zerosTotal = 0;
     for (const row of reportRes.rows) {
+      const pctRawAll = Number(row.percentual_execucao);
+      const pctAll = Number.isFinite(pctRawAll) ? Math.min(1, Math.max(0, pctRawAll > 1 ? pctRawAll / 100 : pctRawAll)) : null;
+      if (pctAll === 0) zerosTotal += 1;
       const statusNorm = normalizeMatchText(String(row.status ?? ""));
       if (!statusNorm.includes("encerrado")) continue;
+      linhasEncerradas += 1;
       const plano = normalizarSetor(String(row.plano ?? "").trim());
       if (!plano) continue;
       const pctRaw = Number(row.percentual_execucao);
       if (!Number.isFinite(pctRaw)) continue;
       const pctDecimal = Math.min(1, Math.max(0, pctRaw > 1 ? pctRaw / 100 : pctRaw));
+      if (pctDecimal === 0) zerosEncerradas += 1;
       const arr = porPlano.get(plano) ?? [];
       arr.push(pctDecimal);
       porPlano.set(plano, arr);
@@ -167,7 +185,17 @@ async function fetchOrdensSelimpNoPeriodo(
       ordens.push({ percentual: Math.min(1, Math.max(0, blend)) });
     }
     const A = ordens.length;
-    return { ordens, P: A, R: 1, F: 1 };
+    const percentualOficial = await getIptOficialMensal(client, inicio, fim);
+    const cenarios = calcularCenariosIPT({
+      ordens,
+      totalLinhas: reportRes.rows.length,
+      linhasEncerradas,
+      zerosTotal,
+      zerosEncerradas,
+      planosDistintos: A,
+      percentualOficial,
+    });
+    return { ordens, P: A, R: 1, F: 1, cenarios: cenarios ?? undefined };
   }
 
   return { ordens, P: 0, R: 0, F: 0 };
@@ -177,11 +205,15 @@ async function fetchOrdensSelimpNoPeriodo(
  * IPT via algoritmo oficial SELIMP: PF = 0.7 × qualidade + 0.3 × cobertura.
  */
 async function getAutoIPTFromReport(client: any, inicio: string, fim: string): Promise<number | null> {
-  const { ordens, P, R, F } = await fetchOrdensSelimpNoPeriodo(client, inicio, fim);
+  const { ordens, cenarios } = await fetchOrdensSelimpNoPeriodo(client, inicio, fim);
   if (ordens.length === 0) return null;
-  const pf = calcularPF({ P, R, F, ordens });
-  if (pf == null) return null;
-  return Number((pf * 100).toFixed(2));
+  return cenarios?.estimado.percentual ?? null;
+}
+
+async function getAutoIPTCenariosFromReport(client: any, inicio: string, fim: string): Promise<IptCenarios | null> {
+  const { ordens, cenarios } = await fetchOrdensSelimpNoPeriodo(client, inicio, fim);
+  if (ordens.length === 0) return null;
+  return cenarios ?? null;
 }
 
 /**
@@ -200,6 +232,27 @@ async function getAutoIPTDetalhesFromReport(
 }
 
 type IptRaw = Record<string, string>;
+
+function isFullMonthPeriod(inicio: string, fim: string): { ano: number; mes: number } | null {
+  const match = inicio.match(/^(\d{4})-(\d{2})-01$/);
+  if (!match) return null;
+  const ano = Number(match[1]);
+  const mes = Number(match[2]);
+  const ultimoDia = new Date(ano, mes, 0).getDate();
+  const fimEsperado = `${ano}-${String(mes).padStart(2, "0")}-${String(ultimoDia).padStart(2, "0")}`;
+  return fim === fimEsperado ? { ano, mes } : null;
+}
+
+async function getIptOficialMensal(client: any, inicio: string, fim: string): Promise<number | null> {
+  const periodo = isFullMonthPeriod(inicio, fim);
+  if (!periodo) return null;
+  const res = await client.query(`SELECT percentual FROM ipt_oficial_mensal WHERE ano = $1 AND mes = $2`, [
+    periodo.ano,
+    periodo.mes,
+  ]);
+  const percentual = Number(res.rows[0]?.percentual);
+  return Number.isFinite(percentual) ? percentual : null;
+}
 
 const normalizeModuleCode = (value: string): string =>
   String(value ?? "")
@@ -534,13 +587,13 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
           return { subprefeitura: sigla, total, sem_irregularidade, if_percentual: pct };
         }),
       };
-      const autoIptPercent = await getAutoIPTFromReport(client, inicio, fim);
-      const iptPercent = autoIptPercent;
+      const autoIptCenarios = await getAutoIPTCenariosFromReport(client, inicio, fim);
+      const iptPercent = autoIptCenarios?.estimado.percentual ?? null;
       const iptDashboard =
         iptPercent != null
-          ? { ...pontuacaoIPT(iptPercent), valor: iptPercent }
+          ? { ...pontuacaoIPT(iptPercent), valor: iptPercent, cenarios: autoIptCenarios }
           : { valor: 0, percentual: 0, pontuacao: 0 };
-      const iptSemDados = autoIptPercent == null;
+      const iptSemDados = autoIptCenarios == null;
 
       // SACs hoje (opcional: período = hoje)
       const hoje = new Date().toISOString().slice(0, 10);
@@ -944,18 +997,20 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
       };
 
       const autoIptDetalhes = await getAutoIPTDetalhesFromReport(client, inicio, fim);
-      const iptPercent = autoIptDetalhes?.percent ?? null;
+      const autoIptCenarios = await getAutoIPTCenariosFromReport(client, inicio, fim);
+      const iptPercent = autoIptCenarios?.estimado.percentual ?? autoIptDetalhes?.percent ?? null;
       const ipt =
         iptPercent != null
           ? {
               ...pontuacaoIPT(iptPercent),
               valor: iptPercent,
               ipt_detalhes: autoIptDetalhes?.detalhes,
+              ipt_cenarios: autoIptCenarios,
               filtros_aplicados: autoIptDetalhes
                 ? [
                     "Prioridade: ipt_consolidado_veiculos / ipt_consolidado_varricao (datas e percentuais na planilha)",
                     "Se nao houver consolidado no periodo: ipt_report_selimp (Status Encerrado, plano, de_execucao)",
-                    "Algoritmo PF SELIMP (qualidade + cobertura) sobre as ordens obtidas acima",
+                    "Cenario estimado: PF otimista quando zeros encerrados estao abaixo do limite critico; media conservadora por plano quando zeros ficam criticos",
                   ]
                 : [
                     "Sem dados IPT no periodo — importe as planilhas consolidadas (Upload, secao prioritaria) ou o Report SELIMP",

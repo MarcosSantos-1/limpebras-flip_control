@@ -91,6 +91,37 @@ export interface PfDetalhes {
   PF: number;
 }
 
+export interface IptCenarioValor {
+  percentual: number;
+  pontuacao: number;
+}
+
+export interface IptCenariosDiagnostico {
+  total_linhas: number;
+  linhas_encerradas: number;
+  zeros_total: number;
+  zeros_encerradas: number;
+  planos_distintos: number;
+  taxa_zeros_encerradas: number;
+  diferenca_otimista_conservador: number;
+  criterio_estimativa: string;
+  Qb: number;
+  sigma: number;
+  qualidade_ajustada: number;
+  cobertura_usada: number;
+  cobertura_stress: number;
+  cobertura_fonte: "oficial_selimp" | "presumida_100";
+  percentual_oficial?: number | null;
+  risco: "baixo" | "medio" | "alto";
+}
+
+export interface IptCenarios {
+  estimado: IptCenarioValor;
+  conservador: IptCenarioValor;
+  otimista: IptCenarioValor;
+  diagnostico: IptCenariosDiagnostico;
+}
+
 /**
  * Calcula o PF e retorna os detalhes intermediários para exibição.
  */
@@ -156,4 +187,97 @@ export function calcularPontuacaoIPT(pf: number): number {
   if (pf >= 0.2) return 16;
   if (pf >= 0.1) return 12;
   return 0;
+}
+
+function pontuacaoPercentual(percentual: number): number {
+  return calcularPontuacaoIPT(Math.min(1, Math.max(0, percentual / 100)));
+}
+
+/**
+ * Gera cenarios para acompanhamento do IPT quando P/R/F reais nao estao
+ * disponiveis. O PF atual e mantido como cenario otimista; o conservador usa
+ * a media dos percentuais por plano ja com zeros; o estimado troca para o
+ * conservador quando a proporcao de zeros em ordens encerradas fica critica.
+ */
+export function calcularCenariosIPT(params: {
+  ordens: Array<{ percentual: number }>;
+  totalLinhas?: number;
+  linhasEncerradas?: number;
+  zerosTotal?: number;
+  zerosEncerradas?: number;
+  planosDistintos?: number;
+  percentualOficial?: number | null;
+  coberturaStress?: number;
+}): IptCenarios | null {
+  const ordens = params.ordens.filter((ordem) => Number.isFinite(ordem.percentual));
+  if (ordens.length === 0) return null;
+
+  const ordensComConclusao = ordens.filter((o) => o.percentual > 0);
+  const qiValues = ordensComConclusao.map((o) => Math.min(1, Math.max(0, o.percentual)));
+  const Qb = qiValues.length > 0 ? qiValues.reduce((s, v) => s + v, 0) / qiValues.length : 0;
+  const sigma = desvioPadrao(qiValues);
+  const qualidadeAjustada = Math.min(Qb + Math.min(sigma, 0.08), 1);
+
+  const coberturaOficialRaw =
+    params.percentualOficial != null
+      ? (params.percentualOficial / 100 - 0.7 * qualidadeAjustada) / 0.3
+      : null;
+  const coberturaOficial =
+    coberturaOficialRaw != null ? Math.min(1, Math.max(0, coberturaOficialRaw)) : null;
+  const coberturaUsada = coberturaOficial ?? 1;
+  const coberturaStress = Math.min(1, Math.max(0, params.coberturaStress ?? 0.1));
+  const calcularPercentual = (cobertura: number) =>
+    Number((Math.min(1, Math.max(0, 0.7 * qualidadeAjustada + 0.3 * cobertura)) * 100).toFixed(2));
+
+  const conservadorPercent = calcularPercentual(coberturaStress);
+  const otimistaPercent = calcularPercentual(1);
+  const estimadoPercent =
+    params.percentualOficial != null ? Number(params.percentualOficial.toFixed(2)) : calcularPercentual(coberturaUsada);
+  const linhasEncerradas = params.linhasEncerradas ?? ordens.length;
+  const zerosEncerradas = params.zerosEncerradas ?? ordens.filter((ordem) => ordem.percentual === 0).length;
+  const taxaZerosEncerradas = linhasEncerradas > 0 ? zerosEncerradas / linhasEncerradas : 0;
+  const diferenca = Number(Math.abs(otimistaPercent - conservadorPercent).toFixed(2));
+
+  let risco: IptCenariosDiagnostico["risco"] = "baixo";
+  if (coberturaOficial != null && estimadoPercent < 90) {
+    risco = "alto";
+  } else if (coberturaOficial == null && (taxaZerosEncerradas >= 0.3 || diferenca >= 10)) {
+    risco = "medio";
+  }
+
+  return {
+    estimado: {
+      percentual: estimadoPercent,
+      pontuacao: pontuacaoPercentual(estimadoPercent),
+    },
+    conservador: {
+      percentual: conservadorPercent,
+      pontuacao: pontuacaoPercentual(conservadorPercent),
+    },
+    otimista: {
+      percentual: otimistaPercent,
+      pontuacao: pontuacaoPercentual(otimistaPercent),
+    },
+    diagnostico: {
+      total_linhas: params.totalLinhas ?? ordens.length,
+      linhas_encerradas: linhasEncerradas,
+      zeros_total: params.zerosTotal ?? ordens.filter((ordem) => ordem.percentual === 0).length,
+      zeros_encerradas: zerosEncerradas,
+      planos_distintos: params.planosDistintos ?? ordens.length,
+      taxa_zeros_encerradas: Number((taxaZerosEncerradas * 100).toFixed(2)),
+      diferenca_otimista_conservador: diferenca,
+      criterio_estimativa:
+        coberturaOficial != null
+          ? "cobertura inferida pelo IPT oficial SELIMP"
+          : "cobertura presumida em 100% por falta de P/R/F oficial",
+      Qb: Number((Qb * 100).toFixed(2)),
+      sigma: Number((sigma * 100).toFixed(2)),
+      qualidade_ajustada: Number((qualidadeAjustada * 100).toFixed(2)),
+      cobertura_usada: Number((coberturaUsada * 100).toFixed(2)),
+      cobertura_stress: Number((coberturaStress * 100).toFixed(2)),
+      cobertura_fonte: coberturaOficial != null ? "oficial_selimp" : "presumida_100",
+      percentual_oficial: params.percentualOficial ?? null,
+      risco,
+    },
+  };
 }

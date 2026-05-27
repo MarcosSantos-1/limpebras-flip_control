@@ -158,9 +158,36 @@ export interface KPIs {
     ird: Indicador;
     ia: Indicador;
     if: Indicador;
+    ipt?: Indicador & {
+      cenarios?: IptCenarios;
+    };
   };
   sacs_hoje: number;
   cncs_urgentes: number;
+}
+
+export interface IptCenarios {
+  estimado: { percentual: number; pontuacao: number };
+  conservador: { percentual: number; pontuacao: number };
+  otimista: { percentual: number; pontuacao: number };
+  diagnostico: {
+    total_linhas: number;
+    linhas_encerradas: number;
+    zeros_total: number;
+    zeros_encerradas: number;
+    planos_distintos: number;
+    taxa_zeros_encerradas: number;
+    diferenca_otimista_conservador: number;
+    criterio_estimativa: string;
+    Qb: number;
+    sigma: number;
+    qualidade_ajustada: number;
+    cobertura_usada: number;
+    cobertura_stress: number;
+    cobertura_fonte: "oficial_selimp" | "presumida_100";
+    percentual_oficial?: number | null;
+    risco: "baixo" | "medio" | "alto";
+  };
 }
 
 export interface IptPreviewRow {
@@ -238,6 +265,7 @@ export interface IptPreviewResponse {
     total_planos_ativos: number;
     total_despachos_selimp?: number;
     total_despachos_zerados?: number;
+    ipt_cenarios?: IptCenarios | null;
     media_execucao_planos_ativos: number | null;
     media_com_zerados?: number | null;
     media_sem_zerados?: number | null;

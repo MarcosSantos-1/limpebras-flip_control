@@ -25,7 +25,7 @@ import { parseHistoricoBateria } from "../services/parseHistoricoBateria.js";
 import { refreshModuloSelimp } from "../services/refreshModuloSelimp.js";
 import { requirePageAccess } from "../auth.js";
 import { pontuacaoIA, pontuacaoIRD, pontuacaoIFFromPercentual, pontuacaoIPT } from "../services/indicadores.js";
-import { calcularPF } from "../services/ipt-pf-algoritmo.js";
+import { calcularCenariosIPT } from "../services/ipt-pf-algoritmo.js";
 import { BFS_IF_EXCLUSAO_SQL, sqlBfsFiscalNaoEhSelimp } from "../constants/bfs.js";
 import { SUB_SIGLAS, regionalToSigla } from "../constants/regionais.js";
 
@@ -333,6 +333,27 @@ function calcularMediaIfPorSubprefeituraSnapshot(
   return somaPercentuais / divisor;
 }
 
+function isFullMonthPeriod(inicio: string, fim: string): { ano: number; mes: number } | null {
+  const match = inicio.match(/^(\d{4})-(\d{2})-01$/);
+  if (!match) return null;
+  const ano = Number(match[1]);
+  const mes = Number(match[2]);
+  const ultimoDia = new Date(ano, mes, 0).getDate();
+  const fimEsperado = `${ano}-${String(mes).padStart(2, "0")}-${String(ultimoDia).padStart(2, "0")}`;
+  return fim === fimEsperado ? { ano, mes } : null;
+}
+
+async function getIptOficialMensalSnapshot(client: PoolClient, inicio: string, fim: string): Promise<number | null> {
+  const periodo = isFullMonthPeriod(inicio, fim);
+  if (!periodo) return null;
+  const res = await client.query(`SELECT percentual FROM ipt_oficial_mensal WHERE ano = $1 AND mes = $2`, [
+    periodo.ano,
+    periodo.mes,
+  ]);
+  const percentual = Number(res.rows[0]?.percentual);
+  return Number.isFinite(percentual) ? percentual : null;
+}
+
 async function getIptPercentFromReportSnapshot(
   client: PoolClient,
   inicio: string,
@@ -345,13 +366,21 @@ async function getIptPercentFromReportSnapshot(
     [inicio, fim]
   );
   const porPlano = new Map<string, number[]>();
+  let linhasEncerradas = 0;
+  let zerosEncerradas = 0;
+  let zerosTotal = 0;
   for (const row of reportRes.rows as Array<{ plano: string; percentual_execucao: string | number | null; status: string | null }>) {
+    const pctRawAll = Number(row.percentual_execucao);
+    const pctAll = Number.isFinite(pctRawAll) ? Math.min(1, Math.max(0, pctRawAll > 1 ? pctRawAll / 100 : pctRawAll)) : null;
+    if (pctAll === 0) zerosTotal += 1;
     if (!isReportStatusEncerrado(row.status)) continue;
+    linhasEncerradas += 1;
     const plano = normalizarSetor(String(row.plano ?? "").trim());
     if (!plano) continue;
     const pctRaw = Number(row.percentual_execucao);
     if (!Number.isFinite(pctRaw)) continue;
     const pctDecimal = Math.min(1, Math.max(0, pctRaw > 1 ? pctRaw / 100 : pctRaw));
+    if (pctDecimal === 0) zerosEncerradas += 1;
     const arr = porPlano.get(plano) ?? [];
     arr.push(pctDecimal);
     porPlano.set(plano, arr);
@@ -364,9 +393,17 @@ async function getIptPercentFromReportSnapshot(
     ordens.push({ percentual: Math.min(1, Math.max(0, blend)) });
   }
   if (ordens.length === 0) return null;
-  const pf = calcularPF({ P: ordens.length, R: 1, F: 1, ordens });
-  if (pf == null) return null;
-  return { percentual: Number((pf * 100).toFixed(2)), base: ordens.length };
+  const cenarios = calcularCenariosIPT({
+    ordens,
+    totalLinhas: reportRes.rows.length,
+    linhasEncerradas,
+    zerosTotal,
+    zerosEncerradas,
+    planosDistintos: ordens.length,
+    percentualOficial: await getIptOficialMensalSnapshot(client, inicio, fim),
+  });
+  if (!cenarios) return null;
+  return { percentual: cenarios.estimado.percentual, base: ordens.length };
 }
 
 async function snapshotIndicadoresFromDb(

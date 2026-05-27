@@ -11,6 +11,7 @@ import {
   findNextExpectedByFrequency,
   parseDateKeyLocal,
 } from "../constants/ipt.js";
+import { calcularCenariosIPT } from "./ipt-pf-algoritmo.js";
 
 const normalizeText = (value: string): string =>
   String(value ?? "")
@@ -44,6 +45,28 @@ function toDateKey(value: string | Date | null | undefined): string | null {
     return `${y}-${m}-${d}`;
   }
   return null;
+}
+
+function isFullMonthPeriod(inicio: string | null, fim: string | null): { ano: number; mes: number } | null {
+  if (!inicio || !fim) return null;
+  const match = inicio.match(/^(\d{4})-(\d{2})-01$/);
+  if (!match) return null;
+  const ano = Number(match[1]);
+  const mes = Number(match[2]);
+  const ultimoDia = new Date(ano, mes, 0).getDate();
+  const fimEsperado = `${ano}-${String(mes).padStart(2, "0")}-${String(ultimoDia).padStart(2, "0")}`;
+  return fim === fimEsperado ? { ano, mes } : null;
+}
+
+async function getIptOficialMensal(client: PoolClient, inicio: string | null, fim: string | null): Promise<number | null> {
+  const periodo = isFullMonthPeriod(inicio, fim);
+  if (!periodo) return null;
+  const res = await client.query(`SELECT percentual FROM ipt_oficial_mensal WHERE ano = $1 AND mes = $2`, [
+    periodo.ano,
+    periodo.mes,
+  ]);
+  const percentual = Number(res.rows[0]?.percentual);
+  return Number.isFinite(percentual) ? percentual : null;
 }
 
 function dateKeyAddDays(dateKey: string, deltaDays: number): string {
@@ -436,6 +459,7 @@ export async function buildIptPreviewFromConsolidado(
     selimp_sum: number;
     selimp_count: number;
     selimp_zero_count: number;
+    selimp_max: number | null;
     nosso_sum: number;
     nosso_count: number;
     despachos_selimp: number;
@@ -484,6 +508,7 @@ export async function buildIptPreviewFromConsolidado(
       selimp_sum: 0,
       selimp_count: 0,
       selimp_zero_count: 0,
+      selimp_max: null,
       nosso_sum: 0,
       nosso_count: 0,
       despachos_selimp: 0,
@@ -519,6 +544,7 @@ export async function buildIptPreviewFromConsolidado(
       bucket.selimp_sum += pctVal;
       bucket.selimp_count += 1;
       bucket.despachos_selimp += 1;
+      bucket.selimp_max = bucket.selimp_max == null ? pctVal : Math.max(bucket.selimp_max, pctVal);
       if (pctVal === 0) bucket.selimp_zero_count += 1;
     }
     if (row.metodo_estimativa && row.metodo_estimativa !== "cronograma" && row.metodo_estimativa !== "cronograma+cross_ref") {
@@ -597,6 +623,7 @@ export async function buildIptPreviewFromConsolidado(
       let countSelimp = 0;
       let despachosSelimp = 0;
       let zeroCountSelimp = 0;
+      let maxSelimp: number | null = null;
       let sumNosso = 0;
       let countNosso = 0;
       let despachosNosso = 0;
@@ -614,6 +641,7 @@ export async function buildIptPreviewFromConsolidado(
           countSelimp += bucket.selimp_count;
           despachosSelimp += bucket.despachos_selimp;
           zeroCountSelimp += bucket.selimp_zero_count;
+          if (bucket.selimp_max != null) maxSelimp = maxSelimp == null ? bucket.selimp_max : Math.max(maxSelimp, bucket.selimp_max);
           sumNosso += bucket.nosso_sum;
           countNosso += bucket.nosso_count;
           despachosNosso += bucket.despachos_nosso;
@@ -632,6 +660,10 @@ export async function buildIptPreviewFromConsolidado(
         .sort((a, b) => b.data.localeCompare(a.data));
 
       const percentualSelimp = countSelimp > 0 ? Number((sumSelimp / countSelimp).toFixed(2)) : null;
+      const iptOrdemBlend =
+        percentualSelimp != null && maxSelimp != null
+          ? Number((0.48 * maxSelimp + 0.52 * percentualSelimp).toFixed(2))
+          : null;
       const percentualNosso = countNosso > 0 ? Number((sumNosso / countNosso).toFixed(2)) : null;
       const origem =
         despachosSelimp > 0 && despachosNosso > 0
@@ -680,6 +712,8 @@ export async function buildIptPreviewFromConsolidado(
         raw_selimp_sum: sumSelimp,
         raw_selimp_count: countSelimp,
         raw_selimp_nonzero_count: countSelimp - zeroCountSelimp,
+        raw_selimp_max: maxSelimp,
+        ipt_ordem_blend: iptOrdemBlend,
         equipamentos: Array.from(item.equipamentos),
         bateria_por_equipamento: Object.fromEntries(
           Array.from(item.equipamentos)
@@ -796,6 +830,18 @@ export async function buildIptPreviewFromConsolidado(
     totalRawSelimpCount > 0 ? Number((totalRawSelimpSum / totalRawSelimpCount).toFixed(2)) : null;
   const iptMedioSelimpSemZerados =
     totalRawSelimpNonzeroCount > 0 ? Number((totalRawSelimpSum / totalRawSelimpNonzeroCount).toFixed(2)) : null;
+  const cenariosIpt = calcularCenariosIPT({
+    ordens: rowsFiltered
+      .map((r) => r.ipt_ordem_blend)
+      .filter((value): value is number => value != null && Number.isFinite(value))
+      .map((percentual) => ({ percentual: percentual / 100 })),
+    totalLinhas: totalRawSelimpCount,
+    linhasEncerradas: totalRawSelimpCount,
+    zerosTotal: totalRawSelimpCount - totalRawSelimpNonzeroCount,
+    zerosEncerradas: totalRawSelimpCount - totalRawSelimpNonzeroCount,
+    planosDistintos: rowsFiltered.filter((r) => r.ipt_ordem_blend != null).length,
+    percentualOficial: await getIptOficialMensal(client, scopeStart, scopeEnd),
+  });
   const planosDespachadosSelimp = rowsFiltered.filter((r) => r.despachos_selimp > 0).length;
   const ddmxSumPond = rowsFiltered.reduce((acc, r) => {
     if (r.percentual_nosso != null && r.despachos_nosso > 0)
@@ -934,6 +980,7 @@ export async function buildIptPreviewFromConsolidado(
       total_despachos_zerados: totalRawSelimpCount - totalRawSelimpNonzeroCount,
       ipt_soma_percentuais: Number(totalRawSelimpSum.toFixed(2)),
       ipt_media_percentual: iptMedioSelimp,
+      ipt_cenarios: cenariosIpt,
     },
     subprefeituras,
     servicos,

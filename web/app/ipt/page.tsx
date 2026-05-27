@@ -431,12 +431,24 @@ export default function IPTPage() {
   );
 
   const iptCard = useMemo(
-    () => ({
-      valor: kpisData?.indicadores?.ipt?.valor,
-      pontuacao: kpisData?.indicadores?.ipt?.pontuacao,
-    }),
-    [kpisData]
+    () => {
+      const cenarios = iptPreviewCards?.resumo.ipt_cenarios ?? kpisData?.indicadores?.ipt?.cenarios ?? null;
+      return {
+        valor: cenarios?.estimado.percentual ?? kpisData?.indicadores?.ipt?.valor,
+        pontuacao: cenarios?.estimado.pontuacao ?? kpisData?.indicadores?.ipt?.pontuacao,
+        cenarios,
+      };
+    },
+    [iptPreviewCards, kpisData]
   );
+
+  const iptRiskTone = useMemo(() => {
+    const risco = iptCard.cenarios?.diagnostico.risco;
+    if (iptCard.cenarios?.diagnostico.cobertura_fonte === "presumida_100") return "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300";
+    if (risco === "alto") return "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300";
+    if (risco === "medio") return "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300";
+    return "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+  }, [iptCard.cenarios]);
 
   const handleServiceEvolutionClick = async (tipoServico: string) => {
     const label = tipoServico || "Não informado";
@@ -980,7 +992,7 @@ export default function IPTPage() {
           <Card className="xl:col-span-1 border-0 shadow-[0_20px_50px_-30px_rgba(16,185,129,0.7)] bg-linear-to-br from-emerald-500/15 via-card to-card">
             <CardHeader className="pb-3">
               <div className="flex items-center gap-2">
-                <CardTitle className="text-base">IPT (Cálculo Automático)</CardTitle>
+                <CardTitle className="text-base">IPT de acompanhamento</CardTitle>
                 <div
                   className="relative"
                   onMouseEnter={() => setIptFormulaTooltip(true)}
@@ -989,25 +1001,37 @@ export default function IPTPage() {
                   <Info className="h-4 w-4 text-zinc-400 hover:text-emerald-500 cursor-help transition-colors shrink-0" />
                   {iptFormulaTooltip && (
                     <div className="absolute left-0 top-6 z-50 w-[min(95vw,28rem)] rounded-lg bg-zinc-900 dark:bg-zinc-800 p-4 text-xs text-white shadow-xl border border-zinc-700">
-                      <div className="font-bold mb-2 text-sm text-emerald-400">IPT — SELIMP</div>
+                      <div className="font-bold mb-2 text-sm text-emerald-400">Cenários IPT</div>
                       <div className="p-2 bg-zinc-800 dark:bg-zinc-900 rounded border border-zinc-700">
                         <div className="font-mono text-xs text-emerald-300 leading-relaxed">
-                          PF = 0.7 × min(Q̄ + min(σ, 0.08), 1) + 0.3 × min(A/C, 1)
+                          IPT = 70% qualidade + 30% cobertura
                           <br />
-                          <span className="text-zinc-400">onde C = P×R/F , Q̄ = (1/N)×ΣQᵢ , N = A−Z</span>
+                          <span className="text-zinc-400">sem P/R/F real, a cobertura fica presumida ou inferida pelo oficial</span>
                         </div>
                       </div>
-                      <div className="text-zinc-400 text-xs mt-2">70% qualidade + 30% cobertura. Fonte: planilha SELIMP.</div>
+                      <div className="text-zinc-400 text-xs mt-2">Fevereiro e março indicam cobertura perto de 100%; abril indica cobertura perto de 10%.</div>
                     </div>
                   )}
                 </div>
               </div>
-              <CardDescription>Percentual Médio e Pontuação.</CardDescription>
+              <CardDescription>Separação entre qualidade executada e cobertura de rastreamento.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              {/* IPT real + pontuação */}
               <div className="rounded-xl bg-background/70 p-3.5 shadow-sm transition-all hover:shadow-md">
-                <p className="text-xs text-muted-foreground">IPT calculado (SELIMP)</p>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs text-muted-foreground">
+                    {iptCard.cenarios?.diagnostico.cobertura_fonte === "oficial_selimp"
+                      ? "IPT oficial / cobertura inferida"
+                      : "IPT com cobertura presumida em 100%"}
+                  </p>
+                  {iptCard.cenarios && (
+                    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase ${iptRiskTone}`}>
+                      {iptCard.cenarios.diagnostico.cobertura_fonte === "oficial_selimp"
+                        ? `cob. ${iptCard.cenarios.diagnostico.cobertura_usada.toFixed(1)}%`
+                        : "cobertura não auditada"}
+                    </span>
+                  )}
+                </div>
                 <p className="text-3xl font-bold text-emerald-600 mt-0.5">
                   {iptCard.valor != null ? `${iptCard.valor.toFixed(1)}%` : "--"}
                 </p>
@@ -1032,13 +1056,43 @@ export default function IPTPage() {
                 </div>
               </div>
 
+              <div className="grid grid-cols-2 gap-2">
+                <div className="rounded-xl bg-red-500/10 p-3 shadow-sm">
+                  <p className="text-xs text-muted-foreground">Stress cobertura 10%</p>
+                  <p className="text-xl font-bold text-red-700 dark:text-red-300">{pct(iptCard.cenarios?.conservador.percentual)}</p>
+                </div>
+                <div className="rounded-xl bg-cyan-500/10 p-3 shadow-sm">
+                  <p className="text-xs text-muted-foreground">Cobertura 100%</p>
+                  <p className="text-xl font-bold text-cyan-700 dark:text-cyan-300">{pct(iptCard.cenarios?.otimista.percentual)}</p>
+                </div>
+              </div>
+
               <div className="rounded-xl bg-background/70 p-3.5 shadow-sm transition-all hover:shadow-md flex items-center justify-between">
                 <div>
-                  <p className="text-xs text-muted-foreground">Pontuação IPT</p>
+                  <p className="text-xs text-muted-foreground">Pontuação IPT no cenário principal</p>
                   <p className="text-3xl font-bold text-teal-600 mt-0.5">{iptCard.pontuacao ?? 0}</p>
                 </div>
                 <Target className="h-8 w-8 text-teal-500/40" />
               </div>
+
+              {iptCard.cenarios && (
+                <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-muted-foreground">
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div>
+                      <p className="font-bold text-foreground">{iptCard.cenarios.diagnostico.qualidade_ajustada.toFixed(1)}%</p>
+                      <p>qualidade PF</p>
+                    </div>
+                    <div>
+                      <p className="font-bold text-foreground">{iptCard.cenarios.diagnostico.zeros_encerradas}</p>
+                      <p>zeros encerr.</p>
+                    </div>
+                    <div>
+                      <p className="font-bold text-foreground">{iptCard.cenarios.diagnostico.taxa_zeros_encerradas.toFixed(1)}%</p>
+                      <p>taxa zero</p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
             </CardContent>
           </Card>
