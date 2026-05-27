@@ -11,6 +11,7 @@ import {
   type IndicadorResult,
 } from "../services/indicadores.js";
 import { calcularCenariosIPT, calcularPFComDetalhes, type IptCenarios, type PfDetalhes } from "../services/ipt-pf-algoritmo.js";
+import { montarRespostaConservador, type Linha as IptLinhaConservador } from "../services/ipt-conservador.js";
 import { BFS_IF_EXCLUSAO_SQL, sqlBfsFiscalNaoEhSelimp } from "../constants/bfs.js";
 import { SUB_SIGLAS, DOMICILIOS_POR_REGIONAL, regionalToSigla } from "../constants/regionais.js";
 import {
@@ -493,6 +494,78 @@ function calcularMediaIfPorSubprefeitura(
 }
 
 type DashboardIndicadorTipo = "IA" | "IRD" | "IF" | "IPT" | "ADC";
+
+/**
+ * Carrega as linhas (1 OS = 1 linha) preservando zeros, subprefeitura e serviço,
+ * para alimentar o IPT conservador. Não agrupa por plano — o agrupamento fica
+ * a cargo de cada variante no serviço de cálculo.
+ *
+ * Fonte: consolidado (veículos + varrição) > fallback report SELIMP encerrado.
+ */
+async function fetchLinhasParaConservador(
+  client: any,
+  inicio: string,
+  fim: string,
+): Promise<{ linhas: IptLinhaConservador[]; fonte: string }> {
+  const veicRes = await client.query(
+    `SELECT setor, raw
+     FROM ipt_imports
+     WHERE file_type = 'ipt_consolidado_veiculos'
+       AND data_referencia >= $1::date AND data_referencia <= $2::date`,
+    [inicio, fim],
+  );
+  const varrRes = await client.query(
+    `SELECT setor, raw
+     FROM ipt_imports
+     WHERE file_type = 'ipt_consolidado_varricao'
+       AND data_referencia >= $1::date AND data_referencia <= $2::date`,
+    [inicio, fim],
+  );
+  const consolidadoRows = [...(veicRes.rows ?? []), ...(varrRes.rows ?? [])];
+
+  if (consolidadoRows.length > 0) {
+    const linhas: IptLinhaConservador[] = [];
+    for (const row of consolidadoRows) {
+      const plano = normalizarSetor(String(row.setor ?? "").trim());
+      if (!plano) continue;
+      const raw = (row.raw ?? {}) as Record<string, unknown>;
+      const s = Number(raw.percentual_selimp);
+      if (!Number.isFinite(s)) continue;
+      const pctDecimal = percentDisplayToDecimal(s > 1 ? s : s * 100);
+      linhas.push({
+        plano,
+        percentual: Math.min(1, Math.max(0, pctDecimal)),
+        subprefeitura: String(raw.subprefeitura ?? "").trim() || undefined,
+        servico: String(raw.servico ?? "").trim() || undefined,
+      });
+    }
+    return { linhas, fonte: "consolidado_selimp" };
+  }
+
+  const reportRes = await client.query(
+    `SELECT plano, percentual_execucao, status, subprefeitura, tipo_servico
+     FROM ipt_report_linhas
+     WHERE data_estimada >= $1::date AND data_estimada <= $2::date`,
+    [inicio, fim],
+  );
+  const linhas: IptLinhaConservador[] = [];
+  for (const row of reportRes.rows ?? []) {
+    const statusNorm = normalizeMatchText(String(row.status ?? ""));
+    if (!statusNorm.includes("encerrado")) continue;
+    const plano = normalizarSetor(String(row.plano ?? "").trim());
+    if (!plano) continue;
+    const pctRaw = Number(row.percentual_execucao);
+    if (!Number.isFinite(pctRaw)) continue;
+    const pctDecimal = Math.min(1, Math.max(0, pctRaw > 1 ? pctRaw / 100 : pctRaw));
+    linhas.push({
+      plano,
+      percentual: pctDecimal,
+      subprefeitura: String(row.subprefeitura ?? "").trim() || undefined,
+      servico: String(row.tipo_servico ?? "").trim() || undefined,
+    });
+  }
+  return { linhas, fonte: "report_selimp_encerrado" };
+}
 
 export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
   /** KPIs do dashboard: contagens e indicadores no período */
@@ -981,11 +1054,13 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
           "Coleta e transporte de entulho e grandes objetos depositados irregularmente nas vias, logradouros e áreas públicas",
           "Fornecimento, instalação e reposição de papeleiras e outros equipamentos de recepção de resíduos",
           "Remoção de animais mortos de proprietários não identificados em vias e logradouros públicos",
+          "Operação dos Ecopontos",
+          "Remoção de Resíduos dos Ecopontos",
         ],
         if_por_sub: ifPorSub,
         filtros_aplicados: [
           "Data_Fiscalizacao no período",
-          "Todos os BFS exceto 3 serviços: Coleta e transporte de entulho e grandes objetos...; Fornecimento, instalação e reposição de papeleiras...; Remoção de animais mortos de proprietários não identificados...",
+          "Todos os BFS exceto 5 serviços: Coleta e transporte de entulho e grandes objetos...; Fornecimento, instalação e reposição de papeleiras...; Remoção de animais mortos de proprietários não identificados...; Operação dos Ecopontos; Remoção de Resíduos dos Ecopontos",
           "Exclui BFS cujo fiscal (coluna Fiscal) começa por \"SELIMP -\" (fiscalização interna SELIMP)",
           "Sem irregularidade = Status = 'Sem Irregularidades'",
           "Cálculo: IF por sub (JT, CV, ST, MG) = (sem irregularidades / total) × 100, média dos 4 = IF final",
@@ -1211,6 +1286,128 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
       return { ano, meses };
+    } finally {
+      client.release();
+    }
+  });
+
+  /**
+   * IPT Conservador — variantes paralelas + diagnóstico.
+   *
+   * Retorna 7 variantes (v1..v7) e um diagnóstico (zeros, planos zerados, subs críticas)
+   * para permitir comparação entre o IPT otimista atual e proxies SELIMP. Não substitui
+   * /dashboard/indicadores; é um endpoint paralelo para acompanhamento de risco de glosa.
+   *
+   * Query: ?periodo_inicial=YYYY-MM-DD&periodo_final=YYYY-MM-DD
+   */
+  fastify.get<{
+    Querystring: { periodo_inicial?: string; periodo_final?: string };
+  }>("/indicadores/ipt-conservador", async (request, reply) => {
+    const inicio = String(request.query.periodo_inicial ?? "").trim();
+    const fim = String(request.query.periodo_final ?? "").trim();
+    if (!isDateYmd(inicio) || !isDateYmd(fim) || inicio > fim) {
+      return reply.code(400).send({ detail: "Informe periodo_inicial e periodo_final validos (YYYY-MM-DD)." });
+    }
+    const client = await pool.connect();
+    try {
+      const { linhas, fonte } = await fetchLinhasParaConservador(client, inicio, fim);
+      const resposta = montarRespostaConservador({ inicio, fim, fonte }, linhas);
+      return resposta;
+    } finally {
+      client.release();
+    }
+  });
+
+  /**
+   * Evolucao diaria por servico — alimenta a visualizacao "estamos indo bem ou nao".
+   *
+   * Le snapshot_type = 'ipt_servico_diario' (gravado a cada upload do consolidado),
+   * agrupado por dia. Sem agregacao artificial: cada linha eh o valor de uma planilha
+   * importada. Permite filtrar por servico e periodo.
+   *
+   * Query: ?tipo_servico=... &periodo_inicial=YYYY-MM-DD &periodo_final=YYYY-MM-DD
+   */
+  fastify.get<{
+    Querystring: { tipo_servico?: string; periodo_inicial?: string; periodo_final?: string };
+  }>("/indicadores/ipt-servico-evolucao", async (request, reply) => {
+    const tipo = String(request.query.tipo_servico ?? "").trim();
+    const inicio = String(request.query.periodo_inicial ?? "").trim();
+    const fim = String(request.query.periodo_final ?? "").trim();
+    if (!isDateYmd(inicio) || !isDateYmd(fim) || inicio > fim) {
+      return reply.code(400).send({ detail: "periodo_inicial e periodo_final obrigatorios (YYYY-MM-DD)." });
+    }
+    const client = await pool.connect();
+    try {
+      const params: any[] = [inicio, fim];
+      let filterServico = "";
+      if (tipo) {
+        params.push(tipo);
+        filterServico = ` AND metric_label = $${params.length}`;
+      }
+      const r = await client.query(
+        `SELECT
+           periodo_inicial::text AS data,
+           metric_key,
+           metric_label AS tipo_servico,
+           percentual,
+           media_sem_zerados,
+           quantidade_planos,
+           total_despachos,
+           despachos_zerados,
+           source_file,
+           snapshot_at
+         FROM metric_snapshots
+         WHERE snapshot_type = 'ipt_servico_diario'
+           AND periodo_inicial >= $1::date
+           AND periodo_final <= $2::date
+           ${filterServico}
+         ORDER BY periodo_inicial, metric_label`,
+        params,
+      );
+      return {
+        periodo: { inicio, fim },
+        tipo_servico: tipo || null,
+        pontos: r.rows.map((row: any) => ({
+          data: row.data,
+          tipo_servico: row.tipo_servico,
+          metric_key: row.metric_key,
+          percentual_com_zeros: row.percentual != null ? Number(row.percentual) : null,
+          percentual_sem_zeros: row.media_sem_zerados != null ? Number(row.media_sem_zerados) : null,
+          planos: Number(row.quantidade_planos ?? 0),
+          despachos: Number(row.total_despachos ?? 0),
+          zerados: Number(row.despachos_zerados ?? 0),
+          source_file: row.source_file,
+          snapshot_at: row.snapshot_at,
+        })),
+      };
+    } finally {
+      client.release();
+    }
+  });
+
+  /**
+   * Lista todos os servicos com snapshot no periodo (para popular dropdown da viz).
+   */
+  fastify.get<{
+    Querystring: { periodo_inicial?: string; periodo_final?: string };
+  }>("/indicadores/ipt-servicos-disponiveis", async (request, reply) => {
+    const inicio = String(request.query.periodo_inicial ?? "").trim();
+    const fim = String(request.query.periodo_final ?? "").trim();
+    if (!isDateYmd(inicio) || !isDateYmd(fim) || inicio > fim) {
+      return reply.code(400).send({ detail: "periodo_inicial e periodo_final obrigatorios (YYYY-MM-DD)." });
+    }
+    const client = await pool.connect();
+    try {
+      const r = await client.query(
+        `SELECT DISTINCT metric_label AS tipo_servico, metric_key
+         FROM metric_snapshots
+         WHERE snapshot_type = 'ipt_servico_diario'
+           AND periodo_inicial >= $1::date
+           AND periodo_final <= $2::date
+         ORDER BY 1`,
+        [inicio, fim],
+      );
+      return { servicos: r.rows };
     } finally {
       client.release();
     }

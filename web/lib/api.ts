@@ -971,6 +971,77 @@ export const apiService = {
     return data;
   },
 
+  /** IPT Conservador: variantes + diagnostico + recomendacao de risco. */
+  getIptConservador: async (periodoInicial: string, periodoFinal: string) => {
+    const { data } = await api.get("/indicadores/ipt-conservador", {
+      params: { periodo_inicial: periodoInicial, periodo_final: periodoFinal },
+    });
+    return data as {
+      base: { inicio: string; fim: string; fonte: string };
+      variantes: Array<{
+        id: string;
+        descricao: string;
+        percentual: number | null;
+        pontuacao: number | null;
+        componentes?: Record<string, number | null>;
+      }>;
+      diagnostico: {
+        total_linhas: number;
+        linhas_zeradas: number;
+        pct_linhas_zeradas: number;
+        planos_distintos: number;
+        planos_totalmente_zerados: number;
+        pct_planos_zerados: number;
+        media_geral_com_zeros: number;
+        media_geral_sem_zeros: number;
+        mediana_geral: number;
+        subprefeituras_criticas: Array<{ subprefeitura: string; media_com_zeros: number; planos: number; zeros: number }>;
+      };
+      recomendacao: {
+        otimista: string;
+        conservador: string;
+        risco_glosa: "baixo" | "medio" | "alto";
+        gap_pp: number;
+        justificativa: string;
+      };
+    };
+  },
+
+  /** Evolucao diaria do percentual de um servico (snapshots ipt_servico_diario). */
+  getIptServicoEvolucao: async (periodoInicial: string, periodoFinal: string, tipoServico?: string) => {
+    const { data } = await api.get("/indicadores/ipt-servico-evolucao", {
+      params: {
+        periodo_inicial: periodoInicial,
+        periodo_final: periodoFinal,
+        tipo_servico: tipoServico,
+      },
+    });
+    return data as {
+      periodo: { inicio: string; fim: string };
+      tipo_servico: string | null;
+      pontos: Array<{
+        data: string;
+        tipo_servico: string;
+        metric_key: string;
+        percentual_com_zeros: number | null;
+        percentual_sem_zeros: number | null;
+        planos: number;
+        despachos: number;
+        zerados: number;
+        source_file: string;
+        snapshot_at: string;
+      }>;
+    };
+  },
+
+  /** Lista de servicos disponiveis no periodo (para popular dropdown). */
+  getIptServicosDisponiveis: async (periodoInicial: string, periodoFinal: string) => {
+    const { data } = await api.get("/indicadores/ipt-servicos-disponiveis", {
+      params: { periodo_inicial: periodoInicial, periodo_final: periodoFinal },
+    });
+    return data as { servicos: Array<{ tipo_servico: string; metric_key: string }> };
+  },
+
   salvarIPT: async (periodoInicial: string, periodoFinal: string, percentualTotal: number) => {
     const { data } = await api.post('/indicadores/salvar/ipt', null, {
       params: {

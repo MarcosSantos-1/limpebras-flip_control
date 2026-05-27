@@ -16,7 +16,7 @@ export function calcularMediaIfPorSubprefeitura(
 }
 
 /**
- * IF estimado alinhado ao ADC: BFS no período, exclui 3 serviços e fiscais SELIMP -;
+ * IF estimado alinhado ao ADC: BFS no período, exclui 5 serviços e fiscais SELIMP -;
  * todas as subs → média dos 4 percentuais; uma sub → (sem irreg. / total) × 100 naquela sub.
  */
 export async function computeIfEstimadoAdc(params: {

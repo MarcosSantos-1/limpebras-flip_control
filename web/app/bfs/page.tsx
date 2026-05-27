@@ -263,7 +263,7 @@ export default function BFSPage() {
                 {ifPercentLabel}
               </div>
               <p className="text-xs text-muted-foreground mt-1 leading-snug">
-                Média dos % por subprefeitura no período (regra ADC: exclui 3 serviços e fiscais SELIMP -).
+                Média dos % por subprefeitura no período (regra ADC: exclui 5 serviços e fiscais SELIMP -).
                 {ifEstimado != null && (
                   <span className="block mt-1">
                     Base: {ifEstimado.total_sem_irregularidade_adc} sem irregularidade /{" "}

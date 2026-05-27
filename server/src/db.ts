@@ -462,6 +462,26 @@ export async function runMigrations() {
          ON metric_snapshots(snapshot_type, periodo_inicial, periodo_final)`
       )
       .catch(() => {});
+    // Permite UPSERT em insertMetricSnapshot. Antes de criar a constraint, dedupe
+    // pelo registro mais recente (id maior vence).
+    await client
+      .query(
+        `DELETE FROM metric_snapshots a
+         USING metric_snapshots b
+         WHERE a.id < b.id
+           AND a.snapshot_type = b.snapshot_type
+           AND a.metric_key = b.metric_key
+           AND a.periodo_inicial = b.periodo_inicial
+           AND a.periodo_final = b.periodo_final
+           AND a.periodo_tipo = b.periodo_tipo`
+      )
+      .catch(() => {});
+    await client
+      .query(
+        `CREATE UNIQUE INDEX IF NOT EXISTS ux_metric_snapshots_upsert
+         ON metric_snapshots(snapshot_type, metric_key, periodo_inicial, periodo_final, periodo_tipo)`
+      )
+      .catch(() => {});
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS ipt_ddmx_varricao (

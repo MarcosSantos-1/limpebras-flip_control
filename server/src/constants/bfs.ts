@@ -18,12 +18,14 @@ export const BFS_NAO_DEMANDANTES: string[] = [
 
 /**
  * Serviços BFS EXCLUÍDOS do cálculo do IF.
- * IF = todos os BFS do período EXCETO estes 3.
+ * IF = todos os BFS do período EXCETO estes 5.
  */
 export const BFS_IF_EXCLUSAO_SQL: string[] = [
   "%Coleta e transporte de entulho e grandes objetos depositados irregularmente nas vias, logradouros  e áreas públicas%",
   "%Fornecimento, instalação e reposição de papeleiras e outros equipamentos de recepção de resíduos%",
   "%Remoção de animais mortos de proprietários não identificados em vias e logradouros públicos%",
+  "%Operação dos Ecopontos%",
+  "%Remoção%Resíduos dos Ecopontos%",
 ];
 
 /**
