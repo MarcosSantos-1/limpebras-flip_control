@@ -239,7 +239,22 @@ async function insertMetricSnapshot(
        $7, $8, $9, $10,
        $11, $12, $13, $14,
        $15, $16::jsonb, NOW()
-     )`,
+     )
+     ON CONFLICT (snapshot_type, metric_key, periodo_inicial, periodo_final, periodo_tipo)
+     DO UPDATE SET
+       metric_label = EXCLUDED.metric_label,
+       snapshot_at = NOW(),
+       valor = EXCLUDED.valor,
+       percentual = EXCLUDED.percentual,
+       pontuacao = EXCLUDED.pontuacao,
+       media_sem_zerados = EXCLUDED.media_sem_zerados,
+       quantidade_planos = EXCLUDED.quantidade_planos,
+       quantidade_base = EXCLUDED.quantidade_base,
+       total_despachos = EXCLUDED.total_despachos,
+       despachos_zerados = EXCLUDED.despachos_zerados,
+       source_file = EXCLUDED.source_file,
+       metadata = EXCLUDED.metadata,
+       updated_at = NOW()`,
     [
       opts.snapshotType,
       opts.metricKey,
@@ -315,6 +330,83 @@ async function insertIptServiceSnapshots(
       despachosZerados: Number(row.despachos_zerados ?? 0),
       sourceFile: opts.sourceFile,
       metadata: { generated_from: "ipt_report_linhas" },
+    });
+    upserted += 1;
+  }
+  return upserted;
+}
+
+/**
+ * Snapshot por (serviço, dia) a partir do consolidado SELIMP.
+ *
+ * Lê de ipt_imports (file_type = ipt_consolidado_veiculos / varricao) os registros
+ * do source_file recém-importado e agrega por (servico, data_referencia::date),
+ * salvando 1 snapshot por par. A média é calculada DIRETO sobre raw.percentual_selimp
+ * (escala 0–100). Preserva os zeros tal como veem nas planilhas — NADA é inventado.
+ *
+ * Para cada (servico, dia) salva:
+ *   - percentual = AVG(raw.percentual_selimp)            // com zeros
+ *   - media_sem_zerados = AVG(...) FILTER (> 0)          // sem zeros
+ *   - quantidade_planos = COUNT(DISTINCT setor)
+ *   - total_despachos = COUNT(*)
+ *   - despachos_zerados = COUNT(*) FILTER (<= 0)
+ *
+ * Chave única do snapshot: (snapshot_type, metric_key, periodo_inicial, periodo_final, periodo_tipo)
+ *   - metric_key = slug(servico)
+ *   - periodo_inicial = periodo_final = data do dia
+ *   - periodo_tipo = "diario"
+ *
+ * Reimportar a mesma planilha simplesmente atualiza o snapshot existente.
+ */
+async function insertIptServiceSnapshotsFromConsolidado(
+  client: PoolClient,
+  opts: { sourceFile: string }
+): Promise<number> {
+  const res = await client.query<{
+    servico: string;
+    data_ref: string;
+    quantidade_planos: string;
+    total_despachos: string;
+    despachos_zerados: string;
+    percentual: string | null;
+    media_sem_zerados: string | null;
+  }>(
+    `SELECT
+       COALESCE(NULLIF(TRIM(servico), ''), 'Nao informado') AS servico,
+       (data_referencia AT TIME ZONE 'America/Sao_Paulo')::date::text AS data_ref,
+       COUNT(DISTINCT setor)::int AS quantidade_planos,
+       COUNT(*)::int AS total_despachos,
+       COUNT(*) FILTER (WHERE COALESCE((raw->>'percentual_selimp')::numeric, 0) <= 0)::int AS despachos_zerados,
+       ROUND(AVG((raw->>'percentual_selimp')::numeric), 4) AS percentual,
+       ROUND(AVG((raw->>'percentual_selimp')::numeric) FILTER (WHERE (raw->>'percentual_selimp')::numeric > 0), 4) AS media_sem_zerados
+     FROM ipt_imports
+     WHERE file_type IN ('ipt_consolidado_veiculos','ipt_consolidado_varricao')
+       AND source_file = $1
+       AND (raw->>'percentual_selimp') IS NOT NULL
+     GROUP BY 1, 2
+     ORDER BY 2, 1`,
+    [opts.sourceFile]
+  );
+
+  let upserted = 0;
+  for (const row of res.rows) {
+    const label = row.servico || "Nao informado";
+    const key = normalizeSnapshotKey(label) || "nao_informado";
+    await insertMetricSnapshot(client, {
+      snapshotType: "ipt_servico_diario",
+      metricKey: key,
+      metricLabel: label,
+      periodoInicial: row.data_ref,
+      periodoFinal: row.data_ref,
+      periodoTipo: "diario",
+      valor: row.percentual != null ? Number(row.percentual) : null,
+      percentual: row.percentual != null ? Number(row.percentual) : null,
+      mediaSemZerados: row.media_sem_zerados != null ? Number(row.media_sem_zerados) : null,
+      quantidadePlanos: Number(row.quantidade_planos ?? 0),
+      totalDespachos: Number(row.total_despachos ?? 0),
+      despachosZerados: Number(row.despachos_zerados ?? 0),
+      sourceFile: opts.sourceFile,
+      metadata: { generated_from: "ipt_imports_consolidado" },
     });
     upserted += 1;
   }
@@ -1461,6 +1553,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         );
         inserted += 1;
       }
+      const snapshotsServicos = await insertIptServiceSnapshotsFromConsolidado(client, { sourceFile });
       await client.query("COMMIT");
       invalidatePrefix("ipt_preview");
       invalidatePrefix("kpis");
@@ -1472,6 +1565,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         duplicados: 0,
         erros: 0,
         ultimo_import: new Date().toISOString(),
+        snapshots_servicos: snapshotsServicos,
         source_file: sourceFile,
         ...(parse_stats ? { parse_stats } : {}),
       };
