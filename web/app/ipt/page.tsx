@@ -1161,8 +1161,12 @@ export default function IPTPage() {
                   <p className="text-xl pt-2 font-bold">{iptPreviewCards?.resumo.total_planos_despachados ?? iptPreviewCards?.resumo.total_planos ?? 0}</p>
                   <p className="text-[10px] text-muted-foreground mt-0.5">Planos encerrados na planilha</p>
                 </div>
-                <div className="rounded-xl bg-cyan-500/10 p-3 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg">
+                <div
+                  className="rounded-xl bg-cyan-500/10 p-3 shadow opacity-60 cursor-default"
+                  title="Indicador em revisão — em breve"
+                >
                   <p className="text-xs text-muted-foreground">Percentual Médio (DDMX)</p>
+                  {/* TODO: reativar quando percentual_medio_ddmx estiver validado na API
                   <p className="text-xl font-bold text-cyan-600">{pct(iptPreviewCards?.resumo.percentual_medio_ddmx)}</p>
                   <div className="mt-2 h-1.5 rounded-full bg-cyan-200/40 dark:bg-cyan-900/20">
                     <div
@@ -1170,6 +1174,7 @@ export default function IPTPage() {
                       style={{ width: `${clamp(iptPreviewCards?.resumo.percentual_medio_ddmx ?? 0)}%` }}
                     />
                   </div>
+                  */}
                 </div>
               </div>
               <div className="md:col-span-2 grid grid-cols-2 gap-4">
