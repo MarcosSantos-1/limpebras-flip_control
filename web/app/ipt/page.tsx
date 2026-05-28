@@ -1044,7 +1044,7 @@ export default function IPTPage() {
           <Card className="xl:col-span-1 border-0 shadow-[0_20px_50px_-30px_rgba(16,185,129,0.7)] bg-linear-to-br from-emerald-500/15 via-card to-card">
             <CardHeader className="pb-3">
               <div className="flex items-center gap-2">
-                <CardTitle className="text-base">IPT de acompanhamento</CardTitle>
+                <CardTitle className="text-base">IPT (Algoritmo SELIMP)</CardTitle>
                 <div
                   className="relative"
                   onMouseEnter={() => setIptFormulaTooltip(true)}
@@ -1151,7 +1151,7 @@ export default function IPTPage() {
 
           <Card className="xl:col-span-2 border-0 shadow-[0_20px_50px_-30px_rgba(16,185,129,0.6)]">
             <CardHeader>
-              <CardTitle className="text-base">Medições Automáticas</CardTitle>
+              <CardTitle className="text-base">IPT - Realidade</CardTitle>
               <CardDescription>Indicadores operacionais gerados automaticamente da base consolidada.</CardDescription>
             </CardHeader>
             <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1172,27 +1172,44 @@ export default function IPTPage() {
                   </div>
                 </div>
               </div>
-              <Link
-                href="/ipt/bateria"
-                className="min-h-[140px] rounded-xl bg-violet-500/10 p-4 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg hover:bg-violet-500/20 border border-violet-500/20 hover:border-violet-500/40 text-left group flex flex-col justify-center"
-              >
-                <div className="flex items-center gap-2">
-                  <Battery className="h-6 w-6 text-violet-600 dark:text-violet-400 group-hover:scale-110 transition-transform" />
-                  <span className="text-base font-semibold text-violet-700 dark:text-violet-300">Análise de Bateria</span>
+              <div className="md:col-span-2 grid grid-cols-2 gap-4">
+                <div className="rounded-xl bg-emerald-500/10 dark:bg-emerald-500/15 p-4 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg border border-emerald-500/20 hover:border-emerald-500/40">
+                  <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400 mb-2 uppercase tracking-wider">
+                    Média exec. (sem zerados)
+                  </p>
+                  <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-300 tabular-nums">
+                    {globalInsights.mediaSemZerados != null
+                      ? `${globalInsights.mediaSemZerados.toFixed(1)}%`
+                      : "--"}
+                  </p>
                 </div>
-                <p className="text-xs text-muted-foreground mt-2">Dashboard completo de monitoramento de módulos, bateria e sinal.</p>
-              </Link>
-              <button
-                type="button"
-                onClick={() => setModalCruzamentoOpen(true)}
-                className="min-h-[140px] rounded-xl bg-indigo-500/10 p-4 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg hover:bg-indigo-500/20 border border-indigo-500/20 hover:border-indigo-500/40 text-left group flex flex-col justify-center"
-              >
-                <div className="flex items-center gap-2">
-                  <Sparkles className="h-6 w-6 text-indigo-600 dark:text-indigo-400 group-hover:scale-110 transition-transform" />
-                  <span className="text-base font-semibold text-indigo-700 dark:text-indigo-300">Cruzamento Inteligente</span>
+                <div className="rounded-xl bg-teal-500/10 dark:bg-teal-500/15 p-4 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg border border-teal-500/20 hover:border-teal-500/40">
+                  <p className="text-xs font-medium text-teal-700 dark:text-teal-400 mb-2 uppercase tracking-wider">
+                    Média exec. (com zerados)
+                  </p>
+                  <p className="text-2xl font-bold text-teal-700 dark:text-teal-300 tabular-nums">
+                    {globalInsights.mediaComZerados != null
+                      ? `${globalInsights.mediaComZerados.toFixed(1)}%`
+                      : "--"}
+                  </p>
                 </div>
-                <p className="text-xs text-muted-foreground mt-2">Clique para abrir. Espaço para mais cards e informações do modal.</p>
-              </button>
+                <div className="rounded-xl bg-amber-500/10 dark:bg-amber-500/15 p-4 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg border border-amber-500/20 hover:border-amber-500/40">
+                  <p className="text-xs font-medium text-amber-700 dark:text-amber-400 mb-2 uppercase tracking-wider">
+                    Despachos zerados
+                  </p>
+                  <p className="text-2xl font-bold text-amber-700 dark:text-amber-300 tabular-nums">
+                    {globalInsights.zerados}
+                  </p>
+                </div>
+                <div className="rounded-xl bg-slate-500/10 dark:bg-slate-500/15 p-4 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg border border-slate-500/20 hover:border-slate-500/40">
+                  <p className="text-xs font-medium text-slate-700 dark:text-slate-400 mb-2 uppercase tracking-wider">
+                    Total planos
+                  </p>
+                  <p className="text-2xl font-bold text-slate-700 dark:text-slate-300 tabular-nums">
+                    {globalInsights.totalPlanos}
+                  </p>
+                </div>
+              </div>
             </CardContent>
           </Card>
 
@@ -1468,7 +1485,7 @@ export default function IPTPage() {
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div>
-                  <CardTitle className="text-base">Subprefeituras (ativos)</CardTitle>
+                  <CardTitle className="text-base">Subprefeituras (Percentual Real)</CardTitle>
                   <CardDescription>Execução média por subprefeitura no mês selecionado.</CardDescription>
                 </div>
                 <span className="text-xs font-medium text-muted-foreground bg-muted/50 px-2 py-1 rounded-full">
@@ -1513,44 +1530,29 @@ export default function IPTPage() {
               {/* Insights e gráficos dinâmicos */}
               {topSubprefeituras.length > 0 && (
                 <div className="mt-8 pt-8 border-t border-border space-y-8">
-                  {/* Métricas globais */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div className="rounded-xl bg-emerald-500/10 dark:bg-emerald-500/15 p-4 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg border border-emerald-500/20 hover:border-emerald-500/40">
-                      <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400 mb-2 uppercase tracking-wider">
-                        Média exec. (sem zerados)
-                      </p>
-                      <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-300 tabular-nums">
-                        {globalInsights.mediaSemZerados != null
-                          ? `${globalInsights.mediaSemZerados.toFixed(1)}%`
-                          : "--"}
-                      </p>
-                    </div>
-                    <div className="rounded-xl bg-teal-500/10 dark:bg-teal-500/15 p-4 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg border border-teal-500/20 hover:border-teal-500/40">
-                      <p className="text-xs font-medium text-teal-700 dark:text-teal-400 mb-2 uppercase tracking-wider">
-                        Média exec. (com zerados)
-                      </p>
-                      <p className="text-2xl font-bold text-teal-700 dark:text-teal-300 tabular-nums">
-                        {globalInsights.mediaComZerados != null
-                          ? `${globalInsights.mediaComZerados.toFixed(1)}%`
-                          : "--"}
-                      </p>
-                    </div>
-                    <div className="rounded-xl bg-amber-500/10 dark:bg-amber-500/15 p-4 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg border border-amber-500/20 hover:border-amber-500/40">
-                      <p className="text-xs font-medium text-amber-700 dark:text-amber-400 mb-2 uppercase tracking-wider">
-                        Despachos zerados
-                      </p>
-                      <p className="text-2xl font-bold text-amber-700 dark:text-amber-300 tabular-nums">
-                        {globalInsights.zerados}
-                      </p>
-                    </div>
-                    <div className="rounded-xl bg-slate-500/10 dark:bg-slate-500/15 p-4 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg border border-slate-500/20 hover:border-slate-500/40">
-                      <p className="text-xs font-medium text-slate-700 dark:text-slate-400 mb-2 uppercase tracking-wider">
-                        Total planos
-                      </p>
-                      <p className="text-2xl font-bold text-slate-700 dark:text-slate-300 tabular-nums">
-                        {globalInsights.totalPlanos}
-                      </p>
-                    </div>
+                  {/* Atalhos analíticos */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <Link
+                      href="/ipt/bateria"
+                      className="min-h-[140px] rounded-xl bg-violet-500/10 p-4 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg hover:bg-violet-500/20 border border-violet-500/20 hover:border-violet-500/40 text-left group flex flex-col justify-center"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Battery className="h-6 w-6 text-violet-600 dark:text-violet-400 group-hover:scale-110 transition-transform" />
+                        <span className="text-base font-semibold text-violet-700 dark:text-violet-300">Análise de Bateria</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-2">Dashboard completo de monitoramento de módulos, bateria e sinal.</p>
+                    </Link>
+                    <button
+                      type="button"
+                      onClick={() => setModalCruzamentoOpen(true)}
+                      className="min-h-[140px] rounded-xl bg-indigo-500/10 p-4 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg hover:bg-indigo-500/20 border border-indigo-500/20 hover:border-indigo-500/40 text-left group flex flex-col justify-center"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="h-6 w-6 text-indigo-600 dark:text-indigo-400 group-hover:scale-110 transition-transform" />
+                        <span className="text-base font-semibold text-indigo-700 dark:text-indigo-300">Cruzamento Inteligente</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-2">Clique para abrir. Espaço para mais cards e informações do modal.</p>
+                    </button>
                   </div>
 
                   {/* Gráfico barras: média sem zerados vs com zerados por sub */}
