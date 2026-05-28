@@ -738,6 +738,26 @@ export default function IPTPage() {
     return list;
   }, [iptPreviewCards]);
 
+  const mediaServicosAtivos = useMemo(() => {
+    const comZerados = topServicos
+      .map((item) => item.media_execucao)
+      .filter((value): value is number => value != null && Number.isFinite(value));
+    const semZerados = topServicos
+      .map((item) => item.media_sem_zerados)
+      .filter((value): value is number => value != null && Number.isFinite(value));
+
+    return {
+      comZerados: comZerados.length
+        ? comZerados.reduce((acc, value) => acc + value, 0) / comZerados.length
+        : null,
+      semZerados: semZerados.length
+        ? semZerados.reduce((acc, value) => acc + value, 0) / semZerados.length
+        : null,
+      totalComZerados: comZerados.length,
+      totalSemZerados: semZerados.length,
+    };
+  }, [topServicos]);
+
   /** Itens do comparativo no escopo do mês (cards) - para métricas do card Subprefeituras */
   const cardsComparativoItens = useMemo(
     () => (iptPreviewCards?.comparativo?.itens ?? []) as Array<{
@@ -1730,6 +1750,32 @@ export default function IPTPage() {
                     </div>
                   </button>
                 ))}
+                {topServicos.length > 0 && (
+                  <div className="mt-4 grid grid-cols-1 gap-3 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-3 sm:grid-cols-2 dark:bg-cyan-500/10">
+                    <div>
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        Média dos serviços c/ zeros
+                      </p>
+                      <p
+                        className="mt-1 text-2xl font-bold tabular-nums text-cyan-700 dark:text-cyan-300"
+                        title={`Média simples dos percentuais com zerados dos ${mediaServicosAtivos.totalComZerados} serviços exibidos.`}
+                      >
+                        {pct(mediaServicosAtivos.comZerados)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        Média dos serviços s/ zeros
+                      </p>
+                      <p
+                        className="mt-1 text-2xl font-bold tabular-nums text-emerald-700 dark:text-emerald-300"
+                        title={`Média simples dos percentuais sem zerados dos ${mediaServicosAtivos.totalSemZerados} serviços exibidos.`}
+                      >
+                        {pct(mediaServicosAtivos.semZerados)}
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
               {!loading && topServicos.length === 0 && (
                 <p className="text-sm text-muted-foreground py-6 text-center">Sem dados para o período.</p>
