@@ -166,6 +166,14 @@ const getPercentualTextClass = (value?: number | null) => {
   return "text-red-700 dark:text-red-300";
 };
 
+/** Destaque de média no cabeçalho da tabela (limiar por fonte: SELIMP 70%, DDMX 50%) */
+const getMediaPeriodoClass = (value: number | null, threshold: number) => {
+  if (value == null) return "text-muted-foreground";
+  if (value > threshold) return "text-emerald-600 dark:text-emerald-400";
+  if (value >= threshold * 0.65) return "text-amber-600 dark:text-amber-400";
+  return "text-red-600 dark:text-red-400";
+};
+
 const PercentualBar = ({ value, compact }: { value?: number | null; compact?: boolean }) => {
   const pctNum = value != null && !Number.isNaN(value) ? clamp(value, 0, 100) : 0;
   const fillClass = getPercentualBarFill(value);
@@ -535,6 +543,9 @@ export default function IPTPage() {
         percentual_nosso: number | null;
         origem: "ambos" | "somente_selimp" | "somente_nosso";
         despachos_selimp?: number;
+        despachos_nosso?: number;
+        raw_selimp_sum?: number;
+        raw_selimp_count?: number;
         equipamentos?: string[];
         modulos_bateria?: IptPreviewModuloBateria[];
         produtividade_bateria_media?: number | null;
@@ -684,6 +695,27 @@ export default function IPTPage() {
     observacoes.diarias,
     tableSearchQuery,
   ]);
+
+  /** Média ponderada por despacho no período/filtros da tabela (Base de dados) */
+  const filteredTableMedias = useMemo(() => {
+    let selimpSum = 0;
+    let selimpCount = 0;
+    let ddmxSum = 0;
+    let ddmxCount = 0;
+    for (const row of filteredComparativo) {
+      selimpSum += row.raw_selimp_sum ?? 0;
+      selimpCount += row.raw_selimp_count ?? 0;
+      const despNosso = row.despachos_nosso ?? 0;
+      if (row.percentual_nosso != null && despNosso > 0) {
+        ddmxSum += row.percentual_nosso * despNosso;
+        ddmxCount += despNosso;
+      }
+    }
+    return {
+      selimp: selimpCount > 0 ? selimpSum / selimpCount : null,
+      ddmx: ddmxCount > 0 ? ddmxSum / ddmxCount : null,
+    };
+  }, [filteredComparativo]);
 
   const comparativoInsights = useMemo(() => {
     const rows = iptPreviewTable?.comparativo?.itens ?? [];
@@ -1161,20 +1193,12 @@ export default function IPTPage() {
                   <p className="text-xl pt-2 font-bold">{iptPreviewCards?.resumo.total_planos_despachados ?? iptPreviewCards?.resumo.total_planos ?? 0}</p>
                   <p className="text-[10px] text-muted-foreground mt-0.5">Planos encerrados na planilha</p>
                 </div>
-                <div
-                  className="rounded-xl bg-cyan-500/10 p-3 shadow opacity-60 cursor-default"
-                  title="Indicador em revisão — em breve"
-                >
-                  <p className="text-xs text-muted-foreground">Percentual Médio (DDMX)</p>
-                  {/* TODO: reativar quando percentual_medio_ddmx estiver validado na API
-                  <p className="text-xl font-bold text-cyan-600">{pct(iptPreviewCards?.resumo.percentual_medio_ddmx)}</p>
-                  <div className="mt-2 h-1.5 rounded-full bg-cyan-200/40 dark:bg-cyan-900/20">
-                    <div
-                      className="h-1.5 rounded-full bg-cyan-500 transition-all"
-                      style={{ width: `${clamp(iptPreviewCards?.resumo.percentual_medio_ddmx ?? 0)}%` }}
-                    />
-                  </div>
-                  */}
+                <div className="rounded-xl bg-cyan-500/10 p-3 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg">
+                  <p className="text-xs text-muted-foreground">Total despachos no mês</p>
+                  <p className="text-xl pt-2 font-bold text-cyan-700 dark:text-cyan-300 tabular-nums">
+                    {iptPreviewCards?.resumo.total_despachos_selimp ?? 0}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">SELIMP · período apurado</p>
                 </div>
               </div>
               <div className="md:col-span-2 grid grid-cols-2 gap-4">
@@ -2123,9 +2147,15 @@ export default function IPTPage() {
                           <button
                             type="button"
                             onClick={() => setHeaderMenuOpen((prev) => (prev === "selimp" ? null : "selimp"))}
-                            className="w-full rounded-xl bg-background/80 px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide shadow-md transition-all duration-200 hover:-translate-y-0.5 hover:bg-background hover:shadow-lg"
+                            className="w-full rounded-xl bg-background/80 px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide shadow-md transition-all duration-200 hover:-translate-y-0.5 hover:bg-background hover:shadow-lg flex items-center justify-between gap-2"
+                            title="Média ponderada SELIMP no período apurado (conforme filtros)"
                           >
-                            <span className="inline-flex items-center gap-1">📈 SELIMP {getSortLabel("selimp")}</span>
+                            <span className="inline-flex items-center gap-1 min-w-0 truncate">📈 SELIMP {getSortLabel("selimp")}</span>
+                            <span
+                              className={`shrink-0 text-sm font-extrabold tabular-nums normal-case tracking-normal ${getMediaPeriodoClass(filteredTableMedias.selimp, 70)}`}
+                            >
+                              {filteredTableMedias.selimp != null ? `${filteredTableMedias.selimp.toFixed(1)}%` : "--"}
+                            </span>
                           </button>
                           {headerMenuOpen === "selimp" && (
                             <div className="absolute left-0 top-[calc(100%+8px)] z-30 w-44 rounded-xl p-2 shadow-[0_16px_45px_-20px_rgba(0,0,0,0.6)] transition-all border border-slate-600" style={{ backgroundColor: '#1e293b', color: '#f8fafc' }}>
@@ -2150,9 +2180,15 @@ export default function IPTPage() {
                           <button
                             type="button"
                             onClick={() => setHeaderMenuOpen((prev) => (prev === "nossa" ? null : "nossa"))}
-                            className="w-full rounded-xl bg-background/80 px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide shadow-md transition-all duration-200 hover:-translate-y-0.5 hover:bg-background hover:shadow-lg"
+                            className="w-full rounded-xl bg-background/80 px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide shadow-md transition-all duration-200 hover:-translate-y-0.5 hover:bg-background hover:shadow-lg flex items-center justify-between gap-2"
+                            title="Média ponderada DDMX no período apurado (conforme filtros)"
                           >
-                            <span className="inline-flex items-center gap-1">📊 DDMX {getSortLabel("nossa")}</span>
+                            <span className="inline-flex items-center gap-1 min-w-0 truncate">📊 DDMX {getSortLabel("nossa")}</span>
+                            <span
+                              className={`shrink-0 text-sm font-extrabold tabular-nums normal-case tracking-normal ${getMediaPeriodoClass(filteredTableMedias.ddmx, 50)}`}
+                            >
+                              {filteredTableMedias.ddmx != null ? `${filteredTableMedias.ddmx.toFixed(1)}%` : "--"}
+                            </span>
                           </button>
                           {headerMenuOpen === "nossa" && (
                             <div className="absolute left-0 top-[calc(100%+8px)] z-30 w-44 rounded-xl p-2 shadow-[0_16px_45px_-20px_rgba(0,0,0,0.6)] transition-all border border-slate-600" style={{ backgroundColor: '#1e293b', color: '#f8fafc' }}>
