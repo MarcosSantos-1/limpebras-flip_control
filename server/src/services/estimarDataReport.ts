@@ -25,6 +25,7 @@ export interface ReportLinhaComData extends ReportLinhaRaw {
   confianca_estimativa: "alta" | "media" | "baixa";
   frequencia: string;
   servico_codigo: string;
+  despacho_esperado: boolean | null;
 }
 
 /**
@@ -88,6 +89,7 @@ export async function estimarDatasReport(
           data_estimada: dataCronograma,
           metodo_estimativa: crossRef ? "cronograma+cross_ref" : "cronograma",
           confianca_estimativa: "alta",
+          despacho_esperado: null,
         });
       }
       continue;
@@ -110,6 +112,7 @@ export async function estimarDatasReport(
             data_estimada: dataFreq,
             metodo_estimativa: crossRef ? "frequencia+cross_ref" : "frequencia",
             confianca_estimativa: crossRef ? "alta" : "media",
+            despacho_esperado: null,
           });
         }
         continue;
@@ -126,6 +129,7 @@ export async function estimarDatasReport(
         data_estimada: null,
         metodo_estimativa: "pendente",
         confianca_estimativa: "baixa",
+        despacho_esperado: null,
       });
     }
   }
@@ -221,7 +225,7 @@ function refinarPorVizinhanca(
   }
 }
 
-async function carregarCronograma(
+export async function carregarCronograma(
   inicio: string,
   fim: string,
 ): Promise<Map<string, string[]>> {

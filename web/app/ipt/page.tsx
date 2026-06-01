@@ -74,6 +74,7 @@ import {
   type IptPreviewModuloBateria,
 } from "@/lib/api";
 import { useIptData } from "@/lib/use-ipt-data";
+import { ManualIndicatorBadge } from "@/components/manual-indicator-badge";
 import { getSortKey, getSubFromPlano } from "@/lib/ipt-utils";
 import {
   Chart as ChartJS,
@@ -465,6 +466,9 @@ export default function IPTPage() {
     },
     [iptPreviewCards, kpisData]
   );
+
+  const adcManual = Boolean(kpisData?.adc_override?.ativo);
+  const adcManualObservacao = kpisData?.adc_override?.observacao ?? "";
 
   const iptRiskTone = useMemo(() => {
     const risco = iptCard.cenarios?.diagnostico.risco;
@@ -1101,6 +1105,10 @@ export default function IPTPage() {
               <CardDescription>Separação entre qualidade executada e cobertura de rastreamento.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
+              {adcManual ? (
+                <ManualIndicatorBadge observacao={adcManualObservacao} />
+              ) : (
+              <>
               <div className="rounded-xl bg-background/70 p-3.5 shadow-sm transition-all hover:shadow-md">
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-xs text-muted-foreground">
@@ -1176,6 +1184,9 @@ export default function IPTPage() {
                     </div>
                   </div>
                 </div>
+              )}
+
+              </>
               )}
 
             </CardContent>
@@ -2687,6 +2698,10 @@ export default function IPTPage() {
                                                     {d.esperado ? (
                                                       <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/20 px-2 py-0.5 text-emerald-700 dark:text-emerald-300">
                                                         <Check className="h-3.5 w-3.5" /> Sim
+                                                      </span>
+                                                    ) : d.despachos_selimp > 0 ? (
+                                                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/20 px-2 py-0.5 text-amber-800 dark:text-amber-200">
+                                                        Inesperado
                                                       </span>
                                                     ) : (
                                                       <span className="inline-flex items-center gap-1 rounded-full bg-slate-500/15 px-2 py-0.5 text-muted-foreground">

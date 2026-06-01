@@ -10,6 +10,8 @@ import {
   isFrequencyDate,
   findNextExpectedByFrequency,
   parseDateKeyLocal,
+  registerVpCanonicalFromSelimp,
+  resolveVpCanonicalFromDdmx,
 } from "../constants/ipt.js";
 import { calcularCenariosIPT } from "./ipt-pf-algoritmo.js";
 
@@ -465,6 +467,7 @@ export async function buildIptPreviewFromConsolidado(
     despachos_selimp: number;
     despachos_nosso: number;
     estimados: number;
+    data_estimada_alg: boolean;
   };
 
   type PlanoEntry = {
@@ -481,6 +484,7 @@ export async function buildIptPreviewFromConsolidado(
   };
 
   const byPlano = new Map<string, PlanoEntry>();
+  const vpCanonicalByMergeKey = new Map<string, string>();
 
   const getOrCreatePlano = (plano: string): PlanoEntry => {
     const parsed = parseSetor(plano);
@@ -514,6 +518,7 @@ export async function buildIptPreviewFromConsolidado(
       despachos_selimp: 0,
       despachos_nosso: 0,
       estimados: 0,
+      data_estimada_alg: false,
     };
     planoEntry.diario.set(dateKey, current);
     return current;
@@ -529,8 +534,9 @@ export async function buildIptPreviewFromConsolidado(
     frequencia: string | null;
     metodo_estimativa: string | null;
   }>) {
-    const plano = normalizarSetor(String(row.plano ?? "").trim());
-    if (!plano) continue;
+    const planoRaw = normalizarSetor(String(row.plano ?? "").trim());
+    if (!planoRaw) continue;
+    const plano = registerVpCanonicalFromSelimp(planoRaw, vpCanonicalByMergeKey);
     const dateKey = toDateKey(row.data_estimada);
     if (!dateKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) continue;
 
@@ -547,8 +553,14 @@ export async function buildIptPreviewFromConsolidado(
       bucket.selimp_max = bucket.selimp_max == null ? pctVal : Math.max(bucket.selimp_max, pctVal);
       if (pctVal === 0) bucket.selimp_zero_count += 1;
     }
-    if (row.metodo_estimativa && row.metodo_estimativa !== "cronograma" && row.metodo_estimativa !== "cronograma+cross_ref") {
-      bucket.estimados += 1;
+    if (row.metodo_estimativa) {
+      const metodo = row.metodo_estimativa;
+      const dataRealSelimp =
+        metodo === "selimp_data_planejada" || metodo === "cronograma" || metodo === "cronograma+cross_ref";
+      if (!dataRealSelimp) {
+        bucket.estimados += 1;
+        bucket.data_estimada_alg = true;
+      }
     }
   }
 
@@ -557,8 +569,9 @@ export async function buildIptPreviewFromConsolidado(
     const rawData = row.raw ?? {};
     // DDMX: rota é o campo principal para o plano (ex: MG10101VP0001)
     const rotaOrSetor = String(rawData.rota ?? rawData.plano ?? rawData.setor ?? row.setor ?? "").trim();
-    const plano = normalizarSetor(rotaOrSetor);
-    if (!plano) continue;
+    const planoRaw = normalizarSetor(rotaOrSetor);
+    if (!planoRaw) continue;
+    const plano = resolveVpCanonicalFromDdmx(planoRaw, vpCanonicalByMergeKey);
     const dateKey = toDateKey(row.data_referencia);
     if (!dateKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) continue;
 
@@ -653,7 +666,7 @@ export async function buildIptPreviewFromConsolidado(
             percentual_nosso: percentualNosso,
             despachos_selimp: bucket.despachos_selimp,
             despachos_nosso: bucket.despachos_nosso,
-            data_estimada: false,
+            data_estimada: bucket.data_estimada_alg,
           };
         })
         .filter((d): d is NonNullable<typeof d> => d != null)
@@ -800,7 +813,6 @@ export async function buildIptPreviewFromConsolidado(
         const inFreq =
           freqCode != null && String(freqCode).length === 4 && isFrequencyDate(String(freqCode), d.data);
         d.esperado = inCron || inFreq;
-        d.data_estimada = inCron;
       }
     }
   }

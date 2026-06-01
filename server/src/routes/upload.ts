@@ -17,7 +17,8 @@ import { parseSetoresModulosWorkbook } from "../services/parseSetoresModulos.js"
 import { enrichDadosBateriaFromSetoresModulos } from "../services/enrichDadosBateriaFromSetores.js";
 import { normalizarSetor, parseSetor, resolveTipoServicoExibicao } from "../constants/ipt.js";
 import { parseConsolidadoVeiculos, parseConsolidadoVarricao } from "../services/parseRelatorioConsolidado.js";
-import { estimarDatasReport, type ReportLinhaRaw } from "../services/estimarDataReport.js";
+import { type ReportLinhaRaw } from "../services/estimarDataReport.js";
+import { resolverDatasReport } from "../services/resolverDatasReport.js";
 import { mergeAcicOverridesAfterImportRow } from "../services/acicImportMerge.js";
 import { parseModulosBateriaWorkbook } from "../services/parseModulosBateria.js";
 import { parseStatusBateria } from "../services/parseStatusBateria.js";
@@ -2377,7 +2378,11 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         };
       });
 
-      const linhasComData = await estimarDatasReport(linhasParaEstimar, inicio, fim);
+      const { linhas: linhasComData, stats: resolverStats } = await resolverDatasReport(
+        linhasParaEstimar,
+        inicio,
+        fim
+      );
 
       const client = await pool.connect();
       try {
@@ -2394,14 +2399,14 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
           await client.query(
             `INSERT INTO ipt_report_linhas (
                plano, subprefeitura, tipo_servico, status, percentual_execucao, equipamentos,
-               data_estimada, metodo_estimativa, confianca_estimativa,
+               data_estimada, metodo_estimativa, confianca_estimativa, despacho_esperado,
                periodo_inicial, periodo_final, periodo_tipo, posicao_original,
                frequencia, servico_codigo, raw, source_file, updated_at
              ) VALUES (
                $1, $2, $3, $4, $5, $6,
-               $7::date, $8, $9,
-               $10::date, $11::date, $12, $13,
-               $14, $15, $16::jsonb, $17, NOW()
+               $7::date, $8, $9, $10,
+               $11::date, $12::date, $13, $14,
+               $15, $16, $17::jsonb, $18, NOW()
              )
              ON CONFLICT (plano, periodo_inicial, periodo_final, posicao_original)
              DO UPDATE SET
@@ -2413,6 +2418,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
                data_estimada = EXCLUDED.data_estimada,
                metodo_estimativa = EXCLUDED.metodo_estimativa,
                confianca_estimativa = EXCLUDED.confianca_estimativa,
+               despacho_esperado = EXCLUDED.despacho_esperado,
                periodo_tipo = EXCLUDED.periodo_tipo,
                frequencia = EXCLUDED.frequencia,
                servico_codigo = EXCLUDED.servico_codigo,
@@ -2429,6 +2435,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
               linha.data_estimada,
               linha.metodo_estimativa,
               linha.confianca_estimativa,
+              linha.despacho_esperado,
               inicio,
               fim,
               modoReferencia,
@@ -2463,6 +2470,9 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         const altaConfianca = linhasComData.filter((l) => l.confianca_estimativa === "alta").length;
         const mediaConfianca = linhasComData.filter((l) => l.confianca_estimativa === "media").length;
         const baixaConfianca = linhasComData.filter((l) => l.confianca_estimativa === "baixa").length;
+        const estimadasCount = linhasComData.filter(
+          (l) => l.metodo_estimativa !== "selimp_data_planejada"
+        ).length;
 
         const result = {
           processados: inserted,
@@ -2481,6 +2491,10 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
           snapshots_indicadores: snapshotsIndicadores,
           source_file: sourceFile,
           estimativa: {
+            com_data_selimp: resolverStats.com_data_selimp,
+            estimadas: estimadasCount,
+            despachos_inesperados: resolverStats.despachos_inesperados,
+            fora_periodo: resolverStats.fora_periodo,
             alta_confianca: altaConfianca,
             media_confianca: mediaConfianca,
             baixa_confianca: baixaConfianca,

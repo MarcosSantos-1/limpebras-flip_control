@@ -92,6 +92,10 @@ interface UploadResult {
     ignoradas_sem_data?: number;
   };
   estimativa?: {
+    com_data_selimp?: number;
+    estimadas?: number;
+    despachos_inesperados?: number;
+    fora_periodo?: number;
     alta_confianca?: number;
     media_confianca?: number;
     baixa_confianca?: number;
@@ -380,14 +384,40 @@ function SummaryBox({ state }: { state: UploadState }) {
         </div>
         {state.result.estimativa && (
           <div className="mt-4 border-t border-emerald-200/70 pt-4 text-xs leading-relaxed text-muted-foreground dark:border-emerald-500/15">
-            <div className="font-semibold text-emerald-900 dark:text-emerald-200">Estimativa de datas</div>
-            <div className="mt-2 grid gap-1.5 sm:grid-cols-3">
+            <div className="font-semibold text-emerald-900 dark:text-emerald-200">Origem das datas</div>
+            <div className="mt-2 grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
               <div>
-                Alta confianca:{" "}
+                Com data SELIMP:{" "}
+                <span className="font-semibold text-emerald-700 dark:text-emerald-400">
+                  {state.result.estimativa.com_data_selimp ?? 0}
+                </span>
+              </div>
+              <div>
+                Estimadas (legado):{" "}
+                <span className="font-semibold text-amber-700 dark:text-amber-400">
+                  {state.result.estimativa.estimadas ?? 0}
+                </span>
+              </div>
+              <div>
+                Despachos inesperados:{" "}
+                <span className="font-semibold text-orange-700 dark:text-orange-400">
+                  {state.result.estimativa.despachos_inesperados ?? 0}
+                </span>
+              </div>
+              {(state.result.estimativa.fora_periodo ?? 0) > 0 && (
+                <div>
+                  Fora do período:{" "}
+                  <span className="font-semibold text-red-700 dark:text-red-400">
+                    {state.result.estimativa.fora_periodo}
+                  </span>
+                </div>
+              )}
+              <div>
+                Alta confiança:{" "}
                 <span className="font-semibold text-emerald-700 dark:text-emerald-400">{state.result.estimativa.alta_confianca ?? 0}</span>
               </div>
               <div>
-                Media:{" "}
+                Média:{" "}
                 <span className="font-semibold text-amber-700 dark:text-amber-400">{state.result.estimativa.media_confianca ?? 0}</span>
               </div>
               <div>

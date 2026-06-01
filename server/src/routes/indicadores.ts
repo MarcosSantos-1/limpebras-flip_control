@@ -33,6 +33,7 @@ import {
   pickNearestDate,
 } from "../constants/ipt.js";
 import { config } from "../config.js";
+import { requireHost } from "../auth.js";
 import { buildIptPreviewFromConsolidado } from "../services/ipt-consolidado-preview.js";
 import { percentDisplayToDecimal } from "../services/parseRelatorioConsolidado.js";
 import { formatDataInstalacaoBr } from "../services/formatDataInstalacaoBr.js";
@@ -567,6 +568,88 @@ async function fetchLinhasParaConservador(
   return { linhas, fonte: "report_selimp_encerrado" };
 }
 
+type AdcOverrideRow = {
+  ano: number;
+  mes: number;
+  modo: "por_indicador" | "total";
+  pontuacao_ird: string | null;
+  pontuacao_ia: string | null;
+  pontuacao_if: string | null;
+  pontuacao_ipt: string | null;
+  adc_total: string | null;
+  observacao: string;
+};
+
+async function fetchAdcOverride(client: any, periodoInicial: string): Promise<AdcOverrideRow | null> {
+  const [y, m] = periodoInicial.split("-").map(Number);
+  if (!y || !m) return null;
+  const res = await client.query(
+    `SELECT ano, mes, modo, pontuacao_ird, pontuacao_ia, pontuacao_if, pontuacao_ipt, adc_total, observacao
+     FROM adc_override_mensal WHERE ano = $1 AND mes = $2`,
+    [y, m]
+  );
+  return (res.rows[0] as AdcOverrideRow | undefined) ?? null;
+}
+
+function applyAdcOverrideToKpis(payload: Record<string, unknown>, override: AdcOverrideRow) {
+  const base = payload as {
+    indicadores: {
+      ird: IndicadorResult;
+      ia: IndicadorResult & Record<string, unknown>;
+      if: IndicadorResult & Record<string, unknown>;
+      ipt: IndicadorResult & Record<string, unknown>;
+    };
+    ipt_sem_dados: boolean;
+    sacs_hoje: number;
+    cncs_urgentes: number;
+  };
+  const observacao = String(override.observacao ?? "").trim();
+  if (override.modo === "total") {
+    const adcTotal = Number(override.adc_total ?? 0);
+    return {
+      ...base,
+      indicadores: {
+        ird: { ...base.indicadores.ird, pontuacao: 0, valor: 0 },
+        ia: { ...base.indicadores.ia, pontuacao: 0, valor: 0 },
+        if: { ...base.indicadores.if, pontuacao: 0, valor: 0 },
+        ipt: { ...base.indicadores.ipt, pontuacao: 0, valor: 0 },
+      },
+      adc_override: {
+        ativo: true,
+        modo: "total" as const,
+        observacao,
+        adc_total: adcTotal,
+      },
+    };
+  }
+
+  const pontuacaoIrd = Number(override.pontuacao_ird ?? 0);
+  const pontuacaoIa = Number(override.pontuacao_ia ?? 0);
+  const pontuacaoIf = Number(override.pontuacao_if ?? 0);
+  const pontuacaoIpt = Number(override.pontuacao_ipt ?? 0);
+  const adcTotal = pontuacaoIrd + pontuacaoIa + pontuacaoIf + pontuacaoIpt;
+
+  return {
+    ...base,
+    indicadores: {
+      ird: { ...base.indicadores.ird, pontuacao: pontuacaoIrd, valor: 0 },
+      ia: { ...base.indicadores.ia, pontuacao: pontuacaoIa, valor: 0 },
+      if: { ...base.indicadores.if, pontuacao: pontuacaoIf, valor: 0 },
+      ipt: { ...base.indicadores.ipt, pontuacao: pontuacaoIpt, valor: 0 },
+    },
+    adc_override: {
+      ativo: true,
+      modo: "por_indicador" as const,
+      observacao,
+      adc_total: adcTotal,
+      pontuacao_ird: pontuacaoIrd,
+      pontuacao_ia: pontuacaoIa,
+      pontuacao_if: pontuacaoIf,
+      pontuacao_ipt: pontuacaoIpt,
+    },
+  };
+}
+
 export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
   /** KPIs do dashboard: contagens e indicadores no período */
   fastify.get<{
@@ -675,12 +758,19 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         [hoje]
       );
 
-      return {
+      const basePayload = {
         indicadores: { ird, ia: iaDashboard, if: ifDashboard, ipt: iptDashboard },
         ipt_sem_dados: iptSemDados,
         sacs_hoje: Number(sacsHoje.rows[0]?.total ?? 0),
         cncs_urgentes: 0,
       };
+
+      const override = await fetchAdcOverride(client, inicio);
+      if (override) {
+        return applyAdcOverrideToKpis(basePayload, override);
+      }
+
+      return basePayload;
       } finally {
         client.release();
       }
@@ -1836,5 +1926,145 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
     );
 
     return cacheResult;
+  });
+
+  fastify.get<{ Querystring: { ano?: string; mes?: string } }>("/indicadores/adc-override", async (request, reply) => {
+    const ano = Number(request.query.ano);
+    const mes = Number(request.query.mes);
+    if (!Number.isFinite(ano) || !Number.isFinite(mes) || mes < 1 || mes > 12) {
+      return reply.code(400).send({ detail: "ano e mes são obrigatórios (mes 1-12)" });
+    }
+
+    const client = await pool.connect();
+    try {
+      const res = await client.query(
+        `SELECT ano, mes, modo, pontuacao_ird, pontuacao_ia, pontuacao_if, pontuacao_ipt, adc_total, observacao, updated_at
+         FROM adc_override_mensal WHERE ano = $1 AND mes = $2`,
+        [ano, mes]
+      );
+      const row = res.rows[0];
+      if (!row) {
+        return { ativo: false, ano, mes };
+      }
+      return {
+        ativo: true,
+        ano: row.ano,
+        mes: row.mes,
+        modo: row.modo,
+        pontuacao_ird: row.pontuacao_ird != null ? Number(row.pontuacao_ird) : null,
+        pontuacao_ia: row.pontuacao_ia != null ? Number(row.pontuacao_ia) : null,
+        pontuacao_if: row.pontuacao_if != null ? Number(row.pontuacao_if) : null,
+        pontuacao_ipt: row.pontuacao_ipt != null ? Number(row.pontuacao_ipt) : null,
+        adc_total: row.adc_total != null ? Number(row.adc_total) : null,
+        observacao: String(row.observacao ?? ""),
+        updated_at: row.updated_at,
+      };
+    } finally {
+      client.release();
+    }
+  });
+
+  fastify.put<{
+    Body: {
+      ano: number;
+      mes: number;
+      modo: "por_indicador" | "total";
+      pontuacao_ird?: number | null;
+      pontuacao_ia?: number | null;
+      pontuacao_if?: number | null;
+      pontuacao_ipt?: number | null;
+      adc_total?: number | null;
+      observacao: string;
+    };
+  }>("/indicadores/adc-override", async (request, reply) => {
+    const user = await requireHost(request, reply);
+    if (!user) return;
+
+    const { ano, mes, modo, pontuacao_ird, pontuacao_ia, pontuacao_if, pontuacao_ipt, adc_total, observacao } =
+      request.body ?? ({} as any);
+
+    if (!Number.isFinite(ano) || !Number.isFinite(mes) || mes < 1 || mes > 12) {
+      return reply.code(400).send({ detail: "ano e mes inválidos" });
+    }
+    if (modo !== "por_indicador" && modo !== "total") {
+      return reply.code(400).send({ detail: "modo deve ser por_indicador ou total" });
+    }
+    const obs = String(observacao ?? "").trim();
+    if (!obs) {
+      return reply.code(400).send({ detail: "observacao é obrigatória no modo manual" });
+    }
+
+    if (modo === "total") {
+      const total = Number(adc_total);
+      if (!Number.isFinite(total) || total < 0 || total > 100) {
+        return reply.code(400).send({ detail: "adc_total deve estar entre 0 e 100" });
+      }
+    } else {
+      const limits = [
+        { name: "pontuacao_ird", val: pontuacao_ird, max: 20 },
+        { name: "pontuacao_ia", val: pontuacao_ia, max: 20 },
+        { name: "pontuacao_if", val: pontuacao_if, max: 20 },
+        { name: "pontuacao_ipt", val: pontuacao_ipt, max: 40 },
+      ];
+      for (const { name, val, max } of limits) {
+        const n = Number(val);
+        if (!Number.isFinite(n) || n < 0 || n > max) {
+          return reply.code(400).send({ detail: `${name} deve estar entre 0 e ${max}` });
+        }
+      }
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query(
+        `INSERT INTO adc_override_mensal
+           (ano, mes, modo, pontuacao_ird, pontuacao_ia, pontuacao_if, pontuacao_ipt, adc_total, observacao, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+         ON CONFLICT (ano, mes) DO UPDATE SET
+           modo = EXCLUDED.modo,
+           pontuacao_ird = EXCLUDED.pontuacao_ird,
+           pontuacao_ia = EXCLUDED.pontuacao_ia,
+           pontuacao_if = EXCLUDED.pontuacao_if,
+           pontuacao_ipt = EXCLUDED.pontuacao_ipt,
+           adc_total = EXCLUDED.adc_total,
+           observacao = EXCLUDED.observacao,
+           updated_at = NOW()`,
+        [
+          ano,
+          mes,
+          modo,
+          modo === "por_indicador" ? Number(pontuacao_ird) : null,
+          modo === "por_indicador" ? Number(pontuacao_ia) : null,
+          modo === "por_indicador" ? Number(pontuacao_if) : null,
+          modo === "por_indicador" ? Number(pontuacao_ipt) : null,
+          modo === "total" ? Number(adc_total) : null,
+          obs,
+        ]
+      );
+      invalidatePrefix("kpis");
+      return { ok: true, ano, mes, modo };
+    } finally {
+      client.release();
+    }
+  });
+
+  fastify.delete<{ Querystring: { ano?: string; mes?: string } }>("/indicadores/adc-override", async (request, reply) => {
+    const user = await requireHost(request, reply);
+    if (!user) return;
+
+    const ano = Number(request.query.ano);
+    const mes = Number(request.query.mes);
+    if (!Number.isFinite(ano) || !Number.isFinite(mes) || mes < 1 || mes > 12) {
+      return reply.code(400).send({ detail: "ano e mes são obrigatórios (mes 1-12)" });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query(`DELETE FROM adc_override_mensal WHERE ano = $1 AND mes = $2`, [ano, mes]);
+      invalidatePrefix("kpis");
+      return { ok: true, ativo: false, ano, mes };
+    } finally {
+      client.release();
+    }
   });
 };

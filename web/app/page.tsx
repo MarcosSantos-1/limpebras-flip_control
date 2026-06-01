@@ -32,6 +32,8 @@ import { useDashboardData } from "@/lib/use-dashboard-data";
 import { LayoutDashboard } from "lucide-react";
 import { UploadReminderToast } from "@/components/upload-reminder-toast";
 import { useAuth } from "@/lib/auth";
+import { AdcOverrideModal } from "@/components/adc-override-modal";
+import { ManualIndicatorBadge } from "@/components/manual-indicator-badge";
 
 const SUBPREF_LOOKUP = SUBPREFEITURAS.reduce<Record<string, string>>((acc, sub) => {
   acc[sub.code.toUpperCase()] = sub.code;
@@ -343,13 +345,17 @@ function computeTopBfsServices(items: CNC[], periodStart: Date, periodEnd: Date)
 
 function DashboardContent() {
   const [selectedMonth, setSelectedMonth] = useState(() => startOfMonth(new Date()));
+  const [adcOverrideOpen, setAdcOverrideOpen] = useState(false);
 
   const periodStart = startOfMonth(selectedMonth);
   const periodEnd = endOfMonth(selectedMonth);
   const dataInicio = format(periodStart, "yyyy-MM-dd");
   const dataFim = format(periodEnd, "yyyy-MM-dd");
 
-  const { kpisData, sacsData, cncsData, isLoading } = useDashboardData(dataInicio, dataFim);
+  const { kpisData, sacsData, cncsData, isLoading, mutate } = useDashboardData(dataInicio, dataFim);
+
+  const adcManual = Boolean(kpisData?.adc_override?.ativo);
+  const adcManualObservacao = kpisData?.adc_override?.observacao ?? "";
 
   const indicators = useMemo(() => {
     if (!kpisData) return null;
@@ -358,7 +364,10 @@ function DashboardContent() {
     const ifPontos = Math.min(kpisData.indicadores?.if?.pontuacao || 0, 20);
     const iptPontos = kpisData.indicadores?.ipt?.pontuacao || 0;
     const iptValor = kpisData.indicadores?.ipt?.valor ?? null;
-    const totalADC = irdPontos + iaPontos + ifPontos + iptPontos;
+    const totalADC =
+      kpisData.adc_override?.ativo && kpisData.adc_override.adc_total != null
+        ? kpisData.adc_override.adc_total
+        : irdPontos + iaPontos + ifPontos + iptPontos;
     const percentualADC = (totalADC / 100) * 100;
     return {
       data: {
@@ -427,6 +436,12 @@ function DashboardContent() {
 
   return (
     <>
+      <AdcOverrideModal
+        open={adcOverrideOpen}
+        onOpenChange={setAdcOverrideOpen}
+        initialMes={selectedMonth}
+        onSuccess={() => void mutate()}
+      />
       <UploadReminderToast />
       <div className="space-y-8">
         {isLoading && (
@@ -465,12 +480,20 @@ function DashboardContent() {
                   </>
                 )}
               </span>
-              <div
-                className="flex h-22 w-22 shrink-0 items-center justify-center rounded-2xl bg-linear-to-br from-primary/15 via-indigo-500/12 to-cyan-500/15 shadow-md shadow-slate-900/10 dark:from-primary/25 dark:via-indigo-500/20 dark:to-cyan-950/40 dark:shadow-lg dark:shadow-black/30"
-                aria-hidden
+              <button
+                type="button"
+                onClick={() => setAdcOverrideOpen(true)}
+                className="relative flex h-22 w-22 shrink-0 items-center justify-center rounded-2xl bg-linear-to-br from-primary/15 via-indigo-500/12 to-cyan-500/15 shadow-md shadow-slate-900/10 transition-all hover:scale-[1.03] hover:shadow-lg dark:from-primary/25 dark:via-indigo-500/20 dark:to-cyan-950/40 dark:shadow-lg dark:shadow-black/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                title="Configurar ADC do mês (automático ou manual)"
+                aria-label="Configurar ADC do mês"
               >
                 <LayoutDashboard className="h-11 w-11 text-primary dark:text-primary" strokeWidth={1.5} />
-              </div>
+                {adcManual && (
+                  <span className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-white shadow">
+                    M
+                  </span>
+                )}
+              </button>
 
             </div>
           </div>
@@ -492,12 +515,18 @@ function DashboardContent() {
                   <CardTitle className="text-sm font-medium text-white/95 dark:text-blue-400">IA - ÍNDICADOR DE ATENDIMENTO</CardTitle>
                 </CardHeader>
                 <CardContent className="p-0">
+                  {adcManual ? (
+                    <ManualIndicatorBadge observacao={adcManualObservacao} iconClassName="text-white/90" />
+                  ) : (
+                    <>
                   <div className="mb-1 text-lg font-semibold text-white/85 dark:text-muted-foreground">
                     {indicators.data?.IA?.pontuacao || 0} Pontos
                   </div>
                   <div className="text-3xl font-bold text-white dark:bg-linear-to-r dark:from-blue-600 dark:to-blue-400 dark:bg-clip-text dark:text-transparent">
                     {indicators.data?.IA?.valor?.toFixed(1) || "0"}%
                   </div>
+                    </>
+                  )}
                 </CardContent>
               </Card>
               </Link>
@@ -510,12 +539,18 @@ function DashboardContent() {
                   <CardTitle className="text-sm font-medium text-white/95 dark:text-emerald-400">IRD - ÍNDICADOR DE RECLAMAÇÕES POR DOMICÍLIO</CardTitle>
                 </CardHeader>
                 <CardContent className="p-0">
+                  {adcManual ? (
+                    <ManualIndicatorBadge observacao={adcManualObservacao} iconClassName="text-white/90" />
+                  ) : (
+                    <>
                   <div className="mb-1 text-lg font-semibold text-white/85 dark:text-muted-foreground">
                     {indicators.data?.IRD?.pontuacao || 0} Pontos
                   </div>
                   <div className="text-3xl font-bold text-white dark:bg-linear-to-r dark:from-emerald-600 dark:to-emerald-400 dark:bg-clip-text dark:text-transparent">
                     {indicators.data?.IRD?.valor?.toFixed(2) || "0"}
                   </div>
+                    </>
+                  )}
                 </CardContent>
               </Card>
               </Link>
@@ -528,12 +563,18 @@ function DashboardContent() {
                   <CardTitle className="text-sm font-medium text-white/95 dark:text-amber-400">IF - ÍNDICADOR DE FISCALIZAÇÃO</CardTitle>
                 </CardHeader>
                 <CardContent className="p-0">
+                  {adcManual ? (
+                    <ManualIndicatorBadge observacao={adcManualObservacao} iconClassName="text-white/90" />
+                  ) : (
+                    <>
                   <div className="mb-1 text-lg font-semibold text-white/85 dark:text-muted-foreground">
                     {indicators.data?.IF?.pontuacao || 0} Pontos
                   </div>
                   <div className="text-3xl font-bold text-white dark:bg-linear-to-r dark:from-amber-600 dark:to-amber-400 dark:bg-clip-text dark:text-transparent">
                     {indicators.data?.IF?.valor?.toFixed(1) || "0"}%
                   </div>
+                    </>
+                  )}
                 </CardContent>
               </Card>
               </Link>
@@ -546,6 +587,10 @@ function DashboardContent() {
                   <CardTitle className="text-sm font-medium text-white/95 dark:text-purple-400">IPT - INDICADOR PLANO DE TRABALHO</CardTitle>
                 </CardHeader>
                 <CardContent className="p-0">
+                  {adcManual ? (
+                    <ManualIndicatorBadge observacao={adcManualObservacao} iconClassName="text-white/90" />
+                  ) : (
+                    <>
                   <div className="mb-1 text-lg font-semibold text-white/85 dark:text-muted-foreground">
                     {(iptSemDados ? 0 : indicators.data?.IPT?.pontuacao) ?? 0} Pontos
                     {iptSemDados && (
@@ -562,6 +607,8 @@ function DashboardContent() {
                         ? `${indicators.data.IPT.valor.toFixed(1)}%`
                         : "--"}
                   </div>
+                    </>
+                  )}
                 </CardContent>
               </Card>
               </Link>

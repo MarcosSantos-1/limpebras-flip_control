@@ -189,6 +189,50 @@ export function getFrequenciaDescricao(codigo: string): string {
 }
 
 /**
+ * Chave de merge para varrição de praças (VP): SUB + serviço + mapa (6 chars finais).
+ * Ex.: CV10202VP0014 e CV10101VP0014 → "CVVP0014".
+ */
+export function getVpMergeKey(plano: string): string | null {
+  const normalized = normalizarSetor(plano);
+  const parsed = parseSetor(normalized);
+  if (!parsed || parsed.servico !== "VP") return null;
+  return `${parsed.sub}${parsed.servico}${parsed.mapa}`;
+}
+
+/**
+ * Registra plano canônico VP a partir do SELIMP (primeiro registro vence).
+ */
+export function registerVpCanonicalFromSelimp(plano: string, registry: Map<string, string>): string {
+  const normalized = normalizarSetor(plano);
+  if (!normalized) return plano;
+  const mergeKey = getVpMergeKey(normalized);
+  if (!mergeKey) return normalized;
+
+  const existing = registry.get(mergeKey);
+  if (!existing) {
+    registry.set(mergeKey, normalized);
+    return normalized;
+  }
+  return existing;
+}
+
+/**
+ * Resolve plano VP do DDMX: usa nomenclatura SELIMP já registrada; nunca sobrescreve o registry.
+ */
+export function resolveVpCanonicalFromDdmx(plano: string, registry: Map<string, string>): string {
+  const normalized = normalizarSetor(plano);
+  if (!normalized) return plano;
+  const mergeKey = getVpMergeKey(normalized);
+  if (!mergeKey) return normalized;
+
+  const canonical = registry.get(mergeKey);
+  if (canonical) return canonical;
+
+  registry.set(mergeKey, normalized);
+  return normalized;
+}
+
+/**
  * Chave de ordenação: sigla do serviço (VP, VJ, VL, etc), depois 4 últimos dígitos (mapa).
  * Ordem: 1) Sigla sub (CV<JT<MG<ST), 2) Serviço (VP, VJ, VL, MT, GO, etc), 3) Mapa (últimos 4 dígitos).
  */

@@ -257,6 +257,22 @@ export async function runMigrations() {
     `);
 
     await client.query(`
+      CREATE TABLE IF NOT EXISTS adc_override_mensal (
+        ano INTEGER NOT NULL,
+        mes INTEGER NOT NULL,
+        modo TEXT NOT NULL CHECK (modo IN ('por_indicador', 'total')),
+        pontuacao_ird NUMERIC(5,2),
+        pontuacao_ia NUMERIC(5,2),
+        pontuacao_if NUMERIC(5,2),
+        pontuacao_ipt NUMERIC(5,2),
+        adc_total NUMERIC(5,2),
+        observacao TEXT NOT NULL DEFAULT '',
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        PRIMARY KEY (ano, mes)
+      );
+    `);
+
+    await client.query(`
       CREATE TABLE IF NOT EXISTS ipt_imports (
         id SERIAL PRIMARY KEY,
         file_type TEXT NOT NULL,
@@ -410,6 +426,7 @@ export async function runMigrations() {
     await client.query("CREATE INDEX IF NOT EXISTS idx_report_linhas_servico_data ON ipt_report_linhas(tipo_servico, data_estimada)").catch(() => {});
     await client.query("CREATE INDEX IF NOT EXISTS idx_report_linhas_status ON ipt_report_linhas(status)").catch(() => {});
     await client.query("CREATE UNIQUE INDEX IF NOT EXISTS ux_report_linhas_plano_periodo_pos ON ipt_report_linhas(plano, periodo_inicial, periodo_final, posicao_original)").catch(() => {});
+    await client.query("ALTER TABLE ipt_report_linhas ADD COLUMN IF NOT EXISTS despacho_esperado BOOLEAN").catch(() => {});
 
     await client
       .query(

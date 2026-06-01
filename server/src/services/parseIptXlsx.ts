@@ -54,9 +54,9 @@ const FILE_CONFIG: Record<IptFileType, ParseConfig> = {
   ipt_report_selimp: {
     keyAliases: ["plano"],
     setorAliases: ["subprefeitura", "sub_prefeitura"],
-    dateAliases: ["data", "data_planejado", "data_execucao"],
+    dateAliases: ["data_planejada", "data", "data_planejado", "data_execucao"],
     servicoAliases: ["tipo_de_servico", "tipo_servico"],
-    signalAliases: ["status", "plano", "subprefeitura", "tipo_de_servico", "de_execucao"],
+    signalAliases: ["status", "plano", "data_planejada", "subprefeitura", "tipo_de_servico", "de_execucao"],
   },
   ipt_status_bateria: {
     keyAliases: ["placa", "nome"],
@@ -206,6 +206,7 @@ function buildRecordKey(
 ): string {
   if (fileType === "ipt_report_selimp") {
     const dataStr =
+      row[canonicalHeader("data_planejada")] ??
       row[canonicalHeader("data")] ??
       row[canonicalHeader("data_planejado")] ??
       row[canonicalHeader("data_execucao")] ??

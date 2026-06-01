@@ -3,7 +3,9 @@
 import { useMemo, useRef, useState } from "react";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { apiService } from "@/lib/api";
+import { apiService, type AdcOverrideRecord } from "@/lib/api";
+import { descontoADC, glosaSimuladaFromTotal } from "@/lib/adc-utils";
+import { ManualIndicatorAlert } from "@/components/manual-indicator-badge";
 import { endOfMonth, format, startOfMonth } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { ArrowRight, Calculator, ChartPie, Sparkles } from "lucide-react";
@@ -24,9 +26,19 @@ interface ResultadoIndicadores {
   glosa_real?: number;
 }
 
+function parseAnoMesFromPeriodo(periodoInicial: string): { ano: number; mes: number } | null {
+  const m = periodoInicial.match(/^(\d{4})-(\d{2})-\d{2}$/);
+  if (!m) return null;
+  const ano = Number(m[1]);
+  const mes = Number(m[2]);
+  if (!ano || mes < 1 || mes > 12) return null;
+  return { ano, mes };
+}
+
 export default function IndicadoresPage() {
   const [calculando, setCalculando] = useState(false);
   const [resultado, setResultado] = useState<ResultadoIndicadores | null>(null);
+  const [adcOverride, setAdcOverride] = useState<AdcOverrideRecord | null>(null);
   const [periodoInicial, setPeriodoInicial] = useState(format(startOfMonth(new Date()), "yyyy-MM-dd"));
   const [periodoFinal, setPeriodoFinal] = useState(format(endOfMonth(new Date()), "yyyy-MM-dd"));
   const [mesFiltro, setMesFiltro] = useState(format(new Date(), "yyyy-MM"));
@@ -67,19 +79,84 @@ export default function IndicadoresPage() {
     try {
       setCalculando(true);
       setResultado(null);
-      console.log("Calculando ADC para período:", periodoInicial, "->", periodoFinal);
-      const data = await apiService.calcularADC(periodoInicial, periodoFinal);
-      console.log("Resultado ADC:", data);
-      console.log("IPT no resultado:", data?.ipt);
+      setAdcOverride(null);
+
+      const anoMes = parseAnoMesFromPeriodo(periodoInicial);
+      const [data, override] = await Promise.all([
+        apiService.calcularADC(periodoInicial, periodoFinal),
+        anoMes ? apiService.getAdcOverride(anoMes.ano, anoMes.mes) : Promise.resolve({ ativo: false }),
+      ]);
+
       setResultado(data);
+      setAdcOverride(override.ativo ? override : null);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Erro ao calcular ADC";
       console.error("Erro ao calcular ADC:", error);
       setResultado({ error: message });
+      setAdcOverride(null);
     } finally {
       setCalculando(false);
     }
   };
+
+  const exibicao = useMemo(() => {
+    if (!resultado || resultado.error) return null;
+
+    const base = resultado;
+    if (!adcOverride?.ativo) {
+      return {
+        ...base,
+        manualAtivo: false as const,
+        manualPorIndicador: { ird: false, ia: false, if: false, ipt: false },
+        adcTotalManual: false,
+        observacao: "",
+      };
+    }
+
+    const observacao = adcOverride.observacao ?? "";
+
+    if (adcOverride.modo === "total") {
+      const total = adcOverride.adc_total ?? 0;
+      const descontoInfo = descontoADC(total);
+      const glosa = glosaSimuladaFromTotal(total);
+      return {
+        ...base,
+        manualAtivo: true as const,
+        manualPorIndicador: { ird: false, ia: false, if: false, ipt: false },
+        adcTotalManual: true,
+        observacao,
+        pontuacao_total: total,
+        percentual_contrato: descontoInfo.percentual,
+        desconto: 100 - descontoInfo.percentual,
+        glosa_real: glosa,
+      };
+    }
+
+    const pontIrd = adcOverride.pontuacao_ird ?? base.ird?.pontuacao ?? 0;
+    const pontIa = adcOverride.pontuacao_ia ?? base.ia?.pontuacao ?? 0;
+    const pontIf = adcOverride.pontuacao_if ?? base.if?.pontuacao ?? 0;
+    const pontIpt = adcOverride.pontuacao_ipt ?? base.ipt?.pontuacao ?? base.ipt_pontuacao ?? 0;
+    const total = pontIrd + pontIa + pontIf + pontIpt;
+    const descontoInfo = descontoADC(total);
+    const glosa = glosaSimuladaFromTotal(total);
+
+    return {
+      ...base,
+      manualAtivo: true as const,
+      manualPorIndicador: { ird: true, ia: true, if: true, ipt: true },
+      adcTotalManual: true,
+      observacao,
+      ird: { ...base.ird, pontuacao: pontIrd },
+      ia: { ...base.ia, pontuacao: pontIa },
+      if: { ...base.if, pontuacao: pontIf },
+      ipt: base.ipt ? { ...base.ipt, pontuacao: pontIpt } : { pontuacao: pontIpt, valor: 0 },
+      ipt_pontuacao: pontIpt,
+      pontuacao_total: total,
+      percentual_contrato: descontoInfo.percentual,
+      desconto: 100 - descontoInfo.percentual,
+      glosa_real: glosa,
+    };
+  }, [resultado, adcOverride]);
 
   return (
     <MainLayout>
@@ -237,55 +314,126 @@ export default function IndicadoresPage() {
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-alert-triangle"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
                 <span className="font-medium">{resultado.error}</span>
               </div>
-            ) : (
+            ) : exibicao && (
               <div className="space-y-8">
-                <div className="flex items-center gap-3 pb-4 border-b border-border">
+                <div className="flex flex-wrap items-center gap-3 pb-4 border-b border-border">
                   <h3 className="text-xl font-bold text-foreground">Resultado do ADC</h3>
                   <span className="px-3 py-1 rounded-full bg-emerald-100/50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 text-xs font-bold border border-emerald-200 dark:border-emerald-800/50">
                     FINALIZADO
                   </span>
+                  {exibicao.manualAtivo && (
+                    <span className="px-3 py-1 rounded-full bg-amber-500/10 text-amber-700 dark:text-amber-300 text-xs font-semibold">
+                      Override manual ativo
+                    </span>
+                  )}
                 </div>
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
                   <div className="bg-card p-5 rounded-xl border border-border hover:border-emerald-500/30 transition-colors shadow-sm group">
-                    <div className="text-xs font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider mb-2">IRD</div>
-                    <div className="text-3xl font-bold text-foreground group-hover:scale-105 transition-transform origin-left">{resultado.ird?.valor?.toFixed(3)}</div>
-                    <div className="text-sm text-muted-foreground mt-1 font-medium">{resultado.ird?.pontuacao} pontos</div>
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider mb-2">
+                      IRD
+                      {exibicao.manualPorIndicador.ird && (
+                        <ManualIndicatorAlert observacao={exibicao.observacao} />
+                      )}
+                    </div>
+                    {exibicao.manualPorIndicador.ird ? (
+                      <div className="text-3xl font-bold text-foreground">{exibicao.ird?.pontuacao ?? 0}</div>
+                    ) : (
+                      <div className="text-3xl font-bold text-foreground group-hover:scale-105 transition-transform origin-left">{exibicao.ird?.valor?.toFixed(3)}</div>
+                    )}
+                    <div className="text-sm text-muted-foreground mt-1 font-medium">
+                      {exibicao.ird?.pontuacao} pontos
+                      {exibicao.manualPorIndicador.ird && (
+                        <span className="text-amber-600 dark:text-amber-400 ml-1">(manual)</span>
+                      )}
+                    </div>
                   </div>
                   
                   <div className="bg-card p-5 rounded-xl border border-border hover:border-blue-500/30 transition-colors shadow-sm group">
-                    <div className="text-xs font-bold text-blue-600 dark:text-blue-400 uppercase tracking-wider mb-2">IA</div>
-                    <div className="text-3xl font-bold text-foreground group-hover:scale-105 transition-transform origin-left">
-                      {(resultado.ia?.percentual ?? resultado.ia?.valor ?? 0).toFixed(1)}%
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-blue-600 dark:text-blue-400 uppercase tracking-wider mb-2">
+                      IA
+                      {exibicao.manualPorIndicador.ia && (
+                        <ManualIndicatorAlert observacao={exibicao.observacao} />
+                      )}
                     </div>
-                    <div className="text-sm text-muted-foreground mt-1 font-medium">{resultado.ia?.pontuacao} pontos</div>
+                    {exibicao.manualPorIndicador.ia ? (
+                      <div className="text-3xl font-bold text-foreground">{exibicao.ia?.pontuacao ?? 0}</div>
+                    ) : (
+                      <div className="text-3xl font-bold text-foreground group-hover:scale-105 transition-transform origin-left">
+                        {(exibicao.ia?.percentual ?? exibicao.ia?.valor ?? 0).toFixed(1)}%
+                      </div>
+                    )}
+                    <div className="text-sm text-muted-foreground mt-1 font-medium">
+                      {exibicao.ia?.pontuacao} pontos
+                      {exibicao.manualPorIndicador.ia && (
+                        <span className="text-amber-600 dark:text-amber-400 ml-1">(manual)</span>
+                      )}
+                    </div>
                   </div>
                   
                   <div className="bg-card p-5 rounded-xl border border-border hover:border-amber-500/30 transition-colors shadow-sm group">
-                    <div className="text-xs font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider mb-2">IF</div>
-                    <div className="text-3xl font-bold text-foreground group-hover:scale-105 transition-transform origin-left">
-                      {(resultado.if?.percentual ?? ((resultado.if?.valor ?? 0) / 10)).toFixed(1)}%
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider mb-2">
+                      IF
+                      {exibicao.manualPorIndicador.if && (
+                        <ManualIndicatorAlert observacao={exibicao.observacao} />
+                      )}
                     </div>
-                    <div className="text-sm text-muted-foreground mt-1 font-medium">{resultado.if?.pontuacao} pontos</div>
+                    {exibicao.manualPorIndicador.if ? (
+                      <div className="text-3xl font-bold text-foreground">{exibicao.if?.pontuacao ?? 0}</div>
+                    ) : (
+                      <div className="text-3xl font-bold text-foreground group-hover:scale-105 transition-transform origin-left">
+                        {(exibicao.if?.percentual ?? ((exibicao.if?.valor ?? 0) / 10)).toFixed(1)}%
+                      </div>
+                    )}
+                    <div className="text-sm text-muted-foreground mt-1 font-medium">
+                      {exibicao.if?.pontuacao} pontos
+                      {exibicao.manualPorIndicador.if && (
+                        <span className="text-amber-600 dark:text-amber-400 ml-1">(manual)</span>
+                      )}
+                    </div>
                   </div>
                   
-                  <div className={`bg-card p-5 rounded-xl border transition-colors shadow-sm group ${!resultado.ipt ? 'border-yellow-500/50 bg-yellow-50/10' : 'border-border hover:border-purple-500/30'}`}>
-                    <div className="text-xs font-bold text-purple-600 dark:text-purple-400 uppercase tracking-wider mb-2">IPT</div>
-                    <div className="text-3xl font-bold text-foreground group-hover:scale-105 transition-transform origin-left">
-                      {resultado.ipt?.valor?.toFixed(1) ?? '--'}%
+                  <div className={`bg-card p-5 rounded-xl border transition-colors shadow-sm group ${!exibicao.ipt && !exibicao.manualPorIndicador.ipt ? 'border-yellow-500/50 bg-yellow-50/10' : 'border-border hover:border-purple-500/30'}`}>
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-purple-600 dark:text-purple-400 uppercase tracking-wider mb-2">
+                      IPT
+                      {exibicao.manualPorIndicador.ipt && (
+                        <ManualIndicatorAlert observacao={exibicao.observacao} />
+                      )}
                     </div>
+                    {exibicao.manualPorIndicador.ipt ? (
+                      <div className="text-3xl font-bold text-foreground">{exibicao.ipt?.pontuacao ?? exibicao.ipt_pontuacao ?? 0}</div>
+                    ) : (
+                      <div className="text-3xl font-bold text-foreground group-hover:scale-105 transition-transform origin-left">
+                        {exibicao.ipt?.valor?.toFixed(1) ?? '--'}%
+                      </div>
+                    )}
                     <div className="text-sm text-muted-foreground mt-1 font-medium">
-                      {resultado.ipt?.pontuacao ?? resultado.ipt_pontuacao ?? 0} pontos
-                      {!resultado.ipt && <span className="text-xs text-yellow-600 dark:text-yellow-400 ml-1 font-bold">(não informado)</span>}
+                      {exibicao.ipt?.pontuacao ?? exibicao.ipt_pontuacao ?? 0} pontos
+                      {exibicao.manualPorIndicador.ipt && (
+                        <span className="text-amber-600 dark:text-amber-400 ml-1">(manual)</span>
+                      )}
+                      {!exibicao.ipt && !exibicao.manualPorIndicador.ipt && (
+                        <span className="text-xs text-yellow-600 dark:text-yellow-400 ml-1 font-bold">(não informado)</span>
+                      )}
                     </div>
                   </div>
                   
                   <div className="bg-linear-to-br from-emerald-500/10 to-teal-500/10 p-5 rounded-xl border-2 border-emerald-500/20 hover:border-emerald-500/40 transition-colors shadow-sm relative overflow-hidden group">
                     <div className="absolute top-0 right-0 w-16 h-16 bg-emerald-500/10 rounded-bl-full -mr-8 -mt-8"></div>
-                    <div className="text-xs font-bold text-emerald-700 dark:text-emerald-300 uppercase tracking-wider mb-2">ADC Total</div>
-                    <div className="text-4xl font-bold text-emerald-700 dark:text-emerald-300 group-hover:scale-105 transition-transform origin-left">{resultado.pontuacao_total?.toFixed(1)}</div>
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-700 dark:text-emerald-300 uppercase tracking-wider mb-2">
+                      ADC Total
+                      {exibicao.adcTotalManual && (
+                        <ManualIndicatorAlert observacao={exibicao.observacao} />
+                      )}
+                    </div>
+                    <div className="text-4xl font-bold text-emerald-700 dark:text-emerald-300 group-hover:scale-105 transition-transform origin-left">
+                      {exibicao.pontuacao_total?.toFixed(1)}
+                    </div>
                     <div className="text-sm text-emerald-600/80 dark:text-emerald-400/80 mt-1 font-medium">
-                      {resultado.percentual_contrato?.toFixed(1)}% do contrato
+                      {exibicao.percentual_contrato?.toFixed(1)}% do contrato
+                      {exibicao.adcTotalManual && (
+                        <span className="text-amber-600 dark:text-amber-400 ml-1">(manual)</span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -294,40 +442,40 @@ export default function IndicadoresPage() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="p-4 rounded-xl border border-border bg-card">
                       <div className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-1">Desconto real</div>
-                      <div className="text-2xl font-bold text-foreground">{resultado.desconto?.toFixed(2) ?? 0}%</div>
+                      <div className="text-2xl font-bold text-foreground">{exibicao.desconto?.toFixed(2) ?? 0}%</div>
                       <div className="text-sm text-muted-foreground mt-1">Percentual descontado do valor mensal</div>
                     </div>
                     <div className="p-4 rounded-xl border border-border bg-card">
                       <div className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-1">Valor da glosa (R$)</div>
                       <div className="text-2xl font-bold text-foreground">
-                        {typeof resultado.glosa_real === "number"
-                          ? resultado.glosa_real.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                        {typeof exibicao.glosa_real === "number"
+                          ? exibicao.glosa_real.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                           : "0,00"}
                       </div>
                       <div className="text-sm text-muted-foreground mt-1">Valor retido conforme ADC</div>
                     </div>
                   </div>
 
-                  {(resultado.desconto ?? 0) > 0 && (
+                  {(exibicao.desconto ?? 0) > 0 && (
                     <div className="p-4 bg-yellow-50/50 dark:bg-yellow-900/10 border border-yellow-200/50 dark:border-yellow-800/30 rounded-lg flex items-start gap-3">
                       <span className="text-2xl">⚠️</span>
                       <div>
                         <p className="text-yellow-800 dark:text-yellow-200 font-bold mb-1">
-                          Desconto aplicado: {(resultado.desconto ?? 0).toFixed(2)}%
+                          Desconto aplicado: {(exibicao.desconto ?? 0).toFixed(2)}%
                         </p>
                         <p className="text-sm text-yellow-700 dark:text-yellow-300">
-                          Percentual do valor contratual a receber: <strong>{resultado.percentual_contrato?.toFixed(2)}%</strong>
+                          Percentual do valor contratual a receber: <strong>{exibicao.percentual_contrato?.toFixed(2)}%</strong>
                         </p>
-                        {typeof resultado.glosa_real === "number" && resultado.glosa_real > 0 && (
+                        {typeof exibicao.glosa_real === "number" && exibicao.glosa_real > 0 && (
                           <p className="text-sm text-yellow-700 dark:text-yellow-300 mt-1">
-                            Valor da glosa: <strong>R$ {resultado.glosa_real.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+                            Valor da glosa: <strong>R$ {exibicao.glosa_real.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
                           </p>
                         )}
                       </div>
                     </div>
                   )}
                   
-                  {(resultado.desconto ?? 0) === 0 && (resultado.pontuacao_total ?? 0) >= 90 && (
+                  {(exibicao.desconto ?? 0) === 0 && (exibicao.pontuacao_total ?? 0) >= 90 && (
                     <div className="p-4 bg-green-50/50 dark:bg-green-900/10 border border-green-200/50 dark:border-green-800/30 rounded-lg flex items-center gap-3">
                       <div className="h-10 w-10 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center text-xl">🏆</div>
                       <div>

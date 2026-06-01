@@ -4,6 +4,9 @@ import { useMemo, useState } from "react";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
 import { Calculator, Info } from "lucide-react";
 import Link from "next/link";
 import { VALOR_MENSAL_CONTRATO, descontoADC } from "@/lib/adc-utils";
@@ -61,6 +64,84 @@ function pontuacaoIPT(pfPercentual: number): number {
   return 0;
 }
 
+function AdcResultCard({
+  irdPts,
+  iaPts,
+  ifPts,
+  iptPts,
+  adcTotal,
+  descontoInfo,
+  glosaSimulada,
+  showBreakdown = true,
+}: {
+  irdPts: number;
+  iaPts: number;
+  ifPts: number;
+  iptPts: number;
+  adcTotal: number;
+  descontoInfo: ReturnType<typeof descontoADC>;
+  glosaSimulada: number;
+  showBreakdown?: boolean;
+}) {
+  return (
+    <Card className="border-0 shadow-lg bg-linear-to-br from-red-50/80 via-rose-50/60 to-rose-100/40 dark:from-red-950/30 dark:via-rose-950/20 dark:to-rose-900/10">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-rose-800 dark:text-rose-200">
+          <Calculator className="h-5 w-5 text-rose-500" />
+          Resultado ADC Total
+        </CardTitle>
+        <CardDescription>IRD + IA + IF + IPT (máx 100 pts)</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {showBreakdown && (
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <div className="p-4 rounded-xl bg-emerald-100/50 dark:bg-emerald-900/20">
+              <div className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">IRD</div>
+              <div className="text-xl font-bold text-emerald-700 dark:text-emerald-300">{irdPts} pts</div>
+            </div>
+            <div className="p-4 rounded-xl bg-blue-100/50 dark:bg-blue-900/20">
+              <div className="text-xs text-blue-600 dark:text-blue-400 font-medium">IA</div>
+              <div className="text-xl font-bold text-blue-700 dark:text-blue-300">{iaPts} pts</div>
+            </div>
+            <div className="p-4 rounded-xl bg-amber-100/50 dark:bg-amber-900/20">
+              <div className="text-xs text-amber-600 dark:text-amber-400 font-medium">IF</div>
+              <div className="text-xl font-bold text-amber-700 dark:text-amber-300">{ifPts} pts</div>
+            </div>
+            <div className="p-4 rounded-xl bg-violet-100/50 dark:bg-violet-900/20">
+              <div className="text-xs text-violet-600 dark:text-violet-400 font-medium">IPT</div>
+              <div className="text-xl font-bold text-violet-700 dark:text-violet-300">{iptPts} pts</div>
+            </div>
+            <div className="p-4 rounded-xl bg-rose-100/70 dark:bg-rose-900/30 shadow-sm">
+              <div className="text-xs text-rose-600 dark:text-rose-400 font-semibold">ADC Total</div>
+              <div className="text-2xl font-bold text-rose-700 dark:text-rose-300">{adcTotal.toFixed(1)} pts</div>
+            </div>
+          </div>
+        )}
+        {!showBreakdown && (
+          <div className="p-4 rounded-xl bg-rose-100/70 dark:bg-rose-900/30 shadow-sm text-center">
+            <div className="text-xs text-rose-600 dark:text-rose-400 font-semibold">ADC Total</div>
+            <div className="text-3xl font-bold text-rose-700 dark:text-rose-300">{adcTotal.toFixed(1)} pts</div>
+          </div>
+        )}
+        <div className="p-4 rounded-xl bg-white/50 dark:bg-white/5 flex items-start gap-3">
+          <Info className="h-5 w-5 text-rose-500 shrink-0 mt-0.5" />
+          <div>
+            <p className="font-semibold text-foreground">{descontoInfo.percentual.toFixed(1)}% do valor mensal</p>
+            <p className="text-sm text-muted-foreground">{descontoInfo.texto}</p>
+          </div>
+        </div>
+        <div className="p-4 rounded-xl bg-rose-100/50 dark:bg-rose-900/20">
+          <div className="text-xs text-rose-600 dark:text-rose-400 font-semibold uppercase tracking-wider mb-1">Glosa simulada (R$)</div>
+          <div className="text-2xl font-bold text-rose-700 dark:text-rose-300">
+            {glosaSimulada.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">Base: valor mensal do contrato × desconto aplicado</p>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function SimuladorADCPage() {
   // IRD
   const [irdPorSub, setIrdPorSub] = useState<Record<string, string>>({
@@ -90,6 +171,14 @@ export default function SimuladorADCPage() {
   const [iptZ, setIptZ] = useState("263");
   const [iptQb, setIptQb] = useState("87.79");
   const [iptSigma, setIptSigma] = useState("24.09");
+
+  // Modo rápido
+  const [rapidoModo, setRapidoModo] = useState<"por_indicador" | "total">("por_indicador");
+  const [rapidoIrd, setRapidoIrd] = useState("0");
+  const [rapidoIa, setRapidoIa] = useState("0");
+  const [rapidoIf, setRapidoIf] = useState("0");
+  const [rapidoIpt, setRapidoIpt] = useState("0");
+  const [rapidoAdcTotal, setRapidoAdcTotal] = useState("0");
 
   const irdResult = useMemo(() => {
     const total = SUBS.reduce((s, sub) => s + (Number(irdPorSub[sub]) || 0), 0);
@@ -155,6 +244,22 @@ export default function SimuladorADCPage() {
     [descontoInfo.percentual]
   );
 
+  const rapidoAdcComputed = useMemo(() => {
+    if (rapidoModo === "total") return Number(rapidoAdcTotal) || 0;
+    return (
+      (Number(rapidoIrd) || 0) +
+      (Number(rapidoIa) || 0) +
+      (Number(rapidoIf) || 0) +
+      (Number(rapidoIpt) || 0)
+    );
+  }, [rapidoModo, rapidoAdcTotal, rapidoIrd, rapidoIa, rapidoIf, rapidoIpt]);
+
+  const rapidoDesconto = useMemo(() => descontoADC(rapidoAdcComputed), [rapidoAdcComputed]);
+  const rapidoGlosa = useMemo(
+    () => (VALOR_MENSAL_CONTRATO * (100 - rapidoDesconto.percentual)) / 100,
+    [rapidoDesconto.percentual]
+  );
+
   return (
     <MainLayout>
       <div className="space-y-8">
@@ -183,6 +288,13 @@ export default function SimuladorADCPage() {
           </div>
         </div>
 
+        <Tabs defaultValue="detalhado" className="space-y-6">
+          <TabsList>
+            <TabsTrigger value="detalhado">Detalhado</TabsTrigger>
+            <TabsTrigger value="rapido">Rápido</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="detalhado" className="space-y-6">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* IRD */}
           <Card className="border-0 shadow-md bg-emerald-50/60 dark:bg-emerald-950/30">
@@ -372,54 +484,85 @@ export default function SimuladorADCPage() {
           </Card>
         </div>
 
-        {/* Resumo ADC */}
-        <Card className="border-0 shadow-lg bg-linear-to-br from-red-50/80 via-rose-50/60 to-rose-100/40 dark:from-red-950/30 dark:via-rose-950/20 dark:to-rose-900/10">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-rose-800 dark:text-rose-200">
-              <Calculator className="h-5 w-5 text-rose-500" />
-              Resultado ADC Total
-            </CardTitle>
-            <CardDescription>IRD + IA + IF + IPT (máx 100 pts)</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-              <div className="p-4 rounded-xl bg-emerald-100/50 dark:bg-emerald-900/20">
-                <div className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">IRD</div>
-                <div className="text-xl font-bold text-emerald-700 dark:text-emerald-300">{irdResult.pontuacao} pts</div>
-              </div>
-              <div className="p-4 rounded-xl bg-blue-100/50 dark:bg-blue-900/20">
-                <div className="text-xs text-blue-600 dark:text-blue-400 font-medium">IA</div>
-                <div className="text-xl font-bold text-blue-700 dark:text-blue-300">{iaResult.pontuacao} pts</div>
-              </div>
-              <div className="p-4 rounded-xl bg-amber-100/50 dark:bg-amber-900/20">
-                <div className="text-xs text-amber-600 dark:text-amber-400 font-medium">IF</div>
-                <div className="text-xl font-bold text-amber-700 dark:text-amber-300">{ifResult.pontuacao} pts</div>
-              </div>
-              <div className="p-4 rounded-xl bg-violet-100/50 dark:bg-violet-900/20">
-                <div className="text-xs text-violet-600 dark:text-violet-400 font-medium">IPT</div>
-                <div className="text-xl font-bold text-violet-700 dark:text-violet-300">{iptResult?.pontuacao ?? 0} pts</div>
-              </div>
-              <div className="p-4 rounded-xl bg-rose-100/70 dark:bg-rose-900/30 shadow-sm">
-                <div className="text-xs text-rose-600 dark:text-rose-400 font-semibold">ADC Total</div>
-                <div className="text-2xl font-bold text-rose-700 dark:text-rose-300">{adcTotal.toFixed(1)} pts</div>
-              </div>
-            </div>
-            <div className="p-4 rounded-xl bg-white/50 dark:bg-white/5 flex items-start gap-3">
-              <Info className="h-5 w-5 text-rose-500 shrink-0 mt-0.5" />
-              <div>
-                <p className="font-semibold text-foreground">{descontoInfo.percentual.toFixed(1)}% do valor mensal</p>
-                <p className="text-sm text-muted-foreground">{descontoInfo.texto}</p>
-              </div>
-            </div>
-            <div className="p-4 rounded-xl bg-rose-100/50 dark:bg-rose-900/20">
-              <div className="text-xs text-rose-600 dark:text-rose-400 font-semibold uppercase tracking-wider mb-1">Glosa simulada (R$)</div>
-              <div className="text-2xl font-bold text-rose-700 dark:text-rose-300">
-                {glosaSimulada.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">Base: valor mensal do contrato × desconto aplicado</p>
-            </div>
-          </CardContent>
-        </Card>
+        <AdcResultCard
+          irdPts={irdResult.pontuacao}
+          iaPts={iaResult.pontuacao}
+          ifPts={ifResult.pontuacao}
+          iptPts={iptResult?.pontuacao ?? 0}
+          adcTotal={adcTotal}
+          descontoInfo={descontoInfo}
+          glosaSimulada={glosaSimulada}
+        />
+          </TabsContent>
+
+          <TabsContent value="rapido" className="space-y-6">
+            <Card className="border-0 shadow-md">
+              <CardHeader>
+                <CardTitle className="text-lg">Cálculo rápido do ADC</CardTitle>
+                <CardDescription>
+                  Informe as pontuações diretamente ou apenas o ADC total para estimar glosa e recebimento.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={rapidoModo === "por_indicador" ? "default" : "outline"}
+                    onClick={() => setRapidoModo("por_indicador")}
+                  >
+                    Por indicador
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={rapidoModo === "total" ? "default" : "outline"}
+                    onClick={() => setRapidoModo("total")}
+                  >
+                    ADC total
+                  </Button>
+                </div>
+
+                {rapidoModo === "por_indicador" ? (
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="r-ird">IRD (0–20)</Label>
+                      <Input id="r-ird" type="number" min={0} max={20} value={rapidoIrd} onChange={(e) => setRapidoIrd(e.target.value)} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="r-ia">IA (0–20)</Label>
+                      <Input id="r-ia" type="number" min={0} max={20} value={rapidoIa} onChange={(e) => setRapidoIa(e.target.value)} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="r-if">IF (0–20)</Label>
+                      <Input id="r-if" type="number" min={0} max={20} value={rapidoIf} onChange={(e) => setRapidoIf(e.target.value)} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="r-ipt">IPT (0–40)</Label>
+                      <Input id="r-ipt" type="number" min={0} max={40} value={rapidoIpt} onChange={(e) => setRapidoIpt(e.target.value)} />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="max-w-xs space-y-1.5">
+                    <Label htmlFor="r-adc">ADC total (0–100 pts)</Label>
+                    <Input id="r-adc" type="number" min={0} max={100} value={rapidoAdcTotal} onChange={(e) => setRapidoAdcTotal(e.target.value)} />
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <AdcResultCard
+              irdPts={Number(rapidoIrd) || 0}
+              iaPts={Number(rapidoIa) || 0}
+              ifPts={Number(rapidoIf) || 0}
+              iptPts={Number(rapidoIpt) || 0}
+              adcTotal={rapidoAdcComputed}
+              descontoInfo={rapidoDesconto}
+              glosaSimulada={rapidoGlosa}
+              showBreakdown={rapidoModo === "por_indicador"}
+            />
+          </TabsContent>
+        </Tabs>
       </div>
     </MainLayout>
   );

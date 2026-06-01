@@ -167,6 +167,25 @@ export interface KPIs {
   };
   sacs_hoje: number;
   cncs_urgentes: number;
+  ipt_sem_dados?: boolean;
+  adc_override?: AdcOverrideInfo;
+}
+
+export interface AdcOverrideInfo {
+  ativo: boolean;
+  modo?: "por_indicador" | "total";
+  observacao?: string;
+  adc_total?: number;
+  pontuacao_ird?: number;
+  pontuacao_ia?: number;
+  pontuacao_if?: number;
+  pontuacao_ipt?: number;
+}
+
+export interface AdcOverrideRecord extends AdcOverrideInfo {
+  ano?: number;
+  mes?: number;
+  updated_at?: string;
 }
 
 export interface IptCenarios {
@@ -872,6 +891,31 @@ export const apiService = {
     const { data } = await api.get('/dashboard/kpis', {
       params: { periodo_inicial: periodoInicial, periodo_final: periodoFinal },
     });
+    return data;
+  },
+
+  getAdcOverride: async (ano: number, mes: number): Promise<AdcOverrideRecord> => {
+    const { data } = await api.get('/indicadores/adc-override', { params: { ano, mes } });
+    return data;
+  },
+
+  saveAdcOverride: async (payload: {
+    ano: number;
+    mes: number;
+    modo: "por_indicador" | "total";
+    pontuacao_ird?: number | null;
+    pontuacao_ia?: number | null;
+    pontuacao_if?: number | null;
+    pontuacao_ipt?: number | null;
+    adc_total?: number | null;
+    observacao: string;
+  }) => {
+    const { data } = await api.put('/indicadores/adc-override', payload);
+    return data;
+  },
+
+  deleteAdcOverride: async (ano: number, mes: number) => {
+    const { data } = await api.delete('/indicadores/adc-override', { params: { ano, mes } });
     return data;
   },
 
