@@ -1,0 +1,123 @@
+name: Backup Neon Database
+
+on:
+  schedule:
+    # Diário às 06:00 UTC (03:00 BRT)
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Forçar criação de Release permanente'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: backup-neon
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Install PostgreSQL 17 client
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl --fail -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          sudo sh -c 'echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
+          pg_dump --version
+
+      - name: Build backup metadata
+        id: meta
+        run: |
+          DATETIME=$(date -u +%Y-%m-%dT%H-%M-%SZ)
+          DATE=$(date -u +%Y-%m-%d)
+          WEEK=$(date -u +%G-W%V)
+          DOW=$(date -u +%u)
+          echo "datetime=$DATETIME" >> $GITHUB_OUTPUT
+          echo "date=$DATE"         >> $GITHUB_OUTPUT
+          echo "week=$WEEK"         >> $GITHUB_OUTPUT
+          echo "dow=$DOW"           >> $GITHUB_OUTPUT
+
+      - name: Dump critical tables (custom format)
+        env:
+          DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+        run: |
+          mkdir -p backups
+          pg_dump "$DATABASE_URL" \
+            --format=custom \
+            --compress=9 \
+            --no-owner \
+            --no-acl \
+            --verbose \
+            --table=public.ipt_dados_bateria \
+            --table=public.setores_modulos \
+            --table=public.ipt_report_linhas \
+            --file="backups/critical-tables-${{ steps.meta.outputs.datetime }}.dump" \
+            2> backups/critical-tables.log
+          echo "--- critical log tail ---"
+          tail -n 20 backups/critical-tables.log
+
+      - name: Dump full database (custom format)
+        env:
+          DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+        run: |
+          pg_dump "$DATABASE_URL" \
+            --format=custom \
+            --compress=9 \
+            --no-owner \
+            --no-acl \
+            --file="backups/full-db-${{ steps.meta.outputs.datetime }}.dump" \
+            2> backups/full-db.log
+          echo "--- full-db log tail ---"
+          tail -n 20 backups/full-db.log
+
+      - name: Verify dumps are restorable
+        run: |
+          ls -lh backups/
+          for f in backups/*.dump; do
+            echo "=== Contents of $f ==="
+            pg_restore --list "$f" | head -n 30
+            echo "..."
+            SIZE=$(stat -c%s "$f")
+            if [ "$SIZE" -lt 1024 ]; then
+              echo "ERRO: $f tem menos de 1KB ($SIZE bytes) — provavelmente vazio."
+              exit 1
+            fi
+          done
+
+      - name: Upload daily artifact (90-day retention)
+        uses: actions/upload-artifact@v4
+        with:
+          name: neon-backup-${{ steps.meta.outputs.datetime }}
+          path: backups/*.dump
+          retention-days: 90
+          compression-level: 0
+          if-no-files-found: error
+
+      - name: Create weekly Release (Sundays or manual override)
+        if: steps.meta.outputs.dow == '7' || inputs.create_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="backup-${{ steps.meta.outputs.week }}"
+          if gh release view "$TAG" --repo "${{ github.repository }}" > /dev/null 2>&1; then
+            echo "Release $TAG já existe, fazendo upload (substitui arquivos com mesmo nome)..."
+            gh release upload "$TAG" backups/*.dump --clobber --repo "${{ github.repository }}"
+          else
+            gh release create "$TAG" backups/*.dump \
+              --title "Weekly backup ${{ steps.meta.outputs.week }}" \
+              --notes "Backup automático criado em ${{ steps.meta.outputs.datetime }} (UTC).\n\nConteúdo:\n- \`critical-tables-*.dump\`: ipt_dados_bateria, setores_modulos, ipt_report_linhas\n- \`full-db-*.dump\`: banco completo\n\nRestauração: \`pg_restore --dbname=... arquivo.dump\`" \
+              --repo "${{ github.repository }}"
+          fi
