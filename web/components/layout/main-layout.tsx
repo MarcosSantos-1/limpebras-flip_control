@@ -46,7 +46,6 @@ export function MainLayout({ children }: MainLayoutProps) {
   const { user, loading, hasPageAccess, isIptRestrictedUser } = useAuth()
   const pathname = usePathname()
   const router = useRouter()
-  const sidebarWidth = 288 // 18rem (w-72)
 
   useEffect(() => {
     if (loading) return
@@ -103,8 +102,11 @@ export function MainLayout({ children }: MainLayoutProps) {
         {collapsed ? "☰ Menu" : "✕ Sidebar"}
       </button>
       <main
-        className={`relative transition-all duration-300 overflow-x-hidden ${collapsed ? "ml-0" : "ml-72"}`}
-        style={{ width: collapsed ? "100%" : `calc(100% - ${sidebarWidth}px)` }}
+        className={
+          collapsed
+            ? "relative transition-all duration-300 overflow-x-hidden ml-0 w-full"
+            : "relative transition-all duration-300 overflow-x-hidden ml-72 w-[calc(100%-288px)] max-[1440px]:ml-60 max-[1440px]:w-[calc(100%-240px)]"
+        }
       >
         <div className="absolute inset-0 grid-pattern -z-10" />
         <div className="p-6 min-w-0">

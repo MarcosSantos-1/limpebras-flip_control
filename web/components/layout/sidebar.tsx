@@ -20,6 +20,10 @@ import {
   ChevronUp,
   Sparkles,
   Map,
+  Battery,
+  Network,
+  Truck,
+  Eye,
   type LucideIcon,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -36,16 +40,19 @@ type SidebarNavItem = {
   skipAccessCheck?: boolean
   external?: boolean
   match?: "exact" | "prefix"
+  disabled?: boolean
 }
 
 type SidebarNavDotItem = SidebarNavItem & {
   dotClassName: string
 }
 
-const navItems: SidebarNavItem[] = [
+const navItemsBeforeIpt: SidebarNavItem[] = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard, pageKey: "dashboard" as AuthPageKey },
   { href: "/indicadores", label: "Indicadores", icon: ChartPie, pageKey: "indicadores" as AuthPageKey },
-  { href: "/ipt", label: "IPT", icon: Activity, pageKey: "ipt" as AuthPageKey },
+]
+
+const navItemsAfterFlip: SidebarNavItem[] = [
   {
     href: "https://geoplano-limpebras.vercel.app/",
     label: "Plano de trabalho",
@@ -54,6 +61,47 @@ const navItems: SidebarNavItem[] = [
     external: true,
   },
   { href: "/upload", label: "Upload", icon: Upload, pageKey: "upload" as AuthPageKey },
+]
+
+const iptNavItems: SidebarNavDotItem[] = [
+  {
+    href: "/ipt",
+    label: "IPT Geral",
+    icon: Activity,
+    pageKey: "ipt" as AuthPageKey,
+    match: "exact" as const,
+    dotClassName: "bg-blue-500 shadow-blue-500/40",
+  },
+  {
+    href: "/ipt/bateria",
+    label: "Bateria",
+    icon: Battery,
+    pageKey: "ipt" as AuthPageKey,
+    dotClassName: "bg-emerald-500 shadow-emerald-500/40",
+  },
+  {
+    href: "/ipt/cruzamento",
+    label: "Cruzamento inteligente",
+    icon: Network,
+    pageKey: "ipt" as AuthPageKey,
+    dotClassName: "bg-violet-500 shadow-violet-500/40",
+  },
+  {
+    href: "#",
+    label: "Despachos SELIMP",
+    icon: Truck,
+    skipAccessCheck: true,
+    disabled: true,
+    dotClassName: "bg-amber-500 shadow-amber-500/40",
+  },
+  {
+    href: "#",
+    label: "View",
+    icon: Eye,
+    skipAccessCheck: true,
+    disabled: true,
+    dotClassName: "bg-slate-500 shadow-slate-500/40",
+  },
 ]
 
 const flipNavItems: SidebarNavDotItem[] = [
@@ -113,43 +161,78 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
   const { user, hasPageAccess, logout, isIptRestrictedUser, getDefaultAuthorizedPath } = useAuth()
 
   const canShowItem = (item: SidebarNavItem) =>
-    item.skipAccessCheck === true || (item.pageKey != null && hasPageAccess(item.pageKey))
+    item.disabled === true ||
+    item.skipAccessCheck === true ||
+    (item.pageKey != null && hasPageAccess(item.pageKey))
 
-  const sourceItems = isIptRestrictedUser ? iptRestrictedNavItems : navItems
-  const visibleItems = sourceItems.filter(canShowItem)
+  const visibleBeforeIpt = isIptRestrictedUser ? [] : navItemsBeforeIpt.filter(canShowItem)
+  const visibleAfterFlip = isIptRestrictedUser
+    ? iptRestrictedNavItems.filter(canShowItem)
+    : navItemsAfterFlip.filter(canShowItem)
+  const visibleIptItems = isIptRestrictedUser ? [] : iptNavItems.filter(canShowItem)
   const visibleFlipItems = isIptRestrictedUser ? [] : flipNavItems.filter(canShowItem)
   const visibleUserMenuItems = userMenuItems.filter(canShowItem)
 
   const isItemActive = (item: SidebarNavItem) =>
-    item.external
+    item.disabled || item.external
       ? false
       : item.match === "exact"
         ? pathname === item.href
         : pathname === item.href || pathname.startsWith(`${item.href}/`)
 
+  const iptActive = visibleIptItems.some(isItemActive)
   const flipActive = visibleFlipItems.some(isItemActive)
+  const [iptOpen, setIptOpen] = useState(false)
   const [flipOpen, setFlipOpen] = useState(false)
+  const isIptExpanded = iptOpen || iptActive
   const isFlipExpanded = flipOpen || flipActive
 
   const renderNavItem = (item: SidebarNavItem, opts?: { dotClassName?: string; compact?: boolean }) => {
     const Icon = item.icon
     const isActive = isItemActive(item)
     const className = cn(
-      "group flex items-center gap-3 rounded-xl text-sm font-semibold transition-all duration-200",
-      opts?.compact ? "px-3 py-2.5" : "px-4 py-3",
-      isActive
-        ? "bg-linear-to-r from-indigo-600/20 to-cyan-500/20 text-foreground border border-indigo-500/35 shadow-sm"
-        : "text-muted-foreground hover:bg-accent/70 hover:text-accent-foreground border border-transparent hover:border-violet-500/15"
+      "group flex items-center gap-3 max-[1440px]:gap-2.5 rounded-xl text-sm font-semibold transition-all duration-200",
+      opts?.compact ? "px-3 py-2.5 max-[1440px]:py-2" : "px-4 py-3 max-[1440px]:px-3 max-[1440px]:py-2.5",
+      item.disabled
+        ? "cursor-not-allowed border border-transparent text-muted-foreground/60 opacity-70"
+        : isActive
+          ? "bg-linear-to-r from-indigo-600/20 to-cyan-500/20 text-foreground border border-indigo-500/35 shadow-sm"
+          : "text-muted-foreground hover:bg-accent/70 hover:text-accent-foreground border border-transparent hover:border-violet-500/15"
     )
     const content = (
       <>
         {opts?.dotClassName && (
-          <span className={cn("h-2.5 w-2.5 shrink-0 rounded-full shadow-sm", opts.dotClassName)} />
+          <span
+            className={cn(
+              "h-2.5 w-2.5 shrink-0 rounded-full shadow-sm",
+              item.disabled ? "opacity-50" : "",
+              opts.dotClassName
+            )}
+          />
         )}
-        <Icon className={cn("h-5 w-5 shrink-0 transition-transform group-hover:scale-110", isActive ? "text-blue-500" : "")} />
+        <Icon
+          className={cn(
+            "h-5 w-5 max-[1440px]:h-4 max-[1440px]:w-4 shrink-0 transition-transform",
+            item.disabled ? "" : "group-hover:scale-110",
+            isActive ? "text-blue-500" : ""
+          )}
+        />
         <span className="truncate">{item.label}</span>
+        {item.disabled && (
+          <span className="ml-auto rounded-full bg-muted/60 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Em breve
+          </span>
+        )}
       </>
     )
+
+    if (item.disabled) {
+      return (
+        <span key={`${item.href}-${item.label}`} className={className} aria-disabled="true">
+          {content}
+        </span>
+      )
+    }
 
     if (item.external) {
       return (
@@ -172,18 +255,18 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
         "app-sidebar fixed left-0 top-0 z-40 h-screen border-r border-border/70 transition-all duration-300",
         "bg-linear-to-b from-blue-600/8 via-background to-cyan-600/5 dark:from-cyan-500/15 dark:via-background dark:to-cyan-500/10",
         "backdrop-blur-sm shadow-[0_0_50px_-25px_rgba(99,102,241,0.55)]",
-        collapsed ? "w-0 -translate-x-full opacity-0 pointer-events-none" : "w-72"
+        collapsed ? "w-0 -translate-x-full opacity-0 pointer-events-none" : "w-72 max-[1440px]:w-60"
       )}
     >
       <div className="flex h-full min-h-0 flex-col">
-        <div className="flex h-24 items-center justify-start border-b border-border/70 px-6 pb-4 pt-[15px]">
-          <Link href={getDefaultAuthorizedPath()} className="ml-6 flex shrink-0 items-center" aria-label="Limpebras — início">
+        <div className="flex h-24 max-[1440px]:h-20 items-center justify-start border-b border-border/70 px-6 max-[1440px]:px-4 pb-4 pt-[15px] max-[1440px]:pt-3 max-[1440px]:pb-3">
+          <Link href={getDefaultAuthorizedPath()} className="ml-6 max-[1440px]:ml-2 flex shrink-0 items-center" aria-label="Limpebras — início">
             <Image
               src="/logotipo.png"
               alt="Limpebras"
               width={180}
               height={48}
-              className="h-10 w-auto max-w-[200px] object-contain object-left dark:hidden"
+              className="h-10 max-[1440px]:h-8 w-auto max-w-[200px] max-[1440px]:max-w-[160px] object-contain object-left dark:hidden"
               style={{ width: "auto", height: "auto" }}
               priority
             />
@@ -192,30 +275,59 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
               alt="Limpebras"
               width={230}
               height={55}
-              className="hidden h-10 w-auto max-w-[230px] object-contain object-left dark:block"
+              className="hidden h-10 max-[1440px]:h-8 w-auto max-w-[230px] max-[1440px]:max-w-[180px] object-contain object-left dark:block"
               style={{ width: "auto", height: "auto" }}
               priority
             />
           </Link>
         </div>
 
-        <nav className="flex-1 min-h-0 space-y-2 overflow-y-auto p-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          {visibleItems.map((item) => renderNavItem(item))}
+        <nav className="flex-1 min-h-0 space-y-2 max-[1440px]:space-y-1.5 overflow-y-auto p-4 max-[1440px]:p-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {visibleBeforeIpt.map((item) => renderNavItem(item))}
+
+          {visibleIptItems.length > 0 && (
+            <div className="rounded-2xl border border-border/60 bg-background/40 p-2 max-[1440px]:p-1.5 shadow-sm">
+              <button
+                type="button"
+                onClick={() => setIptOpen((prev) => !prev)}
+                className={cn(
+                  "flex w-full items-center justify-between rounded-xl px-3 py-2.5 max-[1440px]:py-2 text-left text-sm font-semibold transition",
+                  iptActive
+                    ? "bg-indigo-500/10 text-foreground"
+                    : "text-muted-foreground hover:bg-accent/70 hover:text-accent-foreground"
+                )}
+                aria-expanded={isIptExpanded}
+              >
+                <span className="flex items-center gap-3 max-[1440px]:gap-2.5">
+                  <Activity className="h-5 w-5 max-[1440px]:h-4 max-[1440px]:w-4 shrink-0" />
+                  <span>IPT</span>
+                </span>
+                <ChevronDown className={cn("h-4 w-4 transition-transform", isIptExpanded ? "rotate-180" : "")} />
+              </button>
+              {isIptExpanded && (
+                <div className="mt-2 space-y-1">
+                  {visibleIptItems.map((item) =>
+                    renderNavItem(item, { dotClassName: item.dotClassName, compact: true })
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {visibleFlipItems.length > 0 && (
-            <div className="rounded-2xl border border-border/60 bg-background/40 p-2 shadow-sm">
+            <div className="rounded-2xl border border-border/60 bg-background/40 p-2 max-[1440px]:p-1.5 shadow-sm">
               <button
                 type="button"
                 onClick={() => setFlipOpen((prev) => !prev)}
                 className={cn(
-                  "flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition",
+                  "flex w-full items-center justify-between rounded-xl px-3 py-2.5 max-[1440px]:py-2 text-left text-sm font-semibold transition",
                   flipActive
                     ? "bg-cyan-500/10 text-foreground"
                     : "text-muted-foreground hover:bg-accent/70 hover:text-accent-foreground"
                 )}
                 aria-expanded={isFlipExpanded}
               >
-                <span className="flex items-center gap-3">
+                <span className="flex items-center gap-3 max-[1440px]:gap-2.5">
                   <span className="h-2.5 w-2.5 rounded-full bg-cyan-500 shadow-sm shadow-cyan-500/40" />
                   <span>FLIP</span>
                 </span>
@@ -230,17 +342,19 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
               )}
             </div>
           )}
+
+          {visibleAfterFlip.map((item) => renderNavItem(item))}
         </nav>
 
-        <div className="border-t border-border/70 bg-background/50 p-4">
-          <div className="px-2">
+        <div className="border-t border-border/70 bg-background/50 p-4 max-[1440px]:p-3">
+          <div className="px-2 max-[1440px]:px-1">
             <Popover>
               <PopoverTrigger asChild>
                 <button
                   type="button"
-                  className="group flex w-full items-center gap-3 rounded-2xl border border-border/70 bg-linear-to-r from-background via-background to-cyan-500/5 px-3 py-3 text-left shadow-sm transition hover:border-blue-400/35 hover:shadow-md"
+                  className="group flex w-full items-center gap-3 max-[1440px]:gap-2 rounded-2xl border border-border/70 bg-linear-to-r from-background via-background to-cyan-500/5 px-3 py-3 max-[1440px]:px-2.5 max-[1440px]:py-2.5 text-left shadow-sm transition hover:border-blue-400/35 hover:shadow-md"
                 >
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-linear-to-br from-blue-600 to-cyan-500 text-white shadow-md">
+                  <div className="flex h-10 w-10 max-[1440px]:h-9 max-[1440px]:w-9 shrink-0 items-center justify-center rounded-xl bg-linear-to-br from-blue-600 to-cyan-500 text-white shadow-md">
                     <Sparkles className="h-4 w-4" />
                   </div>
                   <div className="min-w-0 flex-1">
