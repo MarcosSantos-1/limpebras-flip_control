@@ -562,8 +562,13 @@ export default function IPTPage() {
     [iptPreviewCards, kpisData]
   );
 
-  const adcManual = Boolean(kpisData?.adc_override?.ativo);
-  const adcManualObservacao = kpisData?.adc_override?.observacao ?? "";
+  const adcOverride = kpisData?.adc_override;
+  const adcManual = Boolean(adcOverride?.ativo);
+  const adcManualObservacao = adcOverride?.observacao ?? "";
+  const adcManualIptPontuacao =
+    adcOverride?.modo === "por_indicador" && adcOverride.pontuacao_ipt != null
+      ? adcOverride.pontuacao_ipt
+      : null;
 
   const iptRiskTone = useMemo(() => {
     const risco = iptCard.cenarios?.diagnostico.risco;
@@ -594,6 +599,12 @@ export default function IPTPage() {
           dayValue: point.percentual_dia,
           count: point.total_despachos,
           dayCount: point.total_despachos_dia,
+          plannedCount: point.despachos_previstos,
+          plannedDayCount: point.despachos_previstos_dia,
+          coverageValue: point.cobertura_despachos,
+          dayCoverageValue: point.cobertura_despachos_dia,
+          notDispatchedCount: point.despachos_nao_despachados,
+          notDispatchedDayCount: point.despachos_nao_despachados_dia,
           zeroCount: point.despachos_zerados,
           dayZeroCount: point.despachos_zerados_dia,
           meta: `${point.quantidade_planos} planos | ${point.despachos_zerados} zerados acumulados`,
@@ -643,6 +654,9 @@ export default function IPTPage() {
         origem: "ambos" | "somente_selimp" | "somente_nosso";
         despachos_selimp?: number;
         despachos_nosso?: number;
+        despachos_previstos?: number;
+        despachos_nao_despachados?: number;
+        cobertura_despachos?: number | null;
         raw_selimp_sum?: number;
         raw_selimp_count?: number;
         equipamentos?: string[];
@@ -792,8 +806,18 @@ export default function IPTPage() {
     tableSearchQuery,
   ]);
 
-  const exportDespachosCount = useMemo(
+  const exportLineCount = useMemo(
     () => countIptBaseDadosExportRows(filteredComparativo),
+    [filteredComparativo]
+  );
+
+  const exportSelimpSectorCount = useMemo(
+    () =>
+      filteredComparativo.filter(
+        (row) =>
+          (row.despachos_selimp ?? 0) > 0 ||
+          row.detalhes_diarios?.some((detalhe) => detalhe.despachos_selimp > 0)
+      ).length,
     [filteredComparativo]
   );
 
@@ -1198,6 +1222,7 @@ export default function IPTPage() {
             <CardHeader className="pb-3">
               <div className="flex items-center gap-2">
                 <CardTitle className="text-base">IPT (Algoritmo SELIMP)</CardTitle>
+                {adcManual && <ManualIndicatorBadge observacao={adcManualObservacao} variant="inline" />}
                 <div
                   className="relative"
                   onMouseEnter={() => setIptFormulaTooltip(true)}
@@ -1222,10 +1247,32 @@ export default function IPTPage() {
               <CardDescription>Separação entre qualidade executada e cobertura de rastreamento.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              {adcManual ? (
-                <ManualIndicatorBadge observacao={adcManualObservacao} />
-              ) : (
               <>
+              {adcManual && (
+                <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3.5 shadow-sm">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">
+                          Registro manual ativo
+                        </p>
+                        {adcManualIptPontuacao != null && (
+                          <span className="rounded-full bg-background/70 px-2 py-0.5 text-[11px] font-semibold text-foreground">
+                            IPT registrado: {adcManualIptPontuacao.toFixed(2)} pts
+                          </span>
+                        )}
+                      </div>
+                      {adcManualObservacao.trim() && (
+                        <p className="mt-1 text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap">
+                          {adcManualObservacao}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="rounded-xl bg-background/70 p-3.5 shadow-sm transition-all hover:shadow-md">
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-xs text-muted-foreground">
@@ -1304,7 +1351,6 @@ export default function IPTPage() {
               )}
 
               </>
-              )}
 
             </CardContent>
           </Card>
@@ -1857,7 +1903,7 @@ export default function IPTPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <CardTitle className="text-base">Serviços (ativos)</CardTitle>
-                  <CardDescription>Serviços com execução acumulada no mês selecionado até a data.</CardDescription>
+                  <CardDescription>Execução acumulada, previstos e cobertura de despacho no mês selecionado.</CardDescription>
                 </div>
                 <span className="text-xs font-medium text-muted-foreground bg-muted/50 px-2 py-1 rounded-full">
                   {topServicos.length} serviços
@@ -1872,7 +1918,7 @@ export default function IPTPage() {
                     key={item.tipo_servico}
                     onClick={() => handleServiceEvolutionClick(item.tipo_servico || "Não informado")}
                     className="group w-full rounded-xl bg-background/60 p-3 text-left shadow-sm transition-all hover:shadow-md hover:bg-cyan-500/5 hover:ring-1 hover:ring-cyan-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
-                    title={`${item.total_despachos ?? 0} despachos SELIMP acumulados no mês${item.despachos_zerados != null ? ` · ${item.despachos_zerados} com 0%` : ""}`}
+                    title={`${item.total_despachos ?? 0}/${item.despachos_previstos ?? item.total_despachos ?? 0} despachos previstos no mes${item.cobertura_despachos != null ? ` - ${item.cobertura_despachos.toFixed(1)}% despachado` : ""}${item.despachos_zerados != null ? ` - ${item.despachos_zerados} com 0%` : ""}`}
                   >
                     <div className="mb-2 flex items-center justify-between gap-2">
                       <span className="truncate font-semibold text-sm group-hover:text-cyan-700 dark:group-hover:text-cyan-300 min-w-0">
@@ -1881,7 +1927,7 @@ export default function IPTPage() {
                       <div className="flex items-center gap-1.5 shrink-0">
                         <span
                           className="text-lg font-bold tabular-nums text-cyan-600 dark:text-cyan-400 underline decoration-dotted decoration-cyan-600/50 underline-offset-2 cursor-help"
-                          title="Com zerados: média acumulada do percentual SELIMP em todos os despachos do mês até a data (inclui execução 0%)."
+                          title="Com zerados: media acumulada do percentual SELIMP nos despachos encerrados ate a data (inclui execucao 0%). Nao despachados entram na cobertura abaixo."
                         >
                           {pct(item.media_execucao)}
                         </span>
@@ -1904,8 +1950,12 @@ export default function IPTPage() {
                         />
                       </div>
                       <span className="text-xs text-muted-foreground shrink-0 min-w-[5.5rem] text-right whitespace-nowrap">
-                        {item.total_despachos ?? 0} despachos
+                        {item.total_despachos ?? 0}/{item.despachos_previstos ?? item.total_despachos ?? 0} prev.
                       </span>
+                    </div>
+                    <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                      <span>Despachado {pct(item.cobertura_despachos)}</span>
+                      <span>{item.despachos_nao_despachados ?? 0} nao desp.</span>
                     </div>
                   </button>
                 ))}
@@ -1947,7 +1997,7 @@ export default function IPTPage() {
           open={serviceEvolutionOpen}
           onOpenChange={setServiceEvolutionOpen}
           title={`Evolução do serviço - ${serviceEvolutionTitle}`}
-          description="Percentual acumulado do Report SELIMP no mês selecionado, do dia 01 até cada data com despacho."
+          description="Percentual acumulado do Report SELIMP, com previstos, despachados e cobertura ate cada data."
           primaryLabel="% acumulado com zerados"
           secondaryLabel="% acumulado sem zerados"
           points={serviceEvolutionPoints}
@@ -2016,11 +2066,11 @@ export default function IPTPage() {
               >
                 <p className="text-xs font-bold opacity-90 flex items-center gap-1.5">
                   <Download className="h-3.5 w-3.5" />
-                  Baixar visualizados
+                  Baixar visualização
                 </p>
-                <p className="text-2xl font-bold mt-1">{exportDespachosCount.toLocaleString("pt-BR")}</p>
+                <p className="text-2xl font-bold mt-1">{exportLineCount.toLocaleString("pt-BR")} Linhas</p>
                 <p className="text-xs font-medium opacity-80 mt-1">
-                  {filteredComparativo.length.toLocaleString("pt-BR")} setores visualizados · Clique para exportar
+                  {exportSelimpSectorCount.toLocaleString("pt-BR")} setores com SELIMP
                 </p>
               </button>
             </div>
@@ -2030,8 +2080,8 @@ export default function IPTPage() {
                 <DialogHeader>
                   <DialogTitle>Baixar base de dados?</DialogTitle>
                   <DialogDescription>
-                    Será gerado um arquivo Excel (.xlsx) com um registro por despacho dos setores visíveis na tabela,
-                    respeitando os filtros ativos.
+                    Sera gerado um arquivo Excel (.xlsx) somente com despachos SELIMP encerrados,
+                    respeitando os filtros ativos da tabela.
                   </DialogDescription>
                 </DialogHeader>
                 <div className="space-y-2 rounded-lg border border-border/60 bg-muted/30 p-3 text-sm">
@@ -2053,13 +2103,17 @@ export default function IPTPage() {
                     </span>
                   </p>
                   <p>
-                    <span className="font-medium text-muted-foreground">Linhas a exportar:</span>{" "}
-                    <span className="font-semibold tabular-nums">{exportDespachosCount.toLocaleString("pt-BR")}</span>
+                    <span className="font-medium text-muted-foreground">Despachos SELIMP a exportar:</span>{" "}
+                    <span className="font-semibold tabular-nums">{exportLineCount.toLocaleString("pt-BR")}</span>
+                  </p>
+                  <p>
+                    <span className="font-medium text-muted-foreground">Setores com SELIMP:</span>{" "}
+                    <span className="font-semibold tabular-nums">{exportSelimpSectorCount.toLocaleString("pt-BR")}</span>
                   </p>
                 </div>
-                {exportDespachosCount === 0 && (
+                {exportLineCount === 0 && (
                   <p className="text-sm text-amber-700 dark:text-amber-300">
-                    Não há despachos visíveis para exportar. Ajuste os filtros e tente novamente.
+                    Nao ha despachos SELIMP visiveis para exportar. Ajuste os filtros e tente novamente.
                   </p>
                 )}
                 <DialogFooter>
@@ -2069,7 +2123,7 @@ export default function IPTPage() {
                   <UiButton
                     type="button"
                     className="bg-blue-600 text-white hover:bg-blue-500"
-                    disabled={exportDespachosCount === 0}
+                    disabled={exportLineCount === 0}
                     onClick={handleConfirmDownload}
                   >
                     <Download className="mr-2 h-4 w-4" />

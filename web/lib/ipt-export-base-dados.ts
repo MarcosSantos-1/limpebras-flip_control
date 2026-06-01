@@ -20,6 +20,7 @@ export interface IptBaseDadosExportRow {
   percentual_selimp: number | null;
   percentual_nosso: number | null;
   origem: "ambos" | "somente_selimp" | "somente_nosso";
+  despachos_selimp?: number;
   equipamentos?: string[];
   modulos_bateria?: IptPreviewModuloBateria[];
   produtividade_bateria_media?: number | null;
@@ -61,8 +62,6 @@ const HEADERS = [
   "Bateria SELIMP",
   "Bateria SELIMP (status)",
   "Produtividade bateria média (SELIMP)",
-  "% DDMX",
-  "Origem",
   "Obs. global",
   "Obs. diária",
   "Frequência",
@@ -205,7 +204,7 @@ function formatCronograma(dates?: string[]): string {
 function buildFilename(meta: IptBaseDadosExportMeta): string {
   const safePeriodo = meta.periodoLabel.replace(/[^\d_a-z-]/gi, "_").replace(/_+/g, "_");
   const timestamp = format(new Date(), "yyyyMMdd-HHmmss");
-  return `ipt_base_dados_${safePeriodo}_${timestamp}.xlsx`;
+  return `ipt_base_selimp_${safePeriodo}_${timestamp}.xlsx`;
 }
 
 interface ExpandedExportEntry {
@@ -217,8 +216,14 @@ export function countIptBaseDadosExportRows(rows: IptBaseDadosExportRow[]): numb
   let count = 0;
   for (const row of rows) {
     const despachos =
-      row.detalhes_diarios?.filter((d) => d.despachos_selimp > 0 || d.despachos_nosso > 0) ?? [];
-    count += despachos.length > 0 ? despachos.length : 1;
+      row.detalhes_diarios?.filter((d) => d.despachos_selimp > 0) ?? [];
+    if (despachos.length > 0) {
+      count += despachos.reduce((acc, detalhe) => acc + Math.max(1, detalhe.despachos_selimp), 0);
+      continue;
+    }
+    if (row.percentual_selimp != null || (row.despachos_selimp ?? 0) > 0) {
+      count += Math.max(1, row.despachos_selimp ?? 1);
+    }
   }
   return count;
 }
@@ -228,16 +233,24 @@ function expandRowsForExport(rows: IptBaseDadosExportRow[]): ExpandedExportEntry
 
   for (const row of rows) {
     const despachos =
-      row.detalhes_diarios?.filter((d) => d.despachos_selimp > 0 || d.despachos_nosso > 0) ?? [];
+      row.detalhes_diarios?.filter((d) => d.despachos_selimp > 0) ?? [];
 
     if (despachos.length > 0) {
       for (const detalhe of despachos) {
-        expanded.push({ row, detalhe });
+        const copies = Math.max(1, detalhe.despachos_selimp);
+        for (let i = 0; i < copies; i += 1) {
+          expanded.push({ row, detalhe });
+        }
       }
       continue;
     }
 
-    expanded.push({ row });
+    if (row.percentual_selimp != null || (row.despachos_selimp ?? 0) > 0) {
+      const copies = Math.max(1, row.despachos_selimp ?? 1);
+      for (let i = 0; i < copies; i += 1) {
+        expanded.push({ row });
+      }
+    }
   }
 
   return expanded.sort((a, b) => {
@@ -262,8 +275,6 @@ function buildExportRow(
     : formatBateriaSelimpFromRow(row);
 
   const pctSelimp = detalhe ? detalhe.percentual_selimp : row.percentual_selimp;
-  const pctDdmx = detalhe ? detalhe.percentual_nosso : row.percentual_nosso;
-  const origem = detalhe ? getOrigemLabelFromDetalhe(detalhe) : getOrigemLabelFromRow(row);
   const prodBateria =
     detalhe?.bateria_setor_dia?.media_percentual != null
       ? formatPercentual(detalhe.bateria_setor_dia.media_percentual)
@@ -278,8 +289,6 @@ function buildExportRow(
     bateria.numero,
     bateria.status,
     prodBateria,
-    formatPercentual(pctDdmx),
-    origem,
     formatObsGlobal(obsGlobal),
     obsDiaria,
     row.frequencia || "",
@@ -304,7 +313,7 @@ export function exportIptBaseDadosXlsx(
     ["Período", meta.periodoLabel],
     ["Mês referência", meta.mesReferencia],
     ["Setores exportados", rows.length],
-    ["Despachos exportados", expanded.length],
+    ["Despachos SELIMP exportados", expanded.length],
     ["Exportado em", format(new Date(), "dd/MM/yyyy HH:mm:ss")],
   ]);
   XLSX.utils.book_append_sheet(workbook, metaSheet, "Metadados");

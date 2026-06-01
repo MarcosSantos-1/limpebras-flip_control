@@ -31,6 +31,7 @@ import {
   findNextExpectedByFrequency,
   findPreviousExpectedByFrequencyStrict,
   pickNearestDate,
+  resolveTipoServicoExibicao,
 } from "../constants/ipt.js";
 import { config } from "../config.js";
 import { requireHost } from "../auth.js";
@@ -1306,29 +1307,94 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
          ORDER BY periodo_final, id`,
         [tipoServico, inicio, fim]
       );
+      const snapshotRows = r.rows as Array<any>;
+      const minPeriodoInicial = snapshotRows.reduce<string | null>((min, row) => {
+        const value = String(row.periodo_inicial ?? "").slice(0, 10);
+        if (!value) return min;
+        return min == null || value < min ? value : min;
+      }, null);
+      const maxPeriodoFinal = snapshotRows.reduce<string | null>((max, row) => {
+        const value = String(row.periodo_final ?? "").slice(0, 10);
+        if (!value) return max;
+        return max == null || value > max ? value : max;
+      }, null);
+      const plannedByDay = new Map<string, { total: number; naoDespachados: number }>();
+      if (minPeriodoInicial && maxPeriodoFinal) {
+        const plannedRes = await client.query(
+          `SELECT plano, tipo_servico, status, data_estimada::date::text AS data_ref
+           FROM ipt_report_linhas
+           WHERE data_estimada >= $1::date
+             AND data_estimada <= $2::date
+             AND LOWER(COALESCE(status, '')) NOT LIKE '%cancel%'`,
+          [minPeriodoInicial, maxPeriodoFinal]
+        );
+        for (const row of plannedRes.rows as Array<{
+          plano: string | null;
+          tipo_servico: string | null;
+          status: string | null;
+          data_ref: string | null;
+        }>) {
+          const plano = normalizarSetor(String(row.plano ?? "").trim());
+          if (!plano || !row.data_ref) continue;
+          const label = resolveTipoServicoExibicao(plano, row.tipo_servico ?? "") || row.tipo_servico || "Nao informado";
+          if (label !== tipoServico) continue;
+          const day = String(row.data_ref).slice(0, 10);
+          const current = plannedByDay.get(day) ?? { total: 0, naoDespachados: 0 };
+          current.total += 1;
+          if (normalizeMatchText(String(row.status ?? "")).includes("nao despach")) {
+            current.naoDespachados += 1;
+          }
+          plannedByDay.set(day, current);
+        }
+      }
+      const plannedForRange = (start: string, end: string) => {
+        let total = 0;
+        let naoDespachados = 0;
+        for (const [day, value] of plannedByDay.entries()) {
+          if (day >= start && day <= end) {
+            total += value.total;
+            naoDespachados += value.naoDespachados;
+          }
+        }
+        return { total, naoDespachados };
+      };
       return {
         tipo_servico: tipoServico,
         periodo: { inicial: inicio, final: fim },
-        pontos: r.rows.map((row: any) => ({
-          id: Number(row.id),
-          snapshot_at: row.snapshot_at instanceof Date ? row.snapshot_at.toISOString() : row.snapshot_at,
-          metric_key: row.metric_key,
-          metric_label: row.metric_label,
-          periodo_inicial: row.periodo_inicial,
-          periodo_final: row.periodo_final,
-          periodo_tipo: row.periodo_tipo,
-          percentual: row.percentual != null ? Number(row.percentual) : null,
-          percentual_dia: row.percentual_dia != null ? Number(row.percentual_dia) : null,
-          media_sem_zerados: row.media_sem_zerados != null ? Number(row.media_sem_zerados) : null,
-          quantidade_planos: Number(row.quantidade_planos ?? 0),
-          total_despachos: Number(row.total_despachos ?? 0),
-          total_despachos_dia: Number(row.total_despachos_dia ?? 0),
-          despachos_zerados: Number(row.despachos_zerados ?? 0),
-          despachos_zerados_dia: Number(row.despachos_zerados_dia ?? 0),
-          source_file: row.source_file,
-          metadata: row.metadata ?? {},
-          updated_at: row.updated_at,
-        })),
+        pontos: snapshotRows.map((row: any) => {
+          const periodoInicial = String(row.periodo_inicial ?? "").slice(0, 10);
+          const periodoFinal = String(row.periodo_final ?? "").slice(0, 10);
+          const plannedAcc = plannedForRange(periodoInicial, periodoFinal);
+          const plannedDay = plannedByDay.get(periodoFinal) ?? { total: 0, naoDespachados: 0 };
+          const totalDespachos = Number(row.total_despachos ?? 0);
+          const totalDespachosDia = Number(row.total_despachos_dia ?? 0);
+          return {
+            id: Number(row.id),
+            snapshot_at: row.snapshot_at instanceof Date ? row.snapshot_at.toISOString() : row.snapshot_at,
+            metric_key: row.metric_key,
+            metric_label: row.metric_label,
+            periodo_inicial: row.periodo_inicial,
+            periodo_final: row.periodo_final,
+            periodo_tipo: row.periodo_tipo,
+            percentual: row.percentual != null ? Number(row.percentual) : null,
+            percentual_dia: row.percentual_dia != null ? Number(row.percentual_dia) : null,
+            media_sem_zerados: row.media_sem_zerados != null ? Number(row.media_sem_zerados) : null,
+            quantidade_planos: Number(row.quantidade_planos ?? 0),
+            total_despachos: totalDespachos,
+            total_despachos_dia: totalDespachosDia,
+            despachos_previstos: plannedAcc.total,
+            despachos_previstos_dia: plannedDay.total,
+            despachos_nao_despachados: plannedAcc.naoDespachados,
+            despachos_nao_despachados_dia: plannedDay.naoDespachados,
+            cobertura_despachos: plannedAcc.total > 0 ? Number(((totalDespachos / plannedAcc.total) * 100).toFixed(2)) : null,
+            cobertura_despachos_dia: plannedDay.total > 0 ? Number(((totalDespachosDia / plannedDay.total) * 100).toFixed(2)) : null,
+            despachos_zerados: Number(row.despachos_zerados ?? 0),
+            despachos_zerados_dia: Number(row.despachos_zerados_dia ?? 0),
+            source_file: row.source_file,
+            metadata: row.metadata ?? {},
+            updated_at: row.updated_at,
+          };
+        }),
       };
     } finally {
       client.release();

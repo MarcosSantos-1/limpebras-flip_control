@@ -28,6 +28,12 @@ export type EvolutionSeriesPoint = {
   dayValue?: number | null
   count?: number
   dayCount?: number
+  plannedCount?: number
+  plannedDayCount?: number
+  coverageValue?: number | null
+  dayCoverageValue?: number | null
+  notDispatchedCount?: number
+  notDispatchedDayCount?: number
   zeroCount?: number
   dayZeroCount?: number
   meta?: string
@@ -146,7 +152,9 @@ export function EvolutionChartModal({
             const index = items[0]?.dataIndex ?? 0
             const point = sortedPoints[index]
             const lines = []
-            if (point?.count != null) lines.push(`Base: ${point.count}`)
+            if (point?.count != null) lines.push(`Despachados: ${point.count}`)
+            if (point?.plannedCount != null) lines.push(`Previstos: ${point.plannedCount}`)
+            if (point?.coverageValue != null) lines.push(`Cobertura: ${point.coverageValue.toFixed(2)}%`)
             if (point?.meta) lines.push(point.meta)
             return lines
           },
@@ -205,15 +213,19 @@ export function EvolutionChartModal({
               </div>
               {showPointDetails && (
                 <div className="mt-4 max-h-64 overflow-auto rounded-lg border border-border/80">
-                  <table className="w-full min-w-[720px] text-xs">
+                  <table className="w-full min-w-[960px] text-xs">
                     <thead className="sticky top-0 bg-muted text-muted-foreground">
                       <tr>
                         <th className="px-3 py-2 text-left font-semibold">Data</th>
                         <th className="px-3 py-2 text-right font-semibold">% dia</th>
                         <th className="px-3 py-2 text-right font-semibold">% acum. c/ zeros</th>
                         <th className="px-3 py-2 text-right font-semibold">% acum. s/ zeros</th>
+                        <th className="px-3 py-2 text-right font-semibold">% desp.</th>
+                        <th className="px-3 py-2 text-right font-semibold">Prev. dia</th>
+                        <th className="px-3 py-2 text-right font-semibold">Prev. acum.</th>
                         <th className="px-3 py-2 text-right font-semibold">Desp. dia</th>
                         <th className="px-3 py-2 text-right font-semibold">Desp. acum.</th>
+                        <th className="px-3 py-2 text-right font-semibold">Nao desp.</th>
                         <th className="px-3 py-2 text-right font-semibold">Zerados acum.</th>
                       </tr>
                     </thead>
@@ -224,8 +236,12 @@ export function EvolutionChartModal({
                           <td className="px-3 py-2 text-right tabular-nums">{formatValue(point.dayValue)}</td>
                           <td className="px-3 py-2 text-right tabular-nums">{formatValue(point.value)}</td>
                           <td className="px-3 py-2 text-right tabular-nums">{formatValue(point.secondaryValue)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{formatValue(point.coverageValue)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{point.plannedDayCount ?? "--"}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{point.plannedCount ?? "--"}</td>
                           <td className="px-3 py-2 text-right tabular-nums">{point.dayCount ?? "--"}</td>
                           <td className="px-3 py-2 text-right tabular-nums">{point.count ?? "--"}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{point.notDispatchedCount ?? "--"}</td>
                           <td className="px-3 py-2 text-right tabular-nums">{point.zeroCount ?? "--"}</td>
                         </tr>
                       ))}

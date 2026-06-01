@@ -135,6 +135,12 @@ export async function buildIptPreviewFromConsolidado(
        AND LOWER(COALESCE(status, '')) LIKE '%encerrad%'
        ${reportDateFilter}
      ORDER BY plano, data_estimada`;
+  const plannedReportQuery = `SELECT plano, data_estimada, status, tipo_servico, subprefeitura
+     FROM ipt_report_linhas
+     WHERE data_estimada IS NOT NULL
+       AND LOWER(COALESCE(status, '')) NOT LIKE '%cancel%'
+       ${reportDateFilter}
+     ORDER BY plano, data_estimada`;
 
   // --- DDMX (novas tabelas dedicadas + fallback ipt_imports legado) ---
   const ddmxFileTypes = ["ipt_historico_os", "ipt_historico_os_varricao", "ipt_historico_os_compactadores"];
@@ -215,8 +221,9 @@ export async function buildIptPreviewFromConsolidado(
       ${bateriaHistoricoDateFilter}
     ORDER BY TRIM(selimp_id), data_exportacao, updated_at DESC, id DESC`;
 
-  const [reportRes, ddmxLegacyRes, bateriaRows, modulosSetoresRes, bateriaHistoricoRes] = await Promise.all([
+  const [reportRes, plannedReportRes, ddmxLegacyRes, bateriaRows, modulosSetoresRes, bateriaHistoricoRes] = await Promise.all([
     client.query(reportQuery, rparams),
+    client.query(plannedReportQuery, rparams),
     client.query(ddmxLegacyQuery, dparams),
     client.query(
       `SELECT raw, updated_at
@@ -904,6 +911,45 @@ export async function buildIptPreviewFromConsolidado(
   const totalModulosCriticos = rowsFiltered.reduce((acc, r) => acc + r.bateria_resumo_setor.criticos, 0);
   const totalModulosAlerta = rowsFiltered.reduce((acc, r) => acc + r.bateria_resumo_setor.alerta, 0);
 
+  type PlannedAgg = { previstos: number; naoDespachados: number; planos: Set<string> };
+  const plannedSubMap = new Map<string, PlannedAgg>();
+  const plannedServMap = new Map<string, PlannedAgg>();
+  const subMatchesFilter = (subprefeitura: string, plano: string): boolean => {
+    if (!subFilter || subFilter.trim() === "" || subFilter.toLowerCase() === "all") return true;
+    const subFilterNorm = normalizeText(subFilter).replace(/[^a-z]/g, "");
+    const subNorm = normalizeText(subprefeitura || "").replace(/[^a-z]/g, "");
+    const sigla = getSubFromPlano(plano);
+    return (
+      subNorm === subFilterNorm ||
+      subNorm.includes(subFilterNorm) ||
+      subFilterNorm.includes(subNorm) ||
+      sigla.toUpperCase() === subFilter.toUpperCase() ||
+      subprefeitura === subFilter
+    );
+  };
+  const addPlanned = (map: Map<string, PlannedAgg>, key: string, plano: string, status: string) => {
+    const agg = map.get(key) ?? { previstos: 0, naoDespachados: 0, planos: new Set<string>() };
+    agg.previstos += 1;
+    agg.planos.add(plano);
+    if (normalizeText(status).includes("nao despach")) agg.naoDespachados += 1;
+    map.set(key, agg);
+  };
+
+  for (const row of (plannedReportRes.rows ?? []) as Array<{
+    plano: string | null;
+    status: string | null;
+    tipo_servico: string | null;
+    subprefeitura: string | null;
+  }>) {
+    const plano = normalizarSetor(String(row.plano ?? "").trim());
+    if (!plano) continue;
+    const subprefeitura = row.subprefeitura || "Nao informado";
+    if (!subMatchesFilter(subprefeitura, plano)) continue;
+    const tipoServico = resolveTipoServicoExibicao(plano, row.tipo_servico ?? "") || row.tipo_servico || "Nao informado";
+    addPlanned(plannedSubMap, subprefeitura, plano, row.status ?? "");
+    addPlanned(plannedServMap, tipoServico, plano, row.status ?? "");
+  }
+
   const legacySubMap = new Map<string, { quantidade: number; despachoSum: number; despachoCount: number; despachoNonzeroCount: number }>();
   const legacyServMap = new Map<string, { quantidade: number; despachoSum: number; despachoCount: number; despachoNonzeroCount: number }>();
   for (const r of rowsFiltered) {
@@ -923,22 +969,36 @@ export async function buildIptPreviewFromConsolidado(
     srvAgg.despachoNonzeroCount += r.raw_selimp_nonzero_count;
     legacyServMap.set(srvKey, srvAgg);
   }
-  const subprefeituras = Array.from(legacySubMap.entries()).map(([subprefeitura, v]) => ({
-    subprefeitura,
-    quantidade_planos: v.quantidade,
-    media_execucao: v.despachoCount > 0 ? Number((v.despachoSum / v.despachoCount).toFixed(2)) : null,
-    media_sem_zerados: v.despachoNonzeroCount > 0 ? Number((v.despachoSum / v.despachoNonzeroCount).toFixed(2)) : null,
-    total_despachos: v.despachoCount,
-    despachos_zerados: v.despachoCount - v.despachoNonzeroCount,
-  }));
-  const servicos = Array.from(legacyServMap.entries()).map(([tipo_servico, v]) => ({
-    tipo_servico,
-    quantidade_planos: v.quantidade,
-    media_execucao: v.despachoCount > 0 ? Number((v.despachoSum / v.despachoCount).toFixed(2)) : null,
-    media_sem_zerados: v.despachoNonzeroCount > 0 ? Number((v.despachoSum / v.despachoNonzeroCount).toFixed(2)) : null,
-    total_despachos: v.despachoCount,
-    despachos_zerados: v.despachoCount - v.despachoNonzeroCount,
-  }));
+  const subprefeituras = Array.from(legacySubMap.entries()).map(([subprefeitura, v]) => {
+    const planned = plannedSubMap.get(subprefeitura);
+    const previsto = planned?.previstos ?? v.despachoCount;
+    return {
+      subprefeitura,
+      quantidade_planos: v.quantidade,
+      media_execucao: v.despachoCount > 0 ? Number((v.despachoSum / v.despachoCount).toFixed(2)) : null,
+      media_sem_zerados: v.despachoNonzeroCount > 0 ? Number((v.despachoSum / v.despachoNonzeroCount).toFixed(2)) : null,
+      total_despachos: v.despachoCount,
+      despachos_previstos: previsto,
+      despachos_nao_despachados: planned?.naoDespachados ?? 0,
+      cobertura_despachos: previsto > 0 ? Number(((v.despachoCount / previsto) * 100).toFixed(2)) : null,
+      despachos_zerados: v.despachoCount - v.despachoNonzeroCount,
+    };
+  });
+  const servicos = Array.from(legacyServMap.entries()).map(([tipo_servico, v]) => {
+    const planned = plannedServMap.get(tipo_servico);
+    const previsto = planned?.previstos ?? v.despachoCount;
+    return {
+      tipo_servico,
+      quantidade_planos: v.quantidade,
+      media_execucao: v.despachoCount > 0 ? Number((v.despachoSum / v.despachoCount).toFixed(2)) : null,
+      media_sem_zerados: v.despachoNonzeroCount > 0 ? Number((v.despachoSum / v.despachoNonzeroCount).toFixed(2)) : null,
+      total_despachos: v.despachoCount,
+      despachos_previstos: previsto,
+      despachos_nao_despachados: planned?.naoDespachados ?? 0,
+      cobertura_despachos: previsto > 0 ? Number(((v.despachoCount / previsto) * 100).toFixed(2)) : null,
+      despachos_zerados: v.despachoCount - v.despachoNonzeroCount,
+    };
+  });
 
   const mesclados = rowsFiltered.map((r) => ({
     plano: r.plano,

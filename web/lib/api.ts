@@ -149,6 +149,12 @@ export interface IptServiceSnapshotPoint {
   quantidade_planos: number;
   total_despachos: number;
   total_despachos_dia: number;
+  despachos_previstos?: number;
+  despachos_previstos_dia?: number;
+  despachos_nao_despachados?: number;
+  despachos_nao_despachados_dia?: number;
+  cobertura_despachos?: number | null;
+  cobertura_despachos_dia?: number | null;
   despachos_zerados: number;
   despachos_zerados_dia: number;
   source_file: string | null;
@@ -322,6 +328,9 @@ export interface IptPreviewResponse {
     media_execucao: number | null;
     media_sem_zerados?: number | null;
     total_despachos?: number;
+    despachos_previstos?: number;
+    despachos_nao_despachados?: number;
+    cobertura_despachos?: number | null;
     despachos_zerados?: number;
   }>;
   servicos: Array<{
@@ -330,6 +339,9 @@ export interface IptPreviewResponse {
     media_execucao: number | null;
     media_sem_zerados?: number | null;
     total_despachos?: number;
+    despachos_previstos?: number;
+    despachos_nao_despachados?: number;
+    cobertura_despachos?: number | null;
     despachos_zerados?: number;
   }>;
   mesclados: IptPreviewRow[];
