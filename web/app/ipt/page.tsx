@@ -71,6 +71,7 @@ import {
   apiService,
   type IptPreviewBateriaResumoSetor,
   type IptPreviewBateriaSetorDia,
+  type IptPreviewBateriaDdmxDia,
   type IptPreviewModuloBateria,
 } from "@/lib/api";
 import { useIptData } from "@/lib/use-ipt-data";
@@ -189,6 +190,97 @@ const PercentualBar = ({ value, compact }: { value?: number | null; compact?: bo
       </div>
       <span className={`font-semibold tabular-nums shrink-0 ${getPercentualTextClass(value)}`}>{pct(value)}</span>
     </div>
+  );
+};
+
+const getBateriaColorClass = (hasData: boolean, hasDesatualizada: boolean, mediaPercentual: number | null) => {
+  if (!hasData) return "bg-slate-500/15 text-muted-foreground";
+  if (hasDesatualizada) return "bg-amber-500/15 text-amber-800 dark:text-amber-200";
+  if ((mediaPercentual ?? 0) <= 15) return "bg-red-500/15 text-red-800 dark:text-red-200";
+  if ((mediaPercentual ?? 0) <= 30) return "bg-yellow-500/15 text-yellow-800 dark:text-yellow-200";
+  return "bg-emerald-500/15 text-emerald-800 dark:text-emerald-200";
+};
+
+const formatDdmxBateriaPercentual = (value: number) =>
+  value < 10 ? `${value.toFixed(1)}%` : `${value.toFixed(0)}%`;
+
+const isVarricaoPlanoUi = (plano: string) => /(VP|VJ|VL)\d{4}/i.test(plano.replace(/\s+/g, ""));
+
+const BateriaSelimpBadge = ({ bateriaDia }: { bateriaDia?: IptPreviewBateriaSetorDia | null }) => {
+  const firstModulo = bateriaDia?.modulos[0];
+  const hasDesatualizada = (bateriaDia?.desatualizadas ?? 0) > 0;
+  const label = hasDesatualizada
+    ? "Desatual."
+    : bateriaDia?.media_percentual != null
+    ? `${bateriaDia.media_percentual.toFixed(0)}%`
+    : firstModulo?.bateria_raw || "--";
+  const title = bateriaDia
+    ? bateriaDia.modulos
+        .map((modulo) =>
+          `${modulo.numero_selimp}: ${modulo.bateria_raw || "--"}${
+            modulo.bateria_desatualizada ? " (desatualizada)" : ""
+          }`
+        )
+        .join(" · ")
+    : "Sem dado de bateria para a data do despacho";
+  const colorClass = !bateriaDia
+    ? "bg-slate-500/15 text-muted-foreground"
+    : hasDesatualizada
+    ? "bg-amber-500/15 text-amber-800 dark:text-amber-200"
+    : (bateriaDia.media_percentual ?? 0) <= 15
+    ? "bg-red-500/15 text-red-800 dark:text-red-200"
+    : (bateriaDia.media_percentual ?? 0) <= 30
+    ? "bg-yellow-500/15 text-yellow-800 dark:text-yellow-200"
+    : "bg-emerald-500/15 text-emerald-800 dark:text-emerald-200";
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 font-semibold ${colorClass}`}
+      title={title}
+    >
+      <Battery className="h-3.5 w-3.5 shrink-0" />
+      {label}
+    </span>
+  );
+};
+
+const BateriaDdmxBadge = ({
+  bateriaDia,
+  applicable,
+}: {
+  bateriaDia?: IptPreviewBateriaDdmxDia | null;
+  applicable: boolean;
+}) => {
+  if (!applicable) {
+    return <span className="text-muted-foreground">--</span>;
+  }
+  const hasDesatualizada = (bateriaDia?.desatualizadas ?? 0) > 0;
+  const label = hasDesatualizada
+    ? "Desatual."
+    : bateriaDia?.media_percentual != null
+    ? formatDdmxBateriaPercentual(bateriaDia.media_percentual)
+    : bateriaDia?.despachos[0]?.bateria_raw || "--";
+  const title = bateriaDia
+    ? bateriaDia.despachos
+        .map((despacho) => {
+          const pctLabel =
+            despacho.bateria_percentual != null ? ` (${formatDdmxBateriaPercentual(despacho.bateria_percentual)})` : "";
+          const status = despacho.bateria_desatualizada ? " — desatualizada" : "";
+          return `${despacho.rota}: ${despacho.bateria_raw || "--"}${pctLabel}${status}`;
+        })
+        .join(" · ")
+    : "Sem dado de bateria DDMX para a data do despacho";
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 font-semibold ${getBateriaColorClass(
+        Boolean(bateriaDia),
+        hasDesatualizada,
+        bateriaDia?.media_percentual ?? null
+      )}`}
+      title={title}
+    >
+      <Battery className="h-3.5 w-3.5 shrink-0" />
+      {label}
+    </span>
   );
 };
 
@@ -577,6 +669,7 @@ export default function IPTPage() {
           despachos_nosso: number;
           data_estimada?: boolean;
           bateria_setor_dia?: IptPreviewBateriaSetorDia | null;
+          bateria_ddmx_dia?: IptPreviewBateriaDdmxDia | null;
         }>;
       }>,
     [iptPreviewTable]
@@ -2662,15 +2755,18 @@ export default function IPTPage() {
                                                 <span className="flex items-center gap-1"><Check className="h-3.5 w-3.5" /> Esperado?</span>
                                               </th>
                                               <th className="text-left py-2 px-2">% SELIMP</th>
+                                              <th className="text-left py-2 px-2">
+                                                <span className="flex items-center gap-1"><Battery className="h-3.5 w-3.5" /> Bat. SELIMP</span>
+                                              </th>
                                               <th className="text-left py-2 px-2">% DDMX</th>
+                                              <th className="text-left py-2 px-2">
+                                                <span className="flex items-center gap-1"><Battery className="h-3.5 w-3.5" /> Bat. DDMX</span>
+                                              </th>
                                               <th className="text-left py-2 px-2">
                                                 <span className="flex items-center gap-1"><Truck className="h-3.5 w-3.5" /> Des. Selimp?</span>
                                               </th>
                                               <th className="text-left py-2 px-2">
                                                 <span className="flex items-center gap-1"><Truck className="h-3.5 w-3.5" /> Des. DDMX?</span>
-                                              </th>
-                                              <th className="text-left py-2 px-2">
-                                                <span className="flex items-center gap-1"><Battery className="h-3.5 w-3.5" /> Bat. setor</span>
                                               </th>
                                               <th className="text-left py-2 px-2 w-20">Obs</th>
                                             </tr>
@@ -2713,7 +2809,16 @@ export default function IPTPage() {
                                                     <PercentualBar value={d.percentual_selimp} compact />
                                                   </td>
                                                   <td className="py-2 px-2">
+                                                    <BateriaSelimpBadge bateriaDia={d.bateria_setor_dia} />
+                                                  </td>
+                                                  <td className="py-2 px-2">
                                                     <PercentualBar value={d.percentual_nosso} compact />
+                                                  </td>
+                                                  <td className="py-2 px-2">
+                                                    <BateriaDdmxBadge
+                                                      bateriaDia={d.bateria_ddmx_dia}
+                                                      applicable={isVarricaoPlanoUi(row.plano)}
+                                                    />
                                                   </td>
                                                   <td className="py-2 px-2">
                                                     {d.despachos_selimp > 0 ? (
@@ -2740,45 +2845,6 @@ export default function IPTPage() {
                                                         Não
                                                       </span>
                                                     )}
-                                                  </td>
-                                                  <td className="py-2 px-2">
-                                                    {(() => {
-                                                      const bateriaDia = d.bateria_setor_dia;
-                                                      const firstModulo = bateriaDia?.modulos[0];
-                                                      const hasDesatualizada = (bateriaDia?.desatualizadas ?? 0) > 0;
-                                                      const label = hasDesatualizada
-                                                        ? "Desatual."
-                                                        : bateriaDia?.media_percentual != null
-                                                        ? `${bateriaDia.media_percentual.toFixed(0)}%`
-                                                        : firstModulo?.bateria_raw || "--";
-                                                      const title = bateriaDia
-                                                        ? bateriaDia.modulos
-                                                            .map((modulo) =>
-                                                              `${modulo.numero_selimp}: ${modulo.bateria_raw || "--"}${
-                                                                modulo.bateria_desatualizada ? " (desatualizada)" : ""
-                                                              }`
-                                                            )
-                                                            .join(" · ")
-                                                        : "Sem dado de bateria para a data do despacho";
-                                                      const colorClass = !bateriaDia
-                                                        ? "bg-slate-500/15 text-muted-foreground"
-                                                        : hasDesatualizada
-                                                        ? "bg-amber-500/15 text-amber-800 dark:text-amber-200"
-                                                        : (bateriaDia.media_percentual ?? 0) <= 15
-                                                        ? "bg-red-500/15 text-red-800 dark:text-red-200"
-                                                        : (bateriaDia.media_percentual ?? 0) <= 30
-                                                        ? "bg-yellow-500/15 text-yellow-800 dark:text-yellow-200"
-                                                        : "bg-emerald-500/15 text-emerald-800 dark:text-emerald-200";
-                                                      return (
-                                                        <span
-                                                          className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 font-semibold ${colorClass}`}
-                                                          title={title}
-                                                        >
-                                                          <Battery className="h-3.5 w-3.5 shrink-0" />
-                                                          {label}
-                                                        </span>
-                                                      );
-                                                    })()}
                                                   </td>
                                                   <td className="py-2 px-2">
                                                     {(() => {

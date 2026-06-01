@@ -14,6 +14,12 @@ import {
   resolveVpCanonicalFromDdmx,
 } from "../constants/ipt.js";
 import { calcularCenariosIPT } from "./ipt-pf-algoritmo.js";
+import {
+  parseDdmxBateriaFromRaw,
+  summarizeDdmxBateriaDia,
+  isVarricaoPlano,
+  type DdmxBateriaDispatchItem,
+} from "./parseDdmxBateria.js";
 
 const normalizeText = (value: string): string =>
   String(value ?? "")
@@ -485,6 +491,7 @@ export async function buildIptPreviewFromConsolidado(
 
   const byPlano = new Map<string, PlanoEntry>();
   const vpCanonicalByMergeKey = new Map<string, string>();
+  const bateriaDdmxByPlanoDate = new Map<string, DdmxBateriaDispatchItem[]>();
 
   const getOrCreatePlano = (plano: string): PlanoEntry => {
     const parsed = parseSetor(plano);
@@ -617,6 +624,19 @@ export async function buildIptPreviewFromConsolidado(
       // Mesmo sem percentual, registra o despacho DDMX
       bucket.despachos_nosso += 1;
     }
+
+    if (isVarricaoPlano(plano, parseSetor)) {
+      const parsed = parseDdmxBateriaFromRaw(rawData as Record<string, unknown>);
+      if (parsed.bateria_raw || parsed.bateria_percentual != null) {
+        const bateriaKey = `${plano}|${dateKey}`;
+        const current = bateriaDdmxByPlanoDate.get(bateriaKey) ?? [];
+        current.push({
+          rota: rotaOrSetor,
+          ...parsed,
+        });
+        bateriaDdmxByPlanoDate.set(bateriaKey, current);
+      }
+    }
   }
 
   // --- Montar resultado ---
@@ -703,10 +723,15 @@ export async function buildIptPreviewFromConsolidado(
         }
       }
       const bateriaResumoSetor = summarizeModulosBateria(modulosDoSetor);
-      const detalhesComBateria = detalhes.map((detalhe) => ({
-        ...detalhe,
-        bateria_setor_dia: summarizeBateriaDia(modulosDoSetor, detalhe.data),
-      }));
+      const isVarricao = isVarricaoPlano(item.plano, parseSetor);
+      const detalhesComBateria = detalhes.map((detalhe) => {
+        const ddmxItems = isVarricao ? bateriaDdmxByPlanoDate.get(`${item.plano}|${detalhe.data}`) ?? [] : [];
+        return {
+          ...detalhe,
+          bateria_setor_dia: summarizeBateriaDia(modulosDoSetor, detalhe.data),
+          bateria_ddmx_dia: summarizeDdmxBateriaDia(ddmxItems),
+        };
+      });
 
       return {
         plano: item.plano,

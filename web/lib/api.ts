@@ -279,6 +279,21 @@ export interface IptPreviewBateriaSetorDia {
   modulos: IptPreviewBateriaModuloDia[];
 }
 
+export interface IptPreviewBateriaDdmxDispatch {
+  rota: string;
+  bateria_raw: string;
+  bateria_percentual: number | null;
+  bateria_desatualizada: boolean;
+  ultima_comunicacao: string | null;
+}
+
+export interface IptPreviewBateriaDdmxDia {
+  total: number;
+  desatualizadas: number;
+  media_percentual: number | null;
+  despachos: IptPreviewBateriaDdmxDispatch[];
+}
+
 export interface IptPreviewResponse {
   periodo: { inicial: string | null; final: string | null };
   resumo: {
@@ -372,6 +387,7 @@ export interface IptPreviewResponse {
       despachos_nosso: number;
       data_estimada?: boolean;
       bateria_setor_dia?: IptPreviewBateriaSetorDia | null;
+      bateria_ddmx_dia?: IptPreviewBateriaDdmxDia | null;
     }>;
   }>;
 }
