@@ -55,6 +55,7 @@ jobs:
           DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
         run: |
           mkdir -p backups
+          set +e
           pg_dump "$DATABASE_URL" \
             --format=custom \
             --compress=9 \
@@ -66,13 +67,18 @@ jobs:
             --table=public.ipt_report_linhas \
             --file="backups/critical-tables-${{ steps.meta.outputs.datetime }}.dump" \
             2> backups/critical-tables.log
-          echo "--- critical log tail ---"
-          tail -n 20 backups/critical-tables.log
+          EXIT=$?
+          set -e
+          echo "=== pg_dump (critical tables) log ==="
+          cat backups/critical-tables.log
+          echo "=== exit code: $EXIT ==="
+          exit $EXIT
 
       - name: Dump full database (custom format)
         env:
           DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
         run: |
+          set +e
           pg_dump "$DATABASE_URL" \
             --format=custom \
             --compress=9 \
@@ -80,8 +86,12 @@ jobs:
             --no-acl \
             --file="backups/full-db-${{ steps.meta.outputs.datetime }}.dump" \
             2> backups/full-db.log
-          echo "--- full-db log tail ---"
-          tail -n 20 backups/full-db.log
+          EXIT=$?
+          set -e
+          echo "=== pg_dump (full db) log ==="
+          cat backups/full-db.log
+          echo "=== exit code: $EXIT ==="
+          exit $EXIT
 
       - name: Verify dumps are restorable
         run: |
