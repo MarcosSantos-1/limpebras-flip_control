@@ -21,12 +21,12 @@ import {
   Clock,
   CloudRain,
   Cpu,
+  Download,
   Flag,
   Hammer,
   Info,
   MapPin,
   MessageSquare,
-  Package,
   Pencil,
   Percent,
   Plus,
@@ -63,6 +63,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -77,6 +78,7 @@ import {
 import { useIptData } from "@/lib/use-ipt-data";
 import { ManualIndicatorBadge } from "@/components/manual-indicator-badge";
 import { getSortKey, getSubFromPlano } from "@/lib/ipt-utils";
+import { countIptBaseDadosExportRows, exportIptBaseDadosXlsx } from "@/lib/ipt-export-base-dados";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -492,7 +494,8 @@ export default function IPTPage() {
   const [tableScope, setTableScope] = useState<TableScope>("dia_anterior");
   const [tablePeriodRange, setTablePeriodRange] = useState<{ inicio: Date; fim: Date } | null>(null);
   const [subprefeituraFilter, setSubprefeituraFilter] = useState("all");
-  const [baseDadosCardFilter, setBaseDadosCardFilter] = useState<"inativos" | "obs_global" | "obs_diaria" | null>(null);
+  const [baseDadosCardFilter, setBaseDadosCardFilter] = useState<"obs_global" | "obs_diaria" | null>(null);
+  const [modalDownloadOpen, setModalDownloadOpen] = useState(false);
   const [origemFilter, setOrigemFilter] = useState<"all" | "ambos" | "somente_selimp" | "somente_nosso" | "sem_despacho">("all");
   const [zeroFilter, setZeroFilter] = useState<"all" | "zerados" | "nao_zerados">("all");
   const [tableSearchQuery, setTableSearchQuery] = useState("");
@@ -731,10 +734,6 @@ export default function IPTPage() {
       const zeradoAmbos = isZeroOrMissing(row.percentual_selimp) && isZeroOrMissing(row.percentual_nosso);
       if (zeroFilter === "zerados" && !zeradoAmbos) return false;
       if (zeroFilter === "nao_zerados" && zeradoAmbos) return false;
-      if (baseDadosCardFilter === "inativos") {
-        const inativoSelimp = (row.percentual_selimp == null || row.percentual_selimp === 0) && (row.despachos_selimp ?? 0) === 0;
-        if (!inativoSelimp) return false;
-      }
       if (baseDadosCardFilter === "obs_global") {
         if (!observacoes.globais[row.plano]) return false;
       }
@@ -792,6 +791,11 @@ export default function IPTPage() {
     observacoes.diarias,
     tableSearchQuery,
   ]);
+
+  const exportDespachosCount = useMemo(
+    () => countIptBaseDadosExportRows(filteredComparativo),
+    [filteredComparativo]
+  );
 
   /** Média ponderada por despacho no período/filtros da tabela (Base de dados) */
   const filteredTableMedias = useMemo(() => {
@@ -1043,6 +1047,26 @@ export default function IPTPage() {
   }, [tableScope, tablePeriodRange]);
 
   const periodModeLabel = tableScope === "dia_anterior" ? "D-1" : "Período";
+
+  const exportPeriodoLabel = useMemo(() => {
+    if (tableScope === "dia_anterior") {
+      return format(subDays(new Date(), 1), "yyyy-MM-dd");
+    }
+    if (tablePeriodRange) {
+      const inicio = format(tablePeriodRange.inicio, "yyyy-MM-dd");
+      const fim = format(tablePeriodRange.fim, "yyyy-MM-dd");
+      return inicio === fim ? inicio : `${inicio}_a_${fim}`;
+    }
+    return "periodo";
+  }, [tableScope, tablePeriodRange]);
+
+  const handleConfirmDownload = () => {
+    exportIptBaseDadosXlsx(filteredComparativo, observacoes, {
+      periodoLabel: exportPeriodoLabel,
+      mesReferencia: mesReferenciaLabel,
+    });
+    setModalDownloadOpen(false);
+  };
 
   const handleTableRangeChange = (r: DateRange | undefined) => {
     if (!r?.from || !r?.to) {
@@ -1957,22 +1981,6 @@ export default function IPTPage() {
               </button>
               <button
                 type="button"
-                onClick={() => setBaseDadosCardFilter((prev) => (prev === "inativos" ? null : "inativos"))}
-                className={`rounded-xl p-4 shadow-lg transition-all text-left flex flex-col text-white ${
-                  baseDadosCardFilter === "inativos" ? "bg-slate-700" : "bg-slate-600 hover:bg-slate-500"
-                }`}
-              >
-                <p className="text-xs font-bold opacity-90 flex items-center gap-1.5">
-                  <Package className="h-3.5 w-3.5" />
-                  Inativos na SELIMP
-                </p>
-                <p className="text-2xl font-bold mt-1">
-                  {sourceRows.filter((r) => (r.percentual_selimp == null || r.percentual_selimp === 0) && (r.despachos_selimp ?? 0) === 0).length}
-                </p>
-                <p className="text-xs font-medium opacity-80 mt-1">Clique para filtrar</p>
-              </button>
-              <button
-                type="button"
                 onClick={() => setBaseDadosCardFilter((prev) => (prev === "obs_global" ? null : "obs_global"))}
                 className={`rounded-xl p-4 shadow-lg transition-all text-left flex flex-col text-white ${
                   baseDadosCardFilter === "obs_global" ? "bg-red-600" : "bg-red-500 hover:bg-red-600"
@@ -2001,7 +2009,75 @@ export default function IPTPage() {
                 </p>
                 <p className="text-xs font-medium opacity-80 mt-1">Clique para filtrar</p>
               </button>
+              <button
+                type="button"
+                onClick={() => setModalDownloadOpen(true)}
+                className="rounded-xl p-4 shadow-lg transition-all text-left flex flex-col text-white bg-blue-600 hover:bg-blue-500"
+              >
+                <p className="text-xs font-bold opacity-90 flex items-center gap-1.5">
+                  <Download className="h-3.5 w-3.5" />
+                  Baixar visualizados
+                </p>
+                <p className="text-2xl font-bold mt-1">{exportDespachosCount.toLocaleString("pt-BR")}</p>
+                <p className="text-xs font-medium opacity-80 mt-1">
+                  {filteredComparativo.length.toLocaleString("pt-BR")} setores visualizados · Clique para exportar
+                </p>
+              </button>
             </div>
+
+            <Dialog open={modalDownloadOpen} onOpenChange={setModalDownloadOpen}>
+              <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Baixar base de dados?</DialogTitle>
+                  <DialogDescription>
+                    Será gerado um arquivo Excel (.xlsx) com um registro por despacho dos setores visíveis na tabela,
+                    respeitando os filtros ativos.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-2 rounded-lg border border-border/60 bg-muted/30 p-3 text-sm">
+                  <p>
+                    <span className="font-medium text-muted-foreground">Período:</span>{" "}
+                    {tableScope === "dia_anterior"
+                      ? `D-1 (${format(subDays(new Date(), 1), "dd/MM/yyyy")})`
+                      : tablePeriodRange
+                      ? `${format(tablePeriodRange.inicio, "dd/MM/yyyy")} — ${format(tablePeriodRange.fim, "dd/MM/yyyy")}`
+                      : "—"}
+                  </p>
+                  <p>
+                    <span className="font-medium text-muted-foreground">Mês referência:</span> {mesReferenciaLabel}
+                  </p>
+                  <p>
+                    <span className="font-medium text-muted-foreground">Setores visualizados:</span>{" "}
+                    <span className="font-semibold tabular-nums">
+                      {filteredComparativo.length.toLocaleString("pt-BR")}
+                    </span>
+                  </p>
+                  <p>
+                    <span className="font-medium text-muted-foreground">Linhas a exportar:</span>{" "}
+                    <span className="font-semibold tabular-nums">{exportDespachosCount.toLocaleString("pt-BR")}</span>
+                  </p>
+                </div>
+                {exportDespachosCount === 0 && (
+                  <p className="text-sm text-amber-700 dark:text-amber-300">
+                    Não há despachos visíveis para exportar. Ajuste os filtros e tente novamente.
+                  </p>
+                )}
+                <DialogFooter>
+                  <UiButton type="button" variant="outline" onClick={() => setModalDownloadOpen(false)}>
+                    Cancelar
+                  </UiButton>
+                  <UiButton
+                    type="button"
+                    className="bg-blue-600 text-white hover:bg-blue-500"
+                    disabled={exportDespachosCount === 0}
+                    onClick={handleConfirmDownload}
+                  >
+                    <Download className="mr-2 h-4 w-4" />
+                    Baixar planilha
+                  </UiButton>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
 
             <div className="flex flex-wrap items-center gap-3">
               <Select value={zeroFilter} onValueChange={(v) => setZeroFilter(v as "all" | "zerados" | "nao_zerados")}>
