@@ -22,6 +22,7 @@ import { toast } from "react-toastify";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -38,7 +39,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { apiService } from "@/lib/api";
+import { apiService, type CronogramaImportReport } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
@@ -350,6 +351,129 @@ const DROPZONE_SURFACE: Record<DropzoneTone, string> = {
   amber:
     "border-amber-200/75 from-amber-50/50 to-white hover:border-amber-300/80 dark:border-dashed dark:border-amber-500/35 dark:from-amber-950/35 dark:to-card dark:hover:border-amber-400/45",
 };
+
+/** Pré-visualização (dry-run) da importação anual do cronograma + confirmação. */
+function CronogramaPreview({
+  report,
+  loading,
+  onConfirm,
+  onCancel,
+}: {
+  report: CronogramaImportReport | null;
+  loading: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  if (!report) return null;
+  const isPreview = report.dry_run;
+  const temRemovidos = report.removidos.length > 0;
+  const substituir = report.modo_datas === "substituir";
+
+  return (
+    <div
+      className={cn(
+        "mt-6 rounded-2xl border p-5 text-sm shadow-sm",
+        isPreview
+          ? "border-sky-200/70 bg-gradient-to-br from-sky-50/90 via-white to-white dark:border-sky-800/50 dark:from-sky-950/40 dark:via-card dark:to-card"
+          : "border-emerald-200/60 bg-gradient-to-br from-emerald-50/90 via-white to-white dark:border-emerald-800/50 dark:from-emerald-950/50 dark:via-card dark:to-card",
+      )}
+    >
+      <div className="flex items-center gap-2.5 font-semibold text-foreground">
+        <span
+          className={cn(
+            "flex h-8 w-8 items-center justify-center rounded-lg",
+            isPreview
+              ? "bg-sky-100 text-sky-700 dark:bg-sky-900/50 dark:text-sky-300"
+              : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300",
+          )}
+        >
+          {isPreview ? <AlertCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
+        </span>
+        {isPreview ? "Pré-visualização — confira antes de gravar" : "Importação concluída"}
+        <span
+          className={cn(
+            "ml-auto rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+            substituir
+              ? "bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300"
+              : "bg-slate-100 text-slate-700 dark:bg-muted dark:text-muted-foreground",
+          )}
+        >
+          {substituir ? "Datas: substituir" : "Datas: mesclar"}
+        </span>
+      </div>
+
+      <div className="mt-4 grid gap-2.5 text-xs leading-relaxed text-muted-foreground sm:grid-cols-2 lg:grid-cols-4">
+        <div>Setores nos arquivos: <span className="font-semibold text-foreground">{report.setores_arquivo}</span></div>
+        <div>Novos: <span className="font-semibold text-emerald-600 dark:text-emerald-400">{report.novos}</span></div>
+        <div>Atualizados: <span className="font-semibold text-foreground">{report.atualizados}</span></div>
+        <div>
+          {isPreview ? "Serão removidos" : "Removidos"}:{" "}
+          <span className={cn("font-semibold", temRemovidos ? "text-red-600 dark:text-red-400" : "text-foreground")}>
+            {report.removidos.length}
+          </span>
+        </div>
+        {!isPreview && (
+          <div>Datas inseridas: <span className="font-semibold text-foreground">{report.datas_inseridas}</span></div>
+        )}
+        {substituir && (
+          <div>
+            {isPreview ? "Datas a substituir" : "Datas substituídas"}:{" "}
+            <span className={cn("font-semibold", report.datas_removidas > 0 ? "text-amber-600 dark:text-amber-400" : "text-foreground")}>
+              {report.datas_removidas}
+            </span>
+          </div>
+        )}
+      </div>
+
+      <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+        {report.por_arquivo.map((a) => (
+          <span key={a.arquivo} className="rounded-md bg-muted/60 px-2 py-1">
+            {a.arquivo} · <span className="font-medium text-foreground/80">{a.modelo ?? "?"}</span> · {a.setores} setores
+          </span>
+        ))}
+      </div>
+
+      {temRemovidos && (
+        <div className="mt-4 rounded-xl border border-red-200/70 bg-red-50/70 p-3 dark:border-red-900/50 dark:bg-red-950/30">
+          <div className="text-xs font-semibold text-red-700 dark:text-red-300">
+            {isPreview ? "Estes setores serão EXCLUÍDOS" : "Setores excluídos"} (cronograma + observações):
+          </div>
+          <div className="mt-2 max-h-32 overflow-y-auto font-mono text-[11px] leading-relaxed text-red-800 dark:text-red-200">
+            {report.removidos.join(", ")}
+          </div>
+        </div>
+      )}
+
+      {report.avisos.length > 0 && (
+        <div className="mt-4 rounded-xl border border-amber-200/70 bg-amber-50/60 p-3 dark:border-amber-900/50 dark:bg-amber-950/30">
+          <div className="text-xs font-semibold text-amber-700 dark:text-amber-300">Avisos</div>
+          <ul className="mt-2 list-disc space-y-1 pl-4 text-[11px] leading-relaxed text-amber-800 dark:text-amber-200">
+            {report.avisos.map((a, i) => (
+              <li key={i}>{a}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {isPreview && (
+        <div className="mt-5 flex flex-wrap items-center gap-3">
+          <Button onClick={onConfirm} disabled={loading} className="gap-2">
+            <CheckCircle2 className="h-4 w-4" />
+            {loading ? "Gravando…" : "Confirmar importação"}
+          </Button>
+          <Button variant="outline" onClick={onCancel} disabled={loading}>
+            Cancelar
+          </Button>
+          {temRemovidos && (
+            <span className="text-[11px] text-red-600 dark:text-red-400">
+              Atenção: {report.removidos.length} setor(es) serão removidos permanentemente.
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function SummaryBox({ state }: { state: UploadState }) {
   if (state.status === "success" && state.result) {
@@ -799,6 +923,9 @@ export default function UploadPage() {
   const [customPeriodoFinal, setCustomPeriodoFinal] = useState("");
   const [customStatusBateriaData, setCustomStatusBateriaData] = useState("");
   const [cronogramaModalOpen, setCronogramaModalOpen] = useState(false);
+  const [cronogramaFiles, setCronogramaFiles] = useState<File[]>([]);
+  const [cronogramaReport, setCronogramaReport] = useState<CronogramaImportReport | null>(null);
+  const [cronogramaReplaceDatas, setCronogramaReplaceDatas] = useState(false);
   const [expandedHistory, setExpandedHistory] = useState<Record<string, boolean>>({});
 
   const loadOverview = async () => {
@@ -952,6 +1079,7 @@ export default function UploadPage() {
     }
   };
 
+  /** Passo 1: seleciona as planilhas e roda o dry-run (pré-visualização sem gravar). */
   const handleCronogramaUpload = async (files: FileList | null) => {
     const list = Array.from(files ?? []);
     if (!list.length) return;
@@ -964,32 +1092,70 @@ export default function UploadPage() {
       return;
     }
 
+    setCronogramaFiles(list);
+    setCronogramaReport(null);
+    await runCronogramaDryRun(list, cronogramaReplaceDatas);
+  };
+
+  /** Roda o dry-run (pré-visualização) com a lista de arquivos e o modo de datas atual. */
+  const runCronogramaDryRun = async (list: File[], replaceDatas: boolean) => {
+    if (!list.length) return;
     setUploadState("iptCronograma", { status: "uploading" });
     try {
-      let processados = 0;
-      let total = 0;
-      let inseridos = 0;
-      let atualizados = 0;
+      const report = await apiService.uploadCronogramaPlano(list, { dryRun: true, replaceDatas });
+      setCronogramaReport(report);
+      setUploadState("iptCronograma", { status: "idle" });
+    } catch (error) {
+      const message = getErrorMessage(error);
+      setCronogramaFiles([]);
+      setUploadState("iptCronograma", { status: "error", error: message });
+      toast.error(message);
+    }
+  };
 
-      for (const file of list) {
-        const result = await apiService.uploadIptCronogramaXlsx(file);
-        processados += Number(result?.processados ?? 0);
-        total += Number(result?.total ?? 0);
-        inseridos += Number(result?.inseridos ?? 0);
-        atualizados += Number(result?.atualizados ?? 0);
-      }
+  /** Alterna mesclar/substituir; se já há arquivos selecionados, atualiza a pré-visualização. */
+  const handleCronogramaReplaceToggle = (checked: boolean) => {
+    setCronogramaReplaceDatas(checked);
+    if (cronogramaFiles.length) void runCronogramaDryRun(cronogramaFiles, checked);
+  };
 
+  /** Passo 2: confirma e grava (dryRun=false). */
+  const handleCronogramaConfirm = async () => {
+    if (!cronogramaFiles.length) return;
+    setUploadState("iptCronograma", { status: "uploading" });
+    try {
+      const report = await apiService.uploadCronogramaPlano(cronogramaFiles, {
+        dryRun: false,
+        replaceDatas: cronogramaReplaceDatas,
+      });
+      setCronogramaReport(report);
       setUploadState("iptCronograma", {
         status: "success",
-        result: { processados, total, inseridos, atualizados, duplicados: 0, erros: 0 },
+        result: {
+          processados: report.setores_arquivo,
+          total: report.setores_arquivo,
+          inseridos: report.novos,
+          atualizados: report.atualizados,
+          duplicados: 0,
+          erros: 0,
+        },
       });
-      toast.success("Cronograma importado com sucesso.");
+      setCronogramaFiles([]);
+      toast.success(
+        `Cronograma importado: ${report.novos} novos, ${report.atualizados} atualizados, ${report.removidos.length} removidos.`,
+      );
       await loadOverview();
     } catch (error) {
       const message = getErrorMessage(error);
       setUploadState("iptCronograma", { status: "error", error: message });
       toast.error(message);
     }
+  };
+
+  const handleCronogramaCancel = () => {
+    setCronogramaFiles([]);
+    setCronogramaReport(null);
+    setUploadState("iptCronograma", { status: "idle" });
   };
 
   const handleSetoresModulosUpload = async (files: FileList | null) => {
@@ -1638,17 +1804,41 @@ export default function UploadPage() {
                 value="cronograma"
                 accent="slate"
                 icon={CalendarDays}
-                title="Cronograma — importação anual"
-                subtitle="Contratos BL, MT, NH, LM e GO. Vários XLSX podem ser enviados em sequência."
+                title="Cronograma do Plano de Trabalho — importação anual"
+                subtitle="Envie as DUAS planilhas juntas: “Cronogramas de Serviços Escalonados” (datas) e “Cronogramas de Serviços Fixos” (dias da semana). Substitui o cronograma vigente e remove setores que sumiram."
               >
                 <UploadDropzone
                   inputId="iptCronograma"
                   accept=".xlsx"
                   tone="neutral"
                   loading={states.iptCronograma.status === "uploading"}
-                  helperText="Um ou mais arquivos: BL, MT, NH, LM e GO no formato XLSX de cronograma já utilizado no fluxo IPT."
+                  helperText="Selecione os 2 arquivos XLSX (Escalonados + Fixos). O sistema mostra uma pré-visualização antes de gravar."
                   onFilesSelected={handleCronogramaUpload}
                 />
+
+                <div className="mt-4 flex items-start gap-3 rounded-xl border border-slate-200/80 bg-slate-50/60 p-3 dark:border-border dark:bg-muted/30">
+                  <Checkbox
+                    id="cronograma-replace-datas"
+                    checked={cronogramaReplaceDatas}
+                    onCheckedChange={(v) => handleCronogramaReplaceToggle(v === true)}
+                    className="mt-0.5"
+                  />
+                  <Label htmlFor="cronograma-replace-datas" className="cursor-pointer text-xs leading-relaxed font-normal text-muted-foreground">
+                    <span className="font-semibold text-foreground">Substituir as datas do setor</span> (em vez de acumular).
+                    <br />
+                    Por padrão, as datas são <strong>mescladas</strong>: datas novas são adicionadas e as antigas mantidas
+                    (nada duplica). Marque esta opção para <strong>apagar as datas antigas</strong> de cada setor e gravar
+                    apenas as da planilha — use quando precisar corrigir datas erradas e refletir exatamente o plano vigente.
+                  </Label>
+                </div>
+
+                <CronogramaPreview
+                  report={cronogramaReport}
+                  loading={states.iptCronograma.status === "uploading"}
+                  onConfirm={handleCronogramaConfirm}
+                  onCancel={handleCronogramaCancel}
+                />
+
                 <HistoryBlock
                   title="Último cronograma importado"
                   overview={overview.iptCronograma}

@@ -36,6 +36,8 @@ import {
 import { config } from "../config.js";
 import { requireHost } from "../auth.js";
 import { buildIptPreviewFromConsolidado } from "../services/ipt-consolidado-preview.js";
+import { listCronogramaSetores } from "../services/cronograma.js";
+import { buildDespachosResponse, colarDespachos } from "../services/despachosDiarios.js";
 import { percentDisplayToDecimal } from "../services/parseRelatorioConsolidado.js";
 import { formatDataInstalacaoBr } from "../services/formatDataInstalacaoBr.js";
 
@@ -1707,6 +1709,81 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
     } finally {
       client.release();
     }
+  });
+
+  /**
+   * IPT/Despachos: cronograma do plano de trabalho vigente por setor.
+   * Retorna `modelo`, `dias_semana` (fixos) e `datas` (escalonados) para a página de
+   * Despachos calcular o "esperado" por dia a partir do plano real.
+   * Filtros opcionais: subprefeitura (sigla CV/JT/MG/ST), servico (código 2 letras), modelo.
+   */
+  fastify.get<{
+    Querystring: { subprefeitura?: string; servico?: string; modelo?: string };
+  }>("/ipt/despachos/cronograma", async (request) => {
+    const q = request.query ?? {};
+    const setores = await listCronogramaSetores({
+      subSigla: q.subprefeitura?.trim() || undefined,
+      servico: q.servico?.trim() || undefined,
+      modelo: q.modelo?.trim() || undefined,
+    });
+    return {
+      total: setores.length,
+      setores: setores.map((s) => ({
+        setor: s.setor,
+        modelo: s.modelo,
+        servico: s.servico,
+        subprefeitura: s.subprefeitura,
+        sub_sigla: s.subSigla,
+        frequencia_texto: s.frequenciaTexto,
+        frequencia_codigo: s.frequenciaCodigo,
+        turno: s.turno,
+        local: s.local,
+        feira: s.feira,
+        dias_semana: s.diasSemana,
+        ano_plano: s.anoPlano,
+        datas: s.datas,
+      })),
+    };
+  });
+
+  /**
+   * Despachos SELIMP — visão do dia: cruza cronograma (esperado) × lançamentos
+   * (despachos_diarios) × Report SELIMP (percentual histórico). Retorna kpis, linhas
+   * (só acionáveis) e tendência de 14 dias. Filtros: subprefeitura (sigla), servico, turno.
+   */
+  fastify.get<{
+    Querystring: { dia?: string; subprefeitura?: string; servico?: string; turno?: string };
+  }>("/ipt/despachos", async (request, reply) => {
+    const q = request.query ?? {};
+    const dia = (q.dia ?? "").trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dia)) {
+      return reply.code(400).send({ detail: "Parâmetro 'dia' (YYYY-MM-DD) obrigatório." });
+    }
+    return buildDespachosResponse(dia, {
+      subprefeitura: q.subprefeitura?.trim() || undefined,
+      servico: q.servico?.trim() || undefined,
+      turno: q.turno?.trim() || undefined,
+    });
+  });
+
+  /**
+   * Despachos SELIMP — importa a colagem da grade da SELIMP para um dia.
+   * Extrai os setores despachados, cruza com o cronograma e grava em despachos_diarios.
+   * `dryRun: true` retorna a prévia sem gravar.
+   */
+  fastify.post<{
+    Body: { dia?: string; texto?: string; dryRun?: boolean };
+  }>("/ipt/despachos/colar", async (request, reply) => {
+    const { dia, texto, dryRun } = request.body ?? {};
+    if (!dia || !/^\d{4}-\d{2}-\d{2}$/.test(dia)) {
+      return reply.code(400).send({ detail: "Parâmetro 'dia' (YYYY-MM-DD) obrigatório." });
+    }
+    if (!texto || !texto.trim()) {
+      return reply.code(400).send({ detail: "Cole a grade de despachos da SELIMP no campo de texto." });
+    }
+    const result = await colarDespachos(dia, texto, { dryRun: dryRun === true });
+    if (!dryRun) invalidatePrefix("ipt_preview");
+    return result;
   });
 
   /** IPT: Criar observação global */

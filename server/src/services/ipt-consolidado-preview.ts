@@ -14,6 +14,7 @@ import {
   resolveVpCanonicalFromDdmx,
 } from "../constants/ipt.js";
 import { calcularCenariosIPT } from "./ipt-pf-algoritmo.js";
+import { getCronogramaDatas } from "./cronograma.js";
 import {
   parseDdmxBateriaFromRaw,
   summarizeDdmxBateriaDia,
@@ -795,22 +796,9 @@ export async function buildIptPreviewFromConsolidado(
 
   // --- Enriquecer com cronograma (proxima_programacao + cronograma_preview) ---
   if (rows.length > 0) {
+    // Repontado para cronograma_datas (plano vigente). Mapa já vem por setor normalizado.
     const allSetores = rows.map((r) => r.plano);
-    const allSetoresNorm = rows.map((r) => normalizarSetor(r.plano));
-    const cronRes = await client.query<{ setor: string; data_esperada: string }>(
-      `SELECT setor, to_char(data_esperada, 'YYYY-MM-DD') AS data_esperada
-       FROM ipt_cronograma
-       WHERE TRIM(setor) = ANY($1) OR TRIM(setor) = ANY($2)
-       ORDER BY setor, data_esperada`,
-      [allSetores, allSetoresNorm]
-    );
-
-    const cronMap = new Map<string, string[]>();
-    for (const cr of cronRes.rows) {
-      const key = normalizarSetor(cr.setor.trim());
-      if (!cronMap.has(key)) cronMap.set(key, []);
-      cronMap.get(key)!.push(cr.data_esperada);
-    }
+    const cronMap = await getCronogramaDatas(allSetores, client);
 
     const today = yesterdayKey;
     for (const row of rows) {

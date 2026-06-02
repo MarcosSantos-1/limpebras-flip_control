@@ -1,4 +1,5 @@
 import { pool } from "../db.js";
+import { getCronogramaDatasRange } from "./cronograma.js";
 import {
   parseSetor,
   normalizarSetor,
@@ -229,23 +230,8 @@ export async function carregarCronograma(
   inicio: string,
   fim: string,
 ): Promise<Map<string, string[]>> {
-  const res = await pool.query(
-    `SELECT setor, data_esperada::text AS data_esperada
-     FROM ipt_cronograma
-     WHERE data_esperada >= $1::date AND data_esperada <= $2::date
-     ORDER BY data_esperada`,
-    [inicio, fim],
-  );
-  const map = new Map<string, string[]>();
-  for (const row of res.rows) {
-    const setor = normalizarSetor(row.setor);
-    const dateKey = row.data_esperada?.slice(0, 10);
-    if (!setor || !dateKey) continue;
-    const arr = map.get(setor) ?? [];
-    arr.push(dateKey);
-    map.set(setor, arr);
-  }
-  return map;
+  // Repontado para cronograma_datas (plano de trabalho vigente). Setor já normalizado.
+  return getCronogramaDatasRange(inicio, fim);
 }
 
 /**

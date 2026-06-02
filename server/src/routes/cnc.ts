@@ -374,21 +374,21 @@ export const cncRoutes: FastifyPluginAsync = async (fastify) => {
 
     let cronograma = fromIndex?.cronograma?.trim() || null;
     let frequencia = fromIndex?.frequencia?.trim() || null;
-    let source: "index" | "ipt_cronograma" | "nomenclatura" = fromIndex ? "index" : "nomenclatura";
+    let source: "index" | "cronograma" | "nomenclatura" = fromIndex ? "index" : "nomenclatura";
 
     if (!cronograma) {
       const norm = normalizarSetor(setor);
       const r = await pool.query<{ d: string }>(
-        `SELECT to_char(data_esperada, 'DD/MM/YYYY') AS d
-         FROM ipt_cronograma
-         WHERE TRIM(setor) = $1 OR TRIM(setor) = $2
-         ORDER BY data_esperada`,
-        [setor, norm]
+        `SELECT to_char(data, 'DD/MM/YYYY') AS d
+         FROM cronograma_datas
+         WHERE setor = $1
+         ORDER BY data`,
+        [norm]
       );
       const parts = r.rows.map((row) => row.d).filter(Boolean);
       if (parts.length > 0) {
         cronograma = parts.join("; ");
-        source = "ipt_cronograma";
+        source = "cronograma";
       }
     }
 

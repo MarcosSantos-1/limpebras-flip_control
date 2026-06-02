@@ -300,6 +300,63 @@ export interface IptPreviewBateriaDdmxDia {
   despachos: IptPreviewBateriaDdmxDispatch[];
 }
 
+/** Relatório da importação anual do Cronograma do Plano de Trabalho. */
+export interface CronogramaImportReport {
+  dry_run: boolean;
+  modo_datas: "mesclar" | "substituir";
+  por_arquivo: Array<{ arquivo: string; modelo: "escalonado" | "fixo" | null; setores: number }>;
+  setores_arquivo: number;
+  novos: number;
+  atualizados: number;
+  datas_inseridas: number;
+  datas_removidas: number;
+  removidos: string[];
+  delecao_aplicada: boolean;
+  avisos: string[];
+}
+
+export type StatusDiaDespacho = "conforme" | "nao_despachado" | "fora_plano" | "zerado" | "nao_previsto";
+
+export interface DespachoLinha {
+  setor: string;
+  subprefeitura: string | null;
+  tipo_servico: string;
+  frequencia: string | null;
+  turno: string | null;
+  esperado: boolean;
+  despachadoManual: boolean;
+  despachosSelimp: number;
+  percentual: number | null;
+  status: StatusDiaDespacho;
+  veiculos: string[];
+  proximaProgramacao: string | null;
+}
+
+export interface DespachosResponse {
+  dia: string;
+  kpis: {
+    previstos: number;
+    despachados: number;
+    naoDespachados: number;
+    foraPlano: number;
+    zerados: number;
+    cobertura: number;
+  };
+  linhas: DespachoLinha[];
+  tendencia14d: Array<{ data: string; previstos: number; despachados: number; cobertura: number }>;
+  turnos: string[];
+}
+
+export interface ColarDespachosResult {
+  dia: string;
+  extraidos: number;
+  gravados: number;
+  conforme: number;
+  fora_plano: number;
+  nao_despachado: number;
+  avisos: string[];
+}
+
 export interface IptPreviewResponse {
   periodo: { inicial: string | null; final: string | null };
   resumo: {
@@ -535,7 +592,7 @@ export const apiService = {
       setor: string;
       frequencia_resolvida: string | null;
       cronograma_resolvido: string | null;
-      source: "index" | "ipt_cronograma" | "nomenclatura";
+      source: "index" | "cronograma" | "nomenclatura";
     };
   },
 
@@ -765,14 +822,55 @@ export const apiService = {
     return data;
   },
 
-  uploadIptCronogramaXlsx: async (file: File) => {
+  /**
+   * Importação anual do Cronograma do Plano de Trabalho (planilhas Escalonados + Fixos).
+   * `dryRun: true` (default) retorna o relatório do que aconteceria sem gravar.
+   */
+  uploadCronogramaPlano: async (files: File[], opts: { dryRun: boolean; replaceDatas?: boolean }) => {
     const formData = new FormData();
-    formData.append('file', file);
-    const { data } = await api.post('/upload/ipt-cronograma', formData, {
+    for (const file of files) formData.append('files', file);
+    formData.append('dryRun', String(opts.dryRun));
+    formData.append('replaceDatas', String(opts.replaceDatas ?? false));
+    const { data } = await api.post('/upload/cronograma', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
-      timeout: UPLOAD_REQUEST_TIMEOUT_MS,
+      timeout: 600_000, // 10 min — import anual grande (milhares de setores/datas)
     });
-    return data;
+    return data as CronogramaImportReport;
+  },
+
+  /** Despachos: cronograma do plano vigente por setor (datas p/ escalonados, dias_semana p/ fixos). */
+  getDespachosCronograma: async (params?: { subprefeitura?: string; servico?: string; modelo?: string }) => {
+    const { data } = await api.get("/ipt/despachos/cronograma", { params });
+    return data as {
+      total: number;
+      setores: Array<{
+        setor: string;
+        modelo: "escalonado" | "fixo";
+        servico: string | null;
+        subprefeitura: string | null;
+        sub_sigla: string | null;
+        frequencia_texto: string | null;
+        frequencia_codigo: string | null;
+        turno: string | null;
+        local: string | null;
+        feira: string | null;
+        dias_semana: string[] | null;
+        ano_plano: number | null;
+        datas: string[];
+      }>;
+    };
+  },
+
+  /** Despachos SELIMP — visão do dia (kpis, linhas acionáveis, tendência 14d). */
+  getDespachos: async (params: { dia: string; subprefeitura?: string; servico?: string; turno?: string }) => {
+    const { data } = await api.get("/ipt/despachos", { params });
+    return data as DespachosResponse;
+  },
+
+  /** Despachos SELIMP — importa a colagem da grade da SELIMP para um dia (dryRun p/ prévia). */
+  colarDespachos: async (dia: string, texto: string, opts?: { dryRun?: boolean }) => {
+    const { data } = await api.post("/ipt/despachos/colar", { dia, texto, dryRun: opts?.dryRun ?? false });
+    return data as ColarDespachosResult;
   },
 
   uploadIptSetoresModulosXlsx: async (file: File) => {

@@ -342,6 +342,77 @@ export async function runMigrations() {
     await client.query("CREATE INDEX IF NOT EXISTS idx_ipt_cronograma_setor ON ipt_cronograma(setor)").catch(() => {});
     await client.query("CREATE INDEX IF NOT EXISTS idx_ipt_cronograma_data ON ipt_cronograma(data_esperada)").catch(() => {});
 
+    /**
+     * Cronograma do Plano de Trabalho (importação anual das planilhas Escalonados/Fixos).
+     * Substitui o uso de ipt_cronograma (mantida no banco, sem uso). Separa as informações
+     * do setor (cronograma_setores) das datas explícitas (cronograma_datas).
+     */
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS cronograma_setores (
+        id SERIAL PRIMARY KEY,
+        setor TEXT NOT NULL UNIQUE,
+        modelo TEXT NOT NULL,
+        servico TEXT,
+        subprefeitura TEXT,
+        sub_sigla TEXT,
+        frequencia_texto TEXT,
+        frequencia_codigo TEXT,
+        turno TEXT,
+        local TEXT,
+        feira TEXT,
+        dias_semana TEXT[],
+        dia_semana_texto TEXT,
+        ano_plano INTEGER,
+        source_file TEXT,
+        raw JSONB,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client.query("CREATE INDEX IF NOT EXISTS idx_cronograma_setores_servico ON cronograma_setores(servico)").catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_cronograma_setores_sub ON cronograma_setores(sub_sigla)").catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_cronograma_setores_modelo ON cronograma_setores(modelo)").catch(() => {});
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS cronograma_datas (
+        id SERIAL PRIMARY KEY,
+        setor TEXT NOT NULL REFERENCES cronograma_setores(setor) ON DELETE CASCADE,
+        data DATE NOT NULL,
+        ano INTEGER,
+        source_file TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (setor, data)
+      );
+    `);
+    await client.query("CREATE INDEX IF NOT EXISTS idx_cronograma_datas_setor ON cronograma_datas(setor)").catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_cronograma_datas_data ON cronograma_datas(data)").catch(() => {});
+
+    /**
+     * Despachos diários (página Despachos SELIMP): lançamento operacional por setor/dia,
+     * alimentado pela COLAGEM da grade da SELIMP (parseDespachoColagem) ou manualmente.
+     * O percentual de execução vem depois, do Report SELIMP D-1 (ipt_report_linhas).
+     */
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS despachos_diarios (
+        id SERIAL PRIMARY KEY,
+        setor TEXT NOT NULL,
+        data DATE NOT NULL,
+        turno TEXT,
+        status TEXT,
+        modelo TEXT,
+        veiculos TEXT[],
+        data_planejada TEXT,
+        data_maxima TEXT,
+        origem TEXT NOT NULL DEFAULT 'selimp_colagem',
+        raw JSONB,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (setor, data)
+      );
+    `);
+    await client.query("CREATE INDEX IF NOT EXISTS idx_despachos_diarios_data ON despachos_diarios(data)").catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_despachos_diarios_setor ON despachos_diarios(setor)").catch(() => {});
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS setores_modulos (
         id SERIAL PRIMARY KEY,

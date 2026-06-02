@@ -12,7 +12,8 @@ import {
   type CncDetalhesRow,
 } from "../services/parseCsv.js";
 import { detectDdmxWorkbookType, parseIptWorkbook, type IptFileType } from "../services/parseIptXlsx.js";
-import { parseCronogramaWorkbook } from "../services/parseCronogramaIpt.js";
+import { reconcileCronograma, type CronogramaImportFile } from "../services/importCronogramaPlano.js";
+import { getLastCronogramaImport } from "../services/cronograma.js";
 import { parseSetoresModulosWorkbook } from "../services/parseSetoresModulos.js";
 import { enrichDadosBateriaFromSetoresModulos } from "../services/enrichDadosBateriaFromSetores.js";
 import { normalizarSetor, parseSetor, resolveTipoServicoExibicao } from "../constants/ipt.js";
@@ -2816,15 +2817,17 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   const getLastCronogramaUpdate = async () => {
-    const last = await pool.query(
-      `SELECT source_file, updated_at FROM ipt_cronograma ORDER BY updated_at DESC NULLS LAST LIMIT 1`
-    );
-    const count = await pool.query(`SELECT COUNT(*)::int AS total FROM ipt_cronograma`);
-    return {
-      ultimo_import: last.rows[0]?.updated_at ?? null,
-      source_file: last.rows[0]?.source_file ?? null,
-      total_registros: Number(count.rows[0]?.total ?? 0),
-    };
+    try {
+      const info = await getLastCronogramaImport();
+      return {
+        ultimo_import: info.ultimo_import,
+        source_file: info.source_file,
+        total_registros: info.total_setores,
+        total_datas: info.total_datas,
+      };
+    } catch {
+      return { ultimo_import: null, source_file: null, total_registros: 0, total_datas: 0 };
+    }
   };
 
   const getLastSetoresModulosUpdate = async () => {
@@ -2875,47 +2878,80 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
     return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("pt-BR", { timeZone: "UTC" });
   }
 
-  fastify.post("/upload/ipt-cronograma", async (request, reply) => {
-    const data = await request.file();
-    if (!data) return reply.code(400).send({ detail: "Arquivo XLSX obrigatório (BL.xlsx, MT.xlsx, NH.xlsx, LM.xlsx ou GO.xlsx)" });
-    const buffer = await data.toBuffer();
-    const sourceFile = data.filename;
-    const rows = parseCronogramaWorkbook(buffer, sourceFile);
-    if (rows.length === 0) {
+  /**
+   * Importação anual do Cronograma do Plano de Trabalho.
+   * Aceita as duas planilhas (Escalonados + Fixos) num único envio multipart.
+   * Campo `dryRun` (default "true"): retorna o relatório do que aconteceria sem gravar.
+   * Com `dryRun=false`: mescla datas, atualiza setores e remove (cascade) os ausentes.
+   */
+  fastify.post("/upload/cronograma", async (request, reply) => {
+    const arquivos: CronogramaImportFile[] = [];
+    let dryRun = true;
+    let replaceDatas = false;
+    try {
+      for await (const part of request.parts()) {
+        if (part.type === "file") {
+          if (!/\.xlsx?$/i.test(part.filename)) {
+            // descarta o stream para não travar o multipart
+            await part.toBuffer();
+            return reply.code(400).send({ detail: `Arquivo inválido: ${part.filename}. Envie .xlsx.` });
+          }
+          arquivos.push({ filename: part.filename, buffer: await part.toBuffer() });
+        } else if (part.fieldname === "dryRun") {
+          dryRun = String((part as { value?: unknown }).value ?? "true").toLowerCase() !== "false";
+        } else if (part.fieldname === "replaceDatas") {
+          replaceDatas = String((part as { value?: unknown }).value ?? "false").toLowerCase() === "true";
+        }
+      }
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : "Falha ao ler os arquivos.";
+      return reply.code(400).send({ detail });
+    }
+
+    if (arquivos.length === 0) {
       return reply.code(400).send({
-        detail: "Nenhum registro extraído. Use BL.xlsx, MT.xlsx, NH.xlsx, LM.xlsx ou GO.xlsx com estrutura esperada.",
+        detail: "Envie as planilhas do cronograma (Escalonados e Fixos) em formato .xlsx.",
       });
     }
 
-    const servico = rows[0]?.servico;
-    const client = await pool.connect();
     try {
-      await client.query("DELETE FROM ipt_cronograma WHERE servico = $1", [servico]);
+      const report = await reconcileCronograma(arquivos, { dryRun, replaceDatas });
 
-      let inserted = 0;
-      for (const row of rows) {
-        const dataStr = row.dataEsperada.toISOString().slice(0, 10);
-        await client.query(
-          `INSERT INTO ipt_cronograma (servico, setor, data_esperada, ano, raw, source_file, updated_at)
-           VALUES ($1, $2, $3::date, $4, $5::jsonb, $6, NOW())
-           ON CONFLICT (servico, setor, data_esperada)
-           DO UPDATE SET raw = EXCLUDED.raw, source_file = EXCLUDED.source_file, updated_at = NOW()`,
-          [row.servico, row.setor, dataStr, row.ano ?? null, JSON.stringify(row.raw), sourceFile]
-        );
-        inserted += 1;
+      if (report.setores_arquivo === 0) {
+        return reply.code(400).send({
+          detail:
+            "Nenhum setor válido extraído. Confira a aba 'Cronogramas' e as colunas (SETOR, DATA n ou DIA DA SEMANA).",
+          ...report,
+        });
       }
-      invalidatePrefix("ipt_preview");
-      return {
-        processados: inserted,
-        total: rows.length,
-        inseridos: inserted,
-        atualizados: 0,
-        duplicados: 0,
-        erros: 0,
-        ultimo_import: new Date().toISOString(),
-      };
-    } finally {
-      client.release();
+
+      if (!dryRun) {
+        invalidatePrefix("ipt_preview");
+        invalidatePrefix("kpis");
+        const sourceFiles = report.por_arquivo.map((a) => a.arquivo).join(", ") || "cronograma";
+        await pool
+          .query(
+            `INSERT INTO upload_events
+               (session_key, upload_type, source_file, processados, total, inseridos, atualizados, metadata)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)`,
+            [
+              "cronograma",
+              "cronograma",
+              sourceFiles,
+              report.setores_arquivo,
+              report.setores_arquivo,
+              report.novos,
+              report.atualizados,
+              JSON.stringify(report),
+            ],
+          )
+          .catch(() => {});
+      }
+
+      return report;
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : "Falha ao importar o cronograma.";
+      return reply.code(400).send({ detail });
     }
   });
 

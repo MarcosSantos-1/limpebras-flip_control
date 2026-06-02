@@ -87,11 +87,10 @@ const iptNavItems: SidebarNavDotItem[] = [
     dotClassName: "bg-violet-500 shadow-violet-500/40",
   },
   {
-    href: "#",
+    href: "/ipt/despachos",
     label: "Despachos SELIMP",
     icon: Truck,
-    skipAccessCheck: true,
-    disabled: true,
+    pageKey: "ipt" as AuthPageKey,
     dotClassName: "bg-amber-500 shadow-amber-500/40",
   },
   {
