@@ -37,7 +37,7 @@ import { config } from "../config.js";
 import { requireHost } from "../auth.js";
 import { buildIptPreviewFromConsolidado } from "../services/ipt-consolidado-preview.js";
 import { listCronogramaSetores } from "../services/cronograma.js";
-import { buildDespachosResponse, colarDespachos } from "../services/despachosDiarios.js";
+import { buildDespachosResponse, colarDespachos, despacharManual } from "../services/despachosDiarios.js";
 import { percentDisplayToDecimal } from "../services/parseRelatorioConsolidado.js";
 import { formatDataInstalacaoBr } from "../services/formatDataInstalacaoBr.js";
 
@@ -1783,6 +1783,22 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
     }
     const result = await colarDespachos(dia, texto, { dryRun: dryRun === true });
     if (!dryRun) invalidatePrefix("ipt_preview");
+    return result;
+  });
+
+  /** IPT: Despacho manual de uma seleção de setores. */
+  fastify.post<{
+    Body: { dia?: string; setores?: string[] };
+  }>("/ipt/despachos/manual", async (request, reply) => {
+    const { dia, setores } = request.body ?? {};
+    if (!dia || !/^\d{4}-\d{2}-\d{2}$/.test(dia)) {
+      return reply.code(400).send({ detail: "Parâmetro 'dia' (YYYY-MM-DD) obrigatório." });
+    }
+    if (!Array.isArray(setores) || setores.length === 0) {
+      return reply.code(400).send({ detail: "Selecione ao menos um setor para despachar." });
+    }
+    const result = await despacharManual(dia, setores);
+    invalidatePrefix("ipt_preview");
     return result;
   });
 

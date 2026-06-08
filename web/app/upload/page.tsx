@@ -55,7 +55,6 @@ type UploadKey =
   | "iptHistoricoBateria"
   | "iptCronograma"
   | "iptSetoresModulos";
-type IptReferenceMode = "d_minus_1" | "fim_de_semana" | "personalizado";
 type StatusBateriaReferenceMode = "hoje" | "personalizado";
 
 interface UploadApiError {
@@ -157,13 +156,6 @@ interface UploadOverviewResponse {
   sessions?: Record<SessionKey, LastUploadInfo>;
 }
 
-interface IptReferenceOption {
-  value: IptReferenceMode;
-  label: string;
-  periodoInicial: string;
-  periodoFinal: string;
-}
-
 interface StatusBateriaReferenceOption {
   value: StatusBateriaReferenceMode;
   label: string;
@@ -176,12 +168,6 @@ function getErrorMessage(error: unknown): string {
     return apiError.response?.data?.detail || apiError.message || "Erro desconhecido";
   }
   return "Erro desconhecido";
-}
-
-function shiftDays(base: Date, days: number): Date {
-  const copy = new Date(base);
-  copy.setDate(copy.getDate() + days);
-  return copy;
 }
 
 function toDateKey(date: Date): string {
@@ -219,37 +205,6 @@ function buildStatusBateriaReferenceOptions(now = new Date()): StatusBateriaRefe
   ];
 }
 
-function buildIptReferenceOptions(now = new Date()): IptReferenceOption[] {
-  const ontem = shiftDays(now, -1);
-  const diffToPreviousSunday = now.getDay() === 0 ? 7 : now.getDay();
-  const domingoAnterior = shiftDays(now, -diffToPreviousSunday);
-  const sextaAnterior = shiftDays(domingoAnterior, -2);
-
-  const dMinus1Key = toDateKey(ontem);
-  const sextaKey = toDateKey(sextaAnterior);
-  const domingoKey = toDateKey(domingoAnterior);
-
-  return [
-    {
-      value: "d_minus_1",
-      label: `D-1 (${formatPtDate(dMinus1Key)})`,
-      periodoInicial: dMinus1Key,
-      periodoFinal: dMinus1Key,
-    },
-    {
-      value: "fim_de_semana",
-      label: `Sexta a domingo (${formatPtDate(sextaKey)} a ${formatPtDate(domingoKey)})`,
-      periodoInicial: sextaKey,
-      periodoFinal: domingoKey,
-    },
-    {
-      value: "personalizado",
-      label: "Personalizado (datas manuais)",
-      periodoInicial: "",
-      periodoFinal: "",
-    },
-  ];
-}
 
 function createInitialStates(): Record<UploadKey, UploadState> {
   return {
@@ -912,15 +867,10 @@ function UploadDropzone({
 
 export default function UploadPage() {
   const { isIptRestrictedUser } = useAuth();
-  const iptReferenceOptions = useMemo(() => buildIptReferenceOptions(), []);
   const statusBateriaReferenceOptions = useMemo(() => buildStatusBateriaReferenceOptions(), []);
-  const defaultIdx = new Date().getDay() === 1 ? 1 : 0;
   const [states, setStates] = useState<Record<UploadKey, UploadState>>(createInitialStates());
   const [overview, setOverview] = useState<UploadOverviewResponse>({});
-  const [iptRefIdx, setIptRefIdx] = useState(defaultIdx);
   const [statusBateriaRefIdx, setStatusBateriaRefIdx] = useState(0);
-  const [customPeriodoInicial, setCustomPeriodoInicial] = useState("");
-  const [customPeriodoFinal, setCustomPeriodoFinal] = useState("");
   const [customStatusBateriaData, setCustomStatusBateriaData] = useState("");
   const [cronogramaModalOpen, setCronogramaModalOpen] = useState(false);
   const [cronogramaFiles, setCronogramaFiles] = useState<File[]>([]);
@@ -1033,28 +983,9 @@ export default function UploadPage() {
     try {
       let result;
       if (key === "iptReport") {
-        const selectedReference = iptReferenceOptions[iptRefIdx] ?? iptReferenceOptions[0];
-        const isCustom = selectedReference.value === "personalizado";
-        const pi = isCustom ? customPeriodoInicial : selectedReference.periodoInicial;
-        const pf = isCustom ? customPeriodoFinal : selectedReference.periodoFinal;
-        if (!pi || !pf) {
-          setUploadState(key, { status: "error", error: "Informe periodo inicial e final." });
-          toast.error("Informe periodo inicial e final.");
-          return;
-        }
-        if (isCustom && pi > pf) {
-          const msg = "periodo inicial não pode ser maior que periodo final.";
-          setUploadState(key, { status: "error", error: msg });
-          toast.error(msg);
-          return;
-        }
-        const modoRef: "d_minus_1" | "fim_de_semana" =
-          selectedReference.value === "personalizado" ? "d_minus_1" : selectedReference.value;
-        result = await apiService.uploadIptReportXlsx(file, {
-          modoReferencia: modoRef,
-          periodoInicial: pi,
-          periodoFinal: pf,
-        });
+        // A data agora vem da própria planilha (coluna "Data planejada").
+        // O período é derivado automaticamente no backend — sem seleção manual.
+        result = await apiService.uploadIptReportXlsx(file);
       } else {
         const selectedRef = statusBateriaReferenceOptions[statusBateriaRefIdx] ?? statusBateriaReferenceOptions[0];
         const dataReferencia =
@@ -1597,60 +1528,17 @@ export default function UploadPage() {
                 <div>
                   <div className="text-lg font-semibold tracking-tight">IPT — Report SELIMP</div>
                   <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-                    Fluxo mais sensível à referência: escolha o período antes de enviar para evitar sobrescrever ou duplicar leituras.
+                    A data agora vem da própria planilha (coluna “Data planejada”). É só enviar — o sistema identifica os dias automaticamente e sobrescreve os dados desses dias a cada reimportação.
                   </p>
                 </div>
               </div>
-
-              <div className="mb-5 rounded-2xl border border-fuchsia-200/70 bg-gradient-to-br from-fuchsia-50/90 to-white p-4 shadow-sm dark:border-fuchsia-700/40 dark:bg-gradient-to-br dark:from-fuchsia-950/40 dark:to-muted/30">
-                  <Label className="mb-3 block text-sm font-semibold text-fuchsia-900 dark:text-fuchsia-200">
-                    Referência da importação
-                  </Label>
-                  <Select value={String(iptRefIdx)} onValueChange={(value) => setIptRefIdx(Number(value))}>
-                    <SelectTrigger className="w-full border border-slate-200/80 bg-white shadow-sm dark:border-border dark:bg-card">
-                      <SelectValue placeholder="Selecione a referência" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {iptReferenceOptions.map((option, idx) => (
-                        <SelectItem key={idx} value={String(idx)}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {iptReferenceOptions[iptRefIdx]?.value === "personalizado" && (
-                    <div className="mt-3 grid grid-cols-2 gap-3">
-                      <div>
-                        <Label className="mb-1 block text-xs text-fuchsia-800 dark:text-fuchsia-300">Data inicial</Label>
-                        <DatePicker
-                          value={customPeriodoInicial}
-                          onChange={setCustomPeriodoInicial}
-                          placeholder="Data inicial"
-                        />
-                      </div>
-                      <div>
-                        <Label className="mb-1 block text-xs text-fuchsia-800 dark:text-fuchsia-300">Data final</Label>
-                        <DatePicker
-                          value={customPeriodoFinal}
-                          onChange={setCustomPeriodoFinal}
-                          placeholder="Data final"
-                        />
-                      </div>
-                    </div>
-                  )}
-                  {iptReferenceOptions[iptRefIdx]?.periodoInicial && iptReferenceOptions[iptRefIdx]?.value !== "personalizado" && (
-                    <div className="mt-2 text-xs text-fuchsia-700 dark:text-fuchsia-400">
-                      Periodo: {formatPtDate(iptReferenceOptions[iptRefIdx].periodoInicial)} a {formatPtDate(iptReferenceOptions[iptRefIdx].periodoFinal)}
-                    </div>
-                  )}
-                </div>
 
                 <UploadDropzone
                   inputId="iptReport"
                   accept=".xlsx"
                   tone="fuchsia"
                   loading={states.iptReport.status === "uploading"}
-                  helperText="Arquivo oficial do report SELIMP (XLSX). O período selecionado acima define como as linhas serão etiquetadas e substituídas."
+                  helperText="Arquivo oficial do report SELIMP (XLSX). Os dias são lidos da planilha e os dados desses dias são substituídos a cada envio."
                   onFilesSelected={(files) => handleTypedUpload("iptReport", files)}
                 />
                 <HistoryBlock

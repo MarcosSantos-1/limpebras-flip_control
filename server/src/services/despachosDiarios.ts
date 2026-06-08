@@ -1,10 +1,19 @@
 import { pool } from "../db.js";
 import { listCronogramaSetores, type CronogramaSetorInfo } from "./cronograma.js";
-import { normalizarSetor, SERVICO_POR_CODIGO, getFrequenciaDescricao } from "../constants/ipt.js";
+import { normalizarSetor, SERVICO_POR_CODIGO, getFrequenciaDescricao, parseSetor } from "../constants/ipt.js";
 import { parseDespachoColagem } from "./parseDespachoColagem.js";
 
 /** dom..sab → tokens usados em cronograma_setores.dias_semana. */
 const WEEKDAY_TOKEN = ["dom", "seg", "ter", "qua", "qui", "sex", "sab"] as const;
+
+/** 3º dígito do setor → turno (1=Diurno, 2=Vespertino, 3=Noturno). */
+const TURNO_POR_DIGITO: Record<string, string> = { "1": "Diurno", "2": "Vespertino", "3": "Noturno" };
+
+/** Deriva o turno pela nomenclatura do setor (quando não está no cronograma). */
+function turnoPelaNomenclatura(setor: string): string | null {
+  const p = parseSetor(setor);
+  return p ? (TURNO_POR_DIGITO[p.turno] ?? null) : null;
+}
 
 export type StatusDia = "conforme" | "nao_despachado" | "fora_plano" | "zerado" | "nao_previsto";
 
@@ -51,6 +60,13 @@ export interface DespachosResponse {
   linhas: DespachoLinha[];
   tendencia14d: TendenciaDia[];
   turnos: string[];
+}
+
+/** "Diurno/Vespertino" é tratado como "Diurno" (turno único). */
+function normalizeTurno(turno: string | null): string | null {
+  if (!turno) return turno;
+  if (/diurno\s*\/\s*vespertino/i.test(turno)) return "Diurno";
+  return turno;
 }
 
 function dateKeyToDate(key: string): Date {
@@ -127,7 +143,7 @@ export async function buildDespachosResponse(
     servico: filtros.servico,
   });
   const setoresFiltrados = filtros.turno
-    ? setores.filter((s) => (s.turno ?? "").toLowerCase() === filtros.turno!.toLowerCase())
+    ? setores.filter((s) => (normalizeTurno(s.turno) ?? "").toLowerCase() === filtros.turno!.toLowerCase())
     : setores;
 
   // Lançamentos manuais/colagem no intervalo (14 dias).
@@ -204,7 +220,7 @@ export async function buildDespachosResponse(
       subprefeitura: s.subSigla,
       tipo_servico: tipoServicoLabel(s),
       frequencia: s.frequenciaTexto ?? (s.frequenciaCodigo ? getFrequenciaDescricao(s.frequenciaCodigo) : null),
-      turno: s.turno,
+      turno: normalizeTurno(s.turno),
       esperado,
       despachadoManual,
       despachosSelimp,
@@ -212,6 +228,36 @@ export async function buildDespachosResponse(
       status,
       veiculos: manual?.veiculos ?? [],
       proximaProgramacao: proximaProgramacao(s, dia),
+    });
+  }
+
+  // --- Fora do plano: setores DESPACHADOS (colagem) que NÃO existem no cronograma. ---
+  // Eles são salvos em despachos_diarios mas o laço acima só percorre o cronograma, então
+  // sumiam da tela/KPIs. Aqui derivamos serviço, sub e turno pela própria nomenclatura do setor.
+  const cronSet = new Set(setores.map((s) => s.setor));
+  for (const [setor, manual] of despDia as Map<string, { status: string | null; veiculos: string[] }>) {
+    if (cronSet.has(setor)) continue; // já tratado no laço do cronograma
+    if (/cancel|inativ/i.test(manual.status ?? "")) continue;
+    const parsed = parseSetor(setor);
+    if (!parsed) continue;
+    const turnoTxt = TURNO_POR_DIGITO[parsed.turno] ?? null;
+    // Respeita filtros explícitos (quando chamado com sub/turno).
+    if (filtros.subprefeitura && parsed.sub !== filtros.subprefeitura) continue;
+    if (filtros.turno && (turnoTxt ?? "").toLowerCase() !== filtros.turno.toLowerCase()) continue;
+    const sel = selDia.get(setor) as SelimpDia | undefined;
+    linhas.push({
+      setor,
+      subprefeitura: parsed.sub,
+      tipo_servico: SERVICO_POR_CODIGO[parsed.servico] ?? parsed.servico,
+      frequencia: getFrequenciaDescricao(parsed.frequencia) || null,
+      turno: turnoTxt,
+      esperado: false,
+      despachadoManual: true,
+      despachosSelimp: sel?.count ?? 0,
+      percentual: sel?.pct != null ? Math.round(sel.pct) : null,
+      status: "fora_plano",
+      veiculos: manual.veiculos ?? [],
+      proximaProgramacao: null,
     });
   }
 
@@ -261,9 +307,29 @@ export async function buildDespachosResponse(
     });
   }
 
-  const turnos = Array.from(new Set(setores.map((s) => s.turno).filter((t): t is string => !!t))).sort();
+  const turnos = Array.from(
+    new Set(setores.map((s) => normalizeTurno(s.turno)).filter((t): t is string => !!t)),
+  ).sort();
 
   return { dia, kpis, linhas, tendencia14d, turnos };
+}
+
+export interface ColarDespachoItem {
+  setor: string;
+  subprefeitura: string | null;
+  tipo_servico: string;
+  turno: string | null;
+  status: string | null;
+  situacao: "conforme" | "fora_plano"; // colado esperado x colado inesperado
+  dataPlanejada: string | null;
+  veiculos: number;
+}
+
+export interface ColarTurnoResumo {
+  turno: string; // "Diurno" | "Vespertino" | "Noturno" | "Sem turno"
+  previstos: number; // esperados no dia
+  despachados: number; // esperados que vieram na colagem
+  faltam: number; // previstos - despachados
 }
 
 export interface ColarDespachosResult {
@@ -274,7 +340,11 @@ export interface ColarDespachosResult {
   fora_plano: number; // despachado mas não esperado
   nao_despachado: number; // esperado e não despachado
   avisos: string[];
+  itens: ColarDespachoItem[]; // cada despacho colado, separado
+  porTurno: ColarTurnoResumo[]; // previstos x despachados x faltam por turno
 }
+
+const ORDEM_TURNO: Record<string, number> = { Diurno: 0, Vespertino: 1, Noturno: 2 };
 
 /**
  * Processa a colagem da SELIMP para um dia: extrai os setores despachados, cruza com o
@@ -296,24 +366,63 @@ export async function colarDespachos(
   let conforme = 0;
   let foraPlano = 0;
   const despachadosSet = new Set<string>();
+  const itens: ColarDespachoItem[] = [];
   for (const reg of parsed.registros) {
     despachadosSet.add(reg.setor);
     const info = infoPorSetor.get(reg.setor);
+    const esperado = info ? esperadoNoDia(info, dia, datasSetPorSetor.get(reg.setor)!) : false;
     if (!info) {
       avisos.push(`Setor despachado fora do cronograma: ${reg.setor}.`);
       foraPlano++;
-      continue;
+    } else if (esperado) {
+      conforme++;
+    } else {
+      foraPlano++;
     }
-    if (esperadoNoDia(info, dia, datasSetPorSetor.get(reg.setor)!)) conforme++;
-    else foraPlano++;
+    itens.push({
+      setor: reg.setor,
+      subprefeitura: info?.subSigla ?? null,
+      tipo_servico: info ? tipoServicoLabel(info) : "—",
+      turno: normalizeTurno(info?.turno ?? null),
+      status: reg.status,
+      situacao: esperado ? "conforme" : "fora_plano",
+      dataPlanejada: reg.dataPlanejada,
+      veiculos: reg.veiculos.length,
+    });
   }
+  // Ordena: fora do plano primeiro (mais acionável), depois por setor.
+  itens.sort(
+    (a, b) =>
+      (a.situacao === b.situacao ? 0 : a.situacao === "fora_plano" ? -1 : 1) ||
+      a.setor.localeCompare(b.setor),
+  );
 
-  // Esperados no dia que não vieram na colagem.
+  // Despachos JÁ SALVOS no dia (de colagens anteriores) contam como cobertos —
+  // senão um turno que já foi adicionado apareceria como "faltante" no resumo.
+  const jaSalvosRes = await pool.query<{ setor: string }>(
+    `SELECT DISTINCT setor FROM despachos_diarios
+     WHERE data = $1::date AND (status IS NULL OR status !~* 'cancel|inativ')`,
+    [dia],
+  );
+  const cobertos = new Set<string>(despachadosSet);
+  for (const r of jaSalvosRes.rows) cobertos.add(normalizarSetor(r.setor));
+
+  // Esperados no dia que não estão cobertos (colagem atual + já salvos) + resumo por turno.
   let naoDespachado = 0;
+  const turnoMap = new Map<string, { previstos: number; despachados: number }>();
   for (const s of setores) {
     if (!esperadoNoDia(s, dia, datasSetPorSetor.get(s.setor)!)) continue;
-    if (!despachadosSet.has(s.setor)) naoDespachado++;
+    const despachado = cobertos.has(s.setor);
+    if (!despachado) naoDespachado++;
+    const turno = normalizeTurno(s.turno) ?? "Sem turno";
+    const bucket = turnoMap.get(turno) ?? { previstos: 0, despachados: 0 };
+    bucket.previstos++;
+    if (despachado) bucket.despachados++;
+    turnoMap.set(turno, bucket);
   }
+  const porTurno: ColarTurnoResumo[] = Array.from(turnoMap.entries())
+    .map(([turno, v]) => ({ turno, previstos: v.previstos, despachados: v.despachados, faltam: v.previstos - v.despachados }))
+    .sort((a, b) => (ORDEM_TURNO[a.turno] ?? 99) - (ORDEM_TURNO[b.turno] ?? 99) || a.turno.localeCompare(b.turno));
 
   let gravados = 0;
   if (!opts.dryRun && parsed.registros.length > 0) {
@@ -367,5 +476,54 @@ export async function colarDespachos(
     fora_plano: foraPlano,
     nao_despachado: naoDespachado,
     avisos,
+    itens,
+    porTurno,
   };
+}
+
+export interface DespacharManualResult {
+  dia: string;
+  gravados: number;
+  setores: string[];
+}
+
+/**
+ * Despacho manual de uma seleção de setores para um dia. Grava em despachos_diarios
+ * (origem 'manual'), derivando o turno do cronograma ou da nomenclatura do setor.
+ * Em conflito (já despachado) preserva veículos/datas existentes — só reforça o status.
+ */
+export async function despacharManual(dia: string, setores: string[]): Promise<DespacharManualResult> {
+  const limpos = Array.from(new Set((setores ?? []).map((s) => normalizarSetor(s)).filter(Boolean)));
+  if (limpos.length === 0) return { dia, gravados: 0, setores: [] };
+
+  const cron = await listCronogramaSetores({});
+  const turnoPorSetor = new Map(cron.map((s) => [s.setor, normalizeTurno(s.turno)]));
+
+  const client = await pool.connect();
+  let gravados = 0;
+  try {
+    await client.query("BEGIN");
+    for (const setor of limpos) {
+      const turno = turnoPorSetor.get(setor) ?? turnoPelaNomenclatura(setor);
+      const res = await client.query(
+        `INSERT INTO despachos_diarios
+           (setor, data, turno, status, modelo, veiculos, data_planejada, data_maxima, origem, raw, updated_at)
+         VALUES ($1, $2::date, $3, 'Despacho manual', NULL, ARRAY[]::text[], NULL, NULL, 'manual', $4::jsonb, NOW())
+         ON CONFLICT (setor, data) DO UPDATE SET
+           status = 'Despacho manual',
+           origem = 'manual',
+           turno = COALESCE(despachos_diarios.turno, EXCLUDED.turno),
+           updated_at = NOW()`,
+        [setor, dia, turno, JSON.stringify({ origem: "manual", despachado_em: new Date().toISOString() })],
+      );
+      gravados += res.rowCount ?? 0;
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    client.release();
+    throw err;
+  }
+  client.release();
+  return { dia, gravados, setores: limpos };
 }

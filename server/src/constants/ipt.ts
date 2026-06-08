@@ -110,6 +110,7 @@ export const SERVICO_POR_CODIGO: Record<string, string> = {
   LE: "Lavagem especial de equipamentos públicos",
   GO: "Coleta de grandes objetos (cata-bagulho)",
   VP: "Equipe para varrição de praças",
+  VF: "Varrição de feiras-livres",
   VJ: "Varrição manual de vias e logradouros públicos - sarjetas",
   VL: "Varrição manual de vias e logradouros públicos - sarjetas e calçadas",
   /** Varrição mecanizada (código no plano, ex.: CV10302VM0002) */

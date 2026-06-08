@@ -22,7 +22,7 @@ import {
   Map,
   Battery,
   Network,
-  Truck,
+  Send,
   Eye,
   type LucideIcon,
 } from "lucide-react"
@@ -89,7 +89,7 @@ const iptNavItems: SidebarNavDotItem[] = [
   {
     href: "/ipt/despachos",
     label: "Despachos SELIMP",
-    icon: Truck,
+    icon: Send,
     pageKey: "ipt" as AuthPageKey,
     dotClassName: "bg-amber-500 shadow-amber-500/40",
   },

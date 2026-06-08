@@ -19,7 +19,7 @@ import { enrichDadosBateriaFromSetoresModulos } from "../services/enrichDadosBat
 import { normalizarSetor, parseSetor, resolveTipoServicoExibicao } from "../constants/ipt.js";
 import { parseConsolidadoVeiculos, parseConsolidadoVarricao } from "../services/parseRelatorioConsolidado.js";
 import { type ReportLinhaRaw } from "../services/estimarDataReport.js";
-import { resolverDatasReport } from "../services/resolverDatasReport.js";
+import { resolverDatasReport, extrairDataPlanejadaRaw } from "../services/resolverDatasReport.js";
 import { mergeAcicOverridesAfterImportRow } from "../services/acicImportMerge.js";
 import { parseModulosBateriaWorkbook } from "../services/parseModulosBateria.js";
 import { parseStatusBateria } from "../services/parseStatusBateria.js";
@@ -2313,12 +2313,9 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       const modoRef = query.modo_referencia as ReportReferenceMode | undefined;
       const periodoInicial = query.periodo_inicial;
       const periodoFinal = query.periodo_final;
-
-      if (!mesRef && (!modoRef || !periodoInicial || !periodoFinal)) {
-        return reply.code(400).send({
-          detail: "Informe mes_referencia (YYYY-MM) ou modo_referencia + periodo_inicial + periodo_final.",
-        });
-      }
+      // A planilha do report agora traz a data real por linha (coluna "Data planejada").
+      // Quando nenhum período é informado, ele é derivado da própria planilha.
+      const temPeriodoExplicito = Boolean(modoRef && periodoInicial && periodoFinal);
 
       const data = await request.file();
       if (!data) return reply.code(400).send({ detail: "Arquivo XLSX obrigatório" });
@@ -2344,19 +2341,38 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         inicio = `${ano}-${String(mes).padStart(2, "0")}-01`;
         fim = `${ano}-${String(mes).padStart(2, "0")}-${String(ultimoDia).padStart(2, "0")}`;
         modoReferencia = "mensal";
-      } else {
-        if ((modoRef !== "d_minus_1" && modoRef !== "fim_de_semana") || !periodoInicial || !periodoFinal) {
+      } else if (temPeriodoExplicito) {
+        // Caminho legado: período informado explicitamente (compatibilidade).
+        if (modoRef !== "d_minus_1" && modoRef !== "fim_de_semana") {
           return reply.code(400).send({ detail: "modo_referencia inválido. Use d_minus_1 ou fim_de_semana." });
         }
-        if (!isDateKey(periodoInicial) || !isDateKey(periodoFinal)) {
+        if (!isDateKey(periodoInicial!) || !isDateKey(periodoFinal!)) {
           return reply.code(400).send({ detail: "periodo_inicial e periodo_final devem estar no formato YYYY-MM-DD." });
         }
-        if (periodoInicial > periodoFinal) {
+        if (periodoInicial! > periodoFinal!) {
           return reply.code(400).send({ detail: "periodo_inicial não pode ser maior que periodo_final." });
         }
-        inicio = periodoInicial;
-        fim = periodoFinal;
+        inicio = periodoInicial!;
+        fim = periodoFinal!;
         modoReferencia = modoRef;
+      } else {
+        // Caminho padrão: deriva o período das datas reais da planilha (coluna "Data planejada").
+        const datasPlanilha = Array.from(
+          new Set(
+            rows
+              .map((row) => extrairDataPlanejadaRaw(row.raw ?? {}))
+              .filter((d): d is string => !!d),
+          ),
+        ).sort();
+        if (datasPlanilha.length === 0) {
+          return reply.code(400).send({
+            detail:
+              "A planilha não possui a coluna de data (\"Data planejada\"). Não foi possível determinar o período automaticamente.",
+          });
+        }
+        inicio = datasPlanilha[0];
+        fim = datasPlanilha[datasPlanilha.length - 1];
+        modoReferencia = inicio === fim ? "d_minus_1" : "fim_de_semana";
       }
 
       const referenciaLabel = describeReportReference(modoReferencia, inicio, fim);
@@ -2385,10 +2401,25 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         fim
       );
 
+      // Datas reais presentes na planilha (após resolução) — base para a sobrescrita.
+      const datasNaPlanilha = Array.from(
+        new Set(linhasComData.map((l) => l.data_estimada).filter((d): d is string => !!d)),
+      );
+
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
 
+        // Sobrescrita: remove TUDO que já existe para as datas reais da planilha,
+        // independentemente de como foram etiquetadas em importações anteriores
+        // (evita dias "sumindo" e duplicação por períodos sobrepostos).
+        if (datasNaPlanilha.length > 0) {
+          await client.query(
+            `DELETE FROM ipt_report_linhas WHERE data_estimada = ANY($1::date[])`,
+            [datasNaPlanilha]
+          );
+        }
+        // Limpa também eventuais linhas legadas sem data sob o mesmo período.
         await client.query(
           `DELETE FROM ipt_report_linhas
            WHERE periodo_inicial = $1::date AND periodo_final = $2::date AND periodo_tipo = $3`,

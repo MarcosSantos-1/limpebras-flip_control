@@ -347,6 +347,24 @@ export interface DespachosResponse {
   turnos: string[];
 }
 
+export interface ColarDespachoItem {
+  setor: string;
+  subprefeitura: string | null;
+  tipo_servico: string;
+  turno: string | null;
+  status: string | null;
+  situacao: "conforme" | "fora_plano";
+  dataPlanejada: string | null;
+  veiculos: number;
+}
+
+export interface ColarTurnoResumo {
+  turno: string;
+  previstos: number;
+  despachados: number;
+  faltam: number;
+}
+
 export interface ColarDespachosResult {
   dia: string;
   extraidos: number;
@@ -355,6 +373,8 @@ export interface ColarDespachosResult {
   fora_plano: number;
   nao_despachado: number;
   avisos: string[];
+  itens: ColarDespachoItem[];
+  porTurno: ColarTurnoResumo[];
 }
 
 export interface IptPreviewResponse {
@@ -776,24 +796,27 @@ export const apiService = {
 
   uploadIptReportXlsx: async (
     file: File,
-    referencia: {
-      modoReferencia: "d_minus_1" | "fim_de_semana" | "mensal";
-      periodoInicial: string;
-      periodoFinal: string;
+    referencia?: {
+      modoReferencia?: "d_minus_1" | "fim_de_semana" | "mensal";
+      periodoInicial?: string;
+      periodoFinal?: string;
       mesReferencia?: string;
     }
   ) => {
     const formData = new FormData();
     formData.append('file', file);
     const params = new URLSearchParams();
-    if (referencia.mesReferencia) {
+    // A data agora vem da própria planilha; o período é derivado no backend.
+    // Os parâmetros abaixo só são enviados em fluxos legados (ex.: importação mensal).
+    if (referencia?.mesReferencia) {
       params.set('mes_referencia', referencia.mesReferencia);
-    } else {
+    } else if (referencia?.modoReferencia && referencia.periodoInicial && referencia.periodoFinal) {
       params.set('modo_referencia', referencia.modoReferencia);
       params.set('periodo_inicial', referencia.periodoInicial);
       params.set('periodo_final', referencia.periodoFinal);
     }
-    const { data } = await api.post(`/upload/ipt-report?${params.toString()}`, formData, {
+    const qs = params.toString();
+    const { data } = await api.post(`/upload/ipt-report${qs ? `?${qs}` : ""}`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
       timeout: UPLOAD_REQUEST_TIMEOUT_MS,
     });
@@ -871,6 +894,11 @@ export const apiService = {
   colarDespachos: async (dia: string, texto: string, opts?: { dryRun?: boolean }) => {
     const { data } = await api.post("/ipt/despachos/colar", { dia, texto, dryRun: opts?.dryRun ?? false });
     return data as ColarDespachosResult;
+  },
+
+  despacharManual: async (dia: string, setores: string[]) => {
+    const { data } = await api.post("/ipt/despachos/manual", { dia, setores });
+    return data as { dia: string; gravados: number; setores: string[] };
   },
 
   uploadIptSetoresModulosXlsx: async (file: File) => {
