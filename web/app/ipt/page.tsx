@@ -1312,17 +1312,6 @@ export default function IPTPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <div className="rounded-xl bg-red-500/10 p-3 shadow-sm">
-                  <p className="text-xs text-muted-foreground">Stress cobertura 10%</p>
-                  <p className="text-xl font-bold text-red-700 dark:text-red-300">{pct(iptCard.cenarios?.conservador.percentual)}</p>
-                </div>
-                <div className="rounded-xl bg-cyan-500/10 p-3 shadow-sm">
-                  <p className="text-xs text-muted-foreground">Cobertura 100%</p>
-                  <p className="text-xl font-bold text-cyan-700 dark:text-cyan-300">{pct(iptCard.cenarios?.otimista.percentual)}</p>
-                </div>
-              </div>
-
               <div className="rounded-xl bg-background/70 p-3.5 shadow-sm transition-all hover:shadow-md flex items-center justify-between">
                 <div>
                   <p className="text-xs text-muted-foreground">Pontuação IPT no cenário principal</p>

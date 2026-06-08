@@ -119,6 +119,7 @@ export const SERVICO_POR_CODIGO: Record<string, string> = {
   /** Asseio / população em situação de rua (não é LM). */
   CA: SERVICO_ASSEIO_POPULACAO_RUA,
   CV: "Coleta manual de resíduos de varrição com compactador",
+  CF: "Coleta manual de resíduos de feiras-livres com compactador",
 };
 
 /**

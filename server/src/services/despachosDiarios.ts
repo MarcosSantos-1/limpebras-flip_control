@@ -320,9 +320,24 @@ export interface ColarDespachoItem {
   tipo_servico: string;
   turno: string | null;
   status: string | null;
-  situacao: "conforme" | "fora_plano"; // colado esperado x colado inesperado
+  // colado esperado x colado inesperado; "descartado" = status não-despachável (cancelado/inativo)
+  situacao: "conforme" | "fora_plano" | "descartado";
+  motivoDescarte: string | null; // "Cancelado" | "Inativo" quando situacao === "descartado"
   dataPlanejada: string | null;
   veiculos: number;
+}
+
+/**
+ * Status da SELIMP que NÃO devem virar despacho na colagem:
+ *  - Cancelado: serviço cancelado — mostra como feedback, mas não grava nem cobre o setor.
+ *  - Inativo: setor que começa em outro turno — deixar o outro turno despachar.
+ * Os demais (Ativo, Encerrado, Pendente, etc.) são despacháveis.
+ */
+function statusDescartado(status: string | null): "Cancelado" | "Inativo" | null {
+  const s = (status ?? "").toLowerCase();
+  if (/cancel/.test(s)) return "Cancelado";
+  if (/inativ/.test(s)) return "Inativo";
+  return null;
 }
 
 export interface ColarTurnoResumo {
@@ -335,6 +350,8 @@ export interface ColarTurnoResumo {
 export interface ColarDespachosResult {
   dia: string;
   extraidos: number;
+  despachaveis: number; // extraídos com status despachável (o que será gravado)
+  descartados: number; // cancelados/inativos: mostrados como feedback, não gravados
   gravados: number;
   conforme: number; // esperado e despachado
   fora_plano: number; // despachado mas não esperado
@@ -365,12 +382,32 @@ export async function colarDespachos(
 
   let conforme = 0;
   let foraPlano = 0;
+  let descartados = 0;
   const despachadosSet = new Set<string>();
   const itens: ColarDespachoItem[] = [];
   for (const reg of parsed.registros) {
-    despachadosSet.add(reg.setor);
     const info = infoPorSetor.get(reg.setor);
     const esperado = info ? esperadoNoDia(info, dia, datasSetPorSetor.get(reg.setor)!) : false;
+    const descarte = statusDescartado(reg.status);
+
+    if (descarte) {
+      // Cancelado/Inativo: feedback ao usuário, mas NÃO grava nem cobre o setor.
+      descartados++;
+      itens.push({
+        setor: reg.setor,
+        subprefeitura: info?.subSigla ?? null,
+        tipo_servico: info ? tipoServicoLabel(info) : "—",
+        turno: normalizeTurno(info?.turno ?? null),
+        status: reg.status,
+        situacao: "descartado",
+        motivoDescarte: descarte,
+        dataPlanejada: reg.dataPlanejada,
+        veiculos: reg.veiculos.length,
+      });
+      continue;
+    }
+
+    despachadosSet.add(reg.setor);
     if (!info) {
       avisos.push(`Setor despachado fora do cronograma: ${reg.setor}.`);
       foraPlano++;
@@ -386,15 +423,19 @@ export async function colarDespachos(
       turno: normalizeTurno(info?.turno ?? null),
       status: reg.status,
       situacao: esperado ? "conforme" : "fora_plano",
+      motivoDescarte: null,
       dataPlanejada: reg.dataPlanejada,
       veiculos: reg.veiculos.length,
     });
   }
-  // Ordena: fora do plano primeiro (mais acionável), depois por setor.
+  // Ordena: fora do plano primeiro (mais acionável), depois conforme, descartados por último.
+  const ordemSituacao: Record<ColarDespachoItem["situacao"], number> = {
+    fora_plano: 0,
+    conforme: 1,
+    descartado: 2,
+  };
   itens.sort(
-    (a, b) =>
-      (a.situacao === b.situacao ? 0 : a.situacao === "fora_plano" ? -1 : 1) ||
-      a.setor.localeCompare(b.setor),
+    (a, b) => ordemSituacao[a.situacao] - ordemSituacao[b.situacao] || a.setor.localeCompare(b.setor),
   );
 
   // Despachos JÁ SALVOS no dia (de colagens anteriores) contam como cobertos —
@@ -424,12 +465,15 @@ export async function colarDespachos(
     .map(([turno, v]) => ({ turno, previstos: v.previstos, despachados: v.despachados, faltam: v.previstos - v.despachados }))
     .sort((a, b) => (ORDEM_TURNO[a.turno] ?? 99) - (ORDEM_TURNO[b.turno] ?? 99) || a.turno.localeCompare(b.turno));
 
+  // Só grava registros despacháveis (exclui Cancelado/Inativo).
+  const despachaveisRegs = parsed.registros.filter((reg) => !statusDescartado(reg.status));
+
   let gravados = 0;
-  if (!opts.dryRun && parsed.registros.length > 0) {
+  if (!opts.dryRun && despachaveisRegs.length > 0) {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-      for (const reg of parsed.registros) {
+      for (const reg of despachaveisRegs) {
         const turno = infoPorSetor.get(reg.setor)?.turno ?? null;
         const res = await client.query(
           `INSERT INTO despachos_diarios
@@ -471,6 +515,8 @@ export async function colarDespachos(
   return {
     dia,
     extraidos: parsed.total,
+    despachaveis: despachaveisRegs.length,
+    descartados,
     gravados: opts.dryRun ? 0 : gravados,
     conforme,
     fora_plano: foraPlano,

@@ -353,7 +353,8 @@ export interface ColarDespachoItem {
   tipo_servico: string;
   turno: string | null;
   status: string | null;
-  situacao: "conforme" | "fora_plano";
+  situacao: "conforme" | "fora_plano" | "descartado";
+  motivoDescarte: string | null;
   dataPlanejada: string | null;
   veiculos: number;
 }
@@ -368,6 +369,8 @@ export interface ColarTurnoResumo {
 export interface ColarDespachosResult {
   dia: string;
   extraidos: number;
+  despachaveis: number;
+  descartados: number;
   gravados: number;
   conforme: number;
   fora_plano: number;

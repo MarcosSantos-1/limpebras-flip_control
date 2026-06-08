@@ -150,7 +150,7 @@ function getObsCategoria(titulo: string): (typeof OBS_DIARIA_CATEGORIES)[number]
 
 type ChipKey = "todos" | "varricao" | "outros";
 
-type StatusFiltro = "fora_plano" | "zerado" | null;
+type StatusFiltro = "fora_plano" | "zerado" | "nao_despachado" | null;
 
 /** Turnos canônicos, ordenados e numerados para o dropdown. */
 const TURNOS = [
@@ -299,6 +299,10 @@ export default function DespachosPage() {
   const [manualOpen, setManualOpen] = useState(false);
   const [manualBusy, setManualBusy] = useState(false);
 
+  // Despacho único (botão na linha, sem entrar no modo seleção)
+  const [singleAlvo, setSingleAlvo] = useState<DespachoLinha | null>(null);
+  const [singleBusy, setSingleBusy] = useState(false);
+
   // Colagem SELIMP
   const [colarOpen, setColarOpen] = useState(false);
   const [colarTexto, setColarTexto] = useState("");
@@ -439,6 +443,21 @@ export default function DespachosPage() {
       toast.error(e instanceof Error ? e.message : "Falha ao despachar manualmente.");
     } finally {
       setManualBusy(false);
+    }
+  }
+
+  async function confirmarDespachoUnico() {
+    if (!singleAlvo) return;
+    setSingleBusy(true);
+    try {
+      await apiService.despacharManual(dia, [singleAlvo.setor]);
+      toast.success(`Despacho manual gravado para ${singleAlvo.setor}.`);
+      setSingleAlvo(null);
+      setNonce((n) => n + 1);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Falha ao despachar manualmente.");
+    } finally {
+      setSingleBusy(false);
     }
   }
 
@@ -616,7 +635,16 @@ export default function DespachosPage() {
               value={`${data.kpis.previstos}/${data.kpis.despachados}`}
               tint="bg-amber-500"
             />
-            <KpiCard icon={AlertTriangle} label="Não despachado" value={data.kpis.naoDespachados} tint="bg-rose-500" emphasis />
+            <KpiCard
+              icon={AlertTriangle}
+              label="Não despachado"
+              value={data.kpis.naoDespachados}
+              tint="bg-rose-500"
+              emphasis
+              onClick={() => setStatusFiltro((cur) => (cur === "nao_despachado" ? null : "nao_despachado"))}
+              active={statusFiltro === "nao_despachado"}
+              activeRing="ring-rose-500/60"
+            />
             <KpiCard
               icon={Send}
               label="Fora do plano"
@@ -714,13 +742,11 @@ export default function DespachosPage() {
                       onClick={() => setStatusFiltro(null)}
                       className={cn(
                         "inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-semibold transition-colors",
-                        statusFiltro === "fora_plano"
-                          ? "border-slate-500/50 bg-slate-500/15 text-slate-700 dark:text-slate-300"
-                          : "border-orange-500/50 bg-orange-500/15 text-orange-700 dark:text-orange-300",
+                        STATUS_META[statusFiltro].className,
                       )}
                       title="Remover filtro"
                     >
-                      {statusFiltro === "fora_plano" ? "Fora do plano" : "Zerados"}
+                      {STATUS_META[statusFiltro].label}
                       <X className="h-3 w-3" />
                     </button>
                   )}
@@ -784,7 +810,7 @@ export default function DespachosPage() {
                       <TableHead className="text-center text-[11px] font-semibold uppercase tracking-wide">% exec.</TableHead>
                       <TableHead className="text-center text-[11px] font-semibold uppercase tracking-wide">Status</TableHead>
                       <TableHead className="text-center text-[11px] font-semibold uppercase tracking-wide">Próx.</TableHead>
-                      <TableHead className="w-10" />
+                      <TableHead className="w-24 text-center text-[11px] font-semibold uppercase tracking-wide">Ações</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -881,30 +907,46 @@ export default function DespachosPage() {
                             {l.proximaProgramacao ?? "—"}
                           </TableCell>
                           <TableCell className="text-center">
-                            {(() => {
-                              const salva = obsDiarias[l.setor];
-                              const animar = recentObs.has(l.setor);
-                              const ObsIcon = salva ? getObsCategoria(salva.titulo).Icon : MessageSquarePlus;
-                              return (
+                            <div className="flex items-center justify-center gap-1.5">
+                              {!l.despachadoManual && l.despachosSelimp === 0 && (
                                 <button
                                   type="button"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    abrirObs(l);
+                                    setSingleAlvo(l);
                                   }}
-                                  title={salva ? `Observação: ${salva.titulo}` : "Registrar observação diária"}
-                                  className={cn(
-                                    "inline-flex items-center justify-center rounded-lg border p-1.5 transition-all",
-                                    salva
-                                      ? "border-amber-500/60 bg-amber-500/20 text-amber-600 hover:bg-amber-500/30 dark:text-amber-400"
-                                      : "border-zinc-300/70 bg-muted/40 text-muted-foreground hover:bg-muted dark:border-zinc-700",
-                                    animar && "animate-pulse ring-2 ring-amber-500/50",
-                                  )}
+                                  title="Despachar este setor"
+                                  aria-label="Despachar este setor"
+                                  className="inline-flex items-center justify-center rounded-lg border border-emerald-500/50 bg-emerald-500/10 p-1.5 text-emerald-600 transition-all hover:bg-emerald-500/20 dark:text-emerald-400"
                                 >
-                                  <ObsIcon className="h-4 w-4" />
+                                  <Send className="h-4 w-4" />
                                 </button>
-                              );
-                            })()}
+                              )}
+                              {(() => {
+                                const salva = obsDiarias[l.setor];
+                                const animar = recentObs.has(l.setor);
+                                const ObsIcon = salva ? getObsCategoria(salva.titulo).Icon : MessageSquarePlus;
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      abrirObs(l);
+                                    }}
+                                    title={salva ? `Observação: ${salva.titulo}` : "Registrar observação diária"}
+                                    className={cn(
+                                      "inline-flex items-center justify-center rounded-lg border p-1.5 transition-all",
+                                      salva
+                                        ? "border-amber-500/60 bg-amber-500/20 text-amber-600 hover:bg-amber-500/30 dark:text-amber-400"
+                                        : "border-zinc-300/70 bg-muted/40 text-muted-foreground hover:bg-muted dark:border-zinc-700",
+                                      animar && "animate-pulse ring-2 ring-amber-500/50",
+                                    )}
+                                  >
+                                    <ObsIcon className="h-4 w-4" />
+                                  </button>
+                                );
+                              })()}
+                            </div>
                           </TableCell>
                         </TableRow>
                         );
@@ -951,12 +993,13 @@ export default function DespachosPage() {
             {colarPreview && (
               <div className="space-y-3">
                 {/* Resumo geral */}
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
                   {[
                     { label: "Extraídos", value: colarPreview.extraidos, cls: "text-foreground" },
                     { label: "Conforme", value: colarPreview.conforme, cls: "text-emerald-600 dark:text-emerald-400" },
                     { label: "Fora do plano", value: colarPreview.fora_plano, cls: "text-slate-600 dark:text-slate-400" },
                     { label: "Não despachados", value: colarPreview.nao_despachado, cls: "text-rose-600 dark:text-rose-400" },
+                    { label: "Descartados", value: colarPreview.descartados, cls: "text-zinc-500 dark:text-zinc-400" },
                   ].map((k) => (
                     <div key={k.label} className="rounded-lg border border-border/70 bg-muted/30 px-3 py-2">
                       <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{k.label}</p>
@@ -1015,7 +1058,13 @@ export default function DespachosPage() {
                     </div>
                     <div className="max-h-60 divide-y divide-border/60 overflow-y-auto rounded-lg border border-border/70">
                       {colarPreview.itens.map((it) => (
-                        <div key={it.setor} className="flex items-center gap-2 px-2.5 py-1.5">
+                        <div
+                          key={it.setor}
+                          className={cn(
+                            "flex items-center gap-2 px-2.5 py-1.5",
+                            it.situacao === "descartado" && "opacity-60",
+                          )}
+                        >
                           <Badge variant="outline" className={cn("h-5 shrink-0 px-1.5 text-[10px]", subprefBadgeClass(it.subprefeitura ?? ""))}>
                             {it.subprefeitura ?? "—"}
                           </Badge>
@@ -1028,15 +1077,26 @@ export default function DespachosPage() {
                           )}
                           <Badge
                             variant="outline"
+                            title={
+                              it.situacao === "descartado"
+                                ? `${it.motivoDescarte ?? it.status ?? "Descartado"} — não despachado`
+                                : undefined
+                            }
                             className={cn(
                               "shrink-0 text-[10px]",
                               it.turno ? "" : "ml-auto",
                               it.situacao === "conforme"
                                 ? "border-emerald-500/40 bg-emerald-500/12 text-emerald-700 dark:text-emerald-300"
-                                : "border-slate-500/40 bg-slate-500/12 text-slate-700 dark:text-slate-300",
+                                : it.situacao === "fora_plano"
+                                  ? "border-slate-500/40 bg-slate-500/12 text-slate-700 dark:text-slate-300"
+                                  : "border-rose-500/40 bg-rose-500/12 text-rose-700 line-through dark:text-rose-300",
                             )}
                           >
-                            {it.situacao === "conforme" ? "Previsto" : "Fora do plano"}
+                            {it.situacao === "conforme"
+                              ? "Previsto"
+                              : it.situacao === "fora_plano"
+                                ? "Fora do plano"
+                                : (it.motivoDescarte ?? it.status ?? "Descartado")}
                           </Badge>
                           <span className="flex shrink-0 items-center gap-0.5 text-[10px] tabular-nums text-muted-foreground" title="Veículos">
                             <Truck className="h-3 w-3" />
@@ -1072,11 +1132,12 @@ export default function DespachosPage() {
             ) : (
               <Button
                 onClick={confirmarColagem}
-                disabled={colarBusy || colarPreview.extraidos === 0}
+                disabled={colarBusy || colarPreview.despachaveis === 0}
                 className="gap-2 bg-amber-600 text-white hover:bg-amber-700"
               >
                 {colarBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                Gravar {colarPreview.extraidos} despachos
+                Gravar {colarPreview.despachaveis} despachos
+                {colarPreview.descartados > 0 ? ` (${colarPreview.descartados} descartado${colarPreview.descartados > 1 ? "s" : ""})` : ""}
               </Button>
             )}
           </DialogFooter>
@@ -1126,6 +1187,48 @@ export default function DespachosPage() {
             >
               {manualBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
               Despachar {selectedLinhas.length}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog: despacho único (botão aviãozinho na linha) */}
+      <Dialog open={singleAlvo != null} onOpenChange={(o) => !o && setSingleAlvo(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <Send className="h-5 w-5 text-amber-500" />
+              Despachar setor — {format(diaDate, "dd/MM/yyyy")}
+            </DialogTitle>
+            <DialogDescription className="text-xs leading-relaxed">
+              Confirme o despacho manual deste setor. Ele passará a contar como despachado no dia.
+            </DialogDescription>
+          </DialogHeader>
+          {singleAlvo && (
+            <div className="flex items-center gap-2 rounded-lg border border-border/70 bg-muted/30 px-3 py-2.5">
+              <Badge variant="outline" className={cn("h-5 shrink-0 px-1.5 text-[10px]", subprefBadgeClass(singleAlvo.subprefeitura ?? ""))}>
+                {singleAlvo.subprefeitura ?? "—"}
+              </Badge>
+              <span className="shrink-0 font-mono text-xs font-semibold text-foreground">{singleAlvo.setor}</span>
+              <span className="truncate text-xs text-muted-foreground">{servicoLabel(singleAlvo.tipo_servico)}</span>
+              {singleAlvo.turno && (
+                <span className="ml-auto shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                  {singleAlvo.turno}
+                </span>
+              )}
+            </div>
+          )}
+          <DialogFooter className="gap-2">
+            <Button variant="ghost" onClick={() => setSingleAlvo(null)} disabled={singleBusy}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={confirmarDespachoUnico}
+              disabled={singleBusy}
+              className="gap-2 bg-amber-600 text-white hover:bg-amber-700"
+            >
+              {singleBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              Despachar
             </Button>
           </DialogFooter>
         </DialogContent>
