@@ -41,6 +41,7 @@ function sanitizeUser(row: UserRow) {
     blocked: row.blocked,
     page_permissions: pagePermissions,
     is_ipt_restricted: row.role !== "host" && allowed.has("ipt_restrito"),
+    is_cco: row.role !== "host" && allowed.has("cco"),
     visible_password: safeDecryptVisiblePassword(row.password_encrypted),
   };
 }

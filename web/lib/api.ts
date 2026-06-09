@@ -37,6 +37,7 @@ export interface AuthUser {
   blocked: boolean;
   page_permissions: Record<AuthPageKey, boolean>;
   is_ipt_restricted?: boolean;
+  is_cco?: boolean;
   visible_password: string;
 }
 

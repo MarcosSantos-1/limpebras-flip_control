@@ -3,6 +3,7 @@ export const APP_PAGE_KEYS = [
   "indicadores",
   "ipt",
   "ipt_restrito",
+  "cco",
   "sacs",
   "bfs",
   "defesa",

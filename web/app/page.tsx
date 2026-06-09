@@ -838,16 +838,18 @@ function DashboardContent() {
 }
 
 export default function DashboardPage() {
-  const { isIptRestrictedUser } = useAuth();
+  const { isIptRestrictedUser, isCcoUser } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
-    if (isIptRestrictedUser) {
+    if (isCcoUser) {
+      router.replace("/ipt/view");
+    } else if (isIptRestrictedUser) {
       router.replace("/ipt/bateria");
     }
-  }, [isIptRestrictedUser, router]);
+  }, [isCcoUser, isIptRestrictedUser, router]);
 
-  if (isIptRestrictedUser) return null;
+  if (isCcoUser || isIptRestrictedUser) return null;
 
   return (
     <MainLayout>

@@ -34,6 +34,7 @@ export type AuthUser = {
   blocked: boolean;
   allowedPages: Record<AppPageKey, boolean>;
   isIptRestricted: boolean;
+  isCco: boolean;
 };
 
 declare module "fastify" {
@@ -98,6 +99,7 @@ function mapSessionRowToAuthUser(row: SessionRow): AuthUser {
     blocked: row.blocked,
     allowedPages: parsePermissions(row.page_permissions, row.role),
     isIptRestricted: row.role !== "host" && row.page_permissions?.includes("ipt_restrito") === true,
+    isCco: row.role !== "host" && row.page_permissions?.includes("cco") === true,
   };
 }
 

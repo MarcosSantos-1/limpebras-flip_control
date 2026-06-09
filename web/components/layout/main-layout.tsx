@@ -26,6 +26,11 @@ const PAGE_ACCESS_BY_PATH: Record<string, AuthPageKey> = {
 }
 
 const IPT_RESTRICTED_ALLOWED_PATHS = ["/ipt", "/ipt/bateria", "/upload"] as const
+/** CCO: acesso somente às páginas do IPT (qualquer rota sob /ipt). Home = Painel CCO. */
+const CCO_HOME_PATH = "/ipt/view"
+function isAllowedCcoPath(pathname: string): boolean {
+  return pathname === "/ipt" || pathname.startsWith("/ipt/")
+}
 
 function getPageKeyForPath(pathname: string): AuthPageKey | undefined {
   const direct = PAGE_ACCESS_BY_PATH[pathname]
@@ -43,7 +48,7 @@ function isAllowedIptRestrictedPath(pathname: string): boolean {
 
 export function MainLayout({ children }: MainLayoutProps) {
   const [collapsed, setCollapsed] = useState(false)
-  const { user, loading, hasPageAccess, isIptRestrictedUser } = useAuth()
+  const { user, loading, hasPageAccess, isIptRestrictedUser, isCcoUser } = useAuth()
   const pathname = usePathname()
   const router = useRouter()
 
@@ -53,15 +58,19 @@ export function MainLayout({ children }: MainLayoutProps) {
       router.replace("/login")
       return
     }
+    if (isCcoUser && !isAllowedCcoPath(pathname)) {
+      router.replace(CCO_HOME_PATH)
+      return
+    }
     if (isIptRestrictedUser && !isAllowedIptRestrictedPath(pathname)) {
       router.replace("/ipt/bateria")
       return
     }
     const pageKey = getPageKeyForPath(pathname)
     if (pageKey && !hasPageAccess(pageKey)) {
-      router.replace(isIptRestrictedUser ? "/ipt/bateria" : "/")
+      router.replace(isCcoUser ? CCO_HOME_PATH : isIptRestrictedUser ? "/ipt/bateria" : "/")
     }
-  }, [hasPageAccess, isIptRestrictedUser, loading, pathname, router, user])
+  }, [hasPageAccess, isCcoUser, isIptRestrictedUser, loading, pathname, router, user])
 
   if (loading) {
     return (

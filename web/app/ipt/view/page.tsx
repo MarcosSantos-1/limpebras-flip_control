@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import { MainLayout } from "@/components/layout/main-layout";
+import { EvolutionChartModal, type EvolutionSeriesPoint } from "@/components/evolution-chart-modal";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -144,7 +145,52 @@ export default function ViewCcoPage() {
   const [loading, setLoading] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
 
+  // Modal de evolução do serviço (mesma experiência da página de IPT).
+  const [serviceEvolutionOpen, setServiceEvolutionOpen] = useState(false);
+  const [serviceEvolutionTitle, setServiceEvolutionTitle] = useState("");
+  const [serviceEvolutionPoints, setServiceEvolutionPoints] = useState<EvolutionSeriesPoint[]>([]);
+  const [serviceEvolutionLoading, setServiceEvolutionLoading] = useState(false);
+
   const diaDate = parseDia(dia);
+
+  const handleServiceEvolutionClick = useCallback(
+    async (tipoServico: string) => {
+      const label = tipoServico || "Não informado";
+      const inicio = format(startOfMonth(diaDate), "yyyy-MM-dd");
+      const fim = format(endOfMonth(diaDate), "yyyy-MM-dd");
+      setServiceEvolutionTitle(label);
+      setServiceEvolutionOpen(true);
+      setServiceEvolutionLoading(true);
+      setServiceEvolutionPoints([]);
+      try {
+        const response = await apiService.getIptServiceSnapshots(label, inicio, fim);
+        setServiceEvolutionPoints(
+          response.pontos.map((point) => ({
+            date: point.periodo_final,
+            value: point.percentual,
+            secondaryValue: point.media_sem_zerados,
+            dayValue: point.percentual_dia,
+            count: point.total_despachos,
+            dayCount: point.total_despachos_dia,
+            plannedCount: point.despachos_previstos,
+            plannedDayCount: point.despachos_previstos_dia,
+            coverageValue: point.cobertura_despachos,
+            dayCoverageValue: point.cobertura_despachos_dia,
+            notDispatchedCount: point.despachos_nao_despachados,
+            notDispatchedDayCount: point.despachos_nao_despachados_dia,
+            zeroCount: point.despachos_zerados,
+            dayZeroCount: point.despachos_zerados_dia,
+            meta: `${point.quantidade_planos} planos | ${point.despachos_zerados} zerados acumulados`,
+          })),
+        );
+      } catch {
+        setServiceEvolutionPoints([]);
+      } finally {
+        setServiceEvolutionLoading(false);
+      }
+    },
+    [diaDate],
+  );
 
   const carregar = useCallback(async () => {
     setLoading(true);
@@ -469,7 +515,7 @@ export default function ViewCcoPage() {
                               </span>
                             )}
                           </p>
-                          <p className="truncate text-[11px] text-muted-foreground">{servicoLabel(l.tipo_servico)}</p>
+                          <p className="truncate text-[13px] text-muted-foreground">{servicoLabel(l.tipo_servico)}</p>
                         </div>
                         <div className="shrink-0 text-right">
                           <p className="font-mono text-sm font-bold tabular-nums text-cyan-600 dark:text-cyan-400">
@@ -508,7 +554,7 @@ export default function ViewCcoPage() {
                   porServicoDia.map((s) => (
                     <div key={s.servico} className="rounded-lg bg-background/60 p-2.5 shadow-sm">
                       <div className="mb-1.5 flex items-center justify-between gap-2">
-                        <span className="min-w-0 truncate text-xs font-semibold">{s.servico}</span>
+                        <span className="min-w-0 truncate text-sm font-semibold">{s.servico}</span>
                         <span className="shrink-0 font-mono text-sm font-bold tabular-nums text-cyan-600 dark:text-cyan-400">
                           {s.cobertura}%
                         </span>
@@ -535,7 +581,7 @@ export default function ViewCcoPage() {
                 <div className="flex items-center justify-between gap-2">
                   <div className="min-w-0">
                     <CardTitle className="text-sm">Serviços (ativos) no mês</CardTitle>
-                    <CardDescription className="text-[11px]">% execução · {format(diaDate, "MMM/yyyy", { locale: ptBR })}.</CardDescription>
+                    <CardDescription className="text-[11px]">% execução · {format(diaDate, "MMM/yyyy", { locale: ptBR })}. Clique para ver a evolução.</CardDescription>
                   </div>
                   <span className="shrink-0 rounded-full bg-muted/50 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
                     {servicosMesFiltrados.length}
@@ -553,9 +599,17 @@ export default function ViewCcoPage() {
                 )}
                 {!loading &&
                   servicosMesFiltrados.map((s) => (
-                    <div key={s.tipo_servico} className="rounded-lg bg-background/60 p-2.5 shadow-sm">
+                    <button
+                      type="button"
+                      key={s.tipo_servico}
+                      onClick={() => handleServiceEvolutionClick(s.tipo_servico || "Não informado")}
+                      className="group w-full rounded-lg bg-background/60 p-2.5 text-left shadow-sm transition-all hover:bg-cyan-500/5 hover:shadow-md hover:ring-1 hover:ring-cyan-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
+                      title="Clique para ver a evolução do serviço"
+                    >
                       <div className="mb-1.5 flex items-center justify-between gap-2">
-                        <span className="min-w-0 truncate text-xs font-semibold">{servicoLabel(s.tipo_servico || "Não informado")}</span>
+                        <span className="min-w-0 truncate text-sm font-semibold group-hover:text-cyan-700 dark:group-hover:text-cyan-300">
+                          {servicoLabel(s.tipo_servico || "Não informado")}
+                        </span>
                         <div className="flex shrink-0 items-center gap-1">
                           <span className="font-mono text-sm font-bold tabular-nums text-cyan-600 dark:text-cyan-400" title="Média de execução (com zerados)">
                             {pct(s.media_execucao)}
@@ -574,16 +628,29 @@ export default function ViewCcoPage() {
                           />
                         </div>
                         <span className="shrink-0 whitespace-nowrap text-[11px] text-muted-foreground">
-                          {s.cobertura_despachos != null ? `${s.cobertura_despachos.toFixed(0)}% desp.` : "—"}
+                          {s.total_despachos ?? 0}/{s.despachos_previstos ?? s.total_despachos ?? 0} despachos
                         </span>
                       </div>
-                    </div>
+                    </button>
                   ))}
               </CardContent>
             </Card>
           </div>
         </div>
       </div>
+
+      <EvolutionChartModal
+        open={serviceEvolutionOpen}
+        onOpenChange={setServiceEvolutionOpen}
+        title={`Evolução do serviço - ${serviceEvolutionTitle}`}
+        description="Percentual acumulado do Report SELIMP, com previstos, despachados e cobertura até cada data."
+        primaryLabel="% acumulado com zerados"
+        secondaryLabel="% acumulado sem zerados"
+        points={serviceEvolutionPoints}
+        loading={serviceEvolutionLoading}
+        showPointDetails
+        emptyMessage="Ainda não há snapshots para este serviço no período."
+      />
     </MainLayout>
   );
 }

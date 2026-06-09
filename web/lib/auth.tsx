@@ -22,6 +22,7 @@ type AuthContextValue = {
   refreshUser: () => Promise<void>;
   hasPageAccess: (pageKey: AuthPageKey) => boolean;
   isIptRestrictedUser: boolean;
+  isCcoUser: boolean;
   getDefaultAuthorizedPath: (targetUser?: AuthUser | null) => string;
 };
 
@@ -30,8 +31,15 @@ function isIptRestrictedProfile(user: AuthUser | null | undefined): boolean {
   return user.is_ipt_restricted === true || user.page_permissions?.ipt_restrito === true;
 }
 
+/** Perfil CCO: acesso somente às páginas do IPT, com o Painel CCO como home. */
+function isCcoProfile(user: AuthUser | null | undefined): boolean {
+  if (!user || user.role === "host") return false;
+  return user.is_cco === true || user.page_permissions?.cco === true;
+}
+
 function getDefaultAuthorizedPathForUser(user: AuthUser | null | undefined): string {
   if (!user) return "/login";
+  if (isCcoProfile(user)) return "/ipt/view";
   return isIptRestrictedProfile(user) ? "/ipt/bateria" : "/";
 }
 
@@ -168,6 +176,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [user]);
 
   const isIptRestrictedUser = isIptRestrictedProfile(user);
+  const isCcoUser = isCcoProfile(user);
 
   const value = useMemo<AuthContextValue>(
     () => ({
@@ -182,9 +191,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       refreshUser,
       hasPageAccess,
       isIptRestrictedUser,
+      isCcoUser,
       getDefaultAuthorizedPath,
     }),
-    [getDefaultAuthorizedPath, hasPageAccess, isIptRestrictedUser, loading, login, logout, rememberMeSaved, rememberedPassword, rememberedUsername, refreshUser, user]
+    [getDefaultAuthorizedPath, hasPageAccess, isIptRestrictedUser, isCcoUser, loading, login, logout, rememberMeSaved, rememberedPassword, rememberedUsername, refreshUser, user]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

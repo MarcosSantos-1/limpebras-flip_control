@@ -95,7 +95,7 @@ const iptNavItems: SidebarNavDotItem[] = [
   },
   {
     href: "/ipt/view",
-    label: "View",
+    label: "Painel CCO",
     icon: Eye,
     pageKey: "ipt" as AuthPageKey,
     dotClassName: "bg-cyan-500 shadow-cyan-500/40",
@@ -137,6 +137,16 @@ const userMenuItems: SidebarNavItem[] = [
   { href: "/admin/users", label: "Usuários", icon: Users, pageKey: "admin_users" as AuthPageKey },
 ]
 
+const ccoAfterNavItems: SidebarNavItem[] = [
+  {
+    href: "https://geoplano-limpebras.vercel.app/",
+    label: "Plano de trabalho",
+    icon: Map,
+    skipAccessCheck: true,
+    external: true,
+  },
+]
+
 const iptRestrictedNavItems: SidebarNavItem[] = [
   { href: "/ipt/bateria", label: "Análise de Módulos", icon: ChartColumnStacked, pageKey: "ipt" as AuthPageKey },
   { href: "/ipt", label: "IPT", icon: Activity, pageKey: "ipt" as AuthPageKey, match: "exact" as const },
@@ -156,19 +166,21 @@ interface SidebarProps {
 
 export function Sidebar({ collapsed = false }: SidebarProps) {
   const pathname = usePathname()
-  const { user, hasPageAccess, logout, isIptRestrictedUser, getDefaultAuthorizedPath } = useAuth()
+  const { user, hasPageAccess, logout, isIptRestrictedUser, isCcoUser, getDefaultAuthorizedPath } = useAuth()
 
   const canShowItem = (item: SidebarNavItem) =>
     item.disabled === true ||
     item.skipAccessCheck === true ||
     (item.pageKey != null && hasPageAccess(item.pageKey))
 
-  const visibleBeforeIpt = isIptRestrictedUser ? [] : navItemsBeforeIpt.filter(canShowItem)
-  const visibleAfterFlip = isIptRestrictedUser
+  const visibleBeforeIpt = isIptRestrictedUser || isCcoUser ? [] : navItemsBeforeIpt.filter(canShowItem)
+  const visibleAfterFlip = isCcoUser
+    ? ccoAfterNavItems.filter(canShowItem)
+    : isIptRestrictedUser
     ? iptRestrictedNavItems.filter(canShowItem)
     : navItemsAfterFlip.filter(canShowItem)
   const visibleIptItems = isIptRestrictedUser ? [] : iptNavItems.filter(canShowItem)
-  const visibleFlipItems = isIptRestrictedUser ? [] : flipNavItems.filter(canShowItem)
+  const visibleFlipItems = isIptRestrictedUser || isCcoUser ? [] : flipNavItems.filter(canShowItem)
   const visibleUserMenuItems = userMenuItems.filter(canShowItem)
 
   const isItemActive = (item: SidebarNavItem) =>
