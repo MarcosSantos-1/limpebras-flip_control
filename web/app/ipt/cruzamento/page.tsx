@@ -486,7 +486,7 @@ export default function CruzamentoPage() {
                 </CardHeader>
                 <CardContent className="p-0">
                   <div>
-                    <Table>
+                    <Table className="[&_tr]:border-border/40">
                       <TableHeader className="bg-card">
                         <TableRow>
                           <TableHead className="w-12 text-center">#</TableHead>

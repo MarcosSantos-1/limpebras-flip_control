@@ -201,8 +201,8 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
     const Icon = item.icon
     const isActive = isItemActive(item)
     const className = cn(
-      "group flex items-center gap-3 max-[1440px]:gap-2.5 rounded-xl text-sm font-semibold transition-all duration-200",
-      opts?.compact ? "px-3 py-2.5 max-[1440px]:py-2" : "px-4 py-3 max-[1440px]:px-3 max-[1440px]:py-2.5",
+      "group flex items-center gap-2.5 max-[1440px]:gap-2 rounded-xl text-[13px] max-[1440px]:text-xs font-semibold transition-all duration-200",
+      opts?.compact ? "px-2.5 py-2 max-[1440px]:py-1.5" : "px-3 py-2.5 max-[1440px]:px-2.5 max-[1440px]:py-1.5",
       item.disabled
         ? "cursor-not-allowed border border-transparent text-muted-foreground/60 opacity-70"
         : isActive
@@ -214,7 +214,7 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
         {opts?.dotClassName && (
           <span
             className={cn(
-              "h-2.5 w-2.5 shrink-0 rounded-full shadow-sm",
+              "h-2 w-2 shrink-0 rounded-full shadow-sm",
               item.disabled ? "opacity-50" : "",
               opts.dotClassName
             )}
@@ -222,7 +222,7 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
         )}
         <Icon
           className={cn(
-            "h-5 w-5 max-[1440px]:h-4 max-[1440px]:w-4 shrink-0 transition-transform",
+            "h-[18px] w-[18px] max-[1440px]:h-4 max-[1440px]:w-4 shrink-0 transition-transform",
             item.disabled ? "" : "group-hover:scale-110",
             isActive ? "text-blue-500" : ""
           )}
@@ -269,7 +269,7 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
       )}
     >
       <div className="flex h-full min-h-0 flex-col">
-        <div className="flex h-24 max-[1440px]:h-20 items-center justify-start border-b border-border/70 px-6 max-[1440px]:px-4 pb-4 pt-[15px] max-[1440px]:pt-3 max-[1440px]:pb-3">
+        <div className="flex h-20 max-[1440px]:h-16 items-center justify-start border-b border-border/70 px-6 max-[1440px]:px-4 pb-3 pt-3 max-[1440px]:pt-2.5 max-[1440px]:pb-2.5">
           <Link href={getDefaultAuthorizedPath()} className="ml-6 max-[1440px]:ml-2 flex shrink-0 items-center" aria-label="Limpebras — início">
             <Image
               src="/logotipo.png"
@@ -292,30 +292,30 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
           </Link>
         </div>
 
-        <nav className="flex-1 min-h-0 space-y-2 max-[1440px]:space-y-1.5 overflow-y-auto p-4 max-[1440px]:p-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <nav className="flex-1 min-h-0 space-y-1.5 max-[1440px]:space-y-1 overflow-y-auto p-3 max-[1440px]:p-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {visibleBeforeIpt.map((item) => renderNavItem(item))}
 
           {visibleIptItems.length > 0 && (
-            <div className="rounded-2xl border border-border/60 bg-background/40 p-2 max-[1440px]:p-1.5 shadow-sm">
+            <div className="rounded-2xl border border-border/60 bg-background/40 p-1.5 max-[1440px]:p-1 shadow-sm">
               <button
                 type="button"
                 onClick={() => setIptOpen((prev) => !prev)}
                 className={cn(
-                  "flex w-full items-center justify-between rounded-xl px-3 py-2.5 max-[1440px]:py-2 text-left text-sm font-semibold transition",
+                  "flex w-full items-center justify-between rounded-xl px-2.5 py-2 max-[1440px]:py-1.5 text-left text-[13px] max-[1440px]:text-xs font-semibold transition",
                   iptActive
                     ? "bg-indigo-500/10 text-foreground"
                     : "text-muted-foreground hover:bg-accent/70 hover:text-accent-foreground"
                 )}
                 aria-expanded={isIptExpanded}
               >
-                <span className="flex items-center gap-3 max-[1440px]:gap-2.5">
-                  <Activity className="h-5 w-5 max-[1440px]:h-4 max-[1440px]:w-4 shrink-0" />
+                <span className="flex items-center gap-2.5 max-[1440px]:gap-2">
+                  <Activity className="h-[18px] w-[18px] max-[1440px]:h-4 max-[1440px]:w-4 shrink-0" />
                   <span>IPT</span>
                 </span>
                 <ChevronDown className={cn("h-4 w-4 transition-transform", isIptExpanded ? "rotate-180" : "")} />
               </button>
               {isIptExpanded && (
-                <div className="mt-2 space-y-1">
+                <div className="mt-1.5 space-y-0.5">
                   {visibleIptItems.map((item) =>
                     renderNavItem(item, { dotClassName: item.dotClassName, compact: true })
                   )}
@@ -325,26 +325,26 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
           )}
 
           {visibleFlipItems.length > 0 && (
-            <div className="rounded-2xl border border-border/60 bg-background/40 p-2 max-[1440px]:p-1.5 shadow-sm">
+            <div className="rounded-2xl border border-border/60 bg-background/40 p-1.5 max-[1440px]:p-1 shadow-sm">
               <button
                 type="button"
                 onClick={() => setFlipOpen((prev) => !prev)}
                 className={cn(
-                  "flex w-full items-center justify-between rounded-xl px-3 py-2.5 max-[1440px]:py-2 text-left text-sm font-semibold transition",
+                  "flex w-full items-center justify-between rounded-xl px-2.5 py-2 max-[1440px]:py-1.5 text-left text-[13px] max-[1440px]:text-xs font-semibold transition",
                   flipActive
                     ? "bg-cyan-500/10 text-foreground"
                     : "text-muted-foreground hover:bg-accent/70 hover:text-accent-foreground"
                 )}
                 aria-expanded={isFlipExpanded}
               >
-                <span className="flex items-center gap-3 max-[1440px]:gap-2.5">
-                  <span className="h-2.5 w-2.5 rounded-full bg-cyan-500 shadow-sm shadow-cyan-500/40" />
+                <span className="flex items-center gap-2.5 max-[1440px]:gap-2">
+                  <span className="h-2 w-2 rounded-full bg-cyan-500 shadow-sm shadow-cyan-500/40" />
                   <span>FLIP</span>
                 </span>
                 <ChevronDown className={cn("h-4 w-4 transition-transform", isFlipExpanded ? "rotate-180" : "")} />
               </button>
               {isFlipExpanded && (
-                <div className="mt-2 space-y-1">
+                <div className="mt-1.5 space-y-0.5">
                   {visibleFlipItems.map((item) =>
                     renderNavItem(item, { dotClassName: item.dotClassName, compact: true })
                   )}
