@@ -327,6 +327,7 @@ export interface DespachoLinha {
   despachadoManual: boolean;
   despachosSelimp: number;
   percentual: number | null;
+  percentualHistorico: number | null;
   status: StatusDiaDespacho;
   veiculos: string[];
   proximaProgramacao: string | null;

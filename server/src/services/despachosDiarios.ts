@@ -27,6 +27,7 @@ export interface DespachoLinha {
   despachadoManual: boolean;
   despachosSelimp: number;
   percentual: number | null;
+  percentualHistorico: number | null; // último % SELIMP conhecido antes do dia (histórico)
   status: StatusDia;
   veiculos: string[];
   proximaProgramacao: string | null;
@@ -202,6 +203,17 @@ export async function buildDespachosResponse(
   // --- Linhas do dia (só acionáveis: esperado OU despachado/SELIMP). ---
   const despDia = despPorDia.get(dia) ?? new Map();
   const selDia = selPorDia.get(dia) ?? new Map();
+
+  /** Último % SELIMP conhecido do setor antes do dia (varre o histórico de 14 dias para trás). */
+  function ultimoPctHistorico(setor: string): number | null {
+    for (let i = 1; i <= 13; i++) {
+      const k = addDaysKey(dia, -i);
+      const v = selPorDia.get(k)?.get(setor);
+      if (v && v.pct != null) return Math.round(v.pct);
+    }
+    return null;
+  }
+
   const linhas: DespachoLinha[] = [];
   for (const s of setoresFiltrados) {
     const esperado = esperadoNoDia(s, dia, datasSetPorSetor.get(s.setor)!);
@@ -225,6 +237,7 @@ export async function buildDespachosResponse(
       despachadoManual,
       despachosSelimp,
       percentual,
+      percentualHistorico: ultimoPctHistorico(s.setor),
       status,
       veiculos: manual?.veiculos ?? [],
       proximaProgramacao: proximaProgramacao(s, dia),
@@ -255,6 +268,7 @@ export async function buildDespachosResponse(
       despachadoManual: true,
       despachosSelimp: sel?.count ?? 0,
       percentual: sel?.pct != null ? Math.round(sel.pct) : null,
+      percentualHistorico: ultimoPctHistorico(setor),
       status: "fora_plano",
       veiculos: manual.veiculos ?? [],
       proximaProgramacao: null,

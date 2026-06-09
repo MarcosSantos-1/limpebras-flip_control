@@ -94,12 +94,11 @@ const iptNavItems: SidebarNavDotItem[] = [
     dotClassName: "bg-amber-500 shadow-amber-500/40",
   },
   {
-    href: "#",
+    href: "/ipt/view",
     label: "View",
     icon: Eye,
-    skipAccessCheck: true,
-    disabled: true,
-    dotClassName: "bg-slate-500 shadow-slate-500/40",
+    pageKey: "ipt" as AuthPageKey,
+    dotClassName: "bg-cyan-500 shadow-cyan-500/40",
   },
 ]
 
