@@ -269,7 +269,7 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
       )}
     >
       <div className="flex h-full min-h-0 flex-col">
-        <div className="flex h-20 max-[1440px]:h-16 items-center justify-start border-b border-border/70 px-6 max-[1440px]:px-4 pb-3 pt-3 max-[1440px]:pt-2.5 max-[1440px]:pb-2.5">
+        <div className="flex h-20 max-[1440px]:h-16 items-start justify-start border-b border-border/70 px-6 max-[1440px]:px-4 pb-3 pt-[18px] max-[1440px]:pt-3.5 max-[1440px]:pb-2.5">
           <Link href={getDefaultAuthorizedPath()} className="ml-6 max-[1440px]:ml-2 flex shrink-0 items-center" aria-label="Limpebras — início">
             <Image
               src="/logotipo.png"

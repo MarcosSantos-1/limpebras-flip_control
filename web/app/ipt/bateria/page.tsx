@@ -1,35 +1,40 @@
 "use client";
 
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Activity,
   AlertTriangle,
   ArrowLeft,
-  ArrowRight,
   Battery,
+  BatteryCharging,
   CheckCircle2,
   AlertCircle,
   ChevronLeft,
   ChevronRight,
-  Clock,
   Download,
   Eye,
   FileText,
   Filter,
+  Gauge,
   Hash,
+  Info,
   LayoutDashboard,
   MapPin,
   MoreHorizontal,
-  Plus,
+  Percent,
+  Repeat,
   Search,
   ShieldAlert,
+  ShieldCheck,
   Table2,
   TrendingUp,
+  Trophy,
   Wrench,
   Wifi,
   WifiOff,
+  XCircle,
   Calendar,
 } from "lucide-react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
@@ -67,7 +72,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
   SelectContent,
@@ -111,17 +115,6 @@ interface ModuleData {
   produtividade: number;
 }
 
-interface Dispatch {
-  id: string;
-  date: string;
-  time: string;
-  module: string;
-  setor: string;
-  type: string;
-  description: string;
-  status: "pending" | "completed" | "in-progress";
-}
-
 interface ApiResponse {
   modules: ModuleData[];
   stats: {
@@ -142,8 +135,10 @@ const CHART_COLORS = {
   warning: "#eab308",
   error: "#ef4444",
   info: "#3b82f6",
+  orange: "#f97316",
   primary: "#10b981",
   maintenance: "#64748b",
+  outdated: "#a1a1aa",
 };
 
 const ITEMS_PER_PAGE = 50;
@@ -218,10 +213,9 @@ function getSignalDistribution(data: ModuleData[]) {
 
 function getProductivityDistribution(data: ModuleData[]) {
   return [
-    { range: "90-100%", count: data.filter((m) => m.produtividade >= 90).length },
-    { range: "70-89%", count: data.filter((m) => m.produtividade >= 70 && m.produtividade < 90).length },
-    { range: "50-69%", count: data.filter((m) => m.produtividade >= 50 && m.produtividade < 70).length },
-    { range: "< 50%", count: data.filter((m) => m.produtividade < 50).length },
+    { range: "Alta (70-100%)", count: data.filter((m) => m.produtividade >= 70).length },
+    { range: "Média (30-69%)", count: data.filter((m) => m.produtividade >= 30 && m.produtividade < 70).length },
+    { range: "Baixa (0-29%)", count: data.filter((m) => m.produtividade < 30).length },
   ];
 }
 
@@ -242,29 +236,6 @@ function getProductivityColor(value: number) {
   return "text-red-500";
 }
 
-function getAlertType(m: ModuleData): { type: string; icon: typeof WifiOff; color: string; message: string } {
-  if (m.comunicacao === "OFF") return { type: "offline", icon: WifiOff, color: "text-red-500", message: "Módulo sem comunicação" };
-  if (m.statusBateria === "DESATUALIZADA") return { type: "battery", icon: Battery, color: "text-yellow-500", message: "Bateria desatualizada" };
-  return { type: "productivity", icon: AlertTriangle, color: "text-red-500", message: "Produtividade crítica" };
-}
-
-/** Badge por subprefeitura na aba Alertas: CV verde, MG ciano, JT azul escuro, ST amarelo */
-function getSubprefBadgeClass(sub: string): string {
-  const s = sub.trim().toUpperCase();
-  switch (s) {
-    case "CV":
-      return "border-emerald-500/40 bg-emerald-500/12 text-emerald-800 dark:text-emerald-300";
-    case "MG":
-      return "border-cyan-500/40 bg-cyan-500/12 text-cyan-900 dark:text-cyan-300";
-    case "JT":
-      return "border-blue-900/45 bg-blue-950/25 text-blue-950 dark:border-blue-600 dark:bg-blue-950/50 dark:text-blue-200";
-    case "ST":
-      return "border-amber-400/50 bg-amber-400/15 text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200";
-    default:
-      return "border-border/60 bg-muted/40 text-muted-foreground";
-  }
-}
-
 function SetorCell({ value }: { value: string }) {
   const parts = value.split("/").map((p) => p.trim()).filter(Boolean);
   if (parts.length <= 1) {
@@ -279,6 +250,23 @@ function SetorCell({ value }: { value: string }) {
         </span>
       ))}
     </div>
+  );
+}
+
+/** Tooltip discreto via CSS (group-hover); suporta quebras de linha com \n */
+function InfoTooltip({ text, children }: { text: string; children?: ReactNode }) {
+  return (
+    <span className="group/tt relative inline-flex items-center">
+      {children ?? (
+        <Info className="h-3.5 w-3.5 cursor-help text-muted-foreground/70 transition-colors hover:text-foreground" />
+      )}
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 hidden w-max max-w-[260px] -translate-x-1/2 whitespace-pre-line rounded-xl border border-border/70 bg-popover px-3 py-2 text-left text-xs font-normal leading-snug text-popover-foreground shadow-xl group-hover/tt:block"
+      >
+        {text}
+      </span>
+    </span>
   );
 }
 
@@ -403,18 +391,20 @@ export default function BateriaDashboardPage() {
   const [data, setData] = useState<ApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
-  const [alertSearch, setAlertSearch] = useState("");
   const [subFilter, setSubFilter] = useState("all");
   const [communicationFilter, setCommunicationFilter] = useState("all");
   const [signalFilter, setSignalFilter] = useState("all");
   const [batteryFilter, setBatteryFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [currentPage, setCurrentPage] = useState(1);
-  const [dispatches, setDispatches] = useState<Dispatch[]>([]);
   const [dispatchDialogOpen, setDispatchDialogOpen] = useState(false);
   const [newDispatch, setNewDispatch] = useState({ module: "", type: "", description: "" });
   const [detailModule, setDetailModule] = useState<ModuleData | null>(null);
   const [chartsReady, setChartsReady] = useState(false);
+  // Filtros da aba "Trocas de Bateria"
+  const [trocasPeriod, setTrocasPeriod] = useState("30d");
+  const [trocasSearch, setTrocasSearch] = useState("");
+  const [trocasSubFilter, setTrocasSubFilter] = useState("all");
   const { resolvedTheme } = useTheme();
 
   useEffect(() => { setChartsReady(true); }, []);
@@ -539,21 +529,18 @@ export default function BateriaDashboardPage() {
     };
   }, [modules]);
 
-  const filteredAlerts = useMemo(() => {
-    if (!alertSearch) return criticalModules;
-    const term = alertSearch.toLowerCase();
-    return criticalModules.filter(
-      (m) =>
-        m.setor.toLowerCase().includes(term) ||
-        m.numeroSelimp.toLowerCase().includes(term) ||
-        m.subprefeitura.toLowerCase().includes(term)
-    );
-  }, [criticalModules, alertSearch]);
-
   const maintenanceChartColor = isChartDark ? "#94a3b8" : CHART_COLORS.maintenance;
 
-  const PROD_COLORS = [CHART_COLORS.success, CHART_COLORS.primary, CHART_COLORS.warning, CHART_COLORS.error];
-  const BATTERY_COLORS = [CHART_COLORS.success, CHART_COLORS.info, CHART_COLORS.warning, CHART_COLORS.error];
+  // Alta (verde) · Média (amarelo) · Baixa (vermelho)
+  const PROD_COLORS = [CHART_COLORS.success, CHART_COLORS.warning, CHART_COLORS.error];
+  // ALTA verde · REGULAR laranja · BAIXA azul · CRÍTICA vermelho · DESATUALIZADA cinza (visível no dark)
+  const BATTERY_COLORS = [
+    CHART_COLORS.success,
+    CHART_COLORS.orange,
+    CHART_COLORS.info,
+    CHART_COLORS.error,
+    CHART_COLORS.outdated,
+  ];
   const SIGNAL_COLORS = useMemo(
     () => [CHART_COLORS.success, CHART_COLORS.error, maintenanceChartColor],
     [maintenanceChartColor]
@@ -563,6 +550,90 @@ export default function BateriaDashboardPage() {
     const set = new Set(modules.map((m) => m.subprefeitura).filter(Boolean));
     return Array.from(set).sort();
   }, [modules]);
+
+  // ===== Aba "Trocas de Bateria" (esqueleto — mockups + dados presentes) =====
+
+  /** Diagnóstico de baterias em operação (dados reais derivados do status atual). */
+  const batteryDiagnostic = useMemo(() => {
+    const countBat = (s: string) => modules.filter((m) => m.statusBateria === s).length;
+    const comSinal = modules.filter((m) => m.statusSinalGeral === "COM SINAL").length;
+    const semSinal = modules.filter((m) => m.statusSinalGeral === "SEM SINAL").length;
+    return {
+      comSinal,
+      semSinal,
+      alta: countBat("ALTA"),
+      regular: countBat("REGULAR"),
+      baixa: countBat("BAIXA"),
+      critica: countBat("CRÍTICA"),
+      desatualizada: countBat("DESATUALIZADA"),
+    };
+  }, [modules]);
+
+  /** Indicadores de trocas (mock derivado da distribuição atual de status). */
+  const trocasStats = useMemo(() => {
+    const corretivas = modules.filter((m) => m.statusBateria === "DESATUALIZADA").length;
+    const preventivas = modules.filter(
+      (m) => m.statusBateria === "CRÍTICA" || m.statusBateria === "BAIXA",
+    ).length;
+    const desnecessarias = modules.filter((m) => m.statusBateria === "REGULAR").length;
+    const total = corretivas + preventivas + desnecessarias;
+    const comSucesso = modules.filter(
+      (m) => m.comunicacao === "ON" && (m.statusBateria === "ALTA" || m.statusBateria === "REGULAR"),
+    ).length;
+    const semSucesso = modules.filter((m) => m.statusBateria === "DESATUALIZADA").length;
+    const baseSucesso = comSucesso + semSucesso;
+    const acertividade = baseSucesso > 0 ? Math.round((comSucesso / baseSucesso) * 100) : 0;
+    const mediaBateria =
+      modules.length > 0
+        ? Math.round(modules.reduce((s, m) => s + (m.bateriaPercentual || 0), 0) / modules.length)
+        : 0;
+    return { total, corretivas, preventivas, desnecessarias, comSucesso, semSucesso, acertividade, mediaBateria };
+  }, [modules]);
+
+  /** Ranking dos setores com maior quantidade de trocas. */
+  const trocasRanking = useMemo(() => {
+    const map = new Map<
+      string,
+      { setor: string; subprefeitura: string; totalTrocas: number; manutencoes: number; somaDuracao: number; n: number }
+    >();
+    for (const m of modules) {
+      const key = m.setor || "—";
+      const cur =
+        map.get(key) ?? {
+          setor: m.setor,
+          subprefeitura: m.subprefeitura,
+          totalTrocas: 0,
+          manutencoes: 0,
+          somaDuracao: 0,
+          n: 0,
+        };
+      cur.totalTrocas += m.quantidadeTrocas || 0;
+      cur.manutencoes += (m.quantidadeTrocas || 0) > 0 ? 1 : 0;
+      cur.somaDuracao += m.diasOn || 0;
+      cur.n += 1;
+      map.set(key, cur);
+    }
+    return Array.from(map.values())
+      .map((r) => ({ ...r, mediaDuracao: r.n ? Math.round(r.somaDuracao / r.n) : 0 }))
+      .sort((a, b) => b.totalTrocas - a.totalTrocas)
+      .slice(0, 7);
+  }, [modules]);
+
+  /** Listagem geral de setores (filtro + busca próprios da aba Trocas). */
+  const trocasModules = useMemo(() => {
+    let result = modules;
+    if (trocasSubFilter !== "all") result = result.filter((m) => m.subprefeitura === trocasSubFilter);
+    if (trocasSearch) {
+      const term = trocasSearch.toLowerCase();
+      result = result.filter(
+        (m) =>
+          m.setor.toLowerCase().includes(term) ||
+          m.numeroSelimp.toLowerCase().includes(term) ||
+          m.subprefeitura.toLowerCase().includes(term),
+      );
+    }
+    return result.slice(0, 60);
+  }, [modules, trocasSubFilter, trocasSearch]);
 
   if (loading) {
     return (
@@ -609,19 +680,14 @@ export default function BateriaDashboardPage() {
               <TabsTrigger value="overview" className="data-[state=active]:bg-emerald-500 data-[state=active]:text-white text-muted-foreground">
                 <LayoutDashboard className="mr-2 h-4 w-4" /> Visão Geral
               </TabsTrigger>
+              <TabsTrigger value="trocas" className="data-[state=active]:bg-emerald-500 data-[state=active]:text-white text-muted-foreground">
+                <Repeat className="mr-2 h-4 w-4" /> Trocas de Bateria
+              </TabsTrigger>
+              <TabsTrigger value="maintenance" className="data-[state=active]:bg-emerald-500 data-[state=active]:text-white text-muted-foreground">
+                <Wrench className="mr-2 h-4 w-4" /> Manutenções
+              </TabsTrigger>
               <TabsTrigger value="modules" className="data-[state=active]:bg-emerald-500 data-[state=active]:text-white text-muted-foreground">
-                <Table2 className="mr-2 h-4 w-4" /> Módulos / baterias
-              </TabsTrigger>
-              <TabsTrigger value="alerts" className="data-[state=active]:bg-emerald-500 data-[state=active]:text-white text-muted-foreground">
-                <AlertTriangle className="mr-2 h-4 w-4" /> Alertas
-                {criticalModules.length > 0 && (
-                  <span className="ml-2 rounded-full bg-red-500 px-2 py-0.5 text-xs text-white">
-                    {criticalModules.length}
-                  </span>
-                )}
-              </TabsTrigger>
-              <TabsTrigger value="dispatch" className="data-[state=active]:bg-emerald-500 data-[state=active]:text-white text-muted-foreground">
-                <FileText className="mr-2 h-4 w-4" /> Despachos
+                <Gauge className="mr-2 h-4 w-4" /> Performance
               </TabsTrigger>
             </TabsList>
 
@@ -799,7 +865,7 @@ export default function BateriaDashboardPage() {
                   {/* Distribuição de Produtividade */}
                   <Card className="col-span-2 flex h-full min-h-[32rem] flex-col border-border/50 bg-card/80 backdrop-blur-sm shadow-sm lg:min-h-[34rem]">
                     <CardHeader className="shrink-0 space-y-1 pb-2 pt-6">
-                      <CardTitle className="text-foreground">Distribuição de Produtividade</CardTitle>
+                      <CardTitle className="text-foreground">Distribuição de Produtividade das Baterias</CardTitle>
                       <CardDescription>Faixas de produtividade dos módulos</CardDescription>
                     </CardHeader>
                     <CardContent className="flex flex-1 flex-col items-center justify-center px-4 pb-8 pt-4">
@@ -872,6 +938,368 @@ export default function BateriaDashboardPage() {
                   </Card>
                 </div>
               )}
+            </TabsContent>
+
+            {/* ===== TROCAS DE BATERIA TAB ===== */}
+            <TabsContent value="trocas" className="space-y-6">
+              {/* Filtro superior discreto */}
+              <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border/50 bg-card/50 px-4 py-3">
+                <div className="flex items-center gap-2">
+                  <Calendar className="h-4 w-4 text-muted-foreground" />
+                  <Select value={trocasPeriod} onValueChange={setTrocasPeriod}>
+                    <SelectTrigger className="h-9 w-[150px] border-border/60 bg-background/60">
+                      <SelectValue placeholder="Período" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="7d">Últimos 7 dias</SelectItem>
+                      <SelectItem value="30d">Últimos 30 dias</SelectItem>
+                      <SelectItem value="90d">Últimos 90 dias</SelectItem>
+                      <SelectItem value="all">Todo o período</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="relative min-w-[200px] flex-1">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    placeholder="Módulo SELIMP, setor..."
+                    className="h-9 border-border/60 bg-background/60 pl-9"
+                    value={trocasSearch}
+                    onChange={(e) => setTrocasSearch(e.target.value)}
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <MapPin className="h-4 w-4 text-muted-foreground" />
+                  <Select value={trocasSubFilter} onValueChange={setTrocasSubFilter}>
+                    <SelectTrigger className="h-9 w-[150px] border-border/60 bg-background/60">
+                      <SelectValue placeholder="Subprefeitura" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todas subs</SelectItem>
+                      {uniqueSubs.map((s) => (
+                        <SelectItem key={s} value={s}>{s}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {/* Hero: total de trocas + 3 sub cards na borda direita */}
+              <div className="relative overflow-hidden rounded-2xl border border-emerald-400/40 bg-linear-to-br from-emerald-600/95 via-teal-700 to-cyan-950 px-6 py-8 shadow-xl shadow-teal-950/30 ring-1 ring-white/15 sm:px-8">
+                <div className="pointer-events-none absolute -right-24 -top-24 size-72 rounded-full bg-teal-400/15 blur-3xl dark:bg-emerald-500/25" aria-hidden />
+                <div className="relative flex flex-col gap-8 xl:flex-row xl:items-stretch xl:justify-between xl:gap-10">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 text-emerald-100/95">
+                      <Repeat className="size-9 shrink-0 text-white opacity-95" aria-hidden />
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wider text-white/85">Trocas de Bateria</p>
+                        <h2 className="text-lg font-semibold text-white">Total de trocas realizadas</h2>
+                      </div>
+                    </div>
+                    <p className="mt-6 text-center text-[clamp(3rem,8vw,4.25rem)] font-bold tabular-nums leading-none tracking-tight text-white drop-shadow-sm sm:text-left">
+                      {trocasStats.total}
+                    </p>
+                    <p className="mt-3 text-xs text-emerald-100/85">
+                      Dados preliminares (mockup) — a dinâmica de registro de trocas será conectada em seguida.
+                    </p>
+                  </div>
+                  <div className="grid flex-1 min-w-[220px] grid-cols-1 gap-4 sm:grid-cols-3 xl:max-w-2xl">
+                    <div className="flex flex-col justify-between rounded-xl border border-white/20 bg-white/10 p-4 backdrop-blur-sm">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="text-xs font-medium uppercase tracking-wide text-white/80">Preventivas</p>
+                        <InfoTooltip text={"Baterias Críticas (1%-14%) ou\nBaixas (15%-29%)"}>
+                          <ShieldCheck className="size-6 shrink-0 cursor-help text-sky-200/95" aria-hidden />
+                        </InfoTooltip>
+                      </div>
+                      <p className="mt-4 font-mono text-3xl font-bold tabular-nums text-white">{trocasStats.preventivas}</p>
+                    </div>
+                    <div className="flex flex-col justify-between rounded-xl border border-white/20 bg-white/10 p-4 backdrop-blur-sm">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="text-xs font-medium uppercase tracking-wide text-white/80">Corretivas</p>
+                        <InfoTooltip text={"Baterias Desatualizadas\n(Sem comunicação)"}>
+                          <AlertTriangle className="size-6 shrink-0 cursor-help text-amber-200/95" aria-hidden />
+                        </InfoTooltip>
+                      </div>
+                      <p className="mt-4 font-mono text-3xl font-bold tabular-nums text-white">{trocasStats.corretivas}</p>
+                    </div>
+                    <div className="flex flex-col justify-between rounded-xl border border-white/20 bg-white/10 p-4 backdrop-blur-sm">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="text-xs font-medium uppercase tracking-wide text-white/80">Desnecessárias</p>
+                        <InfoTooltip text={"Trocas feitas em baterias que ainda\nestavam em bom estado de operação"}>
+                          <XCircle className="size-6 shrink-0 cursor-help text-rose-200/95" aria-hidden />
+                        </InfoTooltip>
+                      </div>
+                      <p className="mt-4 font-mono text-3xl font-bold tabular-nums text-white">{trocasStats.desnecessarias}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 4 cards de indicadores */}
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <Card className="relative overflow-hidden border-0 bg-linear-to-br from-emerald-600 to-emerald-900 text-white shadow-xl shadow-emerald-900/25">
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <CardTitle className="text-sm font-semibold text-white/95">Trocas com Sucesso</CardTitle>
+                    <InfoTooltip text={"Que foram atualizadas o sinal e bateria\napós a troca"}>
+                      <CheckCircle2 className="size-5 shrink-0 cursor-help text-white/85" />
+                    </InfoTooltip>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="font-mono text-4xl font-bold tabular-nums text-white">{trocasStats.comSucesso}</div>
+                    <p className="mt-2 text-sm font-medium text-white/90">Sinal e bateria restabelecidos</p>
+                  </CardContent>
+                </Card>
+
+                <Card className="relative overflow-hidden border border-red-900/55 bg-linear-to-br from-red-700/92 via-red-800 to-rose-950 text-white shadow-xl shadow-red-950/45">
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <CardTitle className="text-sm font-semibold text-white">Trocas sem Sucesso</CardTitle>
+                    <InfoTooltip text={"Que mesmo após a troca o sinal e bateria\npermaneceram desatualizados"}>
+                      <XCircle className="size-5 shrink-0 cursor-help text-white/90" />
+                    </InfoTooltip>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="font-mono text-4xl font-bold tabular-nums text-white">{trocasStats.semSucesso}</div>
+                    <p className="mt-2 text-sm font-medium text-red-50/95">Permaneceram desatualizados</p>
+                  </CardContent>
+                </Card>
+
+                <Card className="border-border/50 bg-card/80 shadow-sm backdrop-blur-sm">
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium text-muted-foreground">Acertividade</CardTitle>
+                    <InfoTooltip text={"Proporção de trocas com sucesso sobre o\ntotal de trocas com resultado conhecido"}>
+                      <Percent className="size-5 shrink-0 cursor-help text-emerald-500" />
+                    </InfoTooltip>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-4xl font-bold tabular-nums text-emerald-600 dark:text-emerald-400">{trocasStats.acertividade}%</div>
+                    <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-muted">
+                      <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${trocasStats.acertividade}%` }} />
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="border-border/50 bg-card/80 shadow-sm backdrop-blur-sm">
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium text-muted-foreground">Média Bateria</CardTitle>
+                    <InfoTooltip text={"Nível médio de carga das baterias\nem operação no período"}>
+                      <BatteryCharging className="size-5 shrink-0 cursor-help text-sky-500" />
+                    </InfoTooltip>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-4xl font-bold tabular-nums text-sky-600 dark:text-sky-400">{trocasStats.mediaBateria}%</div>
+                    <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-muted">
+                      <div className="h-full rounded-full bg-sky-500 transition-all" style={{ width: `${trocasStats.mediaBateria}%` }} />
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {/* Dois cards lado a lado: Ranking (esq) | Diagnóstico (dir) */}
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                {/* Ranking de Trocas */}
+                <Card className="border-border/50 bg-card/80 shadow-sm backdrop-blur-sm">
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2 text-foreground">
+                      <Trophy className="h-5 w-5 text-amber-500" /> Ranking de Trocas
+                    </CardTitle>
+                    <CardDescription>Setores com maior quantidade de trocas</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="bg-muted/25 hover:bg-muted/25">
+                          <TableHead className="w-8">#</TableHead>
+                          <TableHead>Sub</TableHead>
+                          <TableHead>Setor</TableHead>
+                          <TableHead className="text-center">Trocas</TableHead>
+                          <TableHead className="text-center">Manut.</TableHead>
+                          <TableHead className="text-center">Méd. dur.</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {trocasRanking.map((r, i) => (
+                          <TableRow key={r.setor} className="border-border/30 hover:bg-muted/20">
+                            <TableCell className="font-bold tabular-nums text-muted-foreground">{i + 1}</TableCell>
+                            <TableCell className="font-medium">{r.subprefeitura}</TableCell>
+                            <TableCell><SetorCell value={r.setor} /></TableCell>
+                            <TableCell className="text-center font-bold tabular-nums text-emerald-600 dark:text-emerald-400">{r.totalTrocas}</TableCell>
+                            <TableCell className="text-center tabular-nums text-muted-foreground">{r.manutencoes}</TableCell>
+                            <TableCell className="text-center tabular-nums text-sky-600 dark:text-sky-400">{r.mediaDuracao}d</TableCell>
+                          </TableRow>
+                        ))}
+                        {trocasRanking.length === 0 && (
+                          <TableRow>
+                            <TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">Sem dados de trocas.</TableCell>
+                          </TableRow>
+                        )}
+                      </TableBody>
+                    </Table>
+                  </CardContent>
+                </Card>
+
+                {/* Diagnóstico de Baterias em operação */}
+                <Card className="border-border/50 bg-card/80 shadow-sm backdrop-blur-sm">
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2 text-foreground">
+                      <Battery className="h-5 w-5 text-emerald-500" /> Diagnóstico de Baterias em operação
+                    </CardTitle>
+                    <CardDescription>Distribuição por sinal e nível de bateria</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-1.5">
+                      {[
+                        { kind: "head-green", label: "COM SINAL", value: batteryDiagnostic.comSinal, note: "" },
+                        { kind: "value", label: "B/ ALTA", value: batteryDiagnostic.alta, note: ">70%", text: "text-emerald-600 dark:text-emerald-400" },
+                        { kind: "value", label: "B/ REGULAR", value: batteryDiagnostic.regular, note: ">30%", text: "text-orange-600 dark:text-orange-400" },
+                        { kind: "value", label: "B/ BAIXA", value: batteryDiagnostic.baixa, note: ">15%", text: "text-blue-600 dark:text-blue-400" },
+                        { kind: "value", label: "B/ CRÍTICA", value: batteryDiagnostic.critica, note: "<14%", text: "text-red-600 dark:text-red-500" },
+                        { kind: "head-red", label: "SEM SINAL", value: batteryDiagnostic.semSinal, note: "" },
+                        { kind: "value", label: "B/ DESATUALIZADA", value: batteryDiagnostic.desatualizada, note: "", text: "text-red-600 dark:text-red-500" },
+                      ].map((row, i) => {
+                        const isGreen = row.kind === "head-green";
+                        const isRed = row.kind === "head-red";
+                        const isHeader = isGreen || isRed;
+                        const headBg = isGreen ? "bg-emerald-700" : "bg-red-600";
+                        return (
+                          <div key={i} className="flex items-center gap-2">
+                            <div className="grid flex-1 grid-cols-[minmax(0,1fr)_72px] overflow-hidden rounded-md border border-border/60">
+                              <div className={cn(
+                                "px-3 py-2 text-xs font-semibold",
+                                isHeader ? cn(headBg, "font-bold uppercase tracking-wide text-white") : "bg-muted/20 text-foreground",
+                              )}>
+                                {row.label}
+                              </div>
+                              <div className={cn(
+                                "border-l px-3 py-2 text-right text-sm font-bold tabular-nums",
+                                isHeader ? cn(headBg, "border-white/25 text-white") : cn("border-border/60", row.text),
+                              )}>
+                                {row.value}
+                              </div>
+                            </div>
+                            <div className="w-10 shrink-0 text-[11px] font-semibold text-muted-foreground">{row.note}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {/* Listagem Geral de setores */}
+              <Card className="border-border/50 bg-card/80 shadow-sm backdrop-blur-sm">
+                <CardHeader>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <CardTitle className="flex items-center gap-2 text-foreground">
+                        <Table2 className="h-5 w-5 text-emerald-500" /> Listagem Geral de Setores
+                      </CardTitle>
+                      <CardDescription>Base para seleção e agendamento de trocas (em construção)</CardDescription>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="relative w-[220px]">
+                        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                        <Input
+                          placeholder="Buscar setor, SELIMP..."
+                          className="h-9 pl-9"
+                          value={trocasSearch}
+                          onChange={(e) => setTrocasSearch(e.target.value)}
+                        />
+                      </div>
+                      <Select value={trocasSubFilter} onValueChange={setTrocasSubFilter}>
+                        <SelectTrigger className="h-9 w-[130px]">
+                          <Filter className="mr-2 h-4 w-4 text-muted-foreground" />
+                          <SelectValue placeholder="Sub" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Todas</SelectItem>
+                          {uniqueSubs.map((s) => (
+                            <SelectItem key={s} value={s}>{s}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="overflow-hidden rounded-xl bg-muted/15 shadow-sm ring-1 ring-zinc-200/80 dark:ring-zinc-700/60">
+                    <Table className="[&_tbody_tr]:border-b [&_tbody_tr]:border-border/30 [&_thead_tr]:border-b [&_thead_tr]:border-border/30">
+                      <TableHeader>
+                        <TableRow className="bg-muted/25 hover:bg-muted/25">
+                          <TableHead className="text-center">Sub</TableHead>
+                          <TableHead>Setor</TableHead>
+                          <TableHead>SELIMP</TableHead>
+                          <TableHead>Comunic.</TableHead>
+                          <TableHead>Bateria</TableHead>
+                          <TableHead>Status Bat.</TableHead>
+                          <TableHead className="text-center">Trocas</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {trocasModules.map((m) => (
+                          <TableRow key={m.id} className="border-border/30 hover:bg-muted/20">
+                            <TableCell className="text-center font-medium align-top">{m.subprefeitura}</TableCell>
+                            <TableCell className="align-top"><SetorCell value={m.setor} /></TableCell>
+                            <TableCell>{m.numeroSelimp}</TableCell>
+                            <TableCell>
+                              <Badge className={m.comunicacao === "ON"
+                                ? "bg-emerald-500/15 text-emerald-600 border-emerald-500/30 dark:text-emerald-400"
+                                : "bg-red-500/15 text-red-600 border-red-500/30 dark:text-red-400"
+                              }>
+                                {m.comunicacao}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>{m.bateriaPercentual}%</TableCell>
+                            <TableCell>
+                              <Badge className={
+                                m.statusBateria === "ALTA"
+                                  ? "bg-emerald-500/15 text-emerald-600 border-emerald-500/30 dark:text-emerald-400"
+                                  : m.statusBateria === "REGULAR"
+                                  ? "bg-orange-500/15 text-orange-600 border-orange-500/30 dark:text-orange-400"
+                                  : m.statusBateria === "BAIXA"
+                                  ? "bg-blue-500/15 text-blue-600 border-blue-500/30 dark:text-blue-400"
+                                  : m.statusBateria === "CRÍTICA"
+                                  ? "bg-red-500/15 text-red-600 border-red-500/30 dark:text-red-400"
+                                  : "bg-zinc-500/15 text-zinc-600 border-zinc-500/30 dark:text-zinc-300"
+                              }>
+                                {m.statusBateria}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-center font-medium tabular-nums">{m.quantidadeTrocas}</TableCell>
+                          </TableRow>
+                        ))}
+                        {trocasModules.length === 0 && (
+                          <TableRow>
+                            <TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">Nenhum setor encontrado.</TableCell>
+                          </TableRow>
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                  <p className="mt-3 text-xs text-muted-foreground">
+                    Exibindo até 60 setores. Seleção múltipla, agendamento e filtros avançados de troca serão adicionados em seguida.
+                  </p>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* ===== MANUTENÇÕES TAB ===== */}
+            <TabsContent value="maintenance">
+              <Card className="border-border/50 bg-card/80 shadow-sm backdrop-blur-sm">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-foreground">
+                    <Wrench className="h-5 w-5 text-emerald-500" /> Manutenções
+                  </CardTitle>
+                  <CardDescription>Registro e acompanhamento de manutenções dos módulos</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex flex-col items-center justify-center py-20 text-center text-muted-foreground">
+                    <Wrench className="mb-4 h-12 w-12 opacity-40" />
+                    <p className="text-lg font-medium">Página em construção</p>
+                    <p className="mt-1 max-w-md text-sm">
+                      A dinâmica de manutenções será definida em seguida. Por ora, este é o esqueleto da aba.
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
             </TabsContent>
 
             {/* ===== MODULES TAB ===== */}
@@ -1108,10 +1536,12 @@ export default function BateriaDashboardPage() {
                                 m.statusBateria === "ALTA"
                                   ? "bg-emerald-500/15 text-emerald-600 border-emerald-500/30 dark:text-emerald-400"
                                   : m.statusBateria === "REGULAR"
-                                  ? "bg-blue-500/15 text-blue-600 border-blue-500/30 dark:text-blue-400"
+                                  ? "bg-orange-500/15 text-orange-600 border-orange-500/30 dark:text-orange-400"
                                   : m.statusBateria === "BAIXA"
-                                  ? "bg-yellow-500/15 text-yellow-600 border-yellow-500/30 dark:text-yellow-400"
-                                  : "bg-red-500/15 text-red-600 border-red-500/30 dark:text-red-400"
+                                  ? "bg-blue-500/15 text-blue-600 border-blue-500/30 dark:text-blue-400"
+                                  : m.statusBateria === "CRÍTICA"
+                                  ? "bg-red-500/15 text-red-600 border-red-500/30 dark:text-red-400"
+                                  : "bg-zinc-500/15 text-zinc-600 border-zinc-500/30 dark:text-zinc-300"
                               }>
                                 {m.statusBateria}
                               </Badge>
@@ -1158,145 +1588,6 @@ export default function BateriaDashboardPage() {
                         <ChevronRight className="h-4 w-4" />
                       </Button>
                     </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            {/* ===== ALERTS TAB ===== */}
-            <TabsContent value="alerts">
-              <Card className="border-border/50 bg-card/80 backdrop-blur-sm shadow-sm">
-                <CardHeader>
-                  <div className="flex justify-between">
-                    <CardTitle className="flex items-center gap-2 text-foreground">
-                      <AlertTriangle className="h-5 w-5 text-red-500" />
-                      Alertas Críticos
-                    </CardTitle>
-                    <Badge className="bg-red-500/15 text-red-600 border-red-500/30 dark:text-red-400">{criticalModules.length} alertas</Badge>
-                  </div>
-                  <div className="relative mt-3">
-                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                    <Input
-                      placeholder="Buscar setor, módulo, subprefeitura..."
-                      className="pl-9"
-                      value={alertSearch}
-                      onChange={(e) => setAlertSearch(e.target.value)}
-                    />
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <ScrollArea className="h-[500px]">
-                    <div className="space-y-3 pr-4">
-                      {filteredAlerts.length === 0 && (
-                        <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
-                          <CheckCircle2 className="h-12 w-12 mb-4 text-emerald-500" />
-                          <p className="text-lg font-medium">{alertSearch ? "Nenhum resultado encontrado" : "Nenhum alerta crítico"}</p>
-                          <p className="text-sm">{alertSearch ? "Tente outro termo de busca." : "Todos os módulos estão operando normalmente."}</p>
-                        </div>
-                      )}
-                      {filteredAlerts.map((m) => {
-                        const alert = getAlertType(m);
-                        const AlertIcon = alert.icon;
-                        return (
-                          <div key={m.id} className="flex items-start gap-4 rounded-lg border border-border bg-muted/30 p-4 hover:bg-muted/50 transition-colors">
-                            <div className="rounded-full p-2 bg-muted">
-                              <AlertIcon className={cn("h-4 w-4", alert.color)} />
-                            </div>
-                            <div className="flex-1 space-y-1">
-                              <div className="flex justify-between">
-                                <p className="font-medium text-foreground">{m.setor}</p>
-                                <Badge variant="outline" className={cn("text-xs font-medium", getSubprefBadgeClass(m.subprefeitura))}>
-                                  {m.subprefeitura}
-                                </Badge>
-                              </div>
-                              <div className="flex flex-wrap items-center gap-2">
-                                <p className={cn("text-sm", alert.color)}>{alert.message}</p>
-                                {alert.type === "productivity" && (
-                                  <Badge
-                                    variant="outline"
-                                    className="border-sky-500/45 bg-sky-500/10 text-[11px] font-semibold text-sky-900 shadow-sm dark:border-sky-400/35 dark:bg-sky-950/50 dark:text-sky-100"
-                                  >
-                                    — Data de instalação: {formatIptDataInstalacaoBr(m.dataInstalacao) || "—"}
-                                  </Badge>
-                                )}
-                              </div>
-                              <div className="flex gap-4 text-xs text-muted-foreground">
-                                <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {m.ultimaComunicacao || "Sem dados"}</span>
-                                <span>Produtividade: {m.produtividade}%</span>
-                              </div>
-                              <div className="flex gap-2 text-xs text-muted-foreground pt-2">
-                                <span>SELIMP: {m.numeroSelimp}</span>
-                                <span>Bateria: {m.bateriaPercentual}%</span>
-                                {m.diasOff > 0 && <span>{m.diasOff} dias offline</span>}
-                              </div>
-                            </div>
-                            <Button variant="ghost" size="icon" onClick={() => setDetailModule(m)}>
-                              <ArrowRight className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </ScrollArea>
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            {/* ===== DISPATCH TAB ===== */}
-            <TabsContent value="dispatch">
-              <Card className="border-border/50 bg-card/80 backdrop-blur-sm shadow-sm">
-                <CardHeader>
-                  <div className="flex justify-between">
-                    <div>
-                      <CardTitle className="flex items-center gap-2 text-foreground">
-                        <FileText className="h-5 w-5 text-emerald-500" />
-                        Despachos Diários
-                      </CardTitle>
-                      <CardDescription>Registro de ações e manutenções</CardDescription>
-                    </div>
-                    <Button className="bg-emerald-500 text-white hover:bg-emerald-600" onClick={() => setDispatchDialogOpen(true)}>
-                      <Plus className="mr-2 h-4 w-4" /> Novo Despacho
-                    </Button>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-3">
-                    {dispatches.length === 0 && (
-                      <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
-                        <FileText className="h-12 w-12 mb-4 opacity-50" />
-                        <p className="text-lg font-medium">Nenhum despacho registrado</p>
-                        <p className="text-sm">Clique em &quot;Novo Despacho&quot; para criar.</p>
-                      </div>
-                    )}
-                    {dispatches.map((d) => {
-                      const statusConfig = {
-                        pending: { badge: "Pendente", badgeClass: "bg-yellow-500/15 text-yellow-600 border-yellow-500/30 dark:text-yellow-400", icon: AlertCircle, iconColor: "text-yellow-500" },
-                        "in-progress": { badge: "Em Andamento", badgeClass: "bg-blue-500/15 text-blue-600 border-blue-500/30 dark:text-blue-400", icon: Clock, iconColor: "text-blue-500" },
-                        completed: { badge: "Concluído", badgeClass: "bg-emerald-500/15 text-emerald-600 border-emerald-500/30 dark:text-emerald-400", icon: CheckCircle2, iconColor: "text-emerald-500" },
-                      }[d.status];
-                      const StatusIcon = statusConfig.icon;
-                      return (
-                        <div key={d.id} className="flex items-center justify-between rounded-lg border border-border bg-muted/30 p-4 hover:bg-muted/50 transition-colors">
-                          <div className="flex items-center gap-4">
-                            <div className={cn("rounded-full p-2 bg-muted", statusConfig.iconColor)}>
-                              <StatusIcon className="h-4 w-4" />
-                            </div>
-                            <div>
-                              <div className="flex gap-2">
-                                <p className="font-medium text-foreground">{d.type}</p>
-                                <Badge className={statusConfig.badgeClass}>{statusConfig.badge}</Badge>
-                              </div>
-                              <p className="text-sm text-muted-foreground">{d.module} - {d.setor}</p>
-                              {d.description && <p className="text-xs text-muted-foreground mt-1">{d.description}</p>}
-                            </div>
-                          </div>
-                          <div className="text-right text-xs text-muted-foreground">
-                            <div className="flex items-center gap-1"><Calendar className="h-3 w-3" /> {d.date}</div>
-                            <div className="flex items-center gap-1"><Clock className="h-3 w-3" /> {d.time}</div>
-                          </div>
-                        </div>
-                      );
-                    })}
                   </div>
                 </CardContent>
               </Card>
