@@ -2,7 +2,6 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import Link from "next/link";
 import { format, startOfDay, startOfMonth, subDays } from "date-fns";
 import type { DateRange } from "react-day-picker";
 import { ptBR } from "date-fns/locale";
@@ -35,7 +34,6 @@ import {
   ShieldAlert,
   ShieldCheck,
   ShieldX,
-  Sparkles,
   Target,
   TrendingDown,
   TrendingUp,
@@ -1722,31 +1720,6 @@ export default function IPTPage() {
               {/* Insights e gráficos dinâmicos */}
               {topSubprefeituras.length > 0 && (
                 <div className="mt-8 pt-8 border-t border-border space-y-8">
-                  {/* Atalhos analíticos */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <Link
-                      href="/ipt/bateria"
-                      className="min-h-[140px] rounded-xl bg-violet-500/10 p-4 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg hover:bg-violet-500/20 border border-violet-500/20 hover:border-violet-500/40 text-left group flex flex-col justify-center"
-                    >
-                      <div className="flex items-center gap-2">
-                        <Battery className="h-6 w-6 text-violet-600 dark:text-violet-400 group-hover:scale-110 transition-transform" />
-                        <span className="text-base font-semibold text-violet-700 dark:text-violet-300">Análise de Bateria</span>
-                      </div>
-                      <p className="text-xs text-muted-foreground mt-2">Dashboard completo de monitoramento de módulos, bateria e sinal.</p>
-                    </Link>
-                    <button
-                      type="button"
-                      onClick={() => setModalCruzamentoOpen(true)}
-                      className="min-h-[140px] rounded-xl bg-indigo-500/10 p-4 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg hover:bg-indigo-500/20 border border-indigo-500/20 hover:border-indigo-500/40 text-left group flex flex-col justify-center"
-                    >
-                      <div className="flex items-center gap-2">
-                        <Sparkles className="h-6 w-6 text-indigo-600 dark:text-indigo-400 group-hover:scale-110 transition-transform" />
-                        <span className="text-base font-semibold text-indigo-700 dark:text-indigo-300">Cruzamento Inteligente</span>
-                      </div>
-                      <p className="text-xs text-muted-foreground mt-2">Clique para abrir. Espaço para mais cards e informações do modal.</p>
-                    </button>
-                  </div>
-
                   {/* Gráfico barras: média sem zerados vs com zerados por sub */}
                   {subprefeituraInsights.length > 0 && (
                     <div className="rounded-xl bg-background/60 p-5 shadow-sm border border-border space-y-4">

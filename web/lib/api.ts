@@ -492,6 +492,8 @@ export interface IptModuloBateriaModule {
   setor: string;
   numeroSelimp: string;
   diasExecucao: string;
+  setoresDias?: { setor: string; dias: string; km?: number | null; praca?: string | null; execucao?: number | null }[];
+  produtividadeExecucao?: number | null;
   comunicacao: "ON" | "OFF" | string;
   bateria: string;
   bateriaPercentual: number;
@@ -515,6 +517,7 @@ export interface IptModulosBateriaResponse {
     criticalAlerts: number;
     lowBattery: number;
   };
+  evolucaoProdutividade?: { data: string; produtividade: number }[];
   lastUpdate: string | null;
   latestBatch?: {
     id: null;

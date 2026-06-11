@@ -17,6 +17,8 @@ export async function refreshModuloSelimp(client: PoolClient): Promise<RefreshMo
         string_agg(DISTINCT setor, '/' ORDER BY setor) AS setores,
         string_agg(DISTINCT subprefeitura, '/' ORDER BY subprefeitura) AS sub,
         string_agg(DISTINCT dias_execucao, '/' ORDER BY dias_execucao) AS dias_execucao,
+        jsonb_agg(DISTINCT jsonb_build_object('setor', setor, 'dias', COALESCE(dias_execucao, '')))
+          FILTER (WHERE setor IS NOT NULL AND TRIM(setor) <> '') AS setores_dias,
         MIN(selimp_instalacao) AS data_selimp
       FROM setores_modulos
       WHERE selimp_codigo IS NOT NULL AND TRIM(selimp_codigo) <> ''
@@ -69,6 +71,7 @@ export async function refreshModuloSelimp(client: PoolClient): Promise<RefreshMo
         s.setores,
         s.sub,
         s.dias_execucao,
+        s.setores_dias,
         COALESCE(l.comunicacao, 'OFF') AS comunicacao,
         l.ultima_comunicacao,
         l.bateria_raw,
@@ -106,13 +109,13 @@ export async function refreshModuloSelimp(client: PoolClient): Promise<RefreshMo
       LEFT JOIN historico h ON h.modulo_selimp = sm.modulo_selimp
     )
     INSERT INTO modulo_selimp (
-      modulo_selimp, nome, setores, sub, dias_execucao,
+      modulo_selimp, nome, setores, sub, dias_execucao, setores_dias,
       comunicacao, ultima_comunicacao, bateria_raw, bateria_percentual,
       status_bateria, data_selimp, dias_on, dias_off, produtividade_bateria,
       status_sinal_calculado, latest_data_exportacao, source_file, updated_at
     )
     SELECT
-      modulo_selimp, nome, setores, sub, dias_execucao,
+      modulo_selimp, nome, setores, sub, dias_execucao, setores_dias,
       comunicacao, ultima_comunicacao, bateria_raw, bateria_percentual,
       status_bateria, data_selimp, dias_on, dias_off, produtividade_bateria,
       status_sinal_calculado, latest_data_exportacao, source_file, NOW()
@@ -122,6 +125,7 @@ export async function refreshModuloSelimp(client: PoolClient): Promise<RefreshMo
       setores = EXCLUDED.setores,
       sub = EXCLUDED.sub,
       dias_execucao = EXCLUDED.dias_execucao,
+      setores_dias = EXCLUDED.setores_dias,
       comunicacao = EXCLUDED.comunicacao,
       ultima_comunicacao = EXCLUDED.ultima_comunicacao,
       bateria_raw = EXCLUDED.bateria_raw,

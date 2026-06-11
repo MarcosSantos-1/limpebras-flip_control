@@ -653,6 +653,7 @@ export async function runMigrations() {
         setores                    TEXT,
         sub                        TEXT,
         dias_execucao              TEXT,
+        setores_dias               JSONB,
         comunicacao                TEXT,
         ultima_comunicacao         TIMESTAMPTZ,
         bateria_raw                TEXT,
@@ -671,6 +672,7 @@ export async function runMigrations() {
         updated_at                 TIMESTAMPTZ DEFAULT NOW()
       );
     `);
+    await client.query("ALTER TABLE modulo_selimp ADD COLUMN IF NOT EXISTS setores_dias JSONB").catch(() => {});
     await client.query("CREATE INDEX IF NOT EXISTS idx_modulo_selimp_sub ON modulo_selimp(sub)").catch(() => {});
     await client.query("CREATE INDEX IF NOT EXISTS idx_modulo_selimp_comunicacao ON modulo_selimp(comunicacao)").catch(() => {});
     await client.query("CREATE INDEX IF NOT EXISTS idx_modulo_selimp_status_bateria ON modulo_selimp(status_bateria)").catch(() => {});

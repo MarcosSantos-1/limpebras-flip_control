@@ -2006,6 +2006,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
              setores,
              sub,
              dias_execucao,
+             setores_dias,
              comunicacao,
              ultima_comunicacao,
              bateria_raw,
@@ -2022,15 +2023,121 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
            ORDER BY setores NULLS LAST, modulo_selimp`
         );
 
+        // ---- Enriquecimento por setor (km, praça, execução) + série temporal ----
+        // Todas as queries são resilientes: falha em uma não derruba o endpoint.
+        const PERIODO_DIAS = 30;
+        const execMap = new Map<string, number>();
+        const kmMap = new Map<string, number>();
+        const pracaMap = new Map<string, string>();
+        let evolucaoProdutividade: { data: string; produtividade: number }[] = [];
+
+        await Promise.all([
+          // % de execução por setor (ipt_report_linhas, encerrados, últimos 30 dias)
+          (async () => {
+            try {
+              const rows = await pool.query<{ plano: string; pct: string | null }>(
+                `SELECT plano,
+                        AVG(CASE WHEN percentual_execucao > 1 THEN percentual_execucao ELSE percentual_execucao * 100 END) AS pct
+                   FROM ipt_report_linhas
+                  WHERE data_estimada >= (CURRENT_DATE - $1::int)
+                    AND LOWER(COALESCE(status, '')) LIKE '%encerrad%'
+                    AND percentual_execucao IS NOT NULL
+                  GROUP BY plano`,
+                [PERIODO_DIAS],
+              );
+              for (const r of rows.rows) {
+                const key = normalizarSetor(r.plano);
+                if (key && r.pct != null) execMap.set(key, Math.round(Number(r.pct) * 100) / 100);
+              }
+            } catch {
+              /* execução é opcional */
+            }
+          })(),
+          // KM de produção por setor (setores_modulos)
+          (async () => {
+            try {
+              const rows = await pool.query<{ setor: string; km_prod: string | null }>(
+                `SELECT setor, km_prod FROM setores_modulos WHERE setor IS NOT NULL AND km_prod IS NOT NULL`,
+              );
+              for (const r of rows.rows) {
+                const key = normalizarSetor(r.setor);
+                if (key && r.km_prod != null) kmMap.set(key, Number(r.km_prod));
+              }
+            } catch {
+              /* km é opcional */
+            }
+          })(),
+          // Praça / local por setor (cronograma_setores)
+          (async () => {
+            try {
+              const rows = await pool.query<{ setor: string; local: string | null }>(
+                `SELECT setor, local FROM cronograma_setores WHERE setor IS NOT NULL AND local IS NOT NULL AND TRIM(local) <> ''`,
+              );
+              for (const r of rows.rows) {
+                const key = normalizarSetor(r.setor);
+                if (key && r.local) pracaMap.set(key, String(r.local));
+              }
+            } catch {
+              /* praça é opcional */
+            }
+          })(),
+          // Série temporal de produtividade das baterias (% ON por data de exportação)
+          (async () => {
+            try {
+              const rows = await pool.query<{ data: string; on_count: number; total: number }>(
+                `SELECT data_exportacao::text AS data,
+                        COUNT(*) FILTER (WHERE UPPER(TRIM(COALESCE(status_comunicacao, ''))) = 'ON')::int AS on_count,
+                        COUNT(*)::int AS total
+                   FROM ipt_dados_bateria
+                  WHERE data_exportacao >= (CURRENT_DATE - 90)
+                  GROUP BY data_exportacao
+                  ORDER BY data_exportacao`,
+              );
+              evolucaoProdutividade = rows.rows.map((r) => ({
+                data: r.data,
+                produtividade: r.total > 0 ? Math.round((r.on_count / r.total) * 100) : 0,
+              }));
+            } catch {
+              /* série temporal é opcional */
+            }
+          })(),
+        ]);
+
         const modules = result.rows.map((r) => {
           const ultima = r.ultima_comunicacao;
           const statusSinal = String(r.status_sinal_manual ?? r.status_sinal_calculado ?? "");
+          const setoresDias = (Array.isArray(r.setores_dias)
+            ? (r.setores_dias as { setor?: unknown; dias?: unknown }[])
+            : []
+          ).map((d) => {
+            const setorStr = String(d?.setor ?? "");
+            const key = normalizarSetor(setorStr);
+            const execucao = execMap.get(key);
+            const km = kmMap.get(key);
+            const praca = pracaMap.get(key);
+            return {
+              setor: setorStr,
+              dias: String(d?.dias ?? ""),
+              km: km != null ? km : null,
+              praca: praca ?? null,
+              execucao: execucao != null ? execucao : null,
+            };
+          });
+          const execVals = setoresDias
+            .map((s) => s.execucao)
+            .filter((v): v is number => v != null);
+          const produtividadeExecucao =
+            execVals.length > 0
+              ? Math.round((execVals.reduce((a, b) => a + b, 0) / execVals.length) * 100) / 100
+              : null;
           return {
             id: r.id,
             subprefeitura: String(r.sub ?? ""),
             setor: String(r.setores ?? ""),
             numeroSelimp: String(r.modulo_selimp ?? ""),
             diasExecucao: String(r.dias_execucao ?? ""),
+            setoresDias,
+            produtividadeExecucao,
             comunicacao: String(r.comunicacao ?? "OFF"),
             bateria: String(r.bateria_raw ?? ""),
             bateriaPercentual: Number(r.bateria_percentual ?? 0),
@@ -2070,6 +2177,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         return {
           modules,
           stats: { total, online, offline, avgProductivity, criticalAlerts, lowBattery },
+          evolucaoProdutividade,
           lastUpdate,
           latestBatch: meta?.updated_at
             ? {
