@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
+import { apiService, type BateriaTrocaRecord } from "@/lib/api";
 
 // ===== Tipos =====
 
@@ -8,48 +9,48 @@ export type TrocaStatus = "agendada" | "concluida";
 
 export type MotivoTroca = "Manutenção" | "Corretiva" | "Preventiva" | "Desnecessária";
 
-export interface TrocaRecord {
-  selimp: string;
-  status: TrocaStatus;
-  setor?: string;
-  /** Data agendada — yyyy-MM-dd */
-  dataAgendada?: string;
-  // Dados de conclusão:
-  sucesso?: boolean;
-  percentualEntrada?: number;
-  /** yyyy-MM-dd */
-  dataTroca?: string;
-  /** yyyy-MM-dd */
-  ultimaComunicacao?: string;
-}
+export type TrocaRecord = BateriaTrocaRecord;
 
 export type TrocaMap = Record<string, TrocaRecord>;
 
-const STORAGE_KEY = "trocas-bateria-state-v1";
-
-// ===== Persistência (localStorage) =====
-
-function readStorage(): TrocaMap {
-  if (typeof window === "undefined") return {};
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? (parsed as TrocaMap) : {};
-  } catch {
-    return {};
-  }
-}
-
-// ===== Store externo (compatível com useSyncExternalStore / SSR) =====
+// ===== Store externo (useSyncExternalStore), hidratado da API =====
 
 const EMPTY: TrocaMap = {};
-let cache: TrocaMap | null = null;
+let cache: TrocaMap = EMPTY;
+let loaded = false;
+let loading: Promise<void> | null = null;
 const listeners = new Set<() => void>();
 
-function ensureCache(): TrocaMap {
-  if (cache === null) cache = readStorage();
-  return cache;
+function emit() {
+  listeners.forEach((l) => l());
+}
+
+function commitLocal(next: TrocaMap) {
+  cache = next;
+  emit();
+}
+
+async function loadFromApi(): Promise<void> {
+  if (loading) return loading;
+  loading = (async () => {
+    try {
+      const { records } = await apiService.getBateriaTrocas();
+      cache = records;
+      loaded = true;
+      emit();
+    } catch (err) {
+      console.error("Erro ao carregar trocas de bateria", err);
+    } finally {
+      loading = null;
+    }
+  })();
+  return loading;
+}
+
+/** Recarrega do servidor (usado para reconciliar após falha de mutação). */
+function reloadFromApi() {
+  loaded = false;
+  void loadFromApi();
 }
 
 function subscribe(cb: () => void): () => void {
@@ -60,23 +61,11 @@ function subscribe(cb: () => void): () => void {
 }
 
 function getSnapshot(): TrocaMap {
-  return ensureCache();
+  return cache;
 }
 
 function getServerSnapshot(): TrocaMap {
   return EMPTY;
-}
-
-function commit(next: TrocaMap) {
-  cache = next;
-  if (typeof window !== "undefined") {
-    try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    } catch {
-      /* ignore quota / serialization errors */
-    }
-  }
-  listeners.forEach((l) => l());
 }
 
 // ===== Hook =====
@@ -98,9 +87,14 @@ export interface ConcluirInput {
 export function useTrocaState() {
   const records = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 
+  useEffect(() => {
+    if (!loaded) void loadFromApi();
+  }, []);
+
   const agendar = useCallback((inputs: AgendarInput | AgendarInput[]) => {
     const list = Array.isArray(inputs) ? inputs : [inputs];
-    const next = { ...ensureCache() };
+    if (list.length === 0) return;
+    const next = { ...cache };
     for (const it of list) {
       next[it.selimp] = {
         ...next[it.selimp],
@@ -110,12 +104,17 @@ export function useTrocaState() {
         dataAgendada: it.dataAgendada,
       };
     }
-    commit(next);
+    commitLocal(next);
+    apiService.agendarBateriaTrocas(list).catch((err) => {
+      console.error("Erro ao agendar trocas", err);
+      reloadFromApi();
+    });
   }, []);
 
   const concluir = useCallback((inputs: ConcluirInput | ConcluirInput[]) => {
     const list = Array.isArray(inputs) ? inputs : [inputs];
-    const next = { ...ensureCache() };
+    if (list.length === 0) return;
+    const next = { ...cache };
     for (const it of list) {
       next[it.selimp] = {
         ...next[it.selimp],
@@ -127,38 +126,27 @@ export function useTrocaState() {
         ultimaComunicacao: it.ultimaComunicacao,
       };
     }
-    commit(next);
+    commitLocal(next);
+    apiService.concluirBateriaTrocas(list).catch((err) => {
+      console.error("Erro ao concluir trocas", err);
+      reloadFromApi();
+    });
   }, []);
 
   const remover = useCallback((selimp: string) => {
-    const next = { ...ensureCache() };
+    const next = { ...cache };
     delete next[selimp];
-    commit(next);
+    commitLocal(next);
+    apiService.removerBateriaTroca(selimp).catch((err) => {
+      console.error("Erro ao remover troca", err);
+      reloadFromApi();
+    });
   }, []);
 
   return { records, agendar, concluir, remover };
 }
 
-// ===== Alertas (métricas reais + mock determinístico) =====
-
-/** Hash estável (FNV-1a) de string → inteiro positivo. Sem Math.random para ser
- * determinístico entre renders/reloads. */
-function hashString(s: string): number {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return h >>> 0;
-}
-
-const MANUT_DESCRICOES = [
-  "Substituição de bateria",
-  "Reparo de antena/sinal",
-  "Reinstalação do módulo",
-  "Verificação de comunicação",
-  "Troca preventiva",
-];
+// ===== Alertas (derivados de dados reais) =====
 
 export interface AlertaInfo {
   hasAlert: boolean;
@@ -175,25 +163,21 @@ export interface AlertaModuleInput {
   statusBateria: string;
   produtividade: number;
   diasOff: number;
+  diasOffConsecutivos?: number;
 }
 
-/** Deriva o conjunto de alertas de um módulo. Campos reais quando disponíveis,
- * o restante é mock determinístico por SELIMP até existir backend. */
-export function computeAlerta(m: AlertaModuleInput): AlertaInfo {
-  const seed = hashString(m.numeroSelimp || "—");
-  const trocasSemAtualizarSinal = seed % 4; // 0..3
-  const diasOfflineConsecutivos = Math.min(m.diasOff, (seed >> 3) % 15);
+/** Deriva os alertas de um módulo a partir de dados reais:
+ * status/produtividade/dias OFF do snapshot importado, troca registrada no
+ * painel e histórico de manutenção registrado. */
+export function computeAlerta(
+  m: AlertaModuleInput,
+  troca?: TrocaRecord,
+  historicoManutencoes: { data: string; descricao: string }[] = [],
+): AlertaInfo {
+  // Troca concluída em que sinal/bateria não atualizaram (registrada como "sem sucesso").
+  const trocasSemAtualizarSinal = troca?.status === "concluida" && troca.sucesso === false ? 1 : 0;
+  const diasOfflineConsecutivos = m.diasOffConsecutivos ?? 0;
   const baixaProdutividade = m.produtividade < 20;
-  const numManut = seed % 3; // 0..2 registros
-  const historicoManutencoes = Array.from({ length: numManut }, (_, i) => {
-    const dayOffset = ((seed >> (i + 2)) % 90) + i * 15;
-    const d = new Date(2026, 5, 11);
-    d.setDate(d.getDate() - dayOffset);
-    return {
-      data: `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`,
-      descricao: MANUT_DESCRICOES[(seed >> (i + 1)) % MANUT_DESCRICOES.length],
-    };
-  });
 
   const statusCritico = m.statusBateria === "DESATUALIZADA" || m.statusBateria === "CRÍTICA";
   const hasAlert =

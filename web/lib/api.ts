@@ -504,7 +504,34 @@ export interface IptModuloBateriaModule {
   quantidadeTrocas: number;
   diasOn: number;
   diasOff: number;
+  /** Streak mais recente de exportações OFF consecutivas (de ipt_dados_bateria). */
+  diasOffConsecutivos?: number;
   produtividade: number;
+}
+
+// ===== Trocas e manutenções de bateria (página Bateria) =====
+
+export interface BateriaTrocaRecord {
+  selimp: string;
+  setor?: string;
+  status: "agendada" | "concluida";
+  /** yyyy-MM-dd */
+  dataAgendada?: string;
+  sucesso?: boolean;
+  percentualEntrada?: number;
+  /** yyyy-MM-dd */
+  dataTroca?: string;
+  /** yyyy-MM-dd */
+  ultimaComunicacao?: string;
+}
+
+export interface BateriaManutencaoRecord {
+  solicitada: boolean;
+  /** yyyy-MM-dd */
+  dataSolicitacao?: string;
+  /** yyyy-MM-dd */
+  dataManutencao?: string;
+  naoHouve: boolean;
 }
 
 export interface IptModulosBateriaResponse {
@@ -1010,6 +1037,42 @@ export const apiService = {
   },
   getIptModulosBateria: async (): Promise<IptModulosBateriaResponse> => {
     const { data } = await api.get('/dashboard/ipt-modulos-bateria');
+    return data;
+  },
+  // ===== Trocas de bateria =====
+  getBateriaTrocas: async (): Promise<{ records: Record<string, BateriaTrocaRecord> }> => {
+    const { data } = await api.get('/bateria/trocas');
+    return data;
+  },
+  agendarBateriaTrocas: async (items: { selimp: string; setor?: string; dataAgendada: string }[]) => {
+    const { data } = await api.post('/bateria/trocas/agendar', { items });
+    return data;
+  },
+  concluirBateriaTrocas: async (
+    items: { selimp: string; sucesso: boolean; percentualEntrada?: number; dataTroca: string; ultimaComunicacao: string }[],
+  ) => {
+    const { data } = await api.post('/bateria/trocas/concluir', { items });
+    return data;
+  },
+  removerBateriaTroca: async (selimp: string) => {
+    const { data } = await api.delete(`/bateria/trocas/${encodeURIComponent(selimp)}`);
+    return data;
+  },
+  // ===== Manutenções de bateria =====
+  getBateriaManutencoes: async (): Promise<{ records: Record<string, BateriaManutencaoRecord> }> => {
+    const { data } = await api.get('/bateria/manutencoes');
+    return data;
+  },
+  setBateriaManutencao: async (selimp: string, patch: { dataManutencao?: string; naoHouve?: boolean }) => {
+    const { data } = await api.put(`/bateria/manutencoes/${encodeURIComponent(selimp)}`, patch);
+    return data;
+  },
+  solicitarBateriaManutencao: async (selimps: string[], dataSolicitacao: string) => {
+    const { data } = await api.post('/bateria/manutencoes/solicitar', { selimps, dataSolicitacao });
+    return data;
+  },
+  cancelarBateriaManutencao: async (selimp: string) => {
+    const { data } = await api.post('/bateria/manutencoes/cancelar', { selimp });
     return data;
   },
   /** Remove registros manuais de IPT. */

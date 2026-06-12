@@ -2029,6 +2029,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         const execMap = new Map<string, number>();
         const kmMap = new Map<string, number>();
         const pracaMap = new Map<string, string>();
+        const offStreakMap = new Map<string, number>();
         let evolucaoProdutividade: { data: string; produtividade: number }[] = [];
 
         await Promise.all([
@@ -2079,6 +2080,34 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
               }
             } catch {
               /* praça é opcional */
+            }
+          })(),
+          // Dias OFF consecutivos (streak mais recente de exportações sem comunicação ON)
+          (async () => {
+            try {
+              const rows = await pool.query<{ selimp: string; streak: number }>(
+                `WITH dias AS (
+                   SELECT TRIM(selimp_id) AS selimp, data_exportacao,
+                          BOOL_OR(UPPER(TRIM(COALESCE(status_comunicacao, ''))) = 'ON') AS is_on
+                     FROM ipt_dados_bateria
+                    WHERE selimp_id IS NOT NULL AND TRIM(selimp_id) <> ''
+                    GROUP BY TRIM(selimp_id), data_exportacao
+                 ),
+                 ordenado AS (
+                   SELECT selimp, is_on,
+                          SUM(CASE WHEN is_on THEN 1 ELSE 0 END) OVER (
+                            PARTITION BY selimp ORDER BY data_exportacao DESC
+                          ) AS ons_depois
+                     FROM dias
+                 )
+                 SELECT selimp, COUNT(*)::int AS streak
+                   FROM ordenado
+                  WHERE NOT is_on AND ons_depois = 0
+                  GROUP BY selimp`,
+              );
+              for (const r of rows.rows) offStreakMap.set(r.selimp, Number(r.streak));
+            } catch {
+              /* streak é opcional */
             }
           })(),
           // Série temporal de produtividade das baterias (% ON por data de exportação)
@@ -2153,6 +2182,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
             quantidadeTrocas: Number(r.qtd_trocas ?? 0),
             diasOn: Number(r.dias_on ?? 0),
             diasOff: Number(r.dias_off ?? 0),
+            diasOffConsecutivos: offStreakMap.get(String(r.modulo_selimp ?? "").trim()) ?? 0,
             produtividade: Number(r.produtividade_bateria ?? 0),
           };
         });

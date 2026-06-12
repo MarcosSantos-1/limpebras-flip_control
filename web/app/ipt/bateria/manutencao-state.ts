@@ -1,6 +1,8 @@
 "use client";
 
-import { useCallback, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
+import { apiService, type BateriaManutencaoRecord } from "@/lib/api";
+import type { TrocaRecord } from "./troca-state";
 
 // ===== Tipos =====
 
@@ -8,87 +10,133 @@ export type ManutencaoStatus = "ATIVA" | "PENDENTE" | "EM ANÁLISE" | "FINALIZAD
 
 export const MANUTENCAO_STATUS: ManutencaoStatus[] = ["ATIVA", "PENDENTE", "EM ANÁLISE", "FINALIZADA"];
 
-/** Override editável por módulo (data da manutenção / "não houve"). */
-export interface ManutencaoOverride {
-  /** yyyy-MM-dd */
-  dataManutencao?: string;
-  naoHouve?: boolean;
-}
+/** Registro de manutenção por módulo (persistido no servidor). */
+export type ManutencaoOverride = Partial<BateriaManutencaoRecord>;
 
 export type ManutencaoMap = Record<string, ManutencaoOverride>;
 
-const STORAGE_KEY = "manutencoes-bateria-state-v1";
-
-// ===== Persistência (localStorage) =====
-
-function readStorage(): ManutencaoMap {
-  if (typeof window === "undefined") return {};
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? (parsed as ManutencaoMap) : {};
-  } catch {
-    return {};
-  }
-}
-
-// ===== Store externo (useSyncExternalStore / SSR) =====
+// ===== Store externo (useSyncExternalStore), hidratado da API =====
 
 const EMPTY: ManutencaoMap = {};
-let cache: ManutencaoMap | null = null;
+let cache: ManutencaoMap = EMPTY;
+let loaded = false;
+let loading: Promise<void> | null = null;
 const listeners = new Set<() => void>();
 
-function ensureCache(): ManutencaoMap {
-  if (cache === null) cache = readStorage();
-  return cache;
+function emit() {
+  listeners.forEach((l) => l());
 }
+
+function commitLocal(next: ManutencaoMap) {
+  cache = next;
+  emit();
+}
+
+async function loadFromApi(): Promise<void> {
+  if (loading) return loading;
+  loading = (async () => {
+    try {
+      const { records } = await apiService.getBateriaManutencoes();
+      cache = records;
+      loaded = true;
+      emit();
+    } catch (err) {
+      console.error("Erro ao carregar manutenções de bateria", err);
+    } finally {
+      loading = null;
+    }
+  })();
+  return loading;
+}
+
+function reloadFromApi() {
+  loaded = false;
+  void loadFromApi();
+}
+
 function subscribe(cb: () => void): () => void {
   listeners.add(cb);
   return () => {
     listeners.delete(cb);
   };
 }
+
 function getSnapshot(): ManutencaoMap {
-  return ensureCache();
+  return cache;
 }
+
 function getServerSnapshot(): ManutencaoMap {
   return EMPTY;
 }
-function commit(next: ManutencaoMap) {
-  cache = next;
-  if (typeof window !== "undefined") {
-    try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    } catch {
-      /* ignore */
-    }
-  }
-  listeners.forEach((l) => l());
-}
+
+// ===== Hook =====
 
 export function useManutencaoState() {
   const overrides = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 
-  const setOverride = useCallback((selimp: string, patch: ManutencaoOverride) => {
-    const next = { ...ensureCache() };
-    next[selimp] = { ...next[selimp], ...patch };
-    commit(next);
+  useEffect(() => {
+    if (!loaded) void loadFromApi();
   }, []);
 
-  return { overrides, setOverride };
+  const setOverride = useCallback(
+    (selimp: string, patch: { dataManutencao?: string; naoHouve?: boolean }) => {
+      const next = { ...cache };
+      next[selimp] = { ...next[selimp], ...patch };
+      commitLocal(next);
+      apiService.setBateriaManutencao(selimp, patch).catch((err) => {
+        console.error("Erro ao salvar manutenção", err);
+        reloadFromApi();
+      });
+    },
+    [],
+  );
+
+  /** Solicita manutenção para um ou vários módulos (status global → MANUTENÇÃO). */
+  const solicitar = useCallback((selimps: string | string[], dataSolicitacao: string) => {
+    const list = (Array.isArray(selimps) ? selimps : [selimps]).filter(Boolean);
+    if (list.length === 0) return;
+    const next = { ...cache };
+    for (const s of list) next[s] = { ...next[s], solicitada: true, dataSolicitacao };
+    commitLocal(next);
+    apiService.solicitarBateriaManutencao(list, dataSolicitacao).catch((err) => {
+      console.error("Erro ao solicitar manutenção", err);
+      reloadFromApi();
+    });
+  }, []);
+
+  const cancelarSolicitacao = useCallback((selimp: string) => {
+    const next = { ...cache };
+    next[selimp] = { ...next[selimp], solicitada: false, dataSolicitacao: undefined };
+    commitLocal(next);
+    apiService.cancelarBateriaManutencao(selimp).catch((err) => {
+      console.error("Erro ao cancelar solicitação de manutenção", err);
+      reloadFromApi();
+    });
+  }, []);
+
+  return { overrides, setOverride, solicitar, cancelarSolicitacao };
 }
 
-// ===== Mock determinístico (até backend) =====
+// ===== Derivações (dados reais) =====
 
-/** Hash estável (FNV-1a). */
-function hashString(s: string): number {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
+/** yyyy-MM-dd → dd/MM/yyyy. */
+function isoToBr(iso?: string): string {
+  if (!iso) return "—";
+  const [y, m, d] = iso.split("-");
+  if (!y || !m || !d) return iso;
+  return `${d}/${m}/${y}`;
+}
+
+/** Histórico de manutenções registrado para o módulo (para o modal de alertas). */
+export function historicoFromManutencao(ov?: ManutencaoOverride): { data: string; descricao: string }[] {
+  const out: { data: string; descricao: string }[] = [];
+  if (ov?.dataManutencao && !ov.naoHouve) {
+    out.push({ data: isoToBr(ov.dataManutencao), descricao: "Manutenção registrada" });
   }
-  return h >>> 0;
+  if (ov?.solicitada) {
+    out.push({ data: isoToBr(ov.dataSolicitacao), descricao: "Manutenção solicitada (pendente)" });
+  }
+  return out;
 }
 
 export interface ManutencaoModuleInput {
@@ -101,10 +149,9 @@ export interface ManutencaoModuleInput {
 }
 
 export interface ManutencaoInfo {
-  status: ManutencaoStatus;
+  /** null quando não há manutenção conhecida para o módulo. */
+  status: ManutencaoStatus | null;
   qtdManutencoes: number;
-  /** Data sugerida (mock) — yyyy-MM-dd. Sobrescrita pelo override do usuário. */
-  dataManutencaoSugerida: string;
   historico: {
     manutencoes: number;
     trocasBateria: number;
@@ -118,37 +165,42 @@ export interface ManutencaoInfo {
 const MANUT_EM = "MANUTENÇÃO";
 const MANUT_EM2 = "MANUTENCAO";
 
-/** Deriva o estado de manutenção (mock) de um módulo, combinando sinais reais
- * com pseudo-aleatoriedade determinística por SELIMP. */
-export function computeManutencao(m: ManutencaoModuleInput): ManutencaoInfo {
-  const seed = hashString(m.numeroSelimp || "—");
+/** Deriva o estado de manutenção do módulo a partir do registro persistido,
+ * do status global e da troca registrada no painel. */
+export function computeManutencao(
+  m: ManutencaoModuleInput,
+  ov?: ManutencaoOverride,
+  troca?: TrocaRecord,
+): ManutencaoInfo {
   const emManutencao = m.statusSinalGeral === MANUT_EM || m.statusSinalGeral === MANUT_EM2;
 
-  let status: ManutencaoStatus;
-  if (emManutencao) status = "ATIVA";
-  else if (m.statusBateria === "DESATUALIZADA") status = seed % 2 === 0 ? "PENDENTE" : "EM ANÁLISE";
-  else status = MANUTENCAO_STATUS[seed % MANUTENCAO_STATUS.length];
+  let status: ManutencaoStatus | null;
+  if (ov?.solicitada) status = "PENDENTE";
+  else if (emManutencao) status = "ATIVA";
+  else if (ov?.dataManutencao && !ov.naoHouve) status = "FINALIZADA";
+  else status = null;
 
-  const qtdManutencoes = (seed % 5) + (m.quantidadeTrocas > 0 ? 1 : 0);
-  const diasSemAtualizacao = Math.min(m.diasOff + ((seed >> 4) % 10), 90);
+  const qtdManutencoes = ov?.dataManutencao && !ov.naoHouve ? 1 : 0;
 
-  // Data sugerida: alguns dias atrás (determinístico).
-  const dayOffset = (seed >> 2) % 60;
-  const d = new Date(2026, 5, 11);
-  d.setDate(d.getDate() - dayOffset);
-  const dataManutencaoSugerida = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  // Troca concluída após a última comunicação registrada na conclusão.
+  const trocasAposUltimaComunicacao =
+    troca?.status === "concluida" &&
+    troca.dataTroca &&
+    troca.ultimaComunicacao &&
+    troca.dataTroca > troca.ultimaComunicacao
+      ? 1
+      : 0;
 
   return {
     status,
     qtdManutencoes,
-    dataManutencaoSugerida,
     historico: {
       manutencoes: qtdManutencoes,
       trocasBateria: m.quantidadeTrocas,
-      trocasAposUltimaComunicacao: (seed >> 3) % 3,
+      trocasAposUltimaComunicacao,
       diasOn: m.diasOn,
       diasOff: m.diasOff,
-      diasSemAtualizacao,
+      diasSemAtualizacao: m.diasOff,
     },
   };
 }

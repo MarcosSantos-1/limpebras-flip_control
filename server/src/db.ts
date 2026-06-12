@@ -682,6 +682,39 @@ export async function runMigrations() {
       "CREATE INDEX IF NOT EXISTS idx_modulo_selimp_status_sinal ON modulo_selimp((COALESCE(status_sinal_manual, status_sinal_calculado)))"
     ).catch(() => {});
 
+    // Agendamento/conclusão de trocas de bateria — 1 registro corrente por módulo
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS bateria_trocas (
+        id                  SERIAL PRIMARY KEY,
+        modulo_selimp       TEXT NOT NULL UNIQUE,
+        setor               TEXT,
+        status              TEXT NOT NULL DEFAULT 'agendada',
+        data_agendada       DATE,
+        sucesso             BOOLEAN,
+        percentual_entrada  NUMERIC(5,2),
+        data_troca          DATE,
+        ultima_comunicacao  DATE,
+        created_at          TIMESTAMPTZ DEFAULT NOW(),
+        updated_at          TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client.query("CREATE INDEX IF NOT EXISTS idx_bateria_trocas_status ON bateria_trocas(status)").catch(() => {});
+
+    // Manutenções por módulo: solicitação (status global → MANUTENÇÃO) + data/não houve
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS bateria_manutencoes (
+        id                SERIAL PRIMARY KEY,
+        modulo_selimp     TEXT NOT NULL UNIQUE,
+        solicitada        BOOLEAN NOT NULL DEFAULT FALSE,
+        data_solicitacao  DATE,
+        data_manutencao   DATE,
+        nao_houve         BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at        TIMESTAMPTZ DEFAULT NOW(),
+        updated_at        TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client.query("CREATE INDEX IF NOT EXISTS idx_bateria_manutencoes_solicitada ON bateria_manutencoes(solicitada) WHERE solicitada").catch(() => {});
+
     const adminEncryptedPassword = encryptPassword("1515");
     const userResult = await client.query<{ id: number }>(
       `INSERT INTO users (username, display_name, password_encrypted, role, status, blocked, created_at, updated_at)

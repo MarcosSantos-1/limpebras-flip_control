@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   AlertTriangle,
+  ArrowUpDown,
   Battery,
   BatteryCharging,
   Bell,
@@ -105,6 +106,7 @@ import {
 import {
   useManutencaoState,
   computeManutencao,
+  historicoFromManutencao,
   type ManutencaoStatus,
 } from "./manutencao-state";
 
@@ -128,6 +130,7 @@ interface ModuleData {
   quantidadeTrocas: number;
   diasOn: number;
   diasOff: number;
+  diasOffConsecutivos?: number;
   produtividade: number;
 }
 
@@ -428,6 +431,17 @@ function motivoFromModule(m: ModuleData): string {
 
 const MOTIVO_OPTIONS = ["Manutenção", "Corretiva", "Preventiva", "Desnecessária"];
 
+const STATUS_BAT_OPTIONS = ["ALTA", "REGULAR", "BAIXA", "CRÍTICA", "DESATUALIZADA"];
+
+/** Ranking de qualidade da bateria (maior = melhor) para ordenação. */
+const STATUS_BAT_RANK: Record<string, number> = {
+  ALTA: 4,
+  REGULAR: 3,
+  BAIXA: 2,
+  CRÍTICA: 1,
+  DESATUALIZADA: 0,
+};
+
 /** Data de hoje em yyyy-MM-dd (horário local). */
 function isoToday(): string {
   const d = new Date();
@@ -562,6 +576,8 @@ export default function BateriaDashboardPage() {
   const [trocasDaysFilter, setTrocasDaysFilter] = useState<string[]>([]);
   const [trocasMotivoFilter, setTrocasMotivoFilter] = useState<string[]>([]);
   const [trocasAgendadaFilter, setTrocasAgendadaFilter] = useState("all"); // all | sim | nao
+  const [trocasBateriaFilter, setTrocasBateriaFilter] = useState<string[]>([]); // status da bateria
+  const [trocasSort, setTrocasSort] = useState("default"); // ordenação da listagem
 
   // Filtros da aba "Manutenções"
   const [manutPeriod, setManutPeriod] = useState("30d");
@@ -594,6 +610,7 @@ export default function BateriaDashboardPage() {
   const [bulkAgendarDate, setBulkAgendarDate] = useState("");
   const [bulkConcluirOpen, setBulkConcluirOpen] = useState(false);
   const [bulkForm, setBulkForm] = useState<Record<string, ConclusaoForm>>({});
+  const [bulkManutOpen, setBulkManutOpen] = useState(false);
   const { resolvedTheme } = useTheme();
 
   useEffect(() => { setChartsReady(true); }, []);
@@ -643,7 +660,17 @@ export default function BateriaDashboardPage() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  const modules = data?.modules ?? [];
+  // Manutenção solicitada pelo usuário move o status global do módulo para MANUTENÇÃO,
+  // refletindo em cards, gráficos, filtros e badges de toda a página.
+  const modules = useMemo(() => {
+    const raw = data?.modules ?? [];
+    return raw.map((m) => {
+      const ov = manut.overrides[m.numeroSelimp];
+      if (!ov?.solicitada) return m;
+      if (m.statusSinalGeral === "MANUTENÇÃO" || m.statusSinalGeral === "MANUTENCAO") return m;
+      return { ...m, statusSinalGeral: "MANUTENÇÃO" };
+    });
+  }, [data, manut.overrides]);
   const stats = data?.stats ?? { total: 0, online: 0, offline: 0, avgProductivity: 0, criticalAlerts: 0, lowBattery: 0 };
 
   const filteredModules = useMemo(() => {
@@ -830,26 +857,41 @@ export default function BateriaDashboardPage() {
     };
   }, [modules]);
 
-  /** Indicadores de trocas (mock derivado da distribuição atual de status). */
+  /** Indicadores de trocas registradas no painel (agendamentos/conclusões reais). */
   const trocasStats = useMemo(() => {
-    const corretivas = modules.filter((m) => m.statusBateria === "DESATUALIZADA").length;
-    const preventivas = modules.filter(
-      (m) => m.statusBateria === "CRÍTICA" || m.statusBateria === "BAIXA",
-    ).length;
-    const desnecessarias = modules.filter((m) => m.statusBateria === "REGULAR").length;
-    const total = corretivas + preventivas + desnecessarias;
-    const comSucesso = modules.filter(
-      (m) => m.comunicacao === "ON" && (m.statusBateria === "ALTA" || m.statusBateria === "REGULAR"),
-    ).length;
-    const semSucesso = modules.filter((m) => m.statusBateria === "DESATUALIZADA").length;
-    const baseSucesso = comSucesso + semSucesso;
-    const acertividade = baseSucesso > 0 ? Math.round((comSucesso / baseSucesso) * 100) : 0;
+    const bySelimp = new Map(modules.map((m) => [m.numeroSelimp, m]));
+    const recs = Object.values(troca.records);
+    const concluidas = recs.filter((r) => r.status === "concluida");
+    const agendadas = recs.length - concluidas.length;
+    const comSucesso = concluidas.filter((r) => r.sucesso).length;
+    const semSucesso = concluidas.length - comSucesso;
+    let corretivas = 0;
+    let preventivas = 0;
+    let desnecessarias = 0;
+    for (const r of concluidas) {
+      const m = bySelimp.get(r.selimp);
+      const motivo = m ? motivoFromModule(m) : "Manutenção";
+      if (motivo === "Corretiva") corretivas += 1;
+      else if (motivo === "Preventiva") preventivas += 1;
+      else if (motivo === "Desnecessária") desnecessarias += 1;
+    }
+    const acertividade = concluidas.length > 0 ? Math.round((comSucesso / concluidas.length) * 100) : 0;
     const mediaBateria =
       modules.length > 0
         ? Math.round(modules.reduce((s, m) => s + (m.bateriaPercentual || 0), 0) / modules.length)
         : 0;
-    return { total, corretivas, preventivas, desnecessarias, comSucesso, semSucesso, acertividade, mediaBateria };
-  }, [modules]);
+    return {
+      total: concluidas.length,
+      agendadas,
+      corretivas,
+      preventivas,
+      desnecessarias,
+      comSucesso,
+      semSucesso,
+      acertividade,
+      mediaBateria,
+    };
+  }, [modules, troca.records]);
 
   /** Ranking dos setores com maior quantidade de trocas. */
   const trocasRanking = useMemo(() => {
@@ -919,6 +961,28 @@ export default function BateriaDashboardPage() {
         return trocasAgendadaFilter === "sim" ? agendada : !agendada;
       });
     }
+    if (trocasBateriaFilter.length > 0) {
+      result = result.filter((m) => trocasBateriaFilter.includes(m.statusBateria));
+    }
+
+    // Ordenação (não muta a fonte): cópia antes de sort.
+    if (trocasSort !== "default") {
+      const rank = (m: ModuleData) => STATUS_BAT_RANK[m.statusBateria] ?? -1;
+      result = [...result].sort((a, b) => {
+        switch (trocasSort) {
+          case "cargas-desc":
+            return b.quantidadeTrocas - a.quantidadeTrocas;
+          case "cargas-asc":
+            return a.quantidadeTrocas - b.quantidadeTrocas;
+          case "bateria-desc":
+            return rank(b) - rank(a) || b.bateriaPercentual - a.bateriaPercentual;
+          case "bateria-asc":
+            return rank(a) - rank(b) || a.bateriaPercentual - b.bateriaPercentual;
+          default:
+            return 0;
+        }
+      });
+    }
     return result.slice(0, 60);
   }, [
     modules,
@@ -927,6 +991,8 @@ export default function BateriaDashboardPage() {
     trocasDaysFilter,
     trocasMotivoFilter,
     trocasAgendadaFilter,
+    trocasBateriaFilter,
+    trocasSort,
     troca.records,
   ]);
 
@@ -1017,6 +1083,13 @@ export default function BateriaDashboardPage() {
     setBulkConcluirOpen(true);
   }
 
+  function confirmBulkManut() {
+    if (selectedModules.length === 0) return;
+    manut.solicitar(selectedModules.map((m) => m.numeroSelimp), isoToday());
+    setBulkManutOpen(false);
+    toggleSelMode();
+  }
+
   function confirmBulkConcluir() {
     troca.concluir(
       selectedModules.map((m) => {
@@ -1050,32 +1123,45 @@ export default function BateriaDashboardPage() {
     return result.slice(0, 60);
   }, [modules, manutSubFilter, manutSearch]);
 
+  /** Info de manutenção do módulo (registro persistido + status global + troca). */
+  const manutInfoOf = useCallback(
+    (m: ModuleData) => computeManutencao(m, manut.overrides[m.numeroSelimp], troca.records[m.numeroSelimp]),
+    [manut.overrides, troca.records],
+  );
+
+  /** Alertas do módulo (troca registrada + histórico de manutenção reais). */
+  const alertaOf = useCallback(
+    (m: ModuleData) =>
+      computeAlerta(m, troca.records[m.numeroSelimp], historicoFromManutencao(manut.overrides[m.numeroSelimp])),
+    [manut.overrides, troca.records],
+  );
+
   const manutStats = useMemo(() => {
     let total = 0;
     let ativasPendentes = 0;
     let finalizadas = 0;
     let emAnalise = 0;
     for (const m of modules) {
-      const info = computeManutencao(m);
+      const info = manutInfoOf(m);
       total += info.qtdManutencoes;
       if (info.status === "ATIVA" || info.status === "PENDENTE") ativasPendentes += 1;
       else if (info.status === "FINALIZADA") finalizadas += 1;
       else if (info.status === "EM ANÁLISE") emAnalise += 1;
     }
     return { total, ativasPendentes, finalizadas, emAnalise };
-  }, [modules]);
+  }, [modules, manutInfoOf]);
 
   const manutChartData = useMemo(() => {
     const map = new Map<string, number>();
     for (const m of modules) {
       if (!m.subprefeitura) continue;
-      const info = computeManutencao(m);
+      const info = manutInfoOf(m);
       map.set(m.subprefeitura, (map.get(m.subprefeitura) ?? 0) + info.qtdManutencoes);
     }
     return Array.from(map.entries())
       .map(([subprefeitura, manutencoes]) => ({ subprefeitura, manutencoes }))
       .sort((a, b) => b.manutencoes - a.manutencoes);
-  }, [modules]);
+  }, [modules, manutInfoOf]);
 
   if (loading) {
     return (
@@ -1415,7 +1501,7 @@ export default function BateriaDashboardPage() {
                       {trocasStats.total}
                     </p>
                     <p className="mt-3 text-xs text-emerald-100/85">
-                      Dados preliminares (mockup) — a dinâmica de registro de trocas será conectada em seguida.
+                      Trocas registradas no painel · {trocasStats.agendadas} agendada(s) em aberto.
                     </p>
                   </div>
                   <div className="grid flex-1 min-w-[220px] grid-cols-1 gap-4 sm:grid-cols-3 xl:max-w-2xl">
@@ -1628,6 +1714,14 @@ export default function BateriaDashboardPage() {
                           >
                             <CalendarCheck2 className="h-4 w-4" /> Concluir ({selected.size})
                           </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-9 gap-1.5 border-zinc-500/50 text-zinc-600 hover:bg-zinc-500/10 dark:text-zinc-300"
+                            onClick={() => setBulkManutOpen(true)}
+                          >
+                            <Wrench className="h-4 w-4" /> Manutenção ({selected.size})
+                          </Button>
                         </>
                       )}
                       <Button
@@ -1682,6 +1776,14 @@ export default function BateriaDashboardPage() {
                       value={trocasMotivoFilter}
                       onChange={setTrocasMotivoFilter}
                     />
+                    <MultiSelect
+                      compact
+                      className="w-[170px]"
+                      placeholder="Status da Bateria"
+                      options={STATUS_BAT_OPTIONS.map((s) => ({ value: s, label: s }))}
+                      value={trocasBateriaFilter}
+                      onChange={setTrocasBateriaFilter}
+                    />
                     <Select value={trocasAgendadaFilter} onValueChange={setTrocasAgendadaFilter}>
                       <SelectTrigger className="h-9 w-[170px]">
                         <CalendarCheck2 className="mr-1 h-4 w-4 text-muted-foreground" />
@@ -1691,6 +1793,19 @@ export default function BateriaDashboardPage() {
                         <SelectItem value="all">Trocas agendadas: Todas</SelectItem>
                         <SelectItem value="sim">Com troca programada</SelectItem>
                         <SelectItem value="nao">Sem troca programada</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Select value={trocasSort} onValueChange={setTrocasSort}>
+                      <SelectTrigger className="h-9 w-[180px]">
+                        <ArrowUpDown className="mr-1 h-4 w-4 text-muted-foreground" />
+                        <SelectValue placeholder="Ordenar" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="default">Ordenar: padrão</SelectItem>
+                        <SelectItem value="cargas-desc">Mais cargas</SelectItem>
+                        <SelectItem value="cargas-asc">Menos cargas</SelectItem>
+                        <SelectItem value="bateria-desc">Bateria: melhor → pior</SelectItem>
+                        <SelectItem value="bateria-asc">Bateria: pior → melhor</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -1717,7 +1832,7 @@ export default function BateriaDashboardPage() {
                       <TableBody>
                         {trocasModules.map((m, idx) => {
                           const rec = troca.records[m.numeroSelimp];
-                          const alerta = computeAlerta(m);
+                          const alerta = alertaOf(m);
                           const sel = selected.has(m.numeroSelimp);
                           return (
                             <TableRow
@@ -1768,7 +1883,16 @@ export default function BateriaDashboardPage() {
                                 </Badge>
                               </TableCell>
                               <TableCell className="align-top">
-                                <Badge className={statusBatBadge(m.statusBateria)}>{m.statusBateria}</Badge>
+                                <div className="flex items-center gap-1.5">
+                                  <InfoTooltip text={m.comunicacao === "ON" ? "Bateria atualizada (comunicação ON)" : "Bateria desatualizada (comunicação OFF)"}>
+                                    {m.comunicacao === "ON" ? (
+                                      <Wifi className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+                                    ) : (
+                                      <WifiOff className="h-3.5 w-3.5 shrink-0 text-red-500" />
+                                    )}
+                                  </InfoTooltip>
+                                  <Badge className={statusBatBadge(m.statusBateria)}>{m.statusBateria}</Badge>
+                                </div>
                               </TableCell>
                               <TableCell className="text-center font-medium tabular-nums align-top">{m.quantidadeTrocas}</TableCell>
                               <TableCell className="text-center align-top" onClick={(e) => e.stopPropagation()}>
@@ -1860,7 +1984,7 @@ export default function BateriaDashboardPage() {
                       {manutStats.total}
                     </p>
                     <p className="mt-3 text-xs text-zinc-200/85">
-                      Dados preliminares (mockup) — a dinâmica de registro de manutenções será conectada em seguida.
+                      Manutenções registradas no painel — solicitações e registros por módulo.
                     </p>
                   </div>
                   <div className="grid flex-1 min-w-[220px] grid-cols-1 gap-4 sm:grid-cols-2 xl:max-w-xl">
@@ -1963,16 +2087,20 @@ export default function BateriaDashboardPage() {
                       </TableHeader>
                       <TableBody>
                         {manutModules.map((m) => {
-                          const info = computeManutencao(m);
+                          const info = manutInfoOf(m);
                           const ov = manut.overrides[m.numeroSelimp];
-                          const dataAtual = ov?.dataManutencao ?? info.dataManutencaoSugerida;
+                          const dataAtual = ov?.dataManutencao ?? ov?.dataSolicitacao ?? "";
                           const naoHouve = ov?.naoHouve ?? false;
                           return (
                             <TableRow key={m.id} className="border-border/30 hover:bg-muted/20">
                               <TableCell className="text-center font-medium align-top">{m.subprefeitura}</TableCell>
                               <TableCell className="align-top"><SetorCell value={m.setor} /></TableCell>
                               <TableCell className="align-top">
-                                <Badge className={STATUS_MANUT_BADGE[info.status]}>{info.status}</Badge>
+                                {info.status ? (
+                                  <Badge className={STATUS_MANUT_BADGE[info.status]}>{info.status}</Badge>
+                                ) : (
+                                  <span className="text-sm text-muted-foreground">—</span>
+                                )}
                               </TableCell>
                               <TableCell className="align-top">{m.numeroSelimp}</TableCell>
                               <TableCell className="align-top">
@@ -2038,7 +2166,7 @@ export default function BateriaDashboardPage() {
                     </Table>
                   </div>
                   <p className="mt-3 text-xs text-muted-foreground">
-                    Exibindo até 60 setores. Dados de manutenção são mockados até a conexão com o backend.
+                    Exibindo até 60 setores. Dados de manutenção persistidos no servidor.
                   </p>
                 </CardContent>
               </Card>
@@ -2451,7 +2579,7 @@ export default function BateriaDashboardPage() {
               <DialogDescription>{alertModule?.setor}</DialogDescription>
             </DialogHeader>
             {alertModule && (() => {
-              const a: AlertaInfo = computeAlerta(alertModule);
+              const a: AlertaInfo = alertaOf(alertModule);
               return (
                 <div className="space-y-3">
                   <div className="grid grid-cols-2 gap-3">
@@ -2510,8 +2638,24 @@ export default function BateriaDashboardPage() {
                 </div>
               );
             })()}
-            <DialogFooter>
+            <DialogFooter className="gap-2">
               <Button variant="ghost" onClick={() => setAlertModule(null)}>Fechar</Button>
+              {alertModule && (manut.overrides[alertModule.numeroSelimp]?.solicitada ? (
+                <Button
+                  variant="outline"
+                  className="gap-1.5 border-amber-500/50 text-amber-600 hover:bg-amber-500/10 dark:text-amber-400"
+                  onClick={() => { manut.cancelarSolicitacao(alertModule.numeroSelimp); }}
+                >
+                  <Wrench className="h-4 w-4" /> Manutenção pendente — desfazer
+                </Button>
+              ) : (
+                <Button
+                  className="gap-1.5 bg-zinc-700 text-white hover:bg-zinc-800 dark:bg-zinc-600 dark:hover:bg-zinc-700"
+                  onClick={() => { manut.solicitar(alertModule.numeroSelimp, isoToday()); setAlertModule(null); }}
+                >
+                  <Wrench className="h-4 w-4" /> Adicionar à manutenção
+                </Button>
+              ))}
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -2645,6 +2789,40 @@ export default function BateriaDashboardPage() {
           </DialogContent>
         </Dialog>
 
+        {/* ===== Modal de Manutenção em lote ===== */}
+        <Dialog open={bulkManutOpen} onOpenChange={setBulkManutOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-base">
+                <Wrench className="h-5 w-5 text-zinc-500" />
+                Adicionar à manutenção — {selectedModules.length} setor(es)
+              </DialogTitle>
+              <DialogDescription>
+                O status global dos módulos selecionados será movido para Manutenção (pendente).
+              </DialogDescription>
+            </DialogHeader>
+            <div className="max-h-40 overflow-y-auto rounded-lg border border-border/60 bg-muted/20 p-2">
+              <ul className="space-y-1 text-sm">
+                {selectedModules.map((m) => (
+                  <li key={m.numeroSelimp} className="flex items-center justify-between gap-2">
+                    <span className="truncate font-mono text-xs">{m.setor}</span>
+                    <span className="shrink-0 text-xs text-muted-foreground">{m.numeroSelimp}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <DialogFooter className="gap-2">
+              <Button variant="ghost" onClick={() => setBulkManutOpen(false)}>Cancelar</Button>
+              <Button
+                className="bg-zinc-700 text-white hover:bg-zinc-800 dark:bg-zinc-600 dark:hover:bg-zinc-700"
+                onClick={confirmBulkManut}
+              >
+                <Wrench className="mr-1.5 h-4 w-4" /> Adicionar {selectedModules.length}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         {/* ===== Modal de Conclusão em lote ===== */}
         <Dialog open={bulkConcluirOpen} onOpenChange={setBulkConcluirOpen}>
           <DialogContent className="max-w-3xl max-h-[88vh] overflow-y-auto">
@@ -2713,7 +2891,7 @@ export default function BateriaDashboardPage() {
               <DialogDescription>{histModule?.setor}</DialogDescription>
             </DialogHeader>
             {histModule && (() => {
-              const h = computeManutencao(histModule).historico;
+              const h = manutInfoOf(histModule).historico;
               const items: { label: string; value: number | string; icon: typeof Wrench; color: string }[] = [
                 { label: "Manutenções", value: h.manutencoes, icon: Wrench, color: "text-zinc-600 dark:text-zinc-300" },
                 { label: "Trocas de bateria", value: h.trocasBateria, icon: Repeat, color: "text-emerald-600 dark:text-emerald-400" },
