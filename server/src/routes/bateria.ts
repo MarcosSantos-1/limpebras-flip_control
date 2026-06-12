@@ -25,6 +25,17 @@ export interface TrocaRecordDto {
   ultimaComunicacao?: string;
 }
 
+export interface TrocaHistoryDto extends TrocaRecordDto {
+  id: string;
+  tipoTroca?: string;
+  bateriaAntes?: string;
+  bateriaAntesPercentual?: number;
+  statusBateriaAntes?: string;
+  bateriaDepoisPercentual?: number;
+  statusSinalDepois?: string;
+  createdAt?: string;
+}
+
 interface TrocaRow {
   modulo_selimp: string;
   setor: string | null;
@@ -34,6 +45,17 @@ interface TrocaRow {
   percentual_entrada: string | null;
   data_troca: string | null;
   ultima_comunicacao: string | null;
+}
+
+interface TrocaEventoRow extends TrocaRow {
+  id: number;
+  tipo_troca: string | null;
+  bateria_antes_raw: string | null;
+  bateria_antes_percentual: string | null;
+  status_bateria_antes: string | null;
+  bateria_depois_percentual: string | null;
+  status_sinal_depois: string | null;
+  created_at: string | null;
 }
 
 function mapTroca(r: TrocaRow): TrocaRecordDto {
@@ -49,6 +71,28 @@ function mapTroca(r: TrocaRow): TrocaRecordDto {
   };
 }
 
+function mapTrocaHistory(r: TrocaEventoRow): TrocaHistoryDto {
+  return {
+    ...mapTroca(r),
+    id: String(r.id),
+    tipoTroca: r.tipo_troca ?? undefined,
+    bateriaAntes: r.bateria_antes_raw ?? undefined,
+    bateriaAntesPercentual: r.bateria_antes_percentual != null ? Number(r.bateria_antes_percentual) : undefined,
+    statusBateriaAntes: r.status_bateria_antes ?? undefined,
+    bateriaDepoisPercentual: r.bateria_depois_percentual != null ? Number(r.bateria_depois_percentual) : undefined,
+    statusSinalDepois: r.status_sinal_depois ?? undefined,
+    createdAt: r.created_at ?? undefined,
+  };
+}
+
+function currentToHistory(r: TrocaRow): TrocaHistoryDto {
+  return {
+    ...mapTroca(r),
+    id: `current-${r.modulo_selimp}`,
+    tipoTroca: r.status === "agendada" ? "Agendamento" : undefined,
+  };
+}
+
 const SELECT_TROCA = `
   SELECT modulo_selimp, setor, status,
          data_agendada::text AS data_agendada,
@@ -56,6 +100,20 @@ const SELECT_TROCA = `
          data_troca::text AS data_troca,
          ultima_comunicacao::text AS ultima_comunicacao
     FROM bateria_trocas`;
+
+const SELECT_TROCA_EVENTO = `
+  SELECT id, modulo_selimp, setor, status, tipo_troca,
+         data_agendada::text AS data_agendada,
+         sucesso, percentual_entrada,
+         data_troca::text AS data_troca,
+         ultima_comunicacao::text AS ultima_comunicacao,
+         bateria_antes_raw,
+         bateria_antes_percentual,
+         status_bateria_antes,
+         bateria_depois_percentual,
+         status_sinal_depois,
+         created_at::text AS created_at
+    FROM bateria_trocas_eventos`;
 
 // ===== Manutenções =====
 
@@ -89,18 +147,36 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
   // ---- Trocas ----
 
   fastify.get("/bateria/trocas", async () => {
-    const res = await pool.query<TrocaRow>(`${SELECT_TROCA} ORDER BY modulo_selimp`);
+    const [res, eventos] = await Promise.all([
+      pool.query<TrocaRow>(`${SELECT_TROCA} ORDER BY modulo_selimp`),
+      pool.query<TrocaEventoRow>(`${SELECT_TROCA_EVENTO} ORDER BY modulo_selimp, COALESCE(data_troca, data_agendada) DESC NULLS LAST, created_at DESC, id DESC`),
+    ]);
     const records: Record<string, TrocaRecordDto> = {};
+    const history: Record<string, TrocaHistoryDto[]> = {};
     for (const r of res.rows) records[r.modulo_selimp] = mapTroca(r);
-    return { records };
+    for (const r of eventos.rows) {
+      if (!history[r.modulo_selimp]) history[r.modulo_selimp] = [];
+      history[r.modulo_selimp].push(mapTrocaHistory(r));
+    }
+    for (const r of res.rows) {
+      if (!history[r.modulo_selimp]?.length) {
+        history[r.modulo_selimp] = [currentToHistory(r)];
+      }
+    }
+    return { records, history };
   });
 
   fastify.post<{
-    Body: { items?: { selimp?: string; setor?: string; dataAgendada?: string }[] };
+    Body: { items?: { selimp?: string; setor?: string; dataAgendada?: string; tipoTroca?: string }[] };
   }>("/bateria/trocas/agendar", async (request, reply) => {
     const items = Array.isArray(request.body?.items) ? request.body.items : [];
     const valid = items
-      .map((it) => ({ selimp: cleanSelimp(it?.selimp), setor: String(it?.setor ?? "").trim() || null, dataAgendada: it?.dataAgendada }))
+      .map((it) => ({
+        selimp: cleanSelimp(it?.selimp),
+        setor: String(it?.setor ?? "").trim() || null,
+        dataAgendada: it?.dataAgendada,
+        tipoTroca: String(it?.tipoTroca ?? "").trim() || "Agendamento",
+      }))
       .filter((it) => it.selimp && isIsoDate(it.dataAgendada));
     if (valid.length === 0) {
       return reply.code(400).send({ detail: "items deve conter ao menos um { selimp, dataAgendada (yyyy-MM-dd) }" });
@@ -120,6 +196,11 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
              updated_at = NOW()`,
           [it.selimp, it.setor, it.dataAgendada]
         );
+        await client.query(
+          `INSERT INTO bateria_trocas_eventos (modulo_selimp, setor, status, tipo_troca, data_agendada)
+           VALUES ($1, $2, 'agendada', $3, $4::date)`,
+          [it.selimp, it.setor, it.tipoTroca, it.dataAgendada]
+        );
       }
       await client.query("COMMIT");
     } catch (err) {
@@ -135,10 +216,17 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
     Body: {
       items?: {
         selimp?: string;
+        setor?: string;
         sucesso?: boolean;
         percentualEntrada?: number | null;
         dataTroca?: string;
         ultimaComunicacao?: string;
+        tipoTroca?: string;
+        bateriaAntes?: string;
+        bateriaAntesPercentual?: number | null;
+        statusBateriaAntes?: string;
+        bateriaDepoisPercentual?: number | null;
+        statusSinalDepois?: string;
       }[];
     };
   }>("/bateria/trocas/concluir", async (request, reply) => {
@@ -146,6 +234,7 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
     const valid = items
       .map((it) => ({
         selimp: cleanSelimp(it?.selimp),
+        setor: String(it?.setor ?? "").trim() || null,
         sucesso: Boolean(it?.sucesso),
         percentualEntrada:
           it?.percentualEntrada != null && Number.isFinite(Number(it.percentualEntrada))
@@ -153,6 +242,18 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
             : null,
         dataTroca: isIsoDate(it?.dataTroca) ? it.dataTroca : null,
         ultimaComunicacao: isIsoDate(it?.ultimaComunicacao) ? it.ultimaComunicacao : null,
+        tipoTroca: String(it?.tipoTroca ?? "").trim() || null,
+        bateriaAntes: String(it?.bateriaAntes ?? "").trim() || null,
+        bateriaAntesPercentual:
+          it?.bateriaAntesPercentual != null && Number.isFinite(Number(it.bateriaAntesPercentual))
+            ? Math.min(100, Math.max(0, Number(it.bateriaAntesPercentual)))
+            : null,
+        statusBateriaAntes: String(it?.statusBateriaAntes ?? "").trim() || null,
+        bateriaDepoisPercentual:
+          it?.bateriaDepoisPercentual != null && Number.isFinite(Number(it.bateriaDepoisPercentual))
+            ? Math.min(100, Math.max(0, Number(it.bateriaDepoisPercentual)))
+            : null,
+        statusSinalDepois: String(it?.statusSinalDepois ?? "").trim() || null,
       }))
       .filter((it) => it.selimp && it.dataTroca);
     if (valid.length === 0) {
@@ -164,16 +265,40 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
       await client.query("BEGIN");
       for (const it of valid) {
         await client.query(
-          `INSERT INTO bateria_trocas (modulo_selimp, status, sucesso, percentual_entrada, data_troca, ultima_comunicacao, updated_at)
-           VALUES ($1, 'concluida', $2, $3, $4::date, $5::date, NOW())
+          `INSERT INTO bateria_trocas (modulo_selimp, setor, status, sucesso, percentual_entrada, data_troca, ultima_comunicacao, updated_at)
+           VALUES ($1, $2, 'concluida', $3, $4, $5::date, $6::date, NOW())
            ON CONFLICT (modulo_selimp) DO UPDATE SET
+             setor = COALESCE(EXCLUDED.setor, bateria_trocas.setor),
              status = 'concluida',
              sucesso = EXCLUDED.sucesso,
              percentual_entrada = EXCLUDED.percentual_entrada,
              data_troca = EXCLUDED.data_troca,
              ultima_comunicacao = EXCLUDED.ultima_comunicacao,
              updated_at = NOW()`,
-          [it.selimp, it.sucesso, it.percentualEntrada, it.dataTroca, it.ultimaComunicacao]
+          [it.selimp, it.setor, it.sucesso, it.percentualEntrada, it.dataTroca, it.ultimaComunicacao]
+        );
+        await client.query(
+          `INSERT INTO bateria_trocas_eventos (
+             modulo_selimp, setor, status, tipo_troca, sucesso, percentual_entrada,
+             data_troca, ultima_comunicacao, bateria_antes_raw,
+             bateria_antes_percentual, status_bateria_antes,
+             bateria_depois_percentual, status_sinal_depois
+           )
+           VALUES ($1, $2, 'concluida', $3, $4, $5, $6::date, $7::date, $8, $9, $10, $11, $12)`,
+          [
+            it.selimp,
+            it.setor,
+            it.tipoTroca,
+            it.sucesso,
+            it.percentualEntrada,
+            it.dataTroca,
+            it.ultimaComunicacao,
+            it.bateriaAntes,
+            it.bateriaAntesPercentual,
+            it.statusBateriaAntes,
+            it.bateriaDepoisPercentual ?? it.percentualEntrada,
+            it.statusSinalDepois,
+          ]
         );
       }
       await client.query("COMMIT");

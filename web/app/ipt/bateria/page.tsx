@@ -1,7 +1,8 @@
 "use client";
 
 import type { CSSProperties, ReactNode } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Activity,
   AlertTriangle,
@@ -16,6 +17,7 @@ import {
   CheckCircle2,
   CheckSquare,
   AlertCircle,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clock,
@@ -102,6 +104,8 @@ import {
   useTrocaState,
   computeAlerta,
   type AlertaInfo,
+  type TrocaHistoryRecord,
+  type TrocaRecord,
 } from "./troca-state";
 import {
   useManutencaoState,
@@ -273,19 +277,53 @@ function SetorCell({ value }: { value: string }) {
   );
 }
 
-/** Tooltip discreto via CSS (group-hover); suporta quebras de linha com \n */
+/** Tooltip discreto fixo no viewport; suporta quebras de linha com \n. */
 function InfoTooltip({ text, children }: { text: string; children?: ReactNode }) {
+  const triggerRef = useRef<HTMLSpanElement>(null);
+  const [position, setPosition] = useState<{ left: number; top: number; placement: "top" | "bottom" } | null>(null);
+
+  const show = useCallback(() => {
+    const el = triggerRef.current;
+    if (!el || typeof window === "undefined") return;
+    const rect = el.getBoundingClientRect();
+    const tooltipHalfWidth = 130;
+    const left = Math.min(window.innerWidth - tooltipHalfWidth - 12, Math.max(tooltipHalfWidth + 12, rect.left + rect.width / 2));
+    const placement = rect.top > 96 ? "top" : "bottom";
+    const top = placement === "top" ? rect.top - 8 : rect.bottom + 8;
+    setPosition({ left, top, placement });
+  }, []);
+
+  const hide = useCallback(() => setPosition(null), []);
+
   return (
-    <span className="group/tt relative inline-flex items-center">
+    <span
+      ref={triggerRef}
+      className="relative inline-flex items-center"
+      onMouseEnter={show}
+      onMouseMove={show}
+      onMouseLeave={hide}
+      onFocus={show}
+      onBlur={hide}
+    >
       {children ?? (
         <Info className="h-3.5 w-3.5 cursor-help text-muted-foreground/70 transition-colors hover:text-foreground" />
       )}
-      <span
-        role="tooltip"
-        className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 hidden w-max max-w-[260px] -translate-x-1/2 whitespace-pre-line rounded-xl border border-border/70 bg-popover px-3 py-2 text-left text-xs font-normal leading-snug text-popover-foreground shadow-xl group-hover/tt:block"
-      >
-        {text}
-      </span>
+      {position && typeof document !== "undefined"
+        ? createPortal(
+            <span
+              role="tooltip"
+              className="pointer-events-none fixed z-[9999] w-max max-w-[260px] -translate-x-1/2 whitespace-pre-line rounded-xl border border-border/70 bg-popover px-3 py-2 text-left text-xs font-normal leading-snug text-popover-foreground shadow-2xl ring-1 ring-black/5"
+              style={{
+                left: position.left,
+                top: position.top,
+                transform: position.placement === "top" ? "translate(-50%, -100%)" : "translate(-50%, 0)",
+              }}
+            >
+              {text}
+            </span>,
+            document.body,
+          )
+        : null}
     </span>
   );
 }
@@ -456,6 +494,45 @@ function fmtIsoBr(iso?: string): string {
   return `${d}/${m}/${y}`;
 }
 
+function fmtDisplayDate(value?: string): string {
+  if (!value) return "—";
+  const normalized = value.slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? fmtIsoBr(normalized) : value;
+}
+
+function batteryLabel(raw?: string, percent?: number | null): string {
+  const clean = String(raw ?? "").trim();
+  if (clean) return clean;
+  return percent != null && Number.isFinite(Number(percent)) ? `${Number(percent)}%` : "—";
+}
+
+function trocaStatusLabel(item: Pick<TrocaRecord, "status" | "sucesso">): string {
+  if (item.status === "agendada") return "Agendada";
+  return item.sucesso ? "Concluída com sucesso" : "Concluída sem sucesso";
+}
+
+function trocaStatusBadgeClass(item: Pick<TrocaRecord, "status" | "sucesso">): string {
+  if (item.status === "agendada") return "bg-amber-500/15 text-amber-600 border-amber-500/30 dark:text-amber-400";
+  return item.sucesso
+    ? "bg-emerald-500/15 text-emerald-600 border-emerald-500/30 dark:text-emerald-400"
+    : "bg-red-500/15 text-red-600 border-red-500/30 dark:text-red-400";
+}
+
+function trocaHistoryOf(m: ModuleData, rec?: TrocaRecord, history: TrocaHistoryRecord[] = []): TrocaHistoryRecord[] {
+  if (history.length > 0) return history;
+  if (!rec) return [];
+  return [
+    {
+      ...rec,
+      id: `current-${m.numeroSelimp}`,
+      selimp: m.numeroSelimp,
+      setor: rec.setor ?? m.setor,
+      tipoTroca: rec.status === "agendada" ? "Agendamento" : motivoFromModule(m),
+      bateriaDepoisPercentual: rec.percentualEntrada,
+    },
+  ];
+}
+
 const STATUS_BAT_BADGE: Record<string, string> = {
   ALTA: "bg-emerald-500/15 text-emerald-600 border-emerald-500/30 dark:text-emerald-400",
   REGULAR: "bg-orange-500/15 text-orange-600 border-orange-500/30 dark:text-orange-400",
@@ -594,6 +671,7 @@ export default function BateriaDashboardPage() {
   const [selMode, setSelMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [lastIdx, setLastIdx] = useState<number | null>(null);
+  const [expandedTrocaSelimp, setExpandedTrocaSelimp] = useState<string | null>(null);
 
   // Modais da aba Trocas
   const [alertModule, setAlertModule] = useState<ModuleData | null>(null);
@@ -614,6 +692,10 @@ export default function BateriaDashboardPage() {
   const { resolvedTheme } = useTheme();
 
   useEffect(() => { setChartsReady(true); }, []);
+
+  useEffect(() => {
+    if (selMode) setExpandedTrocaSelimp(null);
+  }, [selMode]);
 
   const isChartDark = resolvedTheme === "dark";
   const axisTickColor = isChartDark ? "#e4e4e7" : "#52525b";
@@ -1043,18 +1125,33 @@ export default function BateriaDashboardPage() {
 
   function confirmAgendar() {
     if (!agendarModule || !agendarDate) return;
-    troca.agendar({ selimp: agendarModule.numeroSelimp, setor: agendarModule.setor, dataAgendada: agendarDate });
+    troca.agendar({
+      selimp: agendarModule.numeroSelimp,
+      setor: agendarModule.setor,
+      dataAgendada: agendarDate,
+      tipoTroca: motivoFromModule(agendarModule),
+    });
     setAgendarModule(null);
   }
 
   function confirmConcluir() {
     if (!concluirModule) return;
+    const percentualEntrada = concluirForm.sucesso && concluirForm.percentual.trim() !== ""
+      ? Number(concluirForm.percentual)
+      : undefined;
     troca.concluir({
       selimp: concluirModule.numeroSelimp,
+      setor: concluirModule.setor,
       sucesso: concluirForm.sucesso,
-      percentualEntrada: concluirForm.sucesso ? Number(concluirForm.percentual) || 0 : undefined,
+      percentualEntrada: Number.isFinite(percentualEntrada) ? percentualEntrada : undefined,
       dataTroca: concluirForm.dataTroca,
       ultimaComunicacao: concluirForm.ultimaComunicacao,
+      tipoTroca: motivoFromModule(concluirModule),
+      bateriaAntes: concluirModule.bateria,
+      bateriaAntesPercentual: concluirModule.bateriaPercentual,
+      statusBateriaAntes: concluirModule.statusBateria,
+      bateriaDepoisPercentual: Number.isFinite(percentualEntrada) ? percentualEntrada : undefined,
+      statusSinalDepois: concluirModule.statusSinalGeral,
     });
     setConcluirModule(null);
   }
@@ -1062,7 +1159,12 @@ export default function BateriaDashboardPage() {
   function confirmBulkAgendar() {
     if (!bulkAgendarDate || selectedModules.length === 0) return;
     troca.agendar(
-      selectedModules.map((m) => ({ selimp: m.numeroSelimp, setor: m.setor, dataAgendada: bulkAgendarDate })),
+      selectedModules.map((m) => ({
+        selimp: m.numeroSelimp,
+        setor: m.setor,
+        dataAgendada: bulkAgendarDate,
+        tipoTroca: motivoFromModule(m),
+      })),
     );
     setBulkAgendarOpen(false);
     toggleSelMode();
@@ -1094,12 +1196,20 @@ export default function BateriaDashboardPage() {
     troca.concluir(
       selectedModules.map((m) => {
         const f = bulkForm[m.numeroSelimp] ?? { sucesso: true, percentual: "", dataTroca: isoToday(), ultimaComunicacao: isoToday() };
+        const percentualEntrada = f.sucesso && f.percentual.trim() !== "" ? Number(f.percentual) : undefined;
         return {
           selimp: m.numeroSelimp,
+          setor: m.setor,
           sucesso: f.sucesso,
-          percentualEntrada: f.sucesso ? Number(f.percentual) || 0 : undefined,
+          percentualEntrada: Number.isFinite(percentualEntrada) ? percentualEntrada : undefined,
           dataTroca: f.dataTroca,
           ultimaComunicacao: f.ultimaComunicacao,
+          tipoTroca: motivoFromModule(m),
+          bateriaAntes: m.bateria,
+          bateriaAntesPercentual: m.bateriaPercentual,
+          statusBateriaAntes: m.statusBateria,
+          bateriaDepoisPercentual: Number.isFinite(percentualEntrada) ? percentualEntrada : undefined,
+          statusSinalDepois: m.statusSinalGeral,
         };
       }),
     );
@@ -1762,7 +1872,7 @@ export default function BateriaDashboardPage() {
                     </Select>
                     <MultiSelect
                       compact
-                      className="w-[170px]"
+                      className="w-[204px]"
                       placeholder="Dias de execução"
                       options={uniqueDays.map((d) => ({ value: d, label: d }))}
                       value={trocasDaysFilter}
@@ -1815,7 +1925,7 @@ export default function BateriaDashboardPage() {
                     <Table className="[&_tbody_tr]:border-b [&_tbody_tr]:border-border/30 [&_thead_tr]:border-b [&_thead_tr]:border-border/30">
                       <TableHeader>
                         <TableRow className="bg-muted/25 hover:bg-muted/25">
-                          {selMode && <TableHead className="w-8 text-center" />}
+                          <TableHead className="w-8 text-center" />
                           <TableHead className="text-center">Sub</TableHead>
                           <TableHead>Setor</TableHead>
                           <TableHead>SELIMP</TableHead>
@@ -1832,17 +1942,34 @@ export default function BateriaDashboardPage() {
                       <TableBody>
                         {trocasModules.map((m, idx) => {
                           const rec = troca.records[m.numeroSelimp];
+                          const history = trocaHistoryOf(m, rec, troca.history[m.numeroSelimp]);
+                          const historyConcluidas = history.filter((h) => h.status === "concluida").length;
+                          const historySemData = Math.max(0, (m.quantidadeTrocas || 0) - historyConcluidas);
                           const alerta = alertaOf(m);
                           const sel = selected.has(m.numeroSelimp);
+                          const isExpanded = expandedTrocaSelimp === m.numeroSelimp;
                           return (
+                            <Fragment key={m.id}>
                             <TableRow
                               key={m.id}
-                              className={cn("border-border/30 hover:bg-muted/20", selMode && sel && "bg-emerald-500/10")}
-                              onClick={selMode ? (e) => handleRowSelect(m.numeroSelimp, idx, e) : undefined}
-                              style={selMode ? { cursor: "pointer", userSelect: "none" } : undefined}
+                              role="button"
+                              tabIndex={0}
+                              className={cn(
+                                "border-border/30 hover:bg-muted/20",
+                                selMode && sel && "bg-emerald-500/10",
+                                !selMode && isExpanded && "bg-emerald-500/10 ring-1 ring-inset ring-emerald-500/30",
+                              )}
+                              onClick={selMode ? (e) => handleRowSelect(m.numeroSelimp, idx, e) : () => setExpandedTrocaSelimp((v) => (v === m.numeroSelimp ? null : m.numeroSelimp))}
+                              onKeyDown={(e) => {
+                                if (e.key !== "Enter" && e.key !== " ") return;
+                                e.preventDefault();
+                                if (selMode) return;
+                                setExpandedTrocaSelimp((v) => (v === m.numeroSelimp ? null : m.numeroSelimp));
+                              }}
+                              style={{ cursor: "pointer", userSelect: selMode ? "none" : undefined }}
                             >
                               {selMode && (
-                                <TableCell className="text-center align-top">
+                                <TableCell className="text-center align-middle">
                                   <span
                                     className={cn(
                                       "inline-flex h-4 w-4 items-center justify-center rounded border transition-colors",
@@ -1853,10 +1980,19 @@ export default function BateriaDashboardPage() {
                                   </span>
                                 </TableCell>
                               )}
-                              <TableCell className="text-center font-medium align-top">{m.subprefeitura}</TableCell>
-                              <TableCell className="align-top"><SetorCell value={m.setor} /></TableCell>
-                              <TableCell className="align-top">{m.numeroSelimp}</TableCell>
-                              <TableCell className="align-top">
+                              {!selMode && (
+                                <TableCell className="w-8 text-center align-middle">
+                                  {isExpanded ? (
+                                    <ChevronDown className="mx-auto h-4 w-4 text-muted-foreground" />
+                                  ) : (
+                                    <ChevronRight className="mx-auto h-4 w-4 text-muted-foreground" />
+                                  )}
+                                </TableCell>
+                              )}
+                              <TableCell className="text-center font-medium align-middle">{m.subprefeitura}</TableCell>
+                              <TableCell className="align-middle"><SetorCell value={m.setor} /></TableCell>
+                              <TableCell className="align-middle">{m.numeroSelimp}</TableCell>
+                              <TableCell className="align-middle">
                                 <div className="space-y-1 text-xs leading-snug">
                                   {setoresDiasOf(m).map((sd, i) => (
                                     <div key={i} className="flex flex-col">
@@ -1867,11 +2003,11 @@ export default function BateriaDashboardPage() {
                                   {setoresDiasOf(m).length === 0 && <span className="text-muted-foreground">—</span>}
                                 </div>
                               </TableCell>
-                              <TableCell className="align-top text-xs text-muted-foreground tabular-nums">
+                              <TableCell className="align-middle text-xs text-muted-foreground tabular-nums">
                                 {m.ultimaComunicacao || "—"}
                               </TableCell>
-                              <TableCell className="align-top">{m.bateriaPercentual}%</TableCell>
-                              <TableCell className="align-top">
+                              <TableCell className="align-middle">{m.bateriaPercentual}%</TableCell>
+                              <TableCell className="align-middle">
                                 <Badge className={
                                   m.statusSinalGeral === "COM SINAL"
                                     ? "bg-emerald-500/15 text-emerald-600 border-emerald-500/30 dark:text-emerald-400"
@@ -1882,7 +2018,7 @@ export default function BateriaDashboardPage() {
                                   {m.statusSinalGeral}
                                 </Badge>
                               </TableCell>
-                              <TableCell className="align-top">
+                              <TableCell className="align-middle">
                                 <div className="flex items-center gap-1.5">
                                   <InfoTooltip text={m.comunicacao === "ON" ? "Bateria atualizada (comunicação ON)" : "Bateria desatualizada (comunicação OFF)"}>
                                     {m.comunicacao === "ON" ? (
@@ -1894,8 +2030,8 @@ export default function BateriaDashboardPage() {
                                   <Badge className={statusBatBadge(m.statusBateria)}>{m.statusBateria}</Badge>
                                 </div>
                               </TableCell>
-                              <TableCell className="text-center font-medium tabular-nums align-top">{m.quantidadeTrocas}</TableCell>
-                              <TableCell className="text-center align-top" onClick={(e) => e.stopPropagation()}>
+                              <TableCell className="text-center font-medium tabular-nums align-middle">{m.quantidadeTrocas}</TableCell>
+                              <TableCell className="text-center align-middle" onClick={(e) => e.stopPropagation()}>
                                 {!rec ? (
                                   <Button
                                     size="sm"
@@ -1932,7 +2068,7 @@ export default function BateriaDashboardPage() {
                                   </Button>
                                 )}
                               </TableCell>
-                              <TableCell className="text-center align-top" onClick={(e) => e.stopPropagation()}>
+                              <TableCell className="text-center align-middle" onClick={(e) => e.stopPropagation()}>
                                 <button
                                   type="button"
                                   disabled={!alerta.hasAlert || selMode}
@@ -1949,11 +2085,106 @@ export default function BateriaDashboardPage() {
                                 </button>
                               </TableCell>
                             </TableRow>
+                            {!selMode && isExpanded && (
+                              <TableRow className="border-emerald-500/20 bg-emerald-500/5 hover:bg-emerald-500/5">
+                                <TableCell colSpan={12} className="p-0 align-middle">
+                                  <div className="space-y-4 px-4 py-4">
+                                    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                                      <div className="rounded-lg border border-border/60 bg-background/70 p-3">
+                                        <span className="block text-xs text-muted-foreground">Trocas SELIMP</span>
+                                        <span className="mt-1 block text-xl font-bold tabular-nums text-foreground">{m.quantidadeTrocas}</span>
+                                      </div>
+                                      <div className="rounded-lg border border-border/60 bg-background/70 p-3">
+                                        <span className="block text-xs text-muted-foreground">Registradas no painel</span>
+                                        <span className="mt-1 block text-xl font-bold tabular-nums text-foreground">{history.length}</span>
+                                      </div>
+                                      <div className="rounded-lg border border-border/60 bg-background/70 p-3">
+                                        <span className="block text-xs text-muted-foreground">Bateria atual</span>
+                                        <span className="mt-1 block font-semibold text-foreground">{batteryLabel(m.bateria, m.bateriaPercentual)}</span>
+                                      </div>
+                                      <div className="rounded-lg border border-border/60 bg-background/70 p-3">
+                                        <span className="block text-xs text-muted-foreground">Última comunicação atual</span>
+                                        <span className="mt-1 block text-xs font-medium tabular-nums text-foreground">{m.ultimaComunicacao || "—"}</span>
+                                      </div>
+                                    </div>
+
+                                    <div className="rounded-xl border border-border/60 bg-background/60 p-3">
+                                      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                                        <div className="flex items-center gap-2">
+                                          <History className="h-4 w-4 text-emerald-500" />
+                                          <span className="text-sm font-semibold text-foreground">Histórico de trocas</span>
+                                        </div>
+                                        {historySemData > 0 && (
+                                          <Badge className="border-zinc-500/30 bg-zinc-500/10 text-zinc-600 dark:text-zinc-300">
+                                            {historySemData} sem data detalhada
+                                          </Badge>
+                                        )}
+                                      </div>
+
+                                      {history.length === 0 ? (
+                                        <p className="rounded-lg bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                                          Nenhuma troca registrada no painel. O contador SELIMP indica {m.quantidadeTrocas} carga(s), mas a importação atual não traz as datas individuais.
+                                        </p>
+                                      ) : (
+                                        <div className="space-y-2">
+                                          {history.map((h) => (
+                                            <div key={h.id} className="rounded-lg border border-border/50 bg-muted/20 p-3">
+                                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                  <Badge className={trocaStatusBadgeClass(h)}>{trocaStatusLabel(h)}</Badge>
+                                                  <span className="text-xs font-medium text-muted-foreground">{h.tipoTroca || motivoFromModule(m)}</span>
+                                                </div>
+                                                <span className="text-xs font-semibold tabular-nums text-foreground">
+                                                  {h.status === "agendada" ? fmtDisplayDate(h.dataAgendada) : fmtDisplayDate(h.dataTroca)}
+                                                </span>
+                                              </div>
+                                              <div className="mt-3 grid grid-cols-2 gap-2 text-xs lg:grid-cols-6">
+                                                <div className="rounded-md bg-background/70 p-2">
+                                                  <span className="block text-muted-foreground">Bateria antes</span>
+                                                  <span className="font-medium text-foreground">{batteryLabel(h.bateriaAntes, h.bateriaAntesPercentual)}</span>
+                                                </div>
+                                                <div className="rounded-md bg-background/70 p-2">
+                                                  <span className="block text-muted-foreground">Bateria depois</span>
+                                                  <span className="font-medium text-foreground">{batteryLabel(undefined, h.bateriaDepoisPercentual ?? h.percentualEntrada)}</span>
+                                                </div>
+                                                <div className="rounded-md bg-background/70 p-2">
+                                                  <span className="block text-muted-foreground">Status antes</span>
+                                                  <span className="font-medium text-foreground">{h.statusBateriaAntes || "—"}</span>
+                                                </div>
+                                                <div className="rounded-md bg-background/70 p-2">
+                                                  <span className="block text-muted-foreground">Status depois</span>
+                                                  <span className="font-medium text-foreground">{h.statusSinalDepois || (h.status === "concluida" ? m.statusSinalGeral : "—")}</span>
+                                                </div>
+                                                <div className="rounded-md bg-background/70 p-2">
+                                                  <span className="block text-muted-foreground">Últ. com. antes</span>
+                                                  <span className="font-medium tabular-nums text-foreground">{fmtDisplayDate(h.ultimaComunicacao)}</span>
+                                                </div>
+                                                <div className="rounded-md bg-background/70 p-2">
+                                                  <span className="block text-muted-foreground">Últ. com. depois</span>
+                                                  <span className="font-medium tabular-nums text-foreground">{h.status === "concluida" ? (m.ultimaComunicacao || "—") : "—"}</span>
+                                                </div>
+                                              </div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+
+                                      {historySemData > 0 && history.length > 0 && (
+                                        <p className="mt-3 text-xs text-muted-foreground">
+                                          O contador SELIMP aponta mais troca(s) do que as registradas no painel. Essas trocas antigas não possuem data/bateria antes e depois na importação atual.
+                                        </p>
+                                      )}
+                                    </div>
+                                  </div>
+                                </TableCell>
+                              </TableRow>
+                            )}
+                            </Fragment>
                           );
                         })}
                         {trocasModules.length === 0 && (
                           <TableRow>
-                            <TableCell colSpan={selMode ? 12 : 11} className="py-10 text-center text-sm text-muted-foreground">Nenhum setor encontrado.</TableCell>
+                            <TableCell colSpan={12} className="py-10 text-center text-sm text-muted-foreground">Nenhum setor encontrado.</TableCell>
                           </TableRow>
                         )}
                       </TableBody>

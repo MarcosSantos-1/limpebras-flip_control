@@ -700,6 +700,31 @@ export async function runMigrations() {
     `);
     await client.query("CREATE INDEX IF NOT EXISTS idx_bateria_trocas_status ON bateria_trocas(status)").catch(() => {});
 
+    // Historico append-only das acoes de troca: mantem a trilha mesmo quando
+    // bateria_trocas e sobrescrita pelo estado corrente do modulo.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS bateria_trocas_eventos (
+        id                         SERIAL PRIMARY KEY,
+        modulo_selimp              TEXT NOT NULL,
+        setor                      TEXT,
+        status                     TEXT NOT NULL DEFAULT 'agendada',
+        tipo_troca                 TEXT,
+        data_agendada              DATE,
+        sucesso                    BOOLEAN,
+        percentual_entrada         NUMERIC(5,2),
+        data_troca                 DATE,
+        ultima_comunicacao         DATE,
+        bateria_antes_raw          TEXT,
+        bateria_antes_percentual   NUMERIC(5,2),
+        status_bateria_antes       TEXT,
+        bateria_depois_percentual  NUMERIC(5,2),
+        status_sinal_depois        TEXT,
+        created_at                 TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client.query("CREATE INDEX IF NOT EXISTS idx_bateria_trocas_eventos_modulo ON bateria_trocas_eventos(modulo_selimp)").catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_bateria_trocas_eventos_data ON bateria_trocas_eventos(COALESCE(data_troca, data_agendada), created_at)").catch(() => {});
+
     // Manutenções por módulo: solicitação (status global → MANUTENÇÃO) + data/não houve
     await client.query(`
       CREATE TABLE IF NOT EXISTS bateria_manutencoes (

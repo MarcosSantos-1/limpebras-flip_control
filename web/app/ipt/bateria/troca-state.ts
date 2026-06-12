@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useSyncExternalStore } from "react";
-import { apiService, type BateriaTrocaRecord } from "@/lib/api";
+import { apiService, type BateriaTrocaHistoryRecord, type BateriaTrocaRecord } from "@/lib/api";
 
 // ===== Tipos =====
 
@@ -12,11 +12,18 @@ export type MotivoTroca = "Manutenção" | "Corretiva" | "Preventiva" | "Desnece
 export type TrocaRecord = BateriaTrocaRecord;
 
 export type TrocaMap = Record<string, TrocaRecord>;
+export type TrocaHistoryRecord = BateriaTrocaHistoryRecord;
+export type TrocaHistoryMap = Record<string, TrocaHistoryRecord[]>;
+
+interface TrocaSnapshot {
+  records: TrocaMap;
+  history: TrocaHistoryMap;
+}
 
 // ===== Store externo (useSyncExternalStore), hidratado da API =====
 
-const EMPTY: TrocaMap = {};
-let cache: TrocaMap = EMPTY;
+const EMPTY: TrocaSnapshot = { records: {}, history: {} };
+let cache: TrocaSnapshot = EMPTY;
 let loaded = false;
 let loading: Promise<void> | null = null;
 const listeners = new Set<() => void>();
@@ -25,7 +32,7 @@ function emit() {
   listeners.forEach((l) => l());
 }
 
-function commitLocal(next: TrocaMap) {
+function commitLocal(next: TrocaSnapshot) {
   cache = next;
   emit();
 }
@@ -34,8 +41,8 @@ async function loadFromApi(): Promise<void> {
   if (loading) return loading;
   loading = (async () => {
     try {
-      const { records } = await apiService.getBateriaTrocas();
-      cache = records;
+      const { records, history } = await apiService.getBateriaTrocas();
+      cache = { records, history: history ?? {} };
       loaded = true;
       emit();
     } catch (err) {
@@ -60,12 +67,24 @@ function subscribe(cb: () => void): () => void {
   };
 }
 
-function getSnapshot(): TrocaMap {
+function getSnapshot(): TrocaSnapshot {
   return cache;
 }
 
-function getServerSnapshot(): TrocaMap {
+function getServerSnapshot(): TrocaSnapshot {
   return EMPTY;
+}
+
+function nowLocalId(prefix: string, selimp: string): string {
+  return `${prefix}-${selimp}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function prependHistory(history: TrocaHistoryMap, item: TrocaHistoryRecord): TrocaHistoryMap {
+  const current = history[item.selimp] ?? [];
+  return {
+    ...history,
+    [item.selimp]: [item, ...current],
+  };
 }
 
 // ===== Hook =====
@@ -74,18 +93,26 @@ export interface AgendarInput {
   selimp: string;
   setor?: string;
   dataAgendada: string;
+  tipoTroca?: string;
 }
 
 export interface ConcluirInput {
   selimp: string;
+  setor?: string;
   sucesso: boolean;
   percentualEntrada?: number;
   dataTroca: string;
   ultimaComunicacao: string;
+  tipoTroca?: string;
+  bateriaAntes?: string;
+  bateriaAntesPercentual?: number;
+  statusBateriaAntes?: string;
+  bateriaDepoisPercentual?: number;
+  statusSinalDepois?: string;
 }
 
 export function useTrocaState() {
-  const records = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  const snapshot = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 
   useEffect(() => {
     if (!loaded) void loadFromApi();
@@ -94,17 +121,27 @@ export function useTrocaState() {
   const agendar = useCallback((inputs: AgendarInput | AgendarInput[]) => {
     const list = Array.isArray(inputs) ? inputs : [inputs];
     if (list.length === 0) return;
-    const next = { ...cache };
+    const nextRecords = { ...cache.records };
+    let nextHistory = cache.history;
     for (const it of list) {
-      next[it.selimp] = {
-        ...next[it.selimp],
+      nextRecords[it.selimp] = {
+        ...nextRecords[it.selimp],
         selimp: it.selimp,
         setor: it.setor,
         status: "agendada",
         dataAgendada: it.dataAgendada,
       };
+      nextHistory = prependHistory(nextHistory, {
+        id: nowLocalId("agendada", it.selimp),
+        selimp: it.selimp,
+        setor: it.setor,
+        status: "agendada",
+        dataAgendada: it.dataAgendada,
+        tipoTroca: it.tipoTroca,
+        createdAt: new Date().toISOString(),
+      });
     }
-    commitLocal(next);
+    commitLocal({ records: nextRecords, history: nextHistory });
     apiService.agendarBateriaTrocas(list).catch((err) => {
       console.error("Erro ao agendar trocas", err);
       reloadFromApi();
@@ -114,19 +151,38 @@ export function useTrocaState() {
   const concluir = useCallback((inputs: ConcluirInput | ConcluirInput[]) => {
     const list = Array.isArray(inputs) ? inputs : [inputs];
     if (list.length === 0) return;
-    const next = { ...cache };
+    const nextRecords = { ...cache.records };
+    let nextHistory = cache.history;
     for (const it of list) {
-      next[it.selimp] = {
-        ...next[it.selimp],
+      nextRecords[it.selimp] = {
+        ...nextRecords[it.selimp],
         selimp: it.selimp,
+        setor: it.setor ?? nextRecords[it.selimp]?.setor,
         status: "concluida",
         sucesso: it.sucesso,
         percentualEntrada: it.percentualEntrada,
         dataTroca: it.dataTroca,
         ultimaComunicacao: it.ultimaComunicacao,
       };
+      nextHistory = prependHistory(nextHistory, {
+        id: nowLocalId("concluida", it.selimp),
+        selimp: it.selimp,
+        setor: it.setor ?? nextRecords[it.selimp]?.setor,
+        status: "concluida",
+        sucesso: it.sucesso,
+        percentualEntrada: it.percentualEntrada,
+        dataTroca: it.dataTroca,
+        ultimaComunicacao: it.ultimaComunicacao,
+        tipoTroca: it.tipoTroca,
+        bateriaAntes: it.bateriaAntes,
+        bateriaAntesPercentual: it.bateriaAntesPercentual,
+        statusBateriaAntes: it.statusBateriaAntes,
+        bateriaDepoisPercentual: it.bateriaDepoisPercentual ?? it.percentualEntrada,
+        statusSinalDepois: it.statusSinalDepois,
+        createdAt: new Date().toISOString(),
+      });
     }
-    commitLocal(next);
+    commitLocal({ records: nextRecords, history: nextHistory });
     apiService.concluirBateriaTrocas(list).catch((err) => {
       console.error("Erro ao concluir trocas", err);
       reloadFromApi();
@@ -134,16 +190,16 @@ export function useTrocaState() {
   }, []);
 
   const remover = useCallback((selimp: string) => {
-    const next = { ...cache };
-    delete next[selimp];
-    commitLocal(next);
+    const nextRecords = { ...cache.records };
+    delete nextRecords[selimp];
+    commitLocal({ ...cache, records: nextRecords });
     apiService.removerBateriaTroca(selimp).catch((err) => {
       console.error("Erro ao remover troca", err);
       reloadFromApi();
     });
   }, []);
 
-  return { records, agendar, concluir, remover };
+  return { records: snapshot.records, history: snapshot.history, agendar, concluir, remover };
 }
 
 // ===== Alertas (derivados de dados reais) =====

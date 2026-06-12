@@ -525,6 +525,17 @@ export interface BateriaTrocaRecord {
   ultimaComunicacao?: string;
 }
 
+export interface BateriaTrocaHistoryRecord extends BateriaTrocaRecord {
+  id: string;
+  tipoTroca?: string;
+  bateriaAntes?: string;
+  bateriaAntesPercentual?: number;
+  statusBateriaAntes?: string;
+  bateriaDepoisPercentual?: number;
+  statusSinalDepois?: string;
+  createdAt?: string;
+}
+
 export interface BateriaManutencaoRecord {
   solicitada: boolean;
   /** yyyy-MM-dd */
@@ -1040,16 +1051,32 @@ export const apiService = {
     return data;
   },
   // ===== Trocas de bateria =====
-  getBateriaTrocas: async (): Promise<{ records: Record<string, BateriaTrocaRecord> }> => {
+  getBateriaTrocas: async (): Promise<{
+    records: Record<string, BateriaTrocaRecord>;
+    history?: Record<string, BateriaTrocaHistoryRecord[]>;
+  }> => {
     const { data } = await api.get('/bateria/trocas');
     return data;
   },
-  agendarBateriaTrocas: async (items: { selimp: string; setor?: string; dataAgendada: string }[]) => {
+  agendarBateriaTrocas: async (items: { selimp: string; setor?: string; dataAgendada: string; tipoTroca?: string }[]) => {
     const { data } = await api.post('/bateria/trocas/agendar', { items });
     return data;
   },
   concluirBateriaTrocas: async (
-    items: { selimp: string; sucesso: boolean; percentualEntrada?: number; dataTroca: string; ultimaComunicacao: string }[],
+    items: {
+      selimp: string;
+      setor?: string;
+      sucesso: boolean;
+      percentualEntrada?: number;
+      dataTroca: string;
+      ultimaComunicacao: string;
+      tipoTroca?: string;
+      bateriaAntes?: string;
+      bateriaAntesPercentual?: number;
+      statusBateriaAntes?: string;
+      bateriaDepoisPercentual?: number;
+      statusSinalDepois?: string;
+    }[],
   ) => {
     const { data } = await api.post('/bateria/trocas/concluir', { items });
     return data;
