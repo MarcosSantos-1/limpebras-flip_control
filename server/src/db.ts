@@ -740,6 +740,29 @@ export async function runMigrations() {
     `);
     await client.query("CREATE INDEX IF NOT EXISTS idx_bateria_manutencoes_solicitada ON bateria_manutencoes(solicitada) WHERE solicitada").catch(() => {});
 
+    // Manutenção do MÓDULO (não da bateria): histórico append-only do ciclo
+    // logístico — módulo é retirado, enviado à SELIMP e reinstalado após o sinal
+    // ser restaurado. Vários registros por módulo (histórico completo).
+    //   PENDENTE  = precisa de manutenção, ainda sem data "Ordenado para Manutenção"
+    //   ATIVA     = ordenado à SELIMP (data_ordenado preenchida), aguardando retorno
+    //   REALIZADA = data_manutencao preenchida OU sinal recuperado no deslocamento
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS modulo_manutencoes (
+        id                SERIAL PRIMARY KEY,
+        modulo_selimp     TEXT NOT NULL,
+        setor             TEXT,
+        execucao          TEXT,
+        motivo            TEXT,
+        data_ordenado     DATE,
+        data_manutencao   DATE,
+        sinal_recuperado  BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at        TIMESTAMPTZ DEFAULT NOW(),
+        updated_at        TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client.query("CREATE INDEX IF NOT EXISTS idx_modulo_manutencoes_modulo ON modulo_manutencoes(modulo_selimp)").catch(() => {});
+    await client.query("CREATE INDEX IF NOT EXISTS idx_modulo_manutencoes_data ON modulo_manutencoes(COALESCE(data_manutencao, data_ordenado, created_at::date))").catch(() => {});
+
     const adminEncryptedPassword = encryptPassword("1515");
     const userResult = await client.query<{ id: number }>(
       `INSERT INTO users (username, display_name, password_encrypted, role, status, blocked, created_at, updated_at)

@@ -545,6 +545,34 @@ export interface BateriaManutencaoRecord {
   naoHouve: boolean;
 }
 
+export type ManutencaoModuloStatus = "PENDENTE" | "ATIVA" | "REALIZADA";
+
+/** Registro de manutenção do MÓDULO (histórico append-only). */
+export interface ModuloManutencaoEvento {
+  id: number;
+  selimp: string;
+  setor?: string;
+  execucao?: string;
+  motivo?: string;
+  /** yyyy-MM-dd — "Ordenado para Manutenção" (comunicado à SELIMP). */
+  dataOrdenado?: string;
+  /** yyyy-MM-dd — "Data de Manutenção Realizada". */
+  dataManutencao?: string;
+  sinalRecuperado: boolean;
+  status: ManutencaoModuloStatus;
+  createdAt?: string;
+}
+
+export interface ModuloManutencaoInput {
+  selimp: string;
+  setor?: string;
+  execucao?: string;
+  motivo?: string;
+  dataOrdenado?: string;
+  dataManutencao?: string;
+  sinalRecuperado?: boolean;
+}
+
 export interface IptModulosBateriaResponse {
   modules: IptModuloBateriaModule[];
   stats: {
@@ -1100,6 +1128,31 @@ export const apiService = {
   },
   cancelarBateriaManutencao: async (selimp: string) => {
     const { data } = await api.post('/bateria/manutencoes/cancelar', { selimp });
+    return data;
+  },
+  // ===== Manutenção do MÓDULO (histórico) =====
+  getModuloManutencoes: async (): Promise<{
+    records: Record<string, ModuloManutencaoEvento>;
+    history: Record<string, ModuloManutencaoEvento[]>;
+  }> => {
+    const { data } = await api.get('/modulo/manutencoes');
+    return data;
+  },
+  registrarModuloManutencao: async (
+    items: ModuloManutencaoInput[],
+  ): Promise<{ ok: boolean; registradas: number; eventos: ModuloManutencaoEvento[] }> => {
+    const { data } = await api.post('/modulo/manutencoes', { items });
+    return data;
+  },
+  atualizarModuloManutencao: async (
+    id: number,
+    patch: Partial<Omit<ModuloManutencaoInput, 'selimp'>>,
+  ): Promise<{ ok: boolean; evento: ModuloManutencaoEvento }> => {
+    const { data } = await api.put(`/modulo/manutencoes/${id}`, patch);
+    return data;
+  },
+  removerModuloManutencao: async (id: number) => {
+    const { data } = await api.delete(`/modulo/manutencoes/${id}`);
     return data;
   },
   /** Remove registros manuais de IPT. */

@@ -433,4 +433,168 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
     invalidatePrefix("ipt_modulos_bateria");
     return { ok: true };
   });
+
+  // ===== Manutenção do MÓDULO (histórico) =====
+
+  interface ModuloManutencaoRow {
+    id: number;
+    modulo_selimp: string;
+    setor: string | null;
+    execucao: string | null;
+    motivo: string | null;
+    data_ordenado: string | null;
+    data_manutencao: string | null;
+    sinal_recuperado: boolean;
+    created_at: string;
+  }
+
+  type ManutencaoStatus = "PENDENTE" | "ATIVA" | "REALIZADA";
+
+  function deriveStatus(r: ModuloManutencaoRow): ManutencaoStatus {
+    if (r.data_manutencao || r.sinal_recuperado) return "REALIZADA";
+    if (r.data_ordenado) return "ATIVA";
+    return "PENDENTE";
+  }
+
+  function mapManutencaoEvento(r: ModuloManutencaoRow) {
+    return {
+      id: r.id,
+      selimp: r.modulo_selimp,
+      setor: r.setor ?? undefined,
+      execucao: r.execucao ?? undefined,
+      motivo: r.motivo ?? undefined,
+      dataOrdenado: r.data_ordenado ?? undefined,
+      dataManutencao: r.data_manutencao ?? undefined,
+      sinalRecuperado: r.sinal_recuperado,
+      status: deriveStatus(r),
+      createdAt: r.created_at,
+    };
+  }
+
+  const SELECT_MANUT_MODULO = `
+    SELECT id, modulo_selimp, setor, execucao, motivo,
+           data_ordenado::text  AS data_ordenado,
+           data_manutencao::text AS data_manutencao,
+           sinal_recuperado,
+           created_at::text AS created_at
+      FROM modulo_manutencoes`;
+
+  fastify.get("/modulo/manutencoes", async () => {
+    const res = await pool.query<ModuloManutencaoRow>(
+      `${SELECT_MANUT_MODULO} ORDER BY modulo_selimp,
+        COALESCE(data_manutencao, data_ordenado, created_at::date) DESC, created_at DESC, id DESC`
+    );
+    const history: Record<string, ReturnType<typeof mapManutencaoEvento>[]> = {};
+    const records: Record<string, ReturnType<typeof mapManutencaoEvento>> = {};
+    for (const r of res.rows) {
+      const ev = mapManutencaoEvento(r);
+      if (!history[ev.selimp]) history[ev.selimp] = [];
+      history[ev.selimp].push(ev);
+      // primeiro da lista (mais recente) define o estado corrente do módulo
+      if (!records[ev.selimp]) records[ev.selimp] = ev;
+    }
+    return { records, history };
+  });
+
+  fastify.post<{
+    Body: {
+      items?: {
+        selimp?: string;
+        setor?: string;
+        execucao?: string;
+        motivo?: string;
+        dataOrdenado?: string;
+        dataManutencao?: string;
+        sinalRecuperado?: boolean;
+      }[];
+    };
+  }>("/modulo/manutencoes", async (request, reply) => {
+    const items = (Array.isArray(request.body?.items) ? request.body.items : [])
+      .map((it) => ({
+        selimp: cleanSelimp(it?.selimp),
+        setor: String(it?.setor ?? "").trim() || null,
+        execucao: String(it?.execucao ?? "").trim() || null,
+        motivo: String(it?.motivo ?? "").trim() || null,
+        dataOrdenado: isIsoDate(it?.dataOrdenado) ? it.dataOrdenado : null,
+        dataManutencao: isIsoDate(it?.dataManutencao) ? it.dataManutencao : null,
+        sinalRecuperado: Boolean(it?.sinalRecuperado),
+      }))
+      .filter((it) => it.selimp);
+    if (items.length === 0) {
+      return reply.code(400).send({ detail: "items deve conter ao menos um { selimp }" });
+    }
+
+    const inserted: ReturnType<typeof mapManutencaoEvento>[] = [];
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      for (const it of items) {
+        const res = await client.query<ModuloManutencaoRow>(
+          `INSERT INTO modulo_manutencoes
+             (modulo_selimp, setor, execucao, motivo, data_ordenado, data_manutencao, sinal_recuperado)
+           VALUES ($1, $2, $3, $4, $5::date, $6::date, $7)
+           RETURNING id, modulo_selimp, setor, execucao, motivo,
+             data_ordenado::text AS data_ordenado, data_manutencao::text AS data_manutencao,
+             sinal_recuperado, created_at::text AS created_at`,
+          [it.selimp, it.setor, it.execucao, it.motivo, it.dataOrdenado, it.dataManutencao, it.sinalRecuperado]
+        );
+        if (res.rows[0]) inserted.push(mapManutencaoEvento(res.rows[0]));
+      }
+      await client.query("COMMIT");
+    } catch (err) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+    return { ok: true, registradas: inserted.length, eventos: inserted };
+  });
+
+  fastify.put<{
+    Params: { id: string };
+    Body: {
+      setor?: string;
+      execucao?: string;
+      motivo?: string;
+      dataOrdenado?: string | null;
+      dataManutencao?: string | null;
+      sinalRecuperado?: boolean;
+    };
+  }>("/modulo/manutencoes/:id", async (request, reply) => {
+    const id = Number(request.params.id);
+    if (!Number.isInteger(id) || id <= 0) return reply.code(400).send({ detail: "id inválido" });
+    const b = request.body ?? {};
+    const res = await pool.query<ModuloManutencaoRow>(
+      `UPDATE modulo_manutencoes SET
+         setor = COALESCE($2, setor),
+         execucao = COALESCE($3, execucao),
+         motivo = COALESCE($4, motivo),
+         data_ordenado = CASE WHEN $5 = 'KEEP' THEN data_ordenado ELSE NULLIF($5,'')::date END,
+         data_manutencao = CASE WHEN $6 = 'KEEP' THEN data_manutencao ELSE NULLIF($6,'')::date END,
+         sinal_recuperado = COALESCE($7, sinal_recuperado),
+         updated_at = NOW()
+       WHERE id = $1
+       RETURNING id, modulo_selimp, setor, execucao, motivo,
+         data_ordenado::text AS data_ordenado, data_manutencao::text AS data_manutencao,
+         sinal_recuperado, created_at::text AS created_at`,
+      [
+        id,
+        b.setor != null ? String(b.setor).trim() : null,
+        b.execucao != null ? String(b.execucao).trim() : null,
+        b.motivo != null ? String(b.motivo).trim() : null,
+        b.dataOrdenado === undefined ? "KEEP" : isIsoDate(b.dataOrdenado) ? b.dataOrdenado : "",
+        b.dataManutencao === undefined ? "KEEP" : isIsoDate(b.dataManutencao) ? b.dataManutencao : "",
+        typeof b.sinalRecuperado === "boolean" ? b.sinalRecuperado : null,
+      ]
+    );
+    if (!res.rows[0]) return reply.code(404).send({ detail: "registro não encontrado" });
+    return { ok: true, evento: mapManutencaoEvento(res.rows[0]) };
+  });
+
+  fastify.delete<{ Params: { id: string } }>("/modulo/manutencoes/:id", async (request, reply) => {
+    const id = Number(request.params.id);
+    if (!Number.isInteger(id) || id <= 0) return reply.code(400).send({ detail: "id inválido" });
+    await pool.query(`DELETE FROM modulo_manutencoes WHERE id = $1`, [id]);
+    return { ok: true };
+  });
 };
