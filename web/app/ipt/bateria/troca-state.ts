@@ -241,7 +241,8 @@ export function computeAlerta(
     trocasSemAtualizarSinal > 0 ||
     baixaProdutividade ||
     m.diasOff >= 7 ||
-    diasOfflineConsecutivos >= 3;
+    diasOfflineConsecutivos >= 3 ||
+    historicoManutencoes.length > 0;
 
   return {
     hasAlert,

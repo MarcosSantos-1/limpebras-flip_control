@@ -158,16 +158,18 @@ export function useModuloManutencaoState() {
 // ===== Helpers de exibição =====
 
 export const MANUT_STATUS_LABEL: Record<ManutencaoModuloStatus, string> = {
+  EM_ANALISE: "Em análise",
   PENDENTE: "Pendente",
   ATIVA: "Ativa",
   REALIZADA: "Realizada",
   SINAL_RECUPERADO: "Sinal Recuperado",
 };
 
-/** Ordem de prioridade na listagem: Pendente → Ativa → Realizada → Sinal Recuperado. */
+/** Ordem de prioridade na listagem: Em análise → Pendente → Ativa → Realizada → Sinal Recuperado. */
 export const MANUT_STATUS_ORDER: Record<ManutencaoModuloStatus, number> = {
-  PENDENTE: 0,
-  ATIVA: 1,
-  REALIZADA: 2,
-  SINAL_RECUPERADO: 3,
+  EM_ANALISE: 0,
+  PENDENTE: 1,
+  ATIVA: 2,
+  REALIZADA: 3,
+  SINAL_RECUPERADO: 4,
 };

@@ -449,8 +449,8 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
     created_at: string;
   }
 
-  type ManutencaoStatus = "PENDENTE" | "ATIVA" | "REALIZADA" | "SINAL_RECUPERADO";
-  const MANUT_STATUSES: ManutencaoStatus[] = ["PENDENTE", "ATIVA", "REALIZADA", "SINAL_RECUPERADO"];
+  type ManutencaoStatus = "EM_ANALISE" | "PENDENTE" | "ATIVA" | "REALIZADA" | "SINAL_RECUPERADO";
+  const MANUT_STATUSES: ManutencaoStatus[] = ["EM_ANALISE", "PENDENTE", "ATIVA", "REALIZADA", "SINAL_RECUPERADO"];
   const cleanStatus = (v: unknown): ManutencaoStatus | null =>
     MANUT_STATUSES.includes(String(v ?? "").trim().toUpperCase() as ManutencaoStatus)
       ? (String(v).trim().toUpperCase() as ManutencaoStatus)

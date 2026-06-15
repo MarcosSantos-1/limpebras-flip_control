@@ -554,11 +554,22 @@ function statusBatBadge(status: string): string {
 
 /** Badge por status de manutenção do MÓDULO (Pendente → Ativa → Realizada). */
 const STATUS_MODULO_MANUT_BADGE: Record<ManutencaoModuloStatus, string> = {
+  EM_ANALISE: "bg-violet-500/15 text-violet-600 border-violet-500/30 dark:text-violet-400",
   PENDENTE: "bg-amber-500/15 text-amber-600 border-amber-500/30 dark:text-amber-400",
   ATIVA: "bg-sky-500/15 text-sky-600 border-sky-500/30 dark:text-sky-400",
   REALIZADA: "bg-emerald-500/15 text-emerald-600 border-emerald-500/30 dark:text-emerald-400",
   SINAL_RECUPERADO: "bg-green-800/20 text-green-800 border-green-800/40 dark:bg-green-900/30 dark:text-green-400",
 };
+
+const MANUT_OPEN_STATUSES = new Set<ManutencaoModuloStatus>(["EM_ANALISE", "PENDENTE", "ATIVA"]);
+
+function isOpenManutStatus(status: ManutencaoModuloStatus | null): status is ManutencaoModuloStatus {
+  return status != null && MANUT_OPEN_STATUSES.has(status);
+}
+
+function trocaBlockedStatusLabel(status: ManutencaoModuloStatus): string {
+  return status === "EM_ANALISE" ? "Análise Manutenção" : "Manutenção Pend.";
+}
 
 /** yyyy-MM-dd → dd/MM/yyyy (— quando vazio). */
 function isoBr(iso?: string): string {
@@ -574,6 +585,20 @@ function isoBrDateTime(iso?: string): string {
   if (Number.isNaN(d.getTime())) return isoBr(iso.slice(0, 10));
   const p = (n: number) => String(n).padStart(2, "0");
   return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function manutEventoAlertDate(ev: ModuloManutencaoEvento): string {
+  return isoBr(ev.createdAt?.slice(0, 10) || ev.dataManutencao || ev.dataOrdenado);
+}
+
+function manutEventoDescricao(ev: ModuloManutencaoEvento): string {
+  const ref = ev.dataManutencao || ev.dataOrdenado;
+  const suffix = ref ? ` (${isoBr(ref)})` : "";
+  if (ev.status === "EM_ANALISE") return `Análise de manutenção${suffix}`;
+  if (ev.status === "PENDENTE") return `Manutenção pendente${suffix}`;
+  if (ev.status === "ATIVA") return `Manutenção ordenada${suffix}`;
+  if (ev.status === "SINAL_RECUPERADO") return `Sinal recuperado${suffix}`;
+  return `Manutenção registrada${suffix}`;
 }
 
 /** Uma linha do histórico de manutenção (1 por evento, ou 1 sintética p/ módulo enviado pela aba Trocas). */
@@ -704,7 +729,7 @@ export default function BateriaDashboardPage() {
   const [manutPeriod, setManutPeriod] = useState("30d");
   const [manutSearch, setManutSearch] = useState("");
   const [manutSubFilter, setManutSubFilter] = useState("all");
-  const [manutStatusFilter, setManutStatusFilter] = useState("all"); // all | PENDENTE | ATIVA | REALIZADA
+  const [manutStatusFilter, setManutStatusFilter] = useState("all"); // all | EM_ANALISE | PENDENTE | ATIVA | REALIZADA
   const [histModule, setHistModule] = useState<ModuleData | null>(null);
 
   // Paginação das listagens de Trocas e Manutenções
@@ -717,8 +742,8 @@ export default function BateriaDashboardPage() {
   );
   const [manutForm, setManutForm] = useState({
     selimp: "",
-    // status base do dropdown (PENDENTE | ATIVA | REALIZADA); SINAL_RECUPERADO vem do toggle.
-    status: "REALIZADA" as "PENDENTE" | "ATIVA" | "REALIZADA",
+    // status base do dropdown (EM_ANALISE | PENDENTE | ATIVA | REALIZADA); SINAL_RECUPERADO vem do toggle.
+    status: "REALIZADA" as "EM_ANALISE" | "PENDENTE" | "ATIVA" | "REALIZADA",
     motivo: "",
     dataOrdenado: "",
     dataManutencao: "",
@@ -771,6 +796,7 @@ export default function BateriaDashboardPage() {
   const [bulkConcluirOpen, setBulkConcluirOpen] = useState(false);
   const [bulkForm, setBulkForm] = useState<Record<string, ConclusaoForm>>({});
   const [bulkManutOpen, setBulkManutOpen] = useState(false);
+  const [bulkManutMotivo, setBulkManutMotivo] = useState("");
   const { resolvedTheme } = useTheme();
 
   useEffect(() => { setChartsReady(true); }, []);
@@ -891,9 +917,10 @@ export default function BateriaDashboardPage() {
     const total = modules.length;
     const online = modules.filter((m) => m.comunicacao === "ON").length;
     const offline = modules.filter((m) => m.comunicacao === "OFF").length;
-    const maintenance = modules.filter(
-      (m) => m.statusSinalGeral === "MANUTENÇÃO" || m.statusSinalGeral === "MANUTENCAO",
-    ).length;
+    const maintenance = modules.filter((m) => {
+      const status = manutStatusForModule(m);
+      return status === "PENDENTE" || status === "ATIVA";
+    }).length;
     const pct = (n: number) => (total > 0 ? Math.round((n / total) * 100) : 0);
     return {
       total,
@@ -904,7 +931,7 @@ export default function BateriaDashboardPage() {
       pctOffline: pct(offline),
       pctMaint: pct(maintenance),
     };
-  }, [modules]);
+  }, [modules, manutStatusForModule]);
 
   const maintenanceChartColor = isChartDark ? "#94a3b8" : CHART_COLORS.maintenance;
 
@@ -1119,10 +1146,10 @@ export default function BateriaDashboardPage() {
       const wantManut = trocasMotivoFilter.includes("Manutenção");
       const outros = trocasMotivoFilter.filter((x) => x !== "Manutenção");
       result = result.filter((m) => {
-        // "Manutenção" → módulos com manutenção Pendente ou Ativa.
+        // "Manutenção" → módulos com manutenção Em análise, Pendente ou Ativa.
         if (wantManut) {
           const st = manutStatusForModule(m);
-          if (st === "PENDENTE" || st === "ATIVA") return true;
+          if (isOpenManutStatus(st)) return true;
         }
         return outros.includes(motivoFromModule(m));
       });
@@ -1212,6 +1239,11 @@ export default function BateriaDashboardPage() {
     () => trocasModules.filter((m) => selected.has(m.numeroSelimp)),
     [trocasModules, selected],
   );
+  const selectedOpenManutModules = useMemo(
+    () => selectedModules.filter((m) => isOpenManutStatus(manutStatusForModule(m))),
+    [selectedModules, manutStatusForModule],
+  );
+  const selectedOnlyOpenManut = selectedModules.length > 0 && selectedOpenManutModules.length === selectedModules.length;
 
   // ===== Handlers de agendamento / conclusão =====
   function openConcluir(m: ModuleData) {
@@ -1289,8 +1321,30 @@ export default function BateriaDashboardPage() {
 
   function confirmBulkManut() {
     if (selectedModules.length === 0) return;
-    manut.solicitar(selectedModules.map((m) => m.numeroSelimp), isoToday());
+    const motivo = bulkManutMotivo.trim();
+    void moduloManut.registrar(
+      selectedModules.map((m) => ({
+        selimp: m.numeroSelimp,
+        setor: setoresOf(m).join(" / ") || undefined,
+        execucao: m.diasExecucao || setoresDiasOf(m).map((s) => s.dias).filter(Boolean).join(" / ") || undefined,
+        motivo: motivo || undefined,
+        status: "EM_ANALISE",
+      })),
+    );
+    setBulkManutMotivo("");
     setBulkManutOpen(false);
+    toggleSelMode();
+  }
+
+  function confirmBulkRemoveManut() {
+    if (!selectedOnlyOpenManut) return;
+    for (const m of selectedModules) {
+      const ev = moduloManut.records[m.numeroSelimp];
+      if (ev && isOpenManutStatus(ev.status)) {
+        void moduloManut.remover(ev.id, ev.selimp);
+      }
+      if (isEnviadoManutencao(m)) manut.cancelarSolicitacao(m.numeroSelimp);
+    }
     toggleSelMode();
   }
 
@@ -1404,13 +1458,21 @@ export default function BateriaDashboardPage() {
 
   /** Alertas do módulo (troca registrada + histórico de manutenção reais). */
   const alertaOf = useCallback(
-    (m: ModuleData) =>
-      computeAlerta(m, troca.records[m.numeroSelimp], historicoFromManutencao(manut.overrides[m.numeroSelimp])),
-    [manut.overrides, troca.records],
+    (m: ModuleData) => {
+      const historicoModulo = (moduloManut.history[m.numeroSelimp] ?? []).map((ev) => ({
+        data: manutEventoAlertDate(ev),
+        descricao: manutEventoDescricao(ev),
+      }));
+      return computeAlerta(m, troca.records[m.numeroSelimp], [
+        ...historicoModulo,
+        ...historicoFromManutencao(manut.overrides[m.numeroSelimp]),
+      ]);
+    },
+    [manut.overrides, moduloManut.history, troca.records],
   );
 
   const manutStats = useMemo(() => {
-    const counts: Record<ManutencaoModuloStatus, number> = { PENDENTE: 0, ATIVA: 0, REALIZADA: 0, SINAL_RECUPERADO: 0 };
+    const counts: Record<ManutencaoModuloStatus, number> = { EM_ANALISE: 0, PENDENTE: 0, ATIVA: 0, REALIZADA: 0, SINAL_RECUPERADO: 0 };
     let total = 0;
     for (const events of Object.values(moduloManut.history)) {
       for (const ev of events) { counts[ev.status] += 1; total += 1; }
@@ -1444,7 +1506,7 @@ export default function BateriaDashboardPage() {
         : opts?.status === "SINAL_RECUPERADO" ? "REALIZADA" : opts?.status ?? "REALIZADA";
       setManutForm({
         selimp: ev?.selimp ?? module?.numeroSelimp ?? opts?.selimp ?? "",
-        status: base as "PENDENTE" | "ATIVA" | "REALIZADA",
+        status: base as "EM_ANALISE" | "PENDENTE" | "ATIVA" | "REALIZADA",
         motivo: ev?.motivo ?? "",
         dataOrdenado: ev?.dataOrdenado ?? "",
         dataManutencao: ev?.dataManutencao ?? "",
@@ -1463,8 +1525,8 @@ export default function BateriaDashboardPage() {
     const base = manutForm.status;
     const finalStatus: ManutencaoModuloStatus =
       base === "REALIZADA" && manutForm.sinalRecuperado ? "SINAL_RECUPERADO" : base;
-    // Datas conforme o status: Pendente não tem datas; Realizada (com manutenção) tem data realizada.
-    const dataOrdenado = base === "PENDENTE" ? "" : manutForm.dataOrdenado || "";
+    // Datas conforme o status: Em análise/Pendente não têm datas; Realizada (com manutenção) tem data realizada.
+    const dataOrdenado = base === "EM_ANALISE" || base === "PENDENTE" ? "" : manutForm.dataOrdenado || "";
     const dataManutencao = base === "REALIZADA" && !manutForm.sinalRecuperado ? manutForm.dataManutencao || "" : "";
     const sinalRecuperado = base === "REALIZADA" ? manutForm.sinalRecuperado : false;
     const motivo = manutForm.motivo.trim();
@@ -2036,6 +2098,7 @@ export default function BateriaDashboardPage() {
                           <Button
                             size="sm"
                             className="h-9 gap-1.5 bg-emerald-600 font-semibold text-white hover:bg-emerald-700"
+                            disabled={selectedOpenManutModules.length > 0}
                             onClick={() => { setBulkAgendarDate(isoToday()); setBulkAgendarOpen(true); }}
                           >
                             <CalendarPlus className="h-4 w-4" /> Agendar ({selected.size})
@@ -2044,6 +2107,7 @@ export default function BateriaDashboardPage() {
                             size="sm"
                             variant="outline"
                             className="h-9 gap-1.5 border-sky-500/50 text-sky-600 hover:bg-sky-500/10 dark:text-sky-400"
+                            disabled={selectedOpenManutModules.length > 0}
                             onClick={openBulkConcluir}
                           >
                             <CalendarCheck2 className="h-4 w-4" /> Concluir ({selected.size})
@@ -2052,9 +2116,18 @@ export default function BateriaDashboardPage() {
                             size="sm"
                             variant="outline"
                             className="h-9 gap-1.5 border-zinc-500/50 text-zinc-600 hover:bg-zinc-500/10 dark:text-zinc-300"
-                            onClick={() => setBulkManutOpen(true)}
+                            onClick={() => { setBulkManutMotivo(""); setBulkManutOpen(true); }}
                           >
-                            <Wrench className="h-4 w-4" /> Manutenção ({selected.size})
+                            <Wrench className="h-4 w-4" /> Análise ({selected.size})
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-9 gap-1.5 border-red-500/50 text-red-600 hover:bg-red-500/10 dark:text-red-400"
+                            disabled={!selectedOnlyOpenManut}
+                            onClick={confirmBulkRemoveManut}
+                          >
+                            <Trash2 className="h-4 w-4" /> Remover manut. ({selected.size})
                           </Button>
                         </>
                       )}
@@ -2167,6 +2240,8 @@ export default function BateriaDashboardPage() {
                         {paginatedTrocas.map((m, i) => {
                           const idx = (trocasPage - 1) * ITEMS_PER_PAGE + i;
                           const rec = troca.records[m.numeroSelimp];
+                          const manutStatus = manutStatusForModule(m);
+                          const manutStatusOpen = isOpenManutStatus(manutStatus) ? manutStatus : null;
                           const history = trocaHistoryOf(m, rec, troca.history[m.numeroSelimp]);
                           const historyConcluidas = history.filter((h) => h.status === "concluida").length;
                           const historySemData = Math.max(0, (m.quantidadeTrocas || 0) - historyConcluidas);
@@ -2257,7 +2332,11 @@ export default function BateriaDashboardPage() {
                               </TableCell>
                               <TableCell className="text-center font-medium tabular-nums align-middle">{m.quantidadeTrocas}</TableCell>
                               <TableCell className="text-center align-middle" onClick={(e) => e.stopPropagation()}>
-                                {!rec ? (
+                                {manutStatusOpen ? (
+                                  <Badge className={cn("border", STATUS_MODULO_MANUT_BADGE[manutStatusOpen])}>
+                                    {trocaBlockedStatusLabel(manutStatusOpen)}
+                                  </Badge>
+                                ) : !rec ? (
                                   <Button
                                     size="sm"
                                     variant="outline"
@@ -2456,6 +2535,13 @@ export default function BateriaDashboardPage() {
                   <div className="grid flex-1 min-w-[220px] grid-cols-2 gap-4 xl:max-w-2xl">
                     <div className="flex flex-col justify-between rounded-xl border border-white/20 bg-white/10 p-4 backdrop-blur-sm">
                       <div className="flex items-start justify-between gap-2">
+                        <p className="text-xs font-medium uppercase tracking-wide text-white/80">Em análise</p>
+                        <Eye className="size-6 shrink-0 text-violet-200/95" aria-hidden />
+                      </div>
+                      <p className="mt-4 font-mono text-3xl font-bold tabular-nums text-white">{manutStats.EM_ANALISE}</p>
+                    </div>
+                    <div className="flex flex-col justify-between rounded-xl border border-white/20 bg-white/10 p-4 backdrop-blur-sm">
+                      <div className="flex items-start justify-between gap-2">
                         <p className="text-xs font-medium uppercase tracking-wide text-white/80">Pendentes</p>
                         <AlertTriangle className="size-6 shrink-0 text-amber-200/95" aria-hidden />
                       </div>
@@ -2549,6 +2635,7 @@ export default function BateriaDashboardPage() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="all">Todos status</SelectItem>
+                        <SelectItem value="EM_ANALISE">Em análise</SelectItem>
                         <SelectItem value="PENDENTE">Pendente</SelectItem>
                         <SelectItem value="ATIVA">Ativa</SelectItem>
                         <SelectItem value="REALIZADA">Realizada</SelectItem>
@@ -2569,7 +2656,7 @@ export default function BateriaDashboardPage() {
                   </div>
                   {!manutSearch.trim() && (
                     <p className="text-xs text-muted-foreground">
-                      Histórico de manutenções (Pendente → Ativa → Realizada → Sinal Recuperado). Módulos enviados à manutenção pela aba Trocas entram como Pendente.
+                      Histórico de manutenções (Em análise → Pendente → Ativa → Realizada → Sinal Recuperado). Módulos enviados à manutenção pela aba Trocas entram como Pendente.
                     </p>
                   )}
                 </CardHeader>
@@ -2638,7 +2725,7 @@ export default function BateriaDashboardPage() {
                               <TableCell className="text-center font-medium tabular-nums align-top">{e.quantidadeTrocas}</TableCell>
                               <TableCell className="align-top">
                                 <div className="flex items-center justify-center gap-1.5">
-                                  {e.status === "PENDENTE" && (
+                                  {isOpenManutStatus(e.status) && (
                                     <Button
                                       size="sm"
                                       className="h-7 gap-1 bg-emerald-600/90 text-white hover:bg-emerald-700"
@@ -3187,7 +3274,7 @@ export default function BateriaDashboardPage() {
                     </Button>
                   );
                 }
-                if (st === "PENDENTE" || st === "ATIVA") {
+                if (isOpenManutStatus(st)) {
                   return (
                     <Button
                       variant="outline"
@@ -3201,9 +3288,9 @@ export default function BateriaDashboardPage() {
                 return (
                   <Button
                     className="gap-1.5 bg-zinc-700 text-white hover:bg-zinc-800 dark:bg-zinc-600 dark:hover:bg-zinc-700"
-                    onClick={() => { const m = alertModule; setAlertModule(null); openManutModal(m, { status: "PENDENTE" }); }}
+                    onClick={() => { const m = alertModule; setAlertModule(null); openManutModal(m, { status: "EM_ANALISE" }); }}
                   >
-                    <Wrench className="h-4 w-4" /> Adicionar à manutenção
+                    <Wrench className="h-4 w-4" /> Adicionar à análise
                   </Button>
                 );
               })()}
@@ -3346,21 +3433,32 @@ export default function BateriaDashboardPage() {
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 text-base">
                 <Wrench className="h-5 w-5 text-zinc-500" />
-                Adicionar à manutenção — {selectedModules.length} setor(es)
+                Adicionar à Análise de manutenção — {selectedModules.length} setor(es)
               </DialogTitle>
               <DialogDescription>
-                O status global dos módulos selecionados será movido para Manutenção (pendente).
+                Os módulos selecionados serão enviados para Manutenções como Em análise.
               </DialogDescription>
             </DialogHeader>
-            <div className="max-h-40 overflow-y-auto rounded-lg border border-border/60 bg-muted/20 p-2">
-              <ul className="space-y-1 text-sm">
-                {selectedModules.map((m) => (
-                  <li key={m.numeroSelimp} className="flex items-center justify-between gap-2">
-                    <span className="truncate font-mono text-xs">{m.setor}</span>
-                    <span className="shrink-0 text-xs text-muted-foreground">{m.numeroSelimp}</span>
-                  </li>
-                ))}
-              </ul>
+            <div className="space-y-4">
+              <div className="max-h-40 overflow-y-auto rounded-lg border border-border/60 bg-muted/20 p-2">
+                <ul className="space-y-1 text-sm">
+                  {selectedModules.map((m) => (
+                    <li key={m.numeroSelimp} className="flex items-center justify-between gap-2">
+                      <span className="truncate font-mono text-xs">{m.setor}</span>
+                      <span className="shrink-0 text-xs text-muted-foreground">{m.numeroSelimp}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Motivo da manutenção</label>
+                <Textarea
+                  rows={3}
+                  placeholder="Ex.: muitas trocas de bateria sem atualização de sinal."
+                  value={bulkManutMotivo}
+                  onChange={(e) => setBulkManutMotivo(e.target.value)}
+                />
+              </div>
             </div>
             <DialogFooter className="gap-2">
               <Button variant="ghost" onClick={() => setBulkManutOpen(false)}>Cancelar</Button>
@@ -3615,7 +3713,7 @@ export default function BateriaDashboardPage() {
                       onValueChange={(v) =>
                         setManutForm((f) => ({
                           ...f,
-                          status: v as "PENDENTE" | "ATIVA" | "REALIZADA",
+                          status: v as "EM_ANALISE" | "PENDENTE" | "ATIVA" | "REALIZADA",
                           sinalRecuperado: v === "REALIZADA" ? f.sinalRecuperado : false,
                         }))
                       }
@@ -3624,6 +3722,7 @@ export default function BateriaDashboardPage() {
                         <SelectValue placeholder="Status" />
                       </SelectTrigger>
                       <SelectContent>
+                        <SelectItem value="EM_ANALISE">Em análise</SelectItem>
                         <SelectItem value="PENDENTE">Pendente</SelectItem>
                         <SelectItem value="ATIVA">Ativa</SelectItem>
                         <SelectItem value="REALIZADA">Realizado</SelectItem>
@@ -3641,7 +3740,7 @@ export default function BateriaDashboardPage() {
                     />
                   </div>
 
-                  {manutForm.status !== "PENDENTE" && (
+                  {manutForm.status !== "EM_ANALISE" && manutForm.status !== "PENDENTE" && (
                     <div className={cn("grid gap-3", manutForm.status === "REALIZADA" ? "grid-cols-2" : "grid-cols-1")}>
                       <div className="space-y-1.5">
                         <label className="text-xs font-medium text-muted-foreground">Ordenado para Manutenção</label>

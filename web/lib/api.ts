@@ -545,7 +545,7 @@ export interface BateriaManutencaoRecord {
   naoHouve: boolean;
 }
 
-export type ManutencaoModuloStatus = "PENDENTE" | "ATIVA" | "REALIZADA" | "SINAL_RECUPERADO";
+export type ManutencaoModuloStatus = "EM_ANALISE" | "PENDENTE" | "ATIVA" | "REALIZADA" | "SINAL_RECUPERADO";
 
 /** Registro de manutenção do MÓDULO (histórico append-only). */
 export interface ModuloManutencaoEvento {
