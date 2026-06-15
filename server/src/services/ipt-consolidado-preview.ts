@@ -222,7 +222,28 @@ export async function buildIptPreviewFromConsolidado(
       ${bateriaHistoricoDateFilter}
     ORDER BY TRIM(selimp_id), data_exportacao, updated_at DESC, id DESC`;
 
-  const [reportRes, plannedReportRes, ddmxLegacyRes, bateriaRows, modulosSetoresRes, bateriaHistoricoRes] = await Promise.all([
+  // Trocas concluídas e manutenções realizadas no escopo — usadas para sinalizar, no dia do
+  // despacho, "Troca" (verde/vermelho por sucesso) ou "Manutenção" (cinza) no badge de bateria.
+  const trocaDateFilter =
+    escopo === "dia_anterior" && scopeStart
+      ? ` AND data_troca = $1::date`
+      : escopo === "periodo" && scopeStart && scopeEnd
+        ? ` AND data_troca >= $1::date AND data_troca <= $2::date`
+        : "";
+  const manutDateFilter =
+    escopo === "dia_anterior" && scopeStart
+      ? ` AND data_manutencao = $1::date`
+      : escopo === "periodo" && scopeStart && scopeEnd
+        ? ` AND data_manutencao >= $1::date AND data_manutencao <= $2::date`
+        : "";
+  const trocaQuery = `SELECT TRIM(modulo_selimp) AS modulo_selimp, data_troca::text AS data_troca, sucesso
+    FROM bateria_trocas_eventos
+    WHERE status = 'concluida' AND data_troca IS NOT NULL${trocaDateFilter}`;
+  const manutQuery = `SELECT TRIM(modulo_selimp) AS modulo_selimp, data_manutencao::text AS data_manutencao
+    FROM modulo_manutencoes
+    WHERE status = 'REALIZADA' AND data_manutencao IS NOT NULL${manutDateFilter}`;
+
+  const [reportRes, plannedReportRes, ddmxLegacyRes, bateriaRows, modulosSetoresRes, bateriaHistoricoRes, trocaRes, manutRes] = await Promise.all([
     client.query(reportQuery, rparams),
     client.query(plannedReportQuery, rparams),
     client.query(ddmxLegacyQuery, dparams),
@@ -234,6 +255,8 @@ export async function buildIptPreviewFromConsolidado(
     ),
     client.query(modulosSetoresQuery),
     client.query(bateriaHistoricoQuery, bateriaHistoricoParams),
+    client.query(trocaQuery, bateriaHistoricoParams),
+    client.query(manutQuery, bateriaHistoricoParams),
   ]);
 
   type DdmxRow = {
@@ -345,6 +368,10 @@ export async function buildIptPreviewFromConsolidado(
     desatualizadas: number;
     media_percentual: number | null;
     modulos: BateriaModuloDia[];
+    /** Houve troca de bateria no dia do despacho (verde se sucesso, vermelho se sem sucesso). */
+    troca: { sucesso: boolean } | null;
+    /** Houve manutenção REALIZADA no dia do despacho (badge cinza "Manutenção"). */
+    manutencao_realizada: boolean;
   };
 
   const modulosBySetor = new Map<string, ModuloBateriaPreview[]>();
@@ -425,6 +452,26 @@ export async function buildIptPreviewFromConsolidado(
     });
   }
 
+  // Troca por módulo+dia (sucesso). Se houver mais de uma no mesmo dia, qualquer falha → "sem sucesso".
+  const trocaByModuloDate = new Map<string, { sucesso: boolean }>();
+  for (const row of (trocaRes.rows ?? []) as Array<{ modulo_selimp: string | null; data_troca: string | null; sucesso: boolean | null }>) {
+    const selimp = String(row.modulo_selimp ?? "").trim();
+    const dia = String(row.data_troca ?? "").slice(0, 10);
+    if (!selimp || !dia) continue;
+    const key = `${selimp}|${dia}`;
+    const sucesso = row.sucesso !== false;
+    const prev = trocaByModuloDate.get(key);
+    trocaByModuloDate.set(key, { sucesso: prev ? prev.sucesso && sucesso : sucesso });
+  }
+
+  // Manutenção REALIZADA por módulo+dia.
+  const manutRealizadaByModuloDate = new Set<string>();
+  for (const row of (manutRes.rows ?? []) as Array<{ modulo_selimp: string | null; data_manutencao: string | null }>) {
+    const selimp = String(row.modulo_selimp ?? "").trim();
+    const dia = String(row.data_manutencao ?? "").slice(0, 10);
+    if (selimp && dia) manutRealizadaByModuloDate.add(`${selimp}|${dia}`);
+  }
+
   const summarizeModulosBateria = (modulos: ModuloBateriaPreview[]): BateriaResumoSetor => {
     const total = modulos.length;
     const produtividadeVals = modulos
@@ -452,7 +499,23 @@ export async function buildIptPreviewFromConsolidado(
     const historico = modulos
       .map((modulo) => bateriaHistoricoByModuloDate.get(`${modulo.numero_selimp}|${dateKey}`))
       .filter((item): item is BateriaModuloDia => item != null);
-    if (historico.length === 0) return null;
+
+    // Troca / manutenção realizada no dia do despacho (independem de haver snapshot de bateria).
+    let anyTroca = false;
+    let anyTrocaFalha = false;
+    let manutencaoRealizada = false;
+    for (const modulo of modulos) {
+      const k = `${modulo.numero_selimp}|${dateKey}`;
+      const troca = trocaByModuloDate.get(k);
+      if (troca) {
+        anyTroca = true;
+        if (!troca.sucesso) anyTrocaFalha = true;
+      }
+      if (manutRealizadaByModuloDate.has(k)) manutencaoRealizada = true;
+    }
+    const troca = anyTroca ? { sucesso: !anyTrocaFalha } : null;
+
+    if (historico.length === 0 && !troca && !manutencaoRealizada) return null;
 
     const percentuais = historico
       .map((item) => item.bateria_percentual)
@@ -467,6 +530,8 @@ export async function buildIptPreviewFromConsolidado(
           ? Number((percentuais.reduce((sum, value) => sum + value, 0) / percentuais.length).toFixed(2))
           : null,
       modulos: historico,
+      troca,
+      manutencao_realizada: manutencaoRealizada,
     };
   };
 

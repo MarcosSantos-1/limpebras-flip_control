@@ -131,7 +131,7 @@ interface ModuleData {
   setor: string;
   numeroSelimp: string;
   diasExecucao: string;
-  setoresDias?: { setor: string; dias: string; km?: number | null; praca?: string | null; execucao?: number | null }[];
+  setoresDias?: ModuleSetorDia[];
   produtividadeExecucao?: number | null;
   comunicacao: "ON" | "OFF";
   bateria: string;
@@ -145,6 +145,20 @@ interface ModuleData {
   diasOff: number;
   diasOffConsecutivos?: number;
   produtividade: number;
+}
+
+interface ExecucaoSelimpDia {
+  data: string;
+  percentual: number;
+}
+
+interface ModuleSetorDia {
+  setor: string;
+  dias: string;
+  km?: number | null;
+  praca?: string | null;
+  execucao?: number | null;
+  execucoes?: ExecucaoSelimpDia[];
 }
 
 interface ApiResponse {
@@ -186,6 +200,18 @@ const DISPATCH_TYPES = [
 
 // --- Utility Functions ---
 
+function normalizeStatusKey(value: unknown): string {
+  return String(value ?? "")
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase();
+}
+
+function isMaintenanceSignalStatus(status: unknown): boolean {
+  return normalizeStatusKey(status).includes("MANUTEN");
+}
+
 function getStatusBySubprefeitura(data: ModuleData[]) {
   const subsSet = new Set(data.map((m) => m.subprefeitura).filter(Boolean));
   const subs = Array.from(subsSet).sort();
@@ -194,9 +220,7 @@ function getStatusBySubprefeitura(data: ModuleData[]) {
     const total = items.length;
     const online = items.filter((m) => m.comunicacao === "ON").length;
     const offline = items.filter((m) => m.comunicacao === "OFF").length;
-    const maintenance = items.filter(
-      (m) => m.statusSinalGeral === "MANUTENÇÃO" || m.statusSinalGeral === "MANUTENCAO"
-    ).length;
+    const maintenance = items.filter((m) => isMaintenanceSignalStatus(m.statusSinalGeral)).length;
     return { subprefeitura: sub, total, online, offline, maintenance };
   });
 }
@@ -240,7 +264,7 @@ function getSignalDistribution(data: ModuleData[]) {
   return [
     { status: "Com Sinal", count: data.filter((m) => m.statusSinalGeral === "COM SINAL").length },
     { status: "Sem Sinal", count: data.filter((m) => m.statusSinalGeral === "SEM SINAL").length },
-    { status: "Manutenção", count: data.filter((m) => m.statusSinalGeral === "MANUTENÇÃO" || m.statusSinalGeral === "MANUTENCAO").length },
+    { status: "Manutenção", count: data.filter((m) => isMaintenanceSignalStatus(m.statusSinalGeral)).length },
   ];
 }
 
@@ -509,6 +533,50 @@ function fmtDisplayDate(value?: string): string {
   return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? fmtIsoBr(normalized) : value;
 }
 
+function parseDateOnly(value?: string): Date | null {
+  if (!value) return null;
+  const trimmed = String(value).trim();
+  const iso = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
+  const br = trimmed.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+  if (br) return new Date(Number(br[3]), Number(br[2]) - 1, Number(br[1]));
+  const parsed = new Date(trimmed);
+  return Number.isNaN(parsed.getTime()) ? null : new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
+}
+
+function daysBetweenDates(start: Date, end: Date): number {
+  const startUtc = Date.UTC(start.getFullYear(), start.getMonth(), start.getDate());
+  const endUtc = Date.UTC(end.getFullYear(), end.getMonth(), end.getDate());
+  return Math.max(0, Math.round((endUtc - startUtc) / 86400000));
+}
+
+function average(values: number[]): number | null {
+  return values.length > 0 ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : null;
+}
+
+function periodStartDate(period: string, now = new Date()): Date | null {
+  if (period === "all") return null;
+  const days = period === "7d" ? 7 : period === "90d" ? 90 : 30;
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  start.setDate(start.getDate() - days);
+  return start;
+}
+
+function isDateInPeriod(value: string | undefined, period: string, now = new Date()): boolean {
+  const d = parseDateOnly(value);
+  if (!d) return false;
+  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (d > end) return false;
+  const start = periodStartDate(period, now);
+  return !start || d >= start;
+}
+
+function normalizePercentValue(value?: number | null): number | null {
+  if (value == null || !Number.isFinite(Number(value))) return null;
+  const n = Number(value);
+  return n > 0 && n <= 1 ? n * 100 : n;
+}
+
 function batteryLabel(raw?: string, percent?: number | null): string {
   const clean = String(raw ?? "").trim();
   if (clean) return clean;
@@ -569,6 +637,67 @@ function trocaHistoryOf(m: ModuleData, rec?: TrocaRecord, history: TrocaHistoryR
       bateriaDepoisPercentual: rec.percentualEntrada,
     },
   ];
+}
+
+function trocaDate(h: TrocaHistoryRecord): string | undefined {
+  return h.status === "agendada" ? h.dataAgendada : h.dataTroca;
+}
+
+function trocaInPeriod(h: TrocaHistoryRecord, period: string): boolean {
+  return isDateInPeriod(trocaDate(h), period);
+}
+
+function bateriaAtualizada(m: ModuleData): boolean {
+  return m.statusSinalGeral === "COM SINAL" && m.statusBateria !== "DESATUALIZADA";
+}
+
+function duracoesBateriaAtualizada(m: ModuleData, history: TrocaHistoryRecord[], period: string): number[] {
+  const concluidas = history
+    .filter((h) => h.status === "concluida" && h.dataTroca)
+    .sort((a, b) => String(a.dataTroca).localeCompare(String(b.dataTroca)));
+
+  const out: number[] = [];
+  for (let i = 0; i < concluidas.length; i += 1) {
+    const startEvent = concluidas[i];
+    if (startEvent.sucesso === false) continue;
+    const start = parseDateOnly(startEvent.dataTroca);
+    if (!start) continue;
+
+    const nextEvent = concluidas[i + 1];
+    const end = nextEvent ? parseDateOnly(nextEvent.dataTroca) : bateriaAtualizada(m) ? new Date() : null;
+    if (!end) continue;
+    const endKey = nextEvent ? nextEvent.dataTroca : isoToday();
+    if (!isDateInPeriod(endKey, period)) continue;
+
+    const diff = daysBetweenDates(start, end);
+    if (diff > 0) out.push(diff);
+  }
+  return out;
+}
+
+function execucaoSelimpHistoryOf(m: ModuleData, limit = 10): ExecucaoSelimpDia[] {
+  const byDate = new Map<string, { sum: number; count: number }>();
+  for (const sd of setoresDiasOf(m)) {
+    for (const item of sd.execucoes ?? []) {
+      if (!item.data || !Number.isFinite(item.percentual)) continue;
+      const cur = byDate.get(item.data) ?? { sum: 0, count: 0 };
+      cur.sum += item.percentual;
+      cur.count += 1;
+      byDate.set(item.data, cur);
+    }
+  }
+  return Array.from(byDate.entries())
+    .map(([data, v]) => ({ data, percentual: Math.round((v.sum / v.count) * 10) / 10 }))
+    .sort((a, b) => b.data.localeCompare(a.data))
+    .slice(0, limit);
+}
+
+function mediaExecucaoSelimp(m: ModuleData): number | null {
+  const vals = execucaoSelimpHistoryOf(m, 999)
+    .map((item) => item.percentual)
+    .filter((value) => Number.isFinite(value));
+  if (vals.length > 0) return Math.round((vals.reduce((sum, value) => sum + value, 0) / vals.length) * 10) / 10;
+  return m.produtividadeExecucao != null ? Math.round(m.produtividadeExecucao * 10) / 10 : null;
 }
 
 const STATUS_BAT_BADGE: Record<string, string> = {
@@ -722,7 +851,7 @@ function siglasOf(m: ModuleData): string[] {
 }
 
 /** Lista de pares setor↔dias, com fallback para o campo agregado antigo. */
-function setoresDiasOf(m: ModuleData): { setor: string; dias: string }[] {
+function setoresDiasOf(m: ModuleData): ModuleSetorDia[] {
   if (m.setoresDias && m.setoresDias.length > 0) return m.setoresDias;
   const setores = (m.setor || "").split("/").map((s) => s.trim()).filter(Boolean);
   if (setores.length === 0) return [];
@@ -791,8 +920,7 @@ export default function BateriaDashboardPage() {
   const isEnviadoManutencao = useCallback(
     (m: ModuleData) =>
       Boolean(manut.overrides[m.numeroSelimp]?.solicitada) ||
-      m.statusSinalGeral === "MANUTENÇÃO" ||
-      m.statusSinalGeral === "MANUTENCAO",
+      isMaintenanceSignalStatus(m.statusSinalGeral),
     [manut.overrides],
   );
 
@@ -879,17 +1007,16 @@ export default function BateriaDashboardPage() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  // Manutenção solicitada pelo usuário move o status global do módulo para MANUTENÇÃO,
-  // refletindo em cards, gráficos, filtros e badges de toda a página.
+  // Manutenção ativa do módulo entra no status global da visão geral.
   const modules = useMemo(() => {
     const raw = data?.modules ?? [];
     return raw.map((m) => {
-      const ov = manut.overrides[m.numeroSelimp];
-      if (!ov?.solicitada) return m;
-      if (m.statusSinalGeral === "MANUTENÇÃO" || m.statusSinalGeral === "MANUTENCAO") return m;
-      return { ...m, statusSinalGeral: "MANUTENÇÃO" };
+      const statusModulo = moduloManut.records[m.numeroSelimp]?.status ?? null;
+      if (statusModulo !== "ATIVA") return m;
+      if (isMaintenanceSignalStatus(m.statusSinalGeral)) return m;
+      return { ...m, statusSinalGeral: "MANUTENCAO" };
     });
-  }, [data, manut.overrides]);
+  }, [data, moduloManut.records]);
   const stats = data?.stats ?? { total: 0, online: 0, offline: 0, avgProductivity: 0, criticalAlerts: 0, lowBattery: 0 };
 
   const filteredModules = useMemo(() => {
@@ -908,9 +1035,7 @@ export default function BateriaDashboardPage() {
     if (signalFilter === "com-sinal") result = result.filter((m) => m.statusSinalGeral === "COM SINAL");
     else if (signalFilter === "sem-sinal") result = result.filter((m) => m.statusSinalGeral === "SEM SINAL");
     else if (signalFilter === "manutencao") {
-      result = result.filter(
-        (m) => m.statusSinalGeral === "MANUTENÇÃO" || m.statusSinalGeral === "MANUTENCAO"
-      );
+      result = result.filter((m) => isMaintenanceSignalStatus(m.statusSinalGeral));
     }
 
     if (batteryFilter === "critico") result = result.filter((m) => m.bateriaPercentual < 20);
@@ -946,10 +1071,7 @@ export default function BateriaDashboardPage() {
     const total = modules.length;
     const online = modules.filter((m) => m.comunicacao === "ON").length;
     const offline = modules.filter((m) => m.comunicacao === "OFF").length;
-    const maintenance = modules.filter((m) => {
-      const status = manutStatusForModule(m);
-      return status === "PENDENTE" || status === "ATIVA";
-    }).length;
+    const maintenance = modules.filter((m) => manutStatusForModule(m) === "ATIVA").length;
     const pct = (n: number) => (total > 0 ? Math.round((n / total) * 100) : 0);
     return {
       total,
@@ -1079,30 +1201,45 @@ export default function BateriaDashboardPage() {
 
   /** Indicadores de trocas registradas no painel (agendamentos/conclusões reais). */
   const trocasStats = useMemo(() => {
-    const bySelimp = new Map(modules.map((m) => [m.numeroSelimp, m]));
-    const recs = Object.values(troca.records);
-    const concluidas = recs.filter((r) => r.status === "concluida");
-    const agendadas = recs.length - concluidas.length;
-    const comSucesso = concluidas.filter((r) => r.sucesso).length;
-    const semSucesso = concluidas.length - comSucesso;
+    const concluidas: Array<{ item: TrocaHistoryRecord; module: ModuleData }> = [];
+    const agendadas: TrocaHistoryRecord[] = [];
+    for (const m of modules) {
+      const history = trocaHistoryOf(m, troca.records[m.numeroSelimp], troca.history[m.numeroSelimp]);
+      for (const h of history) {
+        if (!trocaInPeriod(h, trocasPeriod)) continue;
+        if (h.status === "concluida") concluidas.push({ item: h, module: m });
+        else agendadas.push(h);
+      }
+    }
+    const comSucesso = concluidas.filter(({ item }) => item.sucesso !== false).length;
+    const semSucesso = concluidas.filter(({ item }) => item.sucesso === false).length;
     let corretivas = 0;
     let preventivas = 0;
     let desnecessarias = 0;
-    for (const r of concluidas) {
-      const m = bySelimp.get(r.selimp);
-      const motivo = m ? motivoFromModule(m) : "Manutenção";
-      if (motivo === "Corretiva") corretivas += 1;
-      else if (motivo === "Preventiva") preventivas += 1;
-      else if (motivo === "Desnecessária") desnecessarias += 1;
+    const bateriaVals: number[] = [];
+    const fallbackModules = new Map<string, ModuleData>();
+    for (const { item, module: m } of concluidas) {
+      const motivo = normalizeStatusKey(item.tipoTroca || motivoFromModule(m));
+      if (motivo.includes("CORRETIVA")) corretivas += 1;
+      else if (motivo.includes("PREVENTIVA")) preventivas += 1;
+      else if (motivo.includes("DESNECESS")) desnecessarias += 1;
+
+      const pct = normalizePercentValue(item.bateriaDepoisPercentual ?? item.percentualEntrada);
+      if (pct != null) bateriaVals.push(pct);
+      else fallbackModules.set(m.numeroSelimp, m);
     }
-    const acertividade = concluidas.length > 0 ? Math.round((comSucesso / concluidas.length) * 100) : 0;
-    const mediaBateria =
-      modules.length > 0
-        ? Math.round(modules.reduce((s, m) => s + (m.bateriaPercentual || 0), 0) / modules.length)
-        : 0;
+    if (bateriaVals.length === 0) {
+      for (const m of fallbackModules.values()) {
+        const pct = normalizePercentValue(m.bateriaPercentual);
+        if (pct != null) bateriaVals.push(pct);
+      }
+    }
+    const totalAvaliadas = comSucesso + semSucesso;
+    const acertividade = totalAvaliadas > 0 ? Math.round((comSucesso / totalAvaliadas) * 100) : 0;
+    const mediaBateria = bateriaVals.length > 0 ? Math.round(bateriaVals.reduce((s, n) => s + n, 0) / bateriaVals.length) : 0;
     return {
       total: concluidas.length,
-      agendadas,
+      agendadas: agendadas.length,
       corretivas,
       preventivas,
       desnecessarias,
@@ -1111,15 +1248,18 @@ export default function BateriaDashboardPage() {
       acertividade,
       mediaBateria,
     };
-  }, [modules, troca.records]);
+  }, [modules, troca.history, troca.records, trocasPeriod]);
 
   /** Ranking dos setores com maior quantidade de trocas. */
   const trocasRanking = useMemo(() => {
     const map = new Map<
       string,
-      { setor: string; subprefeitura: string; totalTrocas: number; manutencoes: number; somaDuracao: number; n: number }
+      { setor: string; subprefeitura: string; totalTrocas: number; manutencoes: number; duracoes: number[] }
     >();
     for (const m of modules) {
+      const history = trocaHistoryOf(m, troca.records[m.numeroSelimp], troca.history[m.numeroSelimp]);
+      const concluidasPeriodo = history.filter((h) => h.status === "concluida" && trocaInPeriod(h, trocasPeriod));
+      if (concluidasPeriodo.length === 0) continue;
       const key = m.setor || "—";
       const cur =
         map.get(key) ?? {
@@ -1127,20 +1267,18 @@ export default function BateriaDashboardPage() {
           subprefeitura: m.subprefeitura,
           totalTrocas: 0,
           manutencoes: 0,
-          somaDuracao: 0,
-          n: 0,
+          duracoes: [],
         };
-      cur.totalTrocas += m.quantidadeTrocas || 0;
-      cur.manutencoes += (m.quantidadeTrocas || 0) > 0 ? 1 : 0;
-      cur.somaDuracao += m.diasOn || 0;
-      cur.n += 1;
+      cur.totalTrocas += concluidasPeriodo.length;
+      cur.manutencoes += 1;
+      cur.duracoes.push(...duracoesBateriaAtualizada(m, history, trocasPeriod));
       map.set(key, cur);
     }
     return Array.from(map.values())
-      .map((r) => ({ ...r, mediaDuracao: r.n ? Math.round(r.somaDuracao / r.n) : 0 }))
+      .map((r) => ({ ...r, mediaDuracao: average(r.duracoes) }))
       .sort((a, b) => b.totalTrocas - a.totalTrocas)
       .slice(0, 7);
-  }, [modules]);
+  }, [modules, troca.history, troca.records, trocasPeriod]);
 
   /** Opções de "Dias de execução" (união distinta dos dias por setor). */
   const uniqueDays = useMemo(() => {
@@ -1748,7 +1886,7 @@ export default function BateriaDashboardPage() {
                       <span className="font-mono text-4xl font-bold tracking-tight text-zinc-900 tabular-nums dark:text-white">{commMaintenanceStats.maintenance}</span>
                       <span className="font-mono text-2xl font-bold tabular-nums text-zinc-700 dark:text-zinc-300">({commMaintenanceStats.pctMaint}%)</span>
                     </div>
-                    <p className="mt-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">Manutenção ativa ou pendente</p>
+                    <p className="mt-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">Manutenção ativa</p>
                   </CardContent>
                 </Card>
               </div>
@@ -2039,7 +2177,7 @@ export default function BateriaDashboardPage() {
                           <TableHead>Setor</TableHead>
                           <TableHead className="text-center">Trocas</TableHead>
                           <TableHead className="text-center">Manut.</TableHead>
-                          <TableHead className="text-center">Méd. dur.</TableHead>
+                          <TableHead className="text-center">Duração Bat.</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -2050,7 +2188,7 @@ export default function BateriaDashboardPage() {
                             <TableCell><SetorCell value={r.setor} /></TableCell>
                             <TableCell className="text-center font-bold tabular-nums text-emerald-600 dark:text-emerald-400">{r.totalTrocas}</TableCell>
                             <TableCell className="text-center tabular-nums text-muted-foreground">{r.manutencoes}</TableCell>
-                            <TableCell className="text-center tabular-nums text-sky-600 dark:text-sky-400">{r.mediaDuracao}d</TableCell>
+                            <TableCell className="text-center tabular-nums text-sky-600 dark:text-sky-400">{r.mediaDuracao != null ? `${r.mediaDuracao}d` : "—"}</TableCell>
                           </TableRow>
                         ))}
                         {trocasRanking.length === 0 && (
@@ -2258,6 +2396,7 @@ export default function BateriaDashboardPage() {
                           <TableHead>Dias de execução</TableHead>
                           <TableHead>Última Comunicação</TableHead>
                           <TableHead>Bateria</TableHead>
+                          <TableHead className="text-center">Execução</TableHead>
                           <TableHead>Sinal</TableHead>
                           <TableHead>Status da Bateria</TableHead>
                           <TableHead className="text-center">Qtd. Cargas</TableHead>
@@ -2274,6 +2413,8 @@ export default function BateriaDashboardPage() {
                           const history = trocaHistoryOf(m, rec, troca.history[m.numeroSelimp]);
                           const historyConcluidas = history.filter((h) => h.status === "concluida").length;
                           const historySemData = Math.max(0, (m.quantidadeTrocas || 0) - historyConcluidas);
+                          const execucaoHistory = execucaoSelimpHistoryOf(m);
+                          const execucaoMedia = mediaExecucaoSelimp(m);
                           // Troca concluída mais recente (history vem em ordem decrescente por data): só nela
                           // usamos a bateria/sinal atual do módulo como "estado depois".
                           const latestConcluidaId = history.find((h) => h.status === "concluida")?.id;
@@ -2339,6 +2480,9 @@ export default function BateriaDashboardPage() {
                                 {m.ultimaComunicacao || "—"}
                               </TableCell>
                               <TableCell className="align-middle">{m.bateriaPercentual}%</TableCell>
+                              <TableCell className="text-center font-medium tabular-nums align-middle">
+                                {execucaoMedia != null ? `${execucaoMedia}%` : "—"}
+                              </TableCell>
                               <TableCell className="align-middle">
                                 <Badge className={
                                   m.statusSinalGeral === "COM SINAL"
@@ -2423,7 +2567,7 @@ export default function BateriaDashboardPage() {
                             </TableRow>
                             {!selMode && isExpanded && (
                               <TableRow className="border-emerald-500/20 bg-emerald-500/5 hover:bg-emerald-500/5">
-                                <TableCell colSpan={12} className="p-0 align-middle">
+                                <TableCell colSpan={13} className="p-0 align-middle">
                                   <div className="space-y-4 px-4 py-4">
                                     <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
                                       <div className="rounded-lg border border-border/60 bg-background/70 p-3">
@@ -2442,6 +2586,37 @@ export default function BateriaDashboardPage() {
                                         <span className="block text-xs text-muted-foreground">Última comunicação atual</span>
                                         <span className="mt-1 block text-xs font-medium tabular-nums text-foreground">{m.ultimaComunicacao || "—"}</span>
                                       </div>
+                                    </div>
+
+                                    <div className="rounded-xl border border-border/60 bg-background/60 px-3 py-2">
+                                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                                        <div className="flex items-center gap-2">
+                                          <Percent className="h-4 w-4 text-sky-500" />
+                                          <span className="text-sm font-semibold text-foreground">Execução SELIMP</span>
+                                        </div>
+                                        <Badge className="border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-300">
+                                          Média 30d: {execucaoMedia != null ? `${execucaoMedia}%` : "—"}
+                                        </Badge>
+                                      </div>
+                                      {execucaoHistory.length > 0 ? (
+                                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-5 xl:grid-cols-10">
+                                          {execucaoHistory.map((item, idx) => (
+                                            <div key={`${item.data}-${idx}`} className="rounded-lg border border-border/50 bg-muted/20 px-2 py-2">
+                                              <div className="flex items-center justify-between gap-1">
+                                                <span className="text-[11px] font-medium tabular-nums text-muted-foreground">{fmtIsoBr(item.data).slice(0, 5)}</span>
+                                                <span className="text-xs font-bold tabular-nums text-foreground">{item.percentual}%</span>
+                                              </div>
+                                              <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
+                                                <div className="h-full rounded-full bg-sky-500" style={{ width: `${Math.max(0, Math.min(100, item.percentual))}%` }} />
+                                              </div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      ) : (
+                                        <p className="rounded-lg bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                                          Sem percentuais SELIMP encerrados nos últimos 30 dias para os setores deste módulo.
+                                        </p>
+                                      )}
                                     </div>
 
                                     <div className="rounded-xl border border-border/60 bg-background/60 p-3">
@@ -2544,7 +2719,7 @@ export default function BateriaDashboardPage() {
                         })}
                         {trocasModules.length === 0 && (
                           <TableRow>
-                            <TableCell colSpan={12} className="py-10 text-center text-sm text-muted-foreground">Nenhum setor encontrado.</TableCell>
+                            <TableCell colSpan={13} className="py-10 text-center text-sm text-muted-foreground">Nenhum setor encontrado.</TableCell>
                           </TableRow>
                         )}
                       </TableBody>

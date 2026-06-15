@@ -2027,6 +2027,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         // Todas as queries são resilientes: falha em uma não derruba o endpoint.
         const PERIODO_DIAS = 30;
         const execMap = new Map<string, number>();
+        const execHistoryMap = new Map<string, Array<{ data: string; percentual: number }>>();
         const kmMap = new Map<string, number>();
         const pracaMap = new Map<string, string>();
         const offStreakMap = new Map<string, number>();
@@ -2036,19 +2037,32 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
           // % de execução por setor (ipt_report_linhas, encerrados, últimos 30 dias)
           (async () => {
             try {
-              const rows = await pool.query<{ plano: string; pct: string | null }>(
+              const rows = await pool.query<{ plano: string; data: string; pct: string | null }>(
                 `SELECT plano,
+                        to_char(data_estimada, 'YYYY-MM-DD') AS data,
                         AVG(CASE WHEN percentual_execucao > 1 THEN percentual_execucao ELSE percentual_execucao * 100 END) AS pct
                    FROM ipt_report_linhas
                   WHERE data_estimada >= (CURRENT_DATE - $1::int)
                     AND LOWER(COALESCE(status, '')) LIKE '%encerrad%'
                     AND percentual_execucao IS NOT NULL
-                  GROUP BY plano`,
+                  GROUP BY plano, data_estimada
+                  ORDER BY data_estimada DESC, plano`,
                 [PERIODO_DIAS],
               );
               for (const r of rows.rows) {
                 const key = normalizarSetor(r.plano);
-                if (key && r.pct != null) execMap.set(key, Math.round(Number(r.pct) * 100) / 100);
+                if (!key || r.pct == null) continue;
+                const percentual = Math.round(Number(r.pct) * 100) / 100;
+                if (!Number.isFinite(percentual)) continue;
+                const list = execHistoryMap.get(key) ?? [];
+                list.push({ data: r.data, percentual });
+                execHistoryMap.set(key, list);
+              }
+              for (const [key, list] of execHistoryMap) {
+                const media = list.length > 0
+                  ? list.reduce((sum, item) => sum + item.percentual, 0) / list.length
+                  : null;
+                if (media != null) execMap.set(key, Math.round(media * 100) / 100);
               }
             } catch {
               /* execução é opcional */
@@ -2142,6 +2156,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
             const setorStr = String(d?.setor ?? "");
             const key = normalizarSetor(setorStr);
             const execucao = execMap.get(key);
+            const execucoes = key ? execHistoryMap.get(key) ?? [] : [];
             const km = kmMap.get(key);
             const praca = pracaMap.get(key);
             return {
@@ -2150,6 +2165,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
               km: km != null ? km : null,
               praca: praca ?? null,
               execucao: execucao != null ? execucao : null,
+              execucoes,
             };
           });
           const execVals = setoresDias

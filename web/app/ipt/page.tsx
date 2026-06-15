@@ -29,6 +29,7 @@ import {
   Pencil,
   Percent,
   Plus,
+  Repeat,
   RotateCcw,
   Search,
   ShieldAlert,
@@ -209,12 +210,11 @@ const isVarricaoPlanoUi = (plano: string) => /(VP|VJ|VL)\d{4}/i.test(plano.repla
 const BateriaSelimpBadge = ({ bateriaDia }: { bateriaDia?: IptPreviewBateriaSetorDia | null }) => {
   const firstModulo = bateriaDia?.modulos[0];
   const hasDesatualizada = (bateriaDia?.desatualizadas ?? 0) > 0;
-  const label = hasDesatualizada
-    ? "Desatual."
-    : bateriaDia?.media_percentual != null
-    ? `${bateriaDia.media_percentual.toFixed(0)}%`
-    : firstModulo?.bateria_raw || "--";
-  const title = bateriaDia
+  // Prioridade: módulo trocado no dia do despacho → "Troca" (verde/vermelho);
+  // manutenção realizada no dia → "Manutenção" (cinza); senão, % / "Desatual.".
+  const troca = bateriaDia?.troca ?? null;
+  const manutencaoRealizada = Boolean(bateriaDia?.manutencao_realizada);
+  const baseTitle = bateriaDia
     ? bateriaDia.modulos
         .map((modulo) =>
           `${modulo.numero_selimp}: ${modulo.bateria_raw || "--"}${
@@ -223,21 +223,50 @@ const BateriaSelimpBadge = ({ bateriaDia }: { bateriaDia?: IptPreviewBateriaSeto
         )
         .join(" · ")
     : "Sem dado de bateria para a data do despacho";
-  const colorClass = !bateriaDia
-    ? "bg-slate-500/15 text-muted-foreground"
-    : hasDesatualizada
-    ? "bg-amber-500/15 text-amber-800 dark:text-amber-200"
-    : (bateriaDia.media_percentual ?? 0) <= 15
-    ? "bg-red-500/15 text-red-800 dark:text-red-200"
-    : (bateriaDia.media_percentual ?? 0) <= 30
-    ? "bg-yellow-500/15 text-yellow-800 dark:text-yellow-200"
-    : "bg-emerald-500/15 text-emerald-800 dark:text-emerald-200";
+
+  let label: string;
+  let colorClass: string;
+  let title = baseTitle;
+  if (troca) {
+    label = "Troca";
+    colorClass = troca.sucesso
+      ? "bg-emerald-500/15 text-emerald-800 dark:text-emerald-200"
+      : "bg-red-500/15 text-red-800 dark:text-red-200";
+    title = `Troca de bateria no dia do despacho — ${troca.sucesso ? "com sucesso" : "sem sucesso"}${
+      baseTitle ? ` · ${baseTitle}` : ""
+    }`;
+  } else if (manutencaoRealizada) {
+    label = "Manutenção";
+    colorClass = "bg-slate-500/20 text-slate-700 dark:text-slate-300";
+    title = `Manutenção realizada no dia do despacho${baseTitle ? ` · ${baseTitle}` : ""}`;
+  } else {
+    label = hasDesatualizada
+      ? "Desatual."
+      : bateriaDia?.media_percentual != null
+      ? `${bateriaDia.media_percentual.toFixed(0)}%`
+      : firstModulo?.bateria_raw || "--";
+    colorClass = !bateriaDia
+      ? "bg-slate-500/15 text-muted-foreground"
+      : hasDesatualizada
+      ? "bg-amber-500/15 text-amber-800 dark:text-amber-200"
+      : (bateriaDia.media_percentual ?? 0) <= 15
+      ? "bg-red-500/15 text-red-800 dark:text-red-200"
+      : (bateriaDia.media_percentual ?? 0) <= 30
+      ? "bg-yellow-500/15 text-yellow-800 dark:text-yellow-200"
+      : "bg-emerald-500/15 text-emerald-800 dark:text-emerald-200";
+  }
   return (
     <span
       className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 font-semibold ${colorClass}`}
       title={title}
     >
-      <Battery className="h-3.5 w-3.5 shrink-0" />
+      {troca ? (
+        <Repeat className="h-3.5 w-3.5 shrink-0" />
+      ) : manutencaoRealizada ? (
+        <Wrench className="h-3.5 w-3.5 shrink-0" />
+      ) : (
+        <Battery className="h-3.5 w-3.5 shrink-0" />
+      )}
       {label}
     </span>
   );

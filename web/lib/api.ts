@@ -284,6 +284,10 @@ export interface IptPreviewBateriaSetorDia {
   desatualizadas: number;
   media_percentual: number | null;
   modulos: IptPreviewBateriaModuloDia[];
+  /** Houve troca de bateria no dia do despacho (verde se sucesso, vermelho se sem sucesso). */
+  troca?: { sucesso: boolean } | null;
+  /** Houve manutenção REALIZADA no dia do despacho (badge cinza "Manutenção"). */
+  manutencao_realizada?: boolean;
 }
 
 export interface IptPreviewBateriaDdmxDispatch {
@@ -492,7 +496,14 @@ export interface IptModuloBateriaModule {
   setor: string;
   numeroSelimp: string;
   diasExecucao: string;
-  setoresDias?: { setor: string; dias: string; km?: number | null; praca?: string | null; execucao?: number | null }[];
+  setoresDias?: {
+    setor: string;
+    dias: string;
+    km?: number | null;
+    praca?: string | null;
+    execucao?: number | null;
+    execucoes?: { data: string; percentual: number }[];
+  }[];
   produtividadeExecucao?: number | null;
   comunicacao: "ON" | "OFF" | string;
   bateria: string;
