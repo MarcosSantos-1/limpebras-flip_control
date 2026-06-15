@@ -531,8 +531,13 @@ export interface BateriaTrocaHistoryRecord extends BateriaTrocaRecord {
   bateriaAntes?: string;
   bateriaAntesPercentual?: number;
   statusBateriaAntes?: string;
+  bateriaDepois?: string;
   bateriaDepoisPercentual?: number;
+  statusBateriaDepois?: string;
   statusSinalDepois?: string;
+  /** yyyy-MM-dd — última comunicação no snapshot anterior/posterior à troca. */
+  ultimaComunicacaoAntes?: string;
+  ultimaComunicacaoDepois?: string;
   createdAt?: string;
 }
 

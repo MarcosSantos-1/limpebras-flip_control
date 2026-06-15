@@ -640,6 +640,8 @@ export async function runMigrations() {
     await client.query("CREATE INDEX IF NOT EXISTS idx_dados_bateria_nome ON ipt_dados_bateria(nome)").catch(() => {});
     await client.query("CREATE INDEX IF NOT EXISTS idx_dados_bateria_tipo ON ipt_dados_bateria(tipo_modulo)").catch(() => {});
     await client.query("CREATE INDEX IF NOT EXISTS idx_dados_bateria_selimp ON ipt_dados_bateria(selimp_id)").catch(() => {});
+    // Lookup do snapshot mais próximo antes/depois de uma troca (LATERAL em /bateria/trocas).
+    await client.query("CREATE INDEX IF NOT EXISTS idx_dados_bateria_selimp_data ON ipt_dados_bateria(selimp_id, data_exportacao)").catch(() => {});
     await client.query(
       `UPDATE ipt_dados_bateria SET selimp_id = NULL, updated_at = NOW()
        WHERE tipo_modulo = 'PORTATIL' AND selimp_id IS NOT NULL`

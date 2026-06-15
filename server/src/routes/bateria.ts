@@ -31,8 +31,13 @@ export interface TrocaHistoryDto extends TrocaRecordDto {
   bateriaAntes?: string;
   bateriaAntesPercentual?: number;
   statusBateriaAntes?: string;
+  bateriaDepois?: string;
   bateriaDepoisPercentual?: number;
+  statusBateriaDepois?: string;
   statusSinalDepois?: string;
+  /** yyyy-MM-dd — leitura de sinal/comunicação do snapshot anterior/posterior à troca. */
+  ultimaComunicacaoAntes?: string;
+  ultimaComunicacaoDepois?: string;
   createdAt?: string;
 }
 
@@ -56,6 +61,32 @@ interface TrocaEventoRow extends TrocaRow {
   bateria_depois_percentual: string | null;
   status_sinal_depois: string | null;
   created_at: string | null;
+  // Snapshots reais (ipt_dados_bateria) imediatamente antes/depois da troca.
+  snap_antes_pct: string | null;
+  snap_antes_raw: string | null;
+  snap_antes_desat: boolean | null;
+  snap_antes_ultima: string | null;
+  snap_depois_pct: string | null;
+  snap_depois_raw: string | null;
+  snap_depois_desat: boolean | null;
+  snap_depois_sinal: string | null;
+  snap_depois_ultima: string | null;
+}
+
+/** Status da bateria a partir do percentual/flag do snapshot (mesmos limiares do refreshModuloSelimp). */
+function statusBateriaFromSnapshot(
+  pct: string | null,
+  raw: string | null,
+  desatualizada: boolean | null,
+): string | undefined {
+  if ((raw && /desatualizada/i.test(raw)) || desatualizada) return "DESATUALIZADA";
+  if (pct == null) return undefined;
+  const n = Number(pct);
+  if (!Number.isFinite(n)) return undefined;
+  if (n > 70) return "ALTA";
+  if (n > 30) return "REGULAR";
+  if (n > 15) return "BAIXA";
+  return "CRÍTICA";
 }
 
 function mapTroca(r: TrocaRow): TrocaRecordDto {
@@ -72,15 +103,36 @@ function mapTroca(r: TrocaRow): TrocaRecordDto {
 }
 
 function mapTrocaHistory(r: TrocaEventoRow): TrocaHistoryDto {
+  // "Antes"/"Depois" reais = snapshot diário mais próximo antes/depois da troca; se não houver,
+  // cai para os valores gravados no próprio evento (importação antiga).
+  const antesPct =
+    r.snap_antes_pct != null
+      ? Number(r.snap_antes_pct)
+      : r.bateria_antes_percentual != null
+        ? Number(r.bateria_antes_percentual)
+        : undefined;
+  const depoisPct =
+    r.snap_depois_pct != null
+      ? Number(r.snap_depois_pct)
+      : r.bateria_depois_percentual != null
+        ? Number(r.bateria_depois_percentual)
+        : undefined;
   return {
     ...mapTroca(r),
     id: String(r.id),
     tipoTroca: r.tipo_troca ?? undefined,
-    bateriaAntes: r.bateria_antes_raw ?? undefined,
-    bateriaAntesPercentual: r.bateria_antes_percentual != null ? Number(r.bateria_antes_percentual) : undefined,
-    statusBateriaAntes: r.status_bateria_antes ?? undefined,
-    bateriaDepoisPercentual: r.bateria_depois_percentual != null ? Number(r.bateria_depois_percentual) : undefined,
-    statusSinalDepois: r.status_sinal_depois ?? undefined,
+    bateriaAntes: r.snap_antes_raw ?? r.bateria_antes_raw ?? undefined,
+    bateriaAntesPercentual: antesPct,
+    statusBateriaAntes:
+      statusBateriaFromSnapshot(r.snap_antes_pct, r.snap_antes_raw, r.snap_antes_desat) ??
+      r.status_bateria_antes ??
+      undefined,
+    bateriaDepois: r.snap_depois_raw ?? undefined,
+    bateriaDepoisPercentual: depoisPct,
+    statusBateriaDepois: statusBateriaFromSnapshot(r.snap_depois_pct, r.snap_depois_raw, r.snap_depois_desat),
+    statusSinalDepois: r.snap_depois_sinal ?? r.status_sinal_depois ?? undefined,
+    ultimaComunicacaoAntes: r.snap_antes_ultima ?? undefined,
+    ultimaComunicacaoDepois: r.snap_depois_ultima ?? undefined,
     createdAt: r.created_at ?? undefined,
   };
 }
@@ -101,19 +153,48 @@ const SELECT_TROCA = `
          ultima_comunicacao::text AS ultima_comunicacao
     FROM bateria_trocas`;
 
+// Cada evento é enriquecido com o snapshot diário (ipt_dados_bateria) imediatamente ANTERIOR
+// e POSTERIOR à data da troca — dá o status/percentual real de bateria antes e depois da troca.
 const SELECT_TROCA_EVENTO = `
-  SELECT id, modulo_selimp, setor, status, tipo_troca,
-         data_agendada::text AS data_agendada,
-         sucesso, percentual_entrada,
-         data_troca::text AS data_troca,
-         ultima_comunicacao::text AS ultima_comunicacao,
-         bateria_antes_raw,
-         bateria_antes_percentual,
-         status_bateria_antes,
-         bateria_depois_percentual,
-         status_sinal_depois,
-         created_at::text AS created_at
-    FROM bateria_trocas_eventos`;
+  SELECT e.id, e.modulo_selimp, e.setor, e.status, e.tipo_troca,
+         e.data_agendada::text AS data_agendada,
+         e.sucesso, e.percentual_entrada,
+         e.data_troca::text AS data_troca,
+         e.ultima_comunicacao::text AS ultima_comunicacao,
+         e.bateria_antes_raw,
+         e.bateria_antes_percentual,
+         e.status_bateria_antes,
+         e.bateria_depois_percentual,
+         e.status_sinal_depois,
+         e.created_at::text AS created_at,
+         antes.bateria_percentual    AS snap_antes_pct,
+         antes.bateria_raw           AS snap_antes_raw,
+         antes.bateria_desatualizada AS snap_antes_desat,
+         antes.ultima_comunicacao::text AS snap_antes_ultima,
+         depois.bateria_percentual    AS snap_depois_pct,
+         depois.bateria_raw           AS snap_depois_raw,
+         depois.bateria_desatualizada AS snap_depois_desat,
+         depois.status_comunicacao    AS snap_depois_sinal,
+         depois.ultima_comunicacao::text AS snap_depois_ultima
+    FROM bateria_trocas_eventos e
+    LEFT JOIN LATERAL (
+      SELECT d.bateria_percentual, d.bateria_raw, d.bateria_desatualizada, d.ultima_comunicacao
+        FROM ipt_dados_bateria d
+       WHERE d.selimp_id = e.modulo_selimp
+         AND e.data_troca IS NOT NULL
+         AND d.data_exportacao < e.data_troca
+       ORDER BY d.data_exportacao DESC
+       LIMIT 1
+    ) antes ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT d.bateria_percentual, d.bateria_raw, d.bateria_desatualizada, d.status_comunicacao, d.ultima_comunicacao
+        FROM ipt_dados_bateria d
+       WHERE d.selimp_id = e.modulo_selimp
+         AND e.data_troca IS NOT NULL
+         AND d.data_exportacao > e.data_troca
+       ORDER BY d.data_exportacao ASC
+       LIMIT 1
+    ) depois ON TRUE`;
 
 // ===== Manutenções =====
 
@@ -149,7 +230,7 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get("/bateria/trocas", async () => {
     const [res, eventos] = await Promise.all([
       pool.query<TrocaRow>(`${SELECT_TROCA} ORDER BY modulo_selimp`),
-      pool.query<TrocaEventoRow>(`${SELECT_TROCA_EVENTO} ORDER BY modulo_selimp, COALESCE(data_troca, data_agendada) DESC NULLS LAST, created_at DESC, id DESC`),
+      pool.query<TrocaEventoRow>(`${SELECT_TROCA_EVENTO} ORDER BY e.modulo_selimp, COALESCE(e.data_troca, e.data_agendada) DESC NULLS LAST, e.created_at DESC, e.id DESC`),
     ]);
     const records: Record<string, TrocaRecordDto> = {};
     const history: Record<string, TrocaHistoryDto[]> = {};

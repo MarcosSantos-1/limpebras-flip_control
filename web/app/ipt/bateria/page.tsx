@@ -515,6 +515,35 @@ function batteryLabel(raw?: string, percent?: number | null): string {
   return percent != null && Number.isFinite(Number(percent)) ? `${Number(percent)}%` : "—";
 }
 
+/** Normaliza um percentual de bateria para o rótulo "XX%".
+ * Aceita escala 0–100 (82 → "82%") ou decimal 0–1 (0.82 → "82%"); cai para o raw quando não há percentual. */
+function pctBatteryLabel(percent?: number | null, raw?: string): string {
+  if (percent != null && Number.isFinite(Number(percent))) {
+    const n = Number(percent);
+    const v = n > 0 && n <= 1 ? Math.round(n * 100) : Math.round(n);
+    return `${v}%`;
+  }
+  const s = String(raw ?? "").trim();
+  if (!s) return "—";
+  const num = parseFloat(s.replace(",", "."));
+  if (!Number.isNaN(num)) {
+    const v = num > 0 && num <= 1 ? Math.round(num * 100) : Math.round(num);
+    return `${v}%`;
+  }
+  return s;
+}
+
+/** Deriva o status da bateria a partir do percentual (mesmos limiares do backend:
+ * >70 ALTA · >30 REGULAR · >15 BAIXA · senão CRÍTICA). */
+function statusBateriaFromPct(percent?: number | null): string | null {
+  if (percent == null || !Number.isFinite(Number(percent))) return null;
+  const n = Number(percent) > 0 && Number(percent) <= 1 ? Number(percent) * 100 : Number(percent);
+  if (n > 70) return "ALTA";
+  if (n > 30) return "REGULAR";
+  if (n > 15) return "BAIXA";
+  return "CRÍTICA";
+}
+
 function trocaStatusLabel(item: Pick<TrocaRecord, "status" | "sucesso">): string {
   if (item.status === "agendada") return "Agendada";
   return item.sucesso ? "Concluída com sucesso" : "Concluída sem sucesso";
@@ -2245,6 +2274,9 @@ export default function BateriaDashboardPage() {
                           const history = trocaHistoryOf(m, rec, troca.history[m.numeroSelimp]);
                           const historyConcluidas = history.filter((h) => h.status === "concluida").length;
                           const historySemData = Math.max(0, (m.quantidadeTrocas || 0) - historyConcluidas);
+                          // Troca concluída mais recente (history vem em ordem decrescente por data): só nela
+                          // usamos a bateria/sinal atual do módulo como "estado depois".
+                          const latestConcluidaId = history.find((h) => h.status === "concluida")?.id;
                           const alerta = alertaOf(m);
                           const sel = selected.has(m.numeroSelimp);
                           const isExpanded = expandedTrocaSelimp === m.numeroSelimp;
@@ -2431,7 +2463,30 @@ export default function BateriaDashboardPage() {
                                         </p>
                                       ) : (
                                         <div className="space-y-2">
-                                          {history.map((h) => (
+                                          {history.map((h) => {
+                                            const isLatestConcluida = h.status === "concluida" && h.id === latestConcluidaId;
+                                            // "Depois" real = snapshot logo após a troca; sem snapshot ainda, usa o estado
+                                            // atual do módulo apenas na troca mais recente.
+                                            const bateriaDepoisLabel =
+                                              h.bateriaDepoisPercentual != null || h.bateriaDepois || h.percentualEntrada != null
+                                                ? pctBatteryLabel(h.bateriaDepoisPercentual ?? h.percentualEntrada, h.bateriaDepois)
+                                                : isLatestConcluida
+                                                  ? pctBatteryLabel(m.bateriaPercentual, m.bateria)
+                                                  : "—";
+                                            const statusAntesLabel =
+                                              h.statusBateriaAntes || statusBateriaFromPct(h.bateriaAntesPercentual) || "—";
+                                            const statusDepoisLabel =
+                                              h.statusBateriaDepois ||
+                                              statusBateriaFromPct(h.bateriaDepoisPercentual) ||
+                                              (isLatestConcluida ? m.statusBateria : "") ||
+                                              "—";
+                                            const ultimaAntesLabel = fmtDisplayDate(h.ultimaComunicacaoAntes || h.ultimaComunicacao);
+                                            const ultimaDepoisLabel = h.ultimaComunicacaoDepois
+                                              ? fmtDisplayDate(h.ultimaComunicacaoDepois)
+                                              : isLatestConcluida
+                                                ? (m.ultimaComunicacao || "—")
+                                                : "—";
+                                            return (
                                             <div key={h.id} className="rounded-lg border border-border/50 bg-muted/20 p-3">
                                               <div className="flex flex-wrap items-center justify-between gap-2">
                                                 <div className="flex flex-wrap items-center gap-2">
@@ -2445,31 +2500,32 @@ export default function BateriaDashboardPage() {
                                               <div className="mt-3 grid grid-cols-2 gap-2 text-xs lg:grid-cols-6">
                                                 <div className="rounded-md bg-background/70 p-2">
                                                   <span className="block text-muted-foreground">Bateria antes</span>
-                                                  <span className="font-medium text-foreground">{batteryLabel(h.bateriaAntes, h.bateriaAntesPercentual)}</span>
+                                                  <span className="font-medium text-foreground">{pctBatteryLabel(h.bateriaAntesPercentual, h.bateriaAntes)}</span>
                                                 </div>
                                                 <div className="rounded-md bg-background/70 p-2">
                                                   <span className="block text-muted-foreground">Bateria depois</span>
-                                                  <span className="font-medium text-foreground">{batteryLabel(undefined, h.bateriaDepoisPercentual ?? h.percentualEntrada)}</span>
+                                                  <span className="font-medium text-foreground">{bateriaDepoisLabel}</span>
                                                 </div>
                                                 <div className="rounded-md bg-background/70 p-2">
                                                   <span className="block text-muted-foreground">Status antes</span>
-                                                  <span className="font-medium text-foreground">{h.statusBateriaAntes || "—"}</span>
+                                                  <span className="font-medium text-foreground">{statusAntesLabel}</span>
                                                 </div>
                                                 <div className="rounded-md bg-background/70 p-2">
                                                   <span className="block text-muted-foreground">Status depois</span>
-                                                  <span className="font-medium text-foreground">{h.statusSinalDepois || (h.status === "concluida" ? m.statusSinalGeral : "—")}</span>
+                                                  <span className="font-medium text-foreground">{statusDepoisLabel}</span>
                                                 </div>
                                                 <div className="rounded-md bg-background/70 p-2">
                                                   <span className="block text-muted-foreground">Últ. com. antes</span>
-                                                  <span className="font-medium tabular-nums text-foreground">{fmtDisplayDate(h.ultimaComunicacao)}</span>
+                                                  <span className="font-medium tabular-nums text-foreground">{ultimaAntesLabel}</span>
                                                 </div>
                                                 <div className="rounded-md bg-background/70 p-2">
                                                   <span className="block text-muted-foreground">Últ. com. depois</span>
-                                                  <span className="font-medium tabular-nums text-foreground">{h.status === "concluida" ? (m.ultimaComunicacao || "—") : "—"}</span>
+                                                  <span className="font-medium tabular-nums text-foreground">{ultimaDepoisLabel}</span>
                                                 </div>
                                               </div>
                                             </div>
-                                          ))}
+                                            );
+                                          })}
                                         </div>
                                       )}
 
@@ -3088,8 +3144,7 @@ export default function BateriaDashboardPage() {
                             </span>
                           </TableHead>
                           <TableHead>Status da Bateria</TableHead>
-                          <TableHead>ON</TableHead>
-                          <TableHead>OFF</TableHead>
+                          <TableHead className="text-center">ON / OFF</TableHead>
                           <TableHead>Produtiv.</TableHead>
                           <TableHead className="text-center" />
                         </TableRow>
@@ -3148,8 +3203,11 @@ export default function BateriaDashboardPage() {
                                 <Badge className={statusBatBadge(m.statusBateria)}>{m.statusBateria}</Badge>
                               </div>
                             </TableCell>
-                            <TableCell className="text-emerald-600 dark:text-emerald-400 font-medium align-top">{m.diasOn}</TableCell>
-                            <TableCell className="text-red-600 dark:text-red-400 font-medium align-top">{m.diasOff}</TableCell>
+                            <TableCell className="text-center font-medium align-top tabular-nums">
+                              <span className="text-emerald-600 dark:text-emerald-400">{m.diasOn}</span>
+                              <span className="text-muted-foreground"> / </span>
+                              <span className="text-red-600 dark:text-red-400">{m.diasOff}</span>
+                            </TableCell>
                             <TableCell className={cn("font-medium align-top", getProductivityColor(m.produtividade))}>{m.produtividade}%</TableCell>
                             <TableCell className="text-center align-top">
                               <Button
