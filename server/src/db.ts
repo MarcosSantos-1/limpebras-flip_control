@@ -762,6 +762,9 @@ export async function runMigrations() {
     `);
     await client.query("CREATE INDEX IF NOT EXISTS idx_modulo_manutencoes_modulo ON modulo_manutencoes(modulo_selimp)").catch(() => {});
     await client.query("CREATE INDEX IF NOT EXISTS idx_modulo_manutencoes_data ON modulo_manutencoes(COALESCE(data_manutencao, data_ordenado, created_at::date))").catch(() => {});
+    // Status escolhido explicitamente no registro (PENDENTE/ATIVA/REALIZADA/SINAL_RECUPERADO);
+    // quando nulo, derivado das datas/flag. Ver deriveStatus em routes/bateria.ts.
+    await client.query("ALTER TABLE modulo_manutencoes ADD COLUMN IF NOT EXISTS status TEXT").catch(() => {});
 
     const adminEncryptedPassword = encryptPassword("1515");
     const userResult = await client.query<{ id: number }>(

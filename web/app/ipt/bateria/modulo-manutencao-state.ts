@@ -161,11 +161,13 @@ export const MANUT_STATUS_LABEL: Record<ManutencaoModuloStatus, string> = {
   PENDENTE: "Pendente",
   ATIVA: "Ativa",
   REALIZADA: "Realizada",
+  SINAL_RECUPERADO: "Sinal Recuperado",
 };
 
-/** Ordem de prioridade na listagem: Pendente → Ativa → Realizada. */
+/** Ordem de prioridade na listagem: Pendente → Ativa → Realizada → Sinal Recuperado. */
 export const MANUT_STATUS_ORDER: Record<ManutencaoModuloStatus, number> = {
   PENDENTE: 0,
   ATIVA: 1,
   REALIZADA: 2,
+  SINAL_RECUPERADO: 3,
 };
