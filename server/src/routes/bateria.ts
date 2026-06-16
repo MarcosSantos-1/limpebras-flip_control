@@ -65,6 +65,7 @@ interface TrocaEventoRow extends TrocaRow {
   snap_antes_pct: string | null;
   snap_antes_raw: string | null;
   snap_antes_desat: boolean | null;
+  snap_antes_sinal: string | null;
   snap_antes_ultima: string | null;
   snap_depois_pct: string | null;
   snap_depois_raw: string | null;
@@ -87,6 +88,45 @@ function statusBateriaFromSnapshot(
   if (n > 30) return "REGULAR";
   if (n > 15) return "BAIXA";
   return "CRÍTICA";
+}
+
+/** Tem sinal = comunicação ON e bateria não desatualizada. */
+function temSinal(sinal: string | null, raw: string | null, desat: boolean | null): boolean {
+  const on = String(sinal ?? "").trim().toUpperCase() === "ON";
+  const desatualizada = Boolean(desat) || (raw != null && /desatualizada/i.test(raw));
+  return on && !desatualizada;
+}
+
+/**
+ * Classifica automaticamente o tipo da troca a partir dos snapshots reais
+ * (planilhas de bateria) antes e depois da troca:
+ * - CORRETIVA: estava sem sinal/desatualizado antes e voltou a computar depois.
+ * - PREVENTIVA: tinha sinal mas bateria baixa antes e a bateria subiu depois.
+ * - DESNECESSÁRIA: bateria ficou menor que antes, ou tinha sinal e ficou sem sinal.
+ * Retorna undefined quando ainda não há snapshot posterior para decidir.
+ */
+function classifyTipoTroca(
+  antesPct: number | null,
+  antesSinal: string | null,
+  antesRaw: string | null,
+  antesDesat: boolean | null,
+  depoisPct: number | null,
+  depoisSinal: string | null,
+  depoisRaw: string | null,
+  depoisDesat: boolean | null,
+): string | undefined {
+  // Sem nenhum dado "depois" não dá para classificar ainda.
+  if (depoisPct == null && (depoisSinal == null || depoisSinal === "")) return undefined;
+  const sinalAntes = temSinal(antesSinal, antesRaw, antesDesat);
+  const sinalDepois = temSinal(depoisSinal, depoisRaw, depoisDesat);
+  const baixaAntes = antesPct != null && antesPct <= 30;
+  const aumentou = antesPct != null && depoisPct != null && depoisPct > antesPct;
+  const diminuiu = antesPct != null && depoisPct != null && depoisPct < antesPct;
+
+  if (!sinalAntes && sinalDepois) return "CORRETIVA";
+  if (diminuiu || (sinalAntes && !sinalDepois)) return "DESNECESSÁRIA";
+  if (sinalAntes && baixaAntes && aumentou) return "PREVENTIVA";
+  return undefined;
 }
 
 function mapTroca(r: TrocaRow): TrocaRecordDto {
@@ -117,10 +157,25 @@ function mapTrocaHistory(r: TrocaEventoRow): TrocaHistoryDto {
       : r.bateria_depois_percentual != null
         ? Number(r.bateria_depois_percentual)
         : undefined;
+  // Tipo automático (CORRETIVA/PREVENTIVA/DESNECESSÁRIA) derivado dos snapshots
+  // reais antes/depois; cai para o tipo gravado (ex.: "Agendamento") quando indefinido.
+  const tipoAuto =
+    r.status === "concluida"
+      ? classifyTipoTroca(
+          antesPct ?? null,
+          r.snap_antes_sinal,
+          r.snap_antes_raw,
+          r.snap_antes_desat,
+          depoisPct ?? null,
+          r.snap_depois_sinal,
+          r.snap_depois_raw,
+          r.snap_depois_desat,
+        )
+      : undefined;
   return {
     ...mapTroca(r),
     id: String(r.id),
-    tipoTroca: r.tipo_troca ?? undefined,
+    tipoTroca: tipoAuto ?? r.tipo_troca ?? undefined,
     bateriaAntes: r.snap_antes_raw ?? r.bateria_antes_raw ?? undefined,
     bateriaAntesPercentual: antesPct,
     statusBateriaAntes:
@@ -170,6 +225,7 @@ const SELECT_TROCA_EVENTO = `
          antes.bateria_percentual    AS snap_antes_pct,
          antes.bateria_raw           AS snap_antes_raw,
          antes.bateria_desatualizada AS snap_antes_desat,
+         antes.status_comunicacao    AS snap_antes_sinal,
          antes.ultima_comunicacao::text AS snap_antes_ultima,
          depois.bateria_percentual    AS snap_depois_pct,
          depois.bateria_raw           AS snap_depois_raw,
@@ -178,7 +234,7 @@ const SELECT_TROCA_EVENTO = `
          depois.ultima_comunicacao::text AS snap_depois_ultima
     FROM bateria_trocas_eventos e
     LEFT JOIN LATERAL (
-      SELECT d.bateria_percentual, d.bateria_raw, d.bateria_desatualizada, d.ultima_comunicacao
+      SELECT d.bateria_percentual, d.bateria_raw, d.bateria_desatualizada, d.status_comunicacao, d.ultima_comunicacao
         FROM ipt_dados_bateria d
        WHERE d.selimp_id = e.modulo_selimp
          AND e.data_troca IS NOT NULL
@@ -345,6 +401,21 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
     try {
       await client.query("BEGIN");
       for (const it of valid) {
+        // Última comunicação automática: snapshot logo após a troca; senão o mais recente.
+        if (!it.ultimaComunicacao && it.dataTroca) {
+          const auto = await client.query<{ u: string | null }>(
+            `SELECT COALESCE(
+                (SELECT ultima_comunicacao::date::text FROM ipt_dados_bateria
+                  WHERE selimp_id = $1 AND data_exportacao > $2::date AND ultima_comunicacao IS NOT NULL
+                  ORDER BY data_exportacao ASC LIMIT 1),
+                (SELECT ultima_comunicacao::date::text FROM ipt_dados_bateria
+                  WHERE selimp_id = $1 AND ultima_comunicacao IS NOT NULL
+                  ORDER BY data_exportacao DESC LIMIT 1)
+              ) AS u`,
+            [it.selimp, it.dataTroca],
+          );
+          it.ultimaComunicacao = auto.rows[0]?.u ?? null;
+        }
         await client.query(
           `INSERT INTO bateria_trocas (modulo_selimp, setor, status, sucesso, percentual_entrada, data_troca, ultima_comunicacao, updated_at)
            VALUES ($1, $2, 'concluida', $3, $4, $5::date, $6::date, NOW())

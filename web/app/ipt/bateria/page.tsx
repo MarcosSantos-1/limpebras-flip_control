@@ -1411,6 +1411,10 @@ export default function BateriaDashboardPage() {
     [selectedModules, manutStatusForModule],
   );
   const selectedOnlyOpenManut = selectedModules.length > 0 && selectedOpenManutModules.length === selectedModules.length;
+  /** Todos os selecionados já estão agendados → ação de troca vira "Concluir". */
+  const selectedAllAgendadas =
+    selectedModules.length > 0 &&
+    selectedModules.every((m) => troca.records[m.numeroSelimp]?.status === "agendada");
 
   // ===== Handlers de agendamento / conclusão =====
   function openConcluir(m: ModuleData) {
@@ -1446,13 +1450,11 @@ export default function BateriaDashboardPage() {
       sucesso: concluirForm.sucesso,
       percentualEntrada: Number.isFinite(percentualEntrada) ? percentualEntrada : undefined,
       dataTroca: concluirForm.dataTroca,
-      ultimaComunicacao: concluirForm.ultimaComunicacao,
-      tipoTroca: motivoFromModule(concluirModule),
+      // Última comunicação e tipo da troca são determinados pelo servidor (planilhas de bateria).
+      ultimaComunicacao: "",
       bateriaAntes: concluirModule.bateria,
       bateriaAntesPercentual: concluirModule.bateriaPercentual,
       statusBateriaAntes: concluirModule.statusBateria,
-      bateriaDepoisPercentual: Number.isFinite(percentualEntrada) ? percentualEntrada : undefined,
-      statusSinalDepois: concluirModule.statusSinalGeral,
     });
     setConcluirModule(null);
   }
@@ -1526,13 +1528,11 @@ export default function BateriaDashboardPage() {
           sucesso: f.sucesso,
           percentualEntrada: Number.isFinite(percentualEntrada) ? percentualEntrada : undefined,
           dataTroca: f.dataTroca,
-          ultimaComunicacao: f.ultimaComunicacao,
-          tipoTroca: motivoFromModule(m),
+          // Última comunicação e tipo da troca são determinados pelo servidor.
+          ultimaComunicacao: "",
           bateriaAntes: m.bateria,
           bateriaAntesPercentual: m.bateriaPercentual,
           statusBateriaAntes: m.statusBateria,
-          bateriaDepoisPercentual: Number.isFinite(percentualEntrada) ? percentualEntrada : undefined,
-          statusSinalDepois: m.statusSinalGeral,
         };
       }),
     );
@@ -2262,40 +2262,47 @@ export default function BateriaDashboardPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       {selMode && selected.size > 0 && (
                         <>
-                          <Button
-                            size="sm"
-                            className="h-9 gap-1.5 bg-emerald-600 font-semibold text-white hover:bg-emerald-700"
-                            disabled={selectedOpenManutModules.length > 0}
-                            onClick={() => { setBulkAgendarDate(isoToday()); setBulkAgendarOpen(true); }}
-                          >
-                            <CalendarPlus className="h-4 w-4" /> Agendar ({selected.size})
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-9 gap-1.5 border-sky-500/50 text-sky-600 hover:bg-sky-500/10 dark:text-sky-400"
-                            disabled={selectedOpenManutModules.length > 0}
-                            onClick={openBulkConcluir}
-                          >
-                            <CalendarCheck2 className="h-4 w-4" /> Concluir ({selected.size})
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-9 gap-1.5 border-zinc-500/50 text-zinc-600 hover:bg-zinc-500/10 dark:text-zinc-300"
-                            onClick={() => { setBulkManutMotivo(""); setBulkManutOpen(true); }}
-                          >
-                            <Wrench className="h-4 w-4" /> Análise ({selected.size})
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-9 gap-1.5 border-red-500/50 text-red-600 hover:bg-red-500/10 dark:text-red-400"
-                            disabled={!selectedOnlyOpenManut}
-                            onClick={confirmBulkRemoveManut}
-                          >
-                            <Trash2 className="h-4 w-4" /> Remover manut. ({selected.size})
-                          </Button>
+                          {/* Troca: "Concluir" substitui "Agendar" quando todos já estão agendados */}
+                          {selectedAllAgendadas ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-9 gap-1.5 border-sky-500/50 text-sky-600 hover:bg-sky-500/10 dark:text-sky-400"
+                              disabled={selectedOpenManutModules.length > 0}
+                              onClick={openBulkConcluir}
+                            >
+                              <CalendarCheck2 className="h-4 w-4" /> Concluir ({selected.size})
+                            </Button>
+                          ) : (
+                            <Button
+                              size="sm"
+                              className="h-9 gap-1.5 bg-emerald-600 font-semibold text-white hover:bg-emerald-700"
+                              disabled={selectedOpenManutModules.length > 0}
+                              onClick={() => { setBulkAgendarDate(isoToday()); setBulkAgendarOpen(true); }}
+                            >
+                              <CalendarPlus className="h-4 w-4" /> Agendar ({selected.size})
+                            </Button>
+                          )}
+                          {/* Manutenção: "Remover Manutenção" substitui "Análise" quando todos estão em manutenção */}
+                          {selectedOnlyOpenManut ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-9 gap-1.5 border-red-500/50 text-red-600 hover:bg-red-500/10 dark:text-red-400"
+                              onClick={confirmBulkRemoveManut}
+                            >
+                              <Trash2 className="h-4 w-4" /> Remover Manutenção ({selected.size})
+                            </Button>
+                          ) : (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-9 gap-1.5 border-zinc-500/50 text-zinc-600 hover:bg-zinc-500/10 dark:text-zinc-300"
+                              onClick={() => { setBulkManutMotivo(""); setBulkManutOpen(true); }}
+                            >
+                              <Wrench className="h-4 w-4" /> Análise ({selected.size})
+                            </Button>
+                          )}
                         </>
                       )}
                       <Button
@@ -2529,7 +2536,7 @@ export default function BateriaDashboardPage() {
                                     className="h-7 gap-1 bg-amber-500 text-white hover:bg-amber-600"
                                     onClick={() => openConcluir(m)}
                                   >
-                                    <Clock className="h-3.5 w-3.5" /> {fmtIsoBr(rec.dataAgendada)}
+                                    <Clock className="h-3.5 w-3.5" /> Agendado · {fmtIsoBr(rec.dataAgendada)}
                                   </Button>
                                 ) : (
                                   <Button
@@ -2571,12 +2578,12 @@ export default function BateriaDashboardPage() {
                                   <div className="space-y-4 px-4 py-4">
                                     <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
                                       <div className="rounded-lg border border-border/60 bg-background/70 p-3">
-                                        <span className="block text-xs text-muted-foreground">Trocas SELIMP</span>
-                                        <span className="mt-1 block text-xl font-bold tabular-nums text-foreground">{m.quantidadeTrocas}</span>
+                                        <span className="block text-xs text-muted-foreground">Trocas registradas</span>
+                                        <span className="mt-1 block text-xl font-bold tabular-nums text-foreground">{history.length}</span>
                                       </div>
                                       <div className="rounded-lg border border-border/60 bg-background/70 p-3">
-                                        <span className="block text-xs text-muted-foreground">Registradas no painel</span>
-                                        <span className="mt-1 block text-xl font-bold tabular-nums text-foreground">{history.length}</span>
+                                        <span className="block text-xs text-muted-foreground">Status da bateria</span>
+                                        <span className="mt-1 block"><Badge className={statusBatBadge(m.statusBateria)}>{m.statusBateria || "—"}</Badge></span>
                                       </div>
                                       <div className="rounded-lg border border-border/60 bg-background/70 p-3">
                                         <span className="block text-xs text-muted-foreground">Bateria atual</span>
@@ -3315,6 +3322,11 @@ export default function BateriaDashboardPage() {
                           </TableHead>
                           <TableHead>
                             <span className="inline-flex items-center gap-1">
+                              <Percent className="h-3.5 w-3.5" /> Exec. SELIMP
+                            </span>
+                          </TableHead>
+                          <TableHead>
+                            <span className="inline-flex items-center gap-1">
                               <Activity className="h-3.5 w-3.5" /> Sinal
                             </span>
                           </TableHead>
@@ -3355,6 +3367,9 @@ export default function BateriaDashboardPage() {
                               </div>
                             </TableCell>
                             <TableCell className="align-top">{m.bateriaPercentual}%</TableCell>
+                            <TableCell className="align-top tabular-nums">
+                              {m.produtividadeExecucao != null ? `${m.produtividadeExecucao}%` : "—"}
+                            </TableCell>
                             <TableCell className="align-top">
                               <Badge className={
                                 m.statusSinalGeral === "COM SINAL"
@@ -3539,7 +3554,7 @@ export default function BateriaDashboardPage() {
                 <CalendarPlus className="h-5 w-5 text-emerald-500" />
                 Agendar troca de bateria
               </DialogTitle>
-              <DialogDescription>Defina a data prevista para a troca.</DialogDescription>
+              <DialogDescription>Defina a data de agendamento da troca.</DialogDescription>
             </DialogHeader>
             {agendarModule && (
               <div className="space-y-4">
@@ -3554,7 +3569,7 @@ export default function BateriaDashboardPage() {
                   </div>
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-sm font-medium text-foreground">Data da troca</label>
+                  <label className="mb-1.5 block text-sm font-medium text-foreground">Data Agendamento</label>
                   <DatePicker value={agendarDate} onChange={setAgendarDate} />
                 </div>
               </div>
@@ -3604,21 +3619,19 @@ export default function BateriaDashboardPage() {
                     />
                   </div>
                 )}
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="mb-1.5 block text-sm font-medium text-foreground">Data da troca</label>
-                    <DatePicker value={concluirForm.dataTroca} onChange={(v) => setConcluirForm((f) => ({ ...f, dataTroca: v }))} />
-                  </div>
-                  <div>
-                    <label className="mb-1.5 block text-sm font-medium text-foreground">Última comunicação</label>
-                    <DatePicker value={concluirForm.ultimaComunicacao} onChange={(v) => setConcluirForm((f) => ({ ...f, ultimaComunicacao: v }))} />
-                  </div>
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-foreground">Data da troca</label>
+                  <DatePicker value={concluirForm.dataTroca} onChange={(v) => setConcluirForm((f) => ({ ...f, dataTroca: v }))} />
                 </div>
+                <p className="rounded-lg bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                  A última comunicação e o tipo da troca (corretiva, preventiva ou desnecessária) são
+                  determinados automaticamente pelas planilhas de bateria a partir da data da troca.
+                </p>
               </div>
             )}
             <DialogFooter className="gap-2">
               <Button variant="ghost" onClick={() => setConcluirModule(null)}>Cancelar</Button>
-              <Button className="bg-sky-600 text-white hover:bg-sky-700" onClick={confirmConcluir}>
+              <Button className="bg-sky-600 text-white hover:bg-sky-700" disabled={!concluirForm.dataTroca} onClick={confirmConcluir}>
                 Registrar conclusão
               </Button>
             </DialogFooter>
@@ -3647,7 +3660,7 @@ export default function BateriaDashboardPage() {
                 </ul>
               </div>
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-foreground">Data da troca</label>
+                <label className="mb-1.5 block text-sm font-medium text-foreground">Data Agendamento</label>
                 <DatePicker value={bulkAgendarDate} onChange={setBulkAgendarDate} />
               </div>
             </div>
@@ -3734,7 +3747,7 @@ export default function BateriaDashboardPage() {
                         <Switch checked={f.sucesso} onCheckedChange={(v) => update({ sucesso: v })} />
                       </div>
                     </div>
-                    <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                    <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
                       {f.sucesso && (
                         <Input
                           type="number"
@@ -3747,7 +3760,6 @@ export default function BateriaDashboardPage() {
                         />
                       )}
                       <DatePicker value={f.dataTroca} onChange={(v) => update({ dataTroca: v })} placeholder="Data da troca" />
-                      <DatePicker value={f.ultimaComunicacao} onChange={(v) => update({ ultimaComunicacao: v })} placeholder="Últ. comunicação" />
                     </div>
                   </div>
                 );
