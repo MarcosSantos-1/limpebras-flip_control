@@ -102,7 +102,8 @@ import {
 } from "@/components/ui/table";
 import { useTheme } from "next-themes";
 import { apiService } from "@/lib/api";
-import { formatIptDataInstalacaoBr } from "@/lib/ipt-utils";
+import { formatIptDataInstalacaoBr, servicoLabel, mesCorrenteLabel } from "@/lib/ipt-utils";
+import { SetoresTab } from "./setores-tab";
 import { cn } from "@/lib/utils";
 import {
   useTrocaState,
@@ -172,6 +173,7 @@ interface ApiResponse {
     lowBattery: number;
   };
   evolucaoProdutividade?: { data: string; produtividade: number }[];
+  execucaoPorServicoSub?: { servico: string; sub: string; execucao: number }[];
   lastUpdate: string | null;
 }
 
@@ -187,6 +189,17 @@ const CHART_COLORS = {
   maintenance: "#64748b",
   outdated: "#a1a1aa",
 };
+
+/** Cor por subprefeitura (barras agrupadas de execução por serviço × sub). */
+const SUB_CHART_COLORS: Record<string, string> = {
+  CV: "#3b82f6",
+  JT: "#f97316",
+  MG: "#10b981",
+  ST: "#a855f7",
+};
+
+/** Ordem fixa das subprefeituras nas barras agrupadas. */
+const SUB_ORDER = ["CV", "JT", "MG", "ST"] as const;
 
 const ITEMS_PER_PAGE = 50;
 
@@ -1117,26 +1130,44 @@ export default function BateriaDashboardPage() {
     });
   }, [data]);
 
-  /** Produtividade de execução média por subprefeitura (dado real cruzado). */
-  const execSubChartData = useMemo(() => {
-    const map = new Map<string, { soma: number; n: number }>();
-    for (const m of modules) {
-      if (m.produtividadeExecucao == null || !m.subprefeitura) continue;
-      const cur = map.get(m.subprefeitura) ?? { soma: 0, n: 0 };
-      cur.soma += m.produtividadeExecucao;
-      cur.n += 1;
-      map.set(m.subprefeitura, cur);
-    }
-    return Array.from(map.entries())
-      .map(([subprefeitura, v]) => ({ subprefeitura, execucao: Math.round((v.soma / v.n) * 10) / 10 }))
-      .sort((a, b) => b.execucao - a.execucao);
-  }, [modules]);
+  /** Rótulo do período de apuração (mês corrente). */
+  const mesLabel = useMemo(() => mesCorrenteLabel(), []);
 
-  /** Média geral de produtividade de execução (todos os módulos com dado). */
+  /** Produtividade de bateria média do período (mês corrente) = média da série de evolução (só SELIMP). */
+  const mediaPeriodoBateria = useMemo(() => {
+    if (evolucaoData.length === 0) return null;
+    const soma = evolucaoData.reduce((acc, p) => acc + p.produtividade, 0);
+    return Math.round(soma / evolucaoData.length);
+  }, [evolucaoData]);
+
+  /** Subs presentes nos dados de execução (ordem fixa CV/JT/MG/ST). */
+  const execSubs = useMemo(() => {
+    const present = new Set((data?.execucaoPorServicoSub ?? []).map((e) => e.sub));
+    return SUB_ORDER.filter((s) => present.has(s));
+  }, [data]);
+
+  /** Execução SELIMP no mês por tipo de serviço × sub (barras agrupadas). */
+  const execServicoSubChartData = useMemo(() => {
+    const rows = data?.execucaoPorServicoSub ?? [];
+    const byServico = new Map<string, Record<string, number | string>>();
+    for (const e of rows) {
+      const label = servicoLabel(e.servico);
+      const cur = byServico.get(label) ?? { servico: label };
+      cur[e.sub] = Math.round(e.execucao * 10) / 10;
+      byServico.set(label, cur);
+    }
+    // Ordem: Praças, Sarjetas, Sarjetas e Calçadas (depois alfabética)
+    const ordem = ["Praças", "Sarjetas", "Sarjetas e Calçadas"];
+    return Array.from(byServico.values()).sort(
+      (a, b) => ordem.indexOf(String(a.servico)) - ordem.indexOf(String(b.servico)),
+    );
+  }, [data]);
+
+  /** Média geral de execução no mês (média das células serviço×sub com dado). */
   const avgExecucao = useMemo(() => {
-    const vals = modules.map((m) => m.produtividadeExecucao).filter((v): v is number => v != null);
+    const vals = (data?.execucaoPorServicoSub ?? []).map((e) => e.execucao).filter((v) => Number.isFinite(v));
     return vals.length ? Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 10) / 10 : null;
-  }, [modules]);
+  }, [data]);
 
   /** Ranking das piores baterias: menor produtividade, mais trocas, menor duração.
    * Obs.: a bateria conta a partir da última troca — refinaremos quando houver controle de baterias. */
@@ -1779,6 +1810,9 @@ export default function BateriaDashboardPage() {
                 </TabsTrigger>
                 <TabsTrigger value="modules" className="data-[state=active]:bg-emerald-500 data-[state=active]:text-white text-muted-foreground">
                   <Gauge className="mr-2 h-4 w-4" /> Performance
+                </TabsTrigger>
+                <TabsTrigger value="setores" className="data-[state=active]:bg-emerald-500 data-[state=active]:text-white text-muted-foreground">
+                  <MapPin className="mr-2 h-4 w-4" /> Setores
                 </TabsTrigger>
               </TabsList>
               {(activeTab === "trocas" || activeTab === "maintenance") && (
@@ -3046,25 +3080,30 @@ export default function BateriaDashboardPage() {
                     <CardTitle className="flex items-center gap-2 text-foreground">
                       <BatteryCharging className="h-5 w-5 text-emerald-500" /> Produtividade das Baterias
                     </CardTitle>
-                    <CardDescription>Média geral, comunicação e evolução temporal (% dias ON)</CardDescription>
+                    <CardDescription>% de dias ON dos módulos SELIMP · evolução em {mesLabel}</CardDescription>
                   </CardHeader>
                   <CardContent>
                     <div className="mb-4 grid grid-cols-3 gap-3">
                       <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3">
-                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Média Geral</p>
-                        <p className="mt-1 text-3xl font-bold tabular-nums text-emerald-600 dark:text-emerald-400">{stats.avgProductivity}%</p>
+                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Média do período</p>
+                        <p className="mt-1 text-3xl font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+                          {mediaPeriodoBateria != null ? `${mediaPeriodoBateria}%` : "—"}
+                        </p>
+                        <p className="mt-0.5 text-[10px] text-muted-foreground">{mesLabel}</p>
                       </div>
                       <div className="rounded-lg border border-border/50 bg-muted/15 p-3">
                         <p className="flex items-center gap-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                           <Wifi className="h-3.5 w-3.5 text-emerald-500" /> ON
                         </p>
                         <p className="mt-1 text-3xl font-bold tabular-nums text-foreground">{stats.online}</p>
+                        <p className="mt-0.5 text-[10px] text-muted-foreground">atual</p>
                       </div>
                       <div className="rounded-lg border border-border/50 bg-muted/15 p-3">
                         <p className="flex items-center gap-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                           <WifiOff className="h-3.5 w-3.5 text-red-500" /> OFF
                         </p>
                         <p className="mt-1 text-3xl font-bold tabular-nums text-foreground">{stats.offline}</p>
+                        <p className="mt-0.5 text-[10px] text-muted-foreground">atual</p>
                       </div>
                     </div>
                     <div className="h-[200px] w-full">
@@ -3086,13 +3125,13 @@ export default function BateriaDashboardPage() {
                   </CardContent>
                 </Card>
 
-                {/* Produtividade dos Setores (execução real) */}
+                {/* Produtividade dos Setores: execução SELIMP por tipo de serviço × sub (mês corrente) */}
                 <Card className="border-border/50 bg-card/80 shadow-sm backdrop-blur-sm">
                   <CardHeader className="pb-2">
                     <CardTitle className="flex items-center gap-2 text-foreground">
                       <Percent className="h-5 w-5 text-sky-500" /> Produtividade dos Setores
                     </CardTitle>
-                    <CardDescription>% médio de execução do serviço (por sub)</CardDescription>
+                    <CardDescription>% de execução SELIMP por serviço e sub · {mesLabel}</CardDescription>
                   </CardHeader>
                   <CardContent>
                     <div className="mb-3 rounded-lg border border-sky-500/20 bg-sky-500/5 p-3">
@@ -3100,20 +3139,24 @@ export default function BateriaDashboardPage() {
                       <p className="mt-1 text-3xl font-bold tabular-nums text-sky-600 dark:text-sky-400">
                         {avgExecucao != null ? `${avgExecucao}%` : "—"}
                       </p>
+                      <p className="mt-0.5 text-[10px] text-muted-foreground">{mesLabel}</p>
                     </div>
                     <div className="h-[180px] w-full">
-                      {execSubChartData.length > 0 ? (
+                      {execServicoSubChartData.length > 0 && execSubs.length > 0 ? (
                         <ResponsiveContainer width="100%" height="100%">
-                          <BarChart data={execSubChartData} margin={{ top: 8, right: 12, left: 4, bottom: 4 }}>
-                            <XAxis dataKey="subprefeitura" tick={axisTick} tickLine={false} tickMargin={8} axisLine={{ stroke: axisLineStroke }} />
+                          <BarChart data={execServicoSubChartData} margin={{ top: 8, right: 12, left: 4, bottom: 4 }}>
+                            <XAxis dataKey="servico" tick={axisTick} tickLine={false} tickMargin={8} axisLine={{ stroke: axisLineStroke }} />
                             <YAxis tick={axisTick} tickLine={false} tickMargin={6} axisLine={{ stroke: axisLineStroke }} domain={[0, 100]} />
                             <Tooltip content={<GlassTooltip />} cursor={{ fill: "transparent" }} />
-                            <Bar dataKey="execucao" name="Execução %" fill={CHART_COLORS.info} radius={[4, 4, 0, 0]} activeBar={false} />
+                            <Legend {...legendProps} />
+                            {execSubs.map((sub) => (
+                              <Bar key={sub} dataKey={sub} name={sub} fill={SUB_CHART_COLORS[sub]} radius={[4, 4, 0, 0]} activeBar={false} />
+                            ))}
                           </BarChart>
                         </ResponsiveContainer>
                       ) : (
                         <div className="flex h-full items-center justify-center text-center text-xs text-muted-foreground">
-                          Sem dados de execução cruzados para os setores.
+                          Sem dados de execução cruzados no mês.
                         </div>
                       )}
                     </div>
@@ -3128,7 +3171,7 @@ export default function BateriaDashboardPage() {
                     <CardTitle className="flex items-center gap-2 text-foreground">
                       <Battery className="h-5 w-5 text-red-500" /> Piores Baterias
                     </CardTitle>
-                    <CardDescription>Menor produtividade · mais trocas · menor duração</CardDescription>
+                    <CardDescription>Menor produtividade · mais trocas · menor duração · {mesLabel}</CardDescription>
                   </CardHeader>
                   <CardContent>
                     <Table>
@@ -3166,7 +3209,7 @@ export default function BateriaDashboardPage() {
                     <CardTitle className="flex items-center gap-2 text-foreground">
                       <TrendingUp className="h-5 w-5 text-amber-500" /> Piores Setores
                     </CardTitle>
-                    <CardDescription>Média entre produtividade de bateria e execução</CardDescription>
+                    <CardDescription>Média entre produtividade de bateria e execução · {mesLabel}</CardDescription>
                   </CardHeader>
                   <CardContent>
                     <Table>
@@ -3438,6 +3481,11 @@ export default function BateriaDashboardPage() {
                   </div>
                 </CardContent>
               </Card>
+            </TabsContent>
+
+            {/* ===== SETORES TAB ===== */}
+            <TabsContent value="setores" className="space-y-6">
+              <SetoresTab />
             </TabsContent>
           </Tabs>
         </div>

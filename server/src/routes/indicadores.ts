@@ -2032,6 +2032,8 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         const pracaMap = new Map<string, string>();
         const offStreakMap = new Map<string, number>();
         let evolucaoProdutividade: { data: string; produtividade: number }[] = [];
+        // Execução SELIMP por tipo de serviço × subprefeitura (mês corrente) — gráfico "Produtividade dos Setores".
+        let execucaoPorServicoSub: { servico: string; sub: string; execucao: number }[] = [];
 
         await Promise.all([
           // % de execução por setor (ipt_report_linhas, encerrados, últimos 30 dias)
@@ -2132,7 +2134,8 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
                         COUNT(*) FILTER (WHERE UPPER(TRIM(COALESCE(status_comunicacao, ''))) = 'ON')::int AS on_count,
                         COUNT(*)::int AS total
                    FROM ipt_dados_bateria
-                  WHERE data_exportacao >= (CURRENT_DATE - 90)
+                  WHERE selimp_id IS NOT NULL AND TRIM(selimp_id) <> ''
+                    AND data_exportacao >= date_trunc('month', CURRENT_DATE)::date
                   GROUP BY data_exportacao
                   ORDER BY data_exportacao`,
               );
@@ -2142,6 +2145,31 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
               }));
             } catch {
               /* série temporal é opcional */
+            }
+          })(),
+          // Execução SELIMP por tipo de serviço × subprefeitura no mês corrente (ipt_report_linhas × setores_modulos)
+          (async () => {
+            try {
+              const rows = await pool.query<{ servico: string | null; sub: string | null; pct: string | null }>(
+                `SELECT sm.servico, sm.subprefeitura AS sub,
+                        AVG(CASE WHEN r.percentual_execucao > 1 THEN r.percentual_execucao ELSE r.percentual_execucao * 100 END) AS pct
+                   FROM ipt_report_linhas r
+                   JOIN setores_modulos sm ON sm.setor = r.plano
+                  WHERE r.data_estimada >= date_trunc('month', CURRENT_DATE)::date
+                    AND LOWER(COALESCE(r.status, '')) LIKE '%encerrad%'
+                    AND r.percentual_execucao IS NOT NULL
+                  GROUP BY sm.servico, sm.subprefeitura`,
+              );
+              execucaoPorServicoSub = rows.rows
+                .filter((r) => r.servico && r.sub && r.pct != null)
+                .map((r) => ({
+                  servico: String(r.servico),
+                  sub: String(r.sub),
+                  execucao: Math.round(Number(r.pct) * 100) / 100,
+                }))
+                .filter((r) => Number.isFinite(r.execucao));
+            } catch {
+              /* execução por serviço é opcional */
             }
           })(),
         ]);
@@ -2224,6 +2252,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
           modules,
           stats: { total, online, offline, avgProductivity, criticalAlerts, lowBattery },
           evolucaoProdutividade,
+          execucaoPorServicoSub,
           lastUpdate,
           latestBatch: meta?.updated_at
             ? {

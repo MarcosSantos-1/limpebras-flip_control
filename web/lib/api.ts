@@ -601,6 +601,7 @@ export interface IptModulosBateriaResponse {
     lowBattery: number;
   };
   evolucaoProdutividade?: { data: string; produtividade: number }[];
+  execucaoPorServicoSub?: { servico: string; sub: string; execucao: number }[];
   lastUpdate: string | null;
   latestBatch?: {
     id: null;
@@ -608,6 +609,29 @@ export interface IptModulosBateriaResponse {
     sourceFile: string;
     totalRegistros: number;
   } | null;
+}
+
+/** Linha do cadastro setor↔módulo (aba Setores). */
+export interface SetorModulo {
+  id: number;
+  setor: string;
+  subprefeitura: string | null;
+  servico: string | null;
+  frequencia: string | null;
+  dias_execucao: string | null;
+  km_prod: number | null;
+  selimp_codigo: string | null;
+  selimp_instalacao: string | null;
+  ddmx_codigo: string | null;
+  ddmx_instalacao: string | null;
+}
+
+/** Campos de atribuição editáveis de um setor (undefined = manter, null/"" = limpar). */
+export interface SetorModuloPatch {
+  selimpCodigo?: string | null;
+  selimpInstalacao?: string | null;
+  ddmxCodigo?: string | null;
+  ddmxInstalacao?: string | null;
 }
 
 // API calls
@@ -1093,6 +1117,15 @@ export const apiService = {
   },
   getIptModulosBateria: async (): Promise<IptModulosBateriaResponse> => {
     const { data } = await api.get('/dashboard/ipt-modulos-bateria');
+    return data;
+  },
+  // ===== Setores (cadastro setor↔módulo) =====
+  getSetores: async (): Promise<{ setores: SetorModulo[] }> => {
+    const { data } = await api.get('/setores');
+    return data;
+  },
+  updateSetorModulo: async (id: number, patch: SetorModuloPatch): Promise<{ ok: boolean; setor: SetorModulo }> => {
+    const { data } = await api.put(`/setores/${id}`, patch);
     return data;
   },
   // ===== Trocas de bateria =====

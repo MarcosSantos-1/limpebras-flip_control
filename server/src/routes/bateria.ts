@@ -1,6 +1,7 @@
 import { FastifyPluginAsync } from "fastify";
 import { pool } from "../db.js";
 import { invalidatePrefix } from "../cache.js";
+import { refreshModuloSelimp } from "../services/refreshModuloSelimp.js";
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -762,5 +763,79 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
     if (!Number.isInteger(id) || id <= 0) return reply.code(400).send({ detail: "id inválido" });
     await pool.query(`DELETE FROM modulo_manutencoes WHERE id = $1`, [id]);
     return { ok: true };
+  });
+
+  // ===== Setores (gestão de atribuição de módulos) =====
+  // Listagem do cadastro setor↔módulo; a edição é só de atribuição (SELIMP/DDMX + datas).
+
+  fastify.get("/setores", async () => {
+    const res = await pool.query(
+      `SELECT id, setor, subprefeitura, servico, frequencia, dias_execucao,
+              km_prod::float8 AS km_prod,
+              selimp_codigo, selimp_instalacao::text AS selimp_instalacao,
+              ddmx_codigo, ddmx_instalacao::text AS ddmx_instalacao
+         FROM setores_modulos
+        ORDER BY servico NULLS LAST, subprefeitura NULLS LAST, setor`
+    );
+    return { setores: res.rows };
+  });
+
+  fastify.put<{
+    Params: { id: string };
+    Body: {
+      selimpCodigo?: string | null;
+      selimpInstalacao?: string | null;
+      ddmxCodigo?: string | null;
+      ddmxInstalacao?: string | null;
+    };
+  }>("/setores/:id", async (request, reply) => {
+    const id = Number(request.params.id);
+    if (!Number.isInteger(id) || id <= 0) return reply.code(400).send({ detail: "id inválido" });
+    const b = request.body ?? {};
+    // undefined → mantém ("KEEP"); "" → limpa (NULL); valor → grava. Datas validadas com isIsoDate.
+    const textParam = (v: string | null | undefined) =>
+      v === undefined ? "KEEP" : v === null ? "" : String(v).trim();
+    const dateParam = (v: string | null | undefined) =>
+      v === undefined ? "KEEP" : isIsoDate(v) ? v : "";
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const res = await client.query(
+        `UPDATE setores_modulos SET
+           selimp_codigo    = CASE WHEN $2 = 'KEEP' THEN selimp_codigo    ELSE NULLIF($2,'')        END,
+           selimp_instalacao = CASE WHEN $3 = 'KEEP' THEN selimp_instalacao ELSE NULLIF($3,'')::date END,
+           ddmx_codigo      = CASE WHEN $4 = 'KEEP' THEN ddmx_codigo      ELSE NULLIF($4,'')        END,
+           ddmx_instalacao  = CASE WHEN $5 = 'KEEP' THEN ddmx_instalacao  ELSE NULLIF($5,'')::date  END,
+           updated_at = NOW()
+         WHERE id = $1
+         RETURNING id, setor, subprefeitura, servico, frequencia, dias_execucao,
+                   km_prod::float8 AS km_prod,
+                   selimp_codigo, selimp_instalacao::text AS selimp_instalacao,
+                   ddmx_codigo, ddmx_instalacao::text AS ddmx_instalacao`,
+        [
+          id,
+          textParam(b.selimpCodigo),
+          dateParam(b.selimpInstalacao),
+          textParam(b.ddmxCodigo),
+          dateParam(b.ddmxInstalacao),
+        ]
+      );
+      if (!res.rows[0]) {
+        await client.query("ROLLBACK").catch(() => {});
+        return reply.code(404).send({ detail: "setor não encontrado" });
+      }
+      // Reconstrói o snapshot por módulo para refletir a (re)atribuição no dashboard.
+      await refreshModuloSelimp(client);
+      await client.query("COMMIT");
+      invalidatePrefix("ipt_modulos_bateria");
+      invalidatePrefix("ipt_preview");
+      return { ok: true, setor: res.rows[0] };
+    } catch (err) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
   });
 };

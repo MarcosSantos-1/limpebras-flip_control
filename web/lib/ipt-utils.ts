@@ -45,6 +45,22 @@ export function getFrequenciaDescricao(codigo: string): string {
   return FREQUENCIAS[codigo] ?? codigo;
 }
 
+/** Rótulo curto do tipo de serviço (nome completo do cadastro → Praças / Sarjetas / Sarjetas e Calçadas). */
+export function servicoLabel(servico?: string | null): string {
+  const s = String(servico ?? "").trim().toUpperCase();
+  if (!s) return "—";
+  if (s.includes("PRA")) return "Praças";
+  if (s.includes("SARJETAS E CAL")) return "Sarjetas e Calçadas";
+  if (s.includes("SARJETAS")) return "Sarjetas";
+  return String(servico);
+}
+
+/** Rótulo do mês corrente em pt-BR capitalizado, ex.: "Junho/2026". */
+export function mesCorrenteLabel(date: Date = new Date()): string {
+  const mes = date.toLocaleDateString("pt-BR", { month: "long" });
+  return `${mes.charAt(0).toUpperCase()}${mes.slice(1)}/${date.getFullYear()}`;
+}
+
 export function getSortKey(setor: string): { sub: string; servico: string; mapa: string } {
   const raw = String(setor ?? "").trim().toUpperCase();
   const subMatch = raw.match(/^(CV|JT|MG|ST)(\d)(\d{4})([A-Z]{2})(\d{4})/i);
