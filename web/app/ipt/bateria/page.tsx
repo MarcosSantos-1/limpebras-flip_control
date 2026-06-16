@@ -887,7 +887,7 @@ export default function BateriaDashboardPage() {
   const [manutPeriod, setManutPeriod] = useState("30d");
   const [manutSearch, setManutSearch] = useState("");
   const [manutSubFilter, setManutSubFilter] = useState("all");
-  const [manutStatusFilter, setManutStatusFilter] = useState("all"); // all | EM_ANALISE | PENDENTE | ATIVA | REALIZADA
+  const [manutStatusFilter, setManutStatusFilter] = useState("all"); // all | EM_ANALISE | PENDENTE | ATIVA | REALIZADA (+ SINAL_RECUPERADO)
   const [histModule, setHistModule] = useState<ModuleData | null>(null);
 
   // Paginação das listagens de Trocas e Manutenções
@@ -1595,7 +1595,12 @@ export default function BateriaDashboardPage() {
     const term = manutSearch.trim().toLowerCase();
     let result = entries;
     if (manutSubFilter !== "all") result = result.filter((e) => e.sub === manutSubFilter);
-    if (manutStatusFilter !== "all") result = result.filter((e) => e.status === manutStatusFilter);
+    if (manutStatusFilter !== "all") {
+      result =
+        manutStatusFilter === "REALIZADA"
+          ? result.filter((e) => e.status === "REALIZADA" || e.status === "SINAL_RECUPERADO")
+          : result.filter((e) => e.status === manutStatusFilter);
+    }
     if (term)
       result = result.filter(
         (e) =>
@@ -1648,7 +1653,7 @@ export default function BateriaDashboardPage() {
     for (const m of modules) {
       if (!comEvento.has(m.numeroSelimp) && isEnviadoManutencao(m)) { counts.PENDENTE += 1; total += 1; }
     }
-    return { total, ...counts };
+    return { total, ...counts, realizadasTotal: counts.REALIZADA + counts.SINAL_RECUPERADO };
   }, [moduloManut.history, modules, isEnviadoManutencao]);
 
   const manutChartData = useMemo(() => {
@@ -2767,7 +2772,7 @@ export default function BateriaDashboardPage() {
                       {manutStats.total}
                     </p>
                     <p className="mt-3 text-xs text-zinc-200/85">
-                      Registros de manutenção do módulo — ciclo retirada → SELIMP → reinstalação.
+                      Registros de manutenção do módulo
                     </p>
                   </div>
                   <div className="grid flex-1 min-w-[220px] grid-cols-2 gap-4 xl:max-w-2xl">
@@ -2787,54 +2792,54 @@ export default function BateriaDashboardPage() {
                     </div>
                     <div className="flex flex-col justify-between rounded-xl border border-white/20 bg-white/10 p-4 backdrop-blur-sm">
                       <div className="flex items-start justify-between gap-2">
-                        <p className="text-xs font-medium uppercase tracking-wide text-white/80">Ativas</p>
+                        <p className="text-xs font-medium uppercase tracking-wide text-white/80">Manutenções Ativas</p>
                         <Clock className="size-6 shrink-0 text-sky-200/95" aria-hidden />
                       </div>
                       <p className="mt-4 font-mono text-3xl font-bold tabular-nums text-white">{manutStats.ATIVA}</p>
                     </div>
                     <div className="flex flex-col justify-between rounded-xl border border-white/20 bg-white/10 p-4 backdrop-blur-sm">
                       <div className="flex items-start justify-between gap-2">
-                        <p className="text-xs font-medium uppercase tracking-wide text-white/80">Realizadas</p>
+                        <p className="text-xs font-medium uppercase tracking-wide text-white/80">Manutenções Realizadas</p>
                         <CheckCircle2 className="size-6 shrink-0 text-emerald-200/95" aria-hidden />
                       </div>
-                      <p className="mt-4 font-mono text-3xl font-bold tabular-nums text-white">{manutStats.REALIZADA}</p>
-                    </div>
-                    <div className="flex flex-col justify-between rounded-xl border border-white/20 bg-white/10 p-4 backdrop-blur-sm">
-                      <div className="flex items-start justify-between gap-2">
-                        <p className="text-xs font-medium uppercase tracking-wide text-white/80">Sinal Recuperado</p>
-                        <Wifi className="size-6 shrink-0 text-green-300/95" aria-hidden />
-                      </div>
-                      <p className="mt-4 font-mono text-3xl font-bold tabular-nums text-white">{manutStats.SINAL_RECUPERADO}</p>
+                      <p className="mt-4 font-mono text-3xl font-bold tabular-nums text-white">{manutStats.realizadasTotal}</p>
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* Gráfico: manutenções por subprefeitura */}
+              {/* Resumo compacto: manutenções por subprefeitura */}
               <Card className="border-border/50 bg-card/80 shadow-sm backdrop-blur-sm">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2 text-foreground">
-                    <Wrench className="h-5 w-5 text-zinc-500" /> Manutenções por Subprefeitura
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center gap-2 text-sm text-foreground">
+                    <Wrench className="h-4 w-4 text-zinc-500" /> Manutenções por Subprefeitura
                   </CardTitle>
-                  <CardDescription>Quantidade de manutenções apuradas por sub</CardDescription>
                 </CardHeader>
-                <CardContent>
-                  <div className="h-[320px] w-full">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={manutChartData} margin={{ top: 12, right: 12, left: 8, bottom: 8 }}>
-                        <XAxis
-                          dataKey="subprefeitura"
-                          tick={axisTick}
-                          tickLine={false}
-                          tickMargin={10}
-                          axisLine={{ stroke: axisLineStroke }}
-                        />
-                        <YAxis tick={axisTick} tickLine={false} tickMargin={8} axisLine={{ stroke: axisLineStroke }} />
-                        <Tooltip content={<GlassTooltip />} cursor={{ fill: "transparent" }} />
-                        <Bar dataKey="manutencoes" name="Manutenções" fill={maintenanceChartColor} radius={[4, 4, 0, 0]} activeBar={false} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
+                <CardContent className="pt-0">
+                  {manutChartData.length === 0 ? (
+                    <p className="py-3 text-center text-xs text-muted-foreground">Nenhuma manutenção registrada.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {manutChartData.map(({ subprefeitura, manutencoes }) => {
+                        const max = manutChartData[0]?.manutencoes ?? 1;
+                        const pct = max > 0 ? Math.round((manutencoes / max) * 100) : 0;
+                        return (
+                          <div key={subprefeitura} className="flex items-center gap-3">
+                            <span className="w-10 shrink-0 text-xs font-medium text-muted-foreground">{subprefeitura}</span>
+                            <div className="relative h-4 flex-1 overflow-hidden rounded bg-muted/40">
+                              <div
+                                className="h-full rounded-sm bg-zinc-500/80 dark:bg-zinc-400/70"
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                            <span className="w-6 shrink-0 text-right text-xs font-semibold tabular-nums text-foreground">
+                              {manutencoes}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
 
@@ -2876,7 +2881,7 @@ export default function BateriaDashboardPage() {
                         <SelectItem value="EM_ANALISE">Em análise</SelectItem>
                         <SelectItem value="PENDENTE">Pendente</SelectItem>
                         <SelectItem value="ATIVA">Ativa</SelectItem>
-                        <SelectItem value="REALIZADA">Realizada</SelectItem>
+                        <SelectItem value="REALIZADA">Manutenções Realizadas</SelectItem>
                       </SelectContent>
                     </Select>
                     <Select value={manutSubFilter} onValueChange={setManutSubFilter}>
@@ -2894,7 +2899,7 @@ export default function BateriaDashboardPage() {
                   </div>
                   {!manutSearch.trim() && (
                     <p className="text-xs text-muted-foreground">
-                      Histórico de manutenções (Em análise → Pendente → Ativa → Realizada → Sinal Recuperado). Módulos enviados à manutenção pela aba Trocas entram como Pendente.
+                      Histórico de manutenções (Em análise → Pendente → Ativa → Manutenções Realizadas). Módulos enviados à manutenção pela aba Trocas entram como Pendente.
                     </p>
                   )}
                 </CardHeader>
