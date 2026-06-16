@@ -191,12 +191,12 @@ export function EvolutionChartModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[94vw] w-full sm:max-w-4xl max-h-[90vh] overflow-y-auto p-6 animate-in fade-in zoom-in-95 duration-300">
+      <DialogContent className="w-[96vw] max-w-[1480px] max-h-[90vh] overflow-y-auto p-6 sm:p-7 animate-in fade-in zoom-in-95 duration-300">
         <DialogHeader>
           <DialogTitle className="text-xl">{title}</DialogTitle>
           {description && <DialogDescription>{description}</DialogDescription>}
         </DialogHeader>
-        <div className="min-h-[360px] rounded-xl border border-border bg-card/80 p-4">
+        <div className="min-h-[360px] rounded-2xl border border-border/70 bg-card/80 p-5 shadow-sm">
           {loading ? (
             <div className="flex h-[320px] flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
               <span className="h-8 w-8 rounded-full border-2 border-muted border-t-primary animate-spin" />
@@ -208,41 +208,44 @@ export function EvolutionChartModal({
             </div>
           ) : (
             <>
-              <div className="h-[320px]">
+              <div className="h-[340px] sm:h-[380px]">
                 <Line data={chartData} options={options} />
               </div>
               {showPointDetails && (
-                <div className="mt-4 max-h-64 overflow-auto rounded-lg border border-border/80">
-                  <table className="w-full min-w-[960px] text-xs">
-                    <thead className="sticky top-0 bg-muted text-muted-foreground">
+                <div className="mt-5 overflow-hidden rounded-xl border border-border/70 shadow-sm">
+                  <table className="w-full table-fixed text-xs">
+                    <thead className="sticky top-0 z-10 bg-muted/95 text-[11px] uppercase tracking-wide text-muted-foreground backdrop-blur">
                       <tr>
-                        <th className="px-3 py-2 text-left font-semibold">Data</th>
-                        <th className="px-3 py-2 text-right font-semibold">% dia</th>
-                        <th className="px-3 py-2 text-right font-semibold">% acum. c/ zeros</th>
-                        <th className="px-3 py-2 text-right font-semibold">% acum. s/ zeros</th>
-                        <th className="px-3 py-2 text-right font-semibold">% desp.</th>
-                        <th className="px-3 py-2 text-right font-semibold">Prev. dia</th>
-                        <th className="px-3 py-2 text-right font-semibold">Prev. acum.</th>
-                        <th className="px-3 py-2 text-right font-semibold">Desp. dia</th>
-                        <th className="px-3 py-2 text-right font-semibold">Desp. acum.</th>
-                        <th className="px-3 py-2 text-right font-semibold">Nao desp.</th>
-                        <th className="px-3 py-2 text-right font-semibold">Zerados acum.</th>
+                        <th className="px-2.5 py-2.5 text-left font-semibold">Data</th>
+                        <th className="px-2.5 py-2.5 text-right font-semibold">% dia</th>
+                        <th className="px-2.5 py-2.5 text-right font-semibold">% acum. c/ zeros</th>
+                        <th className="px-2.5 py-2.5 text-right font-semibold">% acum. s/ zeros</th>
+                        <th className="px-2.5 py-2.5 text-right font-semibold">% desp.</th>
+                        <th className="px-2.5 py-2.5 text-right font-semibold">Prev. dia</th>
+                        <th className="px-2.5 py-2.5 text-right font-semibold">Prev. acum.</th>
+                        <th className="px-2.5 py-2.5 text-right font-semibold">Desp. dia</th>
+                        <th className="px-2.5 py-2.5 text-right font-semibold">Desp. acum.</th>
+                        <th className="px-2.5 py-2.5 text-right font-semibold">Nao desp.</th>
+                        <th className="px-2.5 py-2.5 text-right font-semibold">Zerados acum.</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-border/70">
+                    <tbody className="divide-y divide-border/50">
                       {sortedPoints.map((point) => (
-                        <tr key={`${point.date}-${point.count ?? 0}`} className="bg-background/70">
-                          <td className="px-3 py-2 font-medium">{formatDateLabel(point.date)}</td>
-                          <td className="px-3 py-2 text-right tabular-nums">{formatValue(point.dayValue)}</td>
-                          <td className="px-3 py-2 text-right tabular-nums">{formatValue(point.value)}</td>
-                          <td className="px-3 py-2 text-right tabular-nums">{formatValue(point.secondaryValue)}</td>
-                          <td className="px-3 py-2 text-right tabular-nums">{formatValue(point.coverageValue)}</td>
-                          <td className="px-3 py-2 text-right tabular-nums">{point.plannedDayCount ?? "--"}</td>
-                          <td className="px-3 py-2 text-right tabular-nums">{point.plannedCount ?? "--"}</td>
-                          <td className="px-3 py-2 text-right tabular-nums">{point.dayCount ?? "--"}</td>
-                          <td className="px-3 py-2 text-right tabular-nums">{point.count ?? "--"}</td>
-                          <td className="px-3 py-2 text-right tabular-nums">{point.notDispatchedCount ?? "--"}</td>
-                          <td className="px-3 py-2 text-right tabular-nums">{point.zeroCount ?? "--"}</td>
+                        <tr
+                          key={`${point.date}-${point.count ?? 0}`}
+                          className="odd:bg-background/60 even:bg-muted/15 transition-colors hover:bg-emerald-500/5"
+                        >
+                          <td className="whitespace-nowrap px-2.5 py-2 font-medium text-foreground">{formatDateLabel(point.date)}</td>
+                          <td className="px-2.5 py-2 text-right tabular-nums">{formatValue(point.dayValue)}</td>
+                          <td className="px-2.5 py-2 text-right tabular-nums">{formatValue(point.value)}</td>
+                          <td className="px-2.5 py-2 text-right tabular-nums">{formatValue(point.secondaryValue)}</td>
+                          <td className="px-2.5 py-2 text-right tabular-nums">{formatValue(point.coverageValue)}</td>
+                          <td className="px-2.5 py-2 text-right tabular-nums">{point.plannedDayCount ?? "--"}</td>
+                          <td className="px-2.5 py-2 text-right tabular-nums">{point.plannedCount ?? "--"}</td>
+                          <td className="px-2.5 py-2 text-right tabular-nums">{point.dayCount ?? "--"}</td>
+                          <td className="px-2.5 py-2 text-right tabular-nums">{point.count ?? "--"}</td>
+                          <td className="px-2.5 py-2 text-right tabular-nums">{point.notDispatchedCount ?? "--"}</td>
+                          <td className="px-2.5 py-2 text-right tabular-nums">{point.zeroCount ?? "--"}</td>
                         </tr>
                       ))}
                     </tbody>
