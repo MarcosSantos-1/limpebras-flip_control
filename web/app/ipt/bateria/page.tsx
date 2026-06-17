@@ -3,6 +3,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import * as XLSX from "xlsx";
 import {
   Activity,
   AlertTriangle,
@@ -496,6 +497,172 @@ function exportCSV(data: ModuleData[]) {
   link.click();
 }
 
+function trocasPeriodLabel(period: string): string {
+  if (period === "7d") return "Últimos 7 dias";
+  if (period === "90d") return "Últimos 90 dias";
+  if (period === "all") return "Todo o período";
+  return "Últimos 30 dias";
+}
+
+function xlsxNumber(value: number | null | undefined, decimals = 1): number | string {
+  if (value == null || !Number.isFinite(Number(value))) return "";
+  return Number(Number(value).toFixed(decimals));
+}
+
+function exportTrocasBateriaXlsx(
+  modules: ModuleData[],
+  options: {
+    records: Record<string, TrocaRecord>;
+    history: Record<string, TrocaHistoryRecord[]>;
+    manutRecords: Record<string, ModuloManutencaoEvento>;
+    period: string;
+  },
+) {
+  const workbook = XLSX.utils.book_new();
+  const periodLabel = trocasPeriodLabel(options.period);
+
+  const moduleHeaders = [
+    "Subprefeitura",
+    "Setor",
+    "SELIMP",
+    "Serviços",
+    "Dias de execução",
+    "Setores/Dias",
+    "Comunicação",
+    "Status de sinal",
+    "Status da bateria",
+    "Bateria atual (%)",
+    "Bateria atual (raw)",
+    "Última comunicação",
+    "Qtd. cargas SELIMP",
+    "Trocas registradas no painel",
+    `Trocas concluídas (${periodLabel})`,
+    `Trocas com sucesso (${periodLabel})`,
+    `Trocas sem sucesso (${periodLabel})`,
+    `Agendadas (${periodLabel})`,
+    `Duração Bat. (${periodLabel})`,
+    "Execução média 90d (%)",
+    "Registros execução 90d",
+    "Produtividade bateria (%)",
+    "Dias ON",
+    "Dias OFF",
+    "Dias OFF consecutivos",
+    "Motivo atual",
+    "Manutenção atual",
+    "Data ordenado manutenção",
+    "Data manutenção realizada",
+    "Motivo manutenção",
+    "Data instalação",
+  ];
+
+  const moduleRows = modules.map((m) => {
+    const history = trocaHistoryOf(m, options.records[m.numeroSelimp], options.history[m.numeroSelimp]);
+    const concluidasPeriodo = history.filter((h) => h.status === "concluida" && trocaInPeriod(h, options.period));
+    const agendadasPeriodo = history.filter((h) => h.status === "agendada" && trocaInPeriod(h, options.period));
+    const exec90 = execucaoSelimpHistoryOf(m, 999, 90);
+    const manut = options.manutRecords[m.numeroSelimp];
+    const duracao = average(duracoesBateriaAtualizada(m, history, options.period));
+    return [
+      m.subprefeitura,
+      m.setor,
+      m.numeroSelimp,
+      siglasOf(m).join(" / "),
+      m.diasExecucao,
+      setoresDiasOf(m).map((sd) => `${sd.setor}: ${sd.dias || "-"}`).join(" | "),
+      m.comunicacao,
+      m.statusSinalGeral,
+      m.statusBateria,
+      xlsxNumber(normalizePercentValue(m.bateriaPercentual), 0),
+      m.bateria,
+      m.ultimaComunicacao,
+      m.quantidadeTrocas,
+      history.length,
+      concluidasPeriodo.length,
+      concluidasPeriodo.filter((h) => h.sucesso !== false).length,
+      concluidasPeriodo.filter((h) => h.sucesso === false).length,
+      agendadasPeriodo.length,
+      duracao ?? "",
+      xlsxNumber(mediaExecucaoSelimp(m, 90), 1),
+      exec90.length,
+      xlsxNumber(m.produtividade, 0),
+      m.diasOn,
+      m.diasOff,
+      m.diasOffConsecutivos ?? "",
+      motivoFromModule(m),
+      manut ? MANUT_STATUS_LABEL[manut.status] : "",
+      manut?.dataOrdenado ? fmtIsoBr(manut.dataOrdenado) : "",
+      manut?.dataManutencao ? fmtIsoBr(manut.dataManutencao) : "",
+      manut?.motivo ?? "",
+      formatIptDataInstalacaoBr(m.dataInstalacao) || "",
+    ];
+  });
+
+  const moduleSheet = XLSX.utils.aoa_to_sheet([moduleHeaders, ...moduleRows]);
+  moduleSheet["!cols"] = [
+    12, 26, 16, 12, 18, 44, 12, 16, 18, 14, 16, 22, 14, 20, 20, 20, 20, 16, 18, 20, 18, 18, 10, 10, 18, 16, 18, 22, 22, 28, 18,
+  ].map((wch) => ({ wch }));
+  XLSX.utils.book_append_sheet(workbook, moduleSheet, "Módulos");
+
+  const moduleSet = new Set(modules.map((m) => m.numeroSelimp));
+  const trocaHeaders = [
+    "SELIMP",
+    "Setor",
+    "Tipo",
+    "Status",
+    "Data agendada",
+    "Data troca",
+    "Dentro do período selecionado",
+    "Sucesso",
+    "Percentual entrada (%)",
+    "Bateria antes (%)",
+    "Bateria depois (%)",
+    "Status bateria antes",
+    "Status bateria depois",
+    "Últ. comunicação antes",
+    "Últ. comunicação depois",
+    "Criado em",
+  ];
+  const trocaRows = modules.flatMap((m) => {
+    const history = trocaHistoryOf(m, options.records[m.numeroSelimp], options.history[m.numeroSelimp]);
+    return history
+      .filter((h) => moduleSet.has(h.selimp))
+      .map((h) => [
+        h.selimp,
+        h.setor ?? m.setor,
+        h.tipoTroca ?? "",
+        trocaStatusLabel(h),
+        h.dataAgendada ? fmtIsoBr(h.dataAgendada) : "",
+        h.dataTroca ? fmtIsoBr(h.dataTroca) : "",
+        trocaInPeriod(h, options.period) ? "Sim" : "Não",
+        h.status === "concluida" ? h.sucesso === false ? "Não" : "Sim" : "",
+        xlsxNumber(normalizePercentValue(h.percentualEntrada), 0),
+        xlsxNumber(normalizePercentValue(h.bateriaAntesPercentual), 0),
+        xlsxNumber(normalizePercentValue(h.bateriaDepoisPercentual ?? h.percentualEntrada), 0),
+        h.statusBateriaAntes ?? "",
+        h.statusBateriaDepois ?? "",
+        fmtDisplayDate(h.ultimaComunicacaoAntes || h.ultimaComunicacao),
+        fmtDisplayDate(h.ultimaComunicacaoDepois),
+        h.createdAt ? isoBrDateTime(h.createdAt) : "",
+      ]);
+  });
+  const trocaSheet = XLSX.utils.aoa_to_sheet([trocaHeaders, ...trocaRows]);
+  trocaSheet["!cols"] = [16, 26, 18, 26, 14, 14, 24, 10, 18, 16, 17, 20, 20, 22, 22, 20].map((wch) => ({ wch }));
+  XLSX.utils.book_append_sheet(workbook, trocaSheet, "Trocas");
+
+  const metaSheet = XLSX.utils.aoa_to_sheet([
+    ["Relatório", "Trocas de Bateria - Módulos SELIMP"],
+    ["Período selecionado", periodLabel],
+    ["Módulos exportados", modules.length],
+    ["Eventos de troca exportados", trocaRows.length],
+    ["Execução média", "Últimos 90 dias, percentual somente"],
+    ["Exportado em", new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })],
+  ]);
+  metaSheet["!cols"] = [{ wch: 28 }, { wch: 48 }];
+  XLSX.utils.book_append_sheet(workbook, metaSheet, "Metadados");
+
+  XLSX.writeFile(workbook, `trocas_bateria_modulos_${new Date().toISOString().slice(0, 10)}.xlsx`);
+}
+
 // --- Page Component ---
 
 /** Motivo da troca derivado do status atual da bateria (mock até backend). */
@@ -691,11 +858,12 @@ function duracoesBateriaAtualizada(m: ModuleData, history: TrocaHistoryRecord[],
   return out;
 }
 
-function execucaoSelimpHistoryOf(m: ModuleData, limit = 10): ExecucaoSelimpDia[] {
+function execucaoSelimpHistoryOf(m: ModuleData, limit = 10, days = 30): ExecucaoSelimpDia[] {
   const byDate = new Map<string, { sum: number; count: number }>();
   for (const sd of setoresDiasOf(m)) {
     for (const item of sd.execucoes ?? []) {
       if (!item.data || !Number.isFinite(item.percentual)) continue;
+      if (!isDateInPeriod(item.data, `${days}d`)) continue;
       const cur = byDate.get(item.data) ?? { sum: 0, count: 0 };
       cur.sum += item.percentual;
       cur.count += 1;
@@ -708,12 +876,12 @@ function execucaoSelimpHistoryOf(m: ModuleData, limit = 10): ExecucaoSelimpDia[]
     .slice(0, limit);
 }
 
-function mediaExecucaoSelimp(m: ModuleData): number | null {
-  const vals = execucaoSelimpHistoryOf(m, 999)
+function mediaExecucaoSelimp(m: ModuleData, days = 30): number | null {
+  const vals = execucaoSelimpHistoryOf(m, 999, days)
     .map((item) => item.percentual)
     .filter((value) => Number.isFinite(value));
   if (vals.length > 0) return Math.round((vals.reduce((sum, value) => sum + value, 0) / vals.length) * 10) / 10;
-  return m.produtividadeExecucao != null ? Math.round(m.produtividadeExecucao * 10) / 10 : null;
+  return days >= 90 && m.produtividadeExecucao != null ? Math.round(m.produtividadeExecucao * 10) / 10 : null;
 }
 
 /** Leitura de bateria do módulo numa data exata (yyyy-MM-dd); null quando não houver leitura. */
@@ -2399,6 +2567,22 @@ export default function BateriaDashboardPage() {
                           )}
                         </>
                       )}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-9 gap-1.5"
+                        disabled={trocasModules.length === 0}
+                        onClick={() =>
+                          exportTrocasBateriaXlsx(trocasModules, {
+                            records: troca.records,
+                            history: troca.history,
+                            manutRecords: moduloManut.records,
+                            period: trocasPeriod,
+                          })
+                        }
+                      >
+                        <Download className="h-4 w-4" /> Exportar Excel
+                      </Button>
                       <Button
                         size="sm"
                         variant="outline"

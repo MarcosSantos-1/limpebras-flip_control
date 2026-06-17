@@ -2025,7 +2025,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
 
         // ---- Enriquecimento por setor (km, praça, execução) + série temporal ----
         // Todas as queries são resilientes: falha em uma não derruba o endpoint.
-        const PERIODO_DIAS = 30;
+        const PERIODO_DIAS = 90;
         const execMap = new Map<string, number>();
         const execHistoryMap = new Map<string, Array<{ data: string; percentual: number }>>();
         const kmMap = new Map<string, number>();
@@ -2038,7 +2038,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         let execucaoPorServicoSub: { servico: string; sub: string; execucao: number }[] = [];
 
         await Promise.all([
-          // % de execução por setor (ipt_report_linhas, encerrados, últimos 30 dias)
+          // % de execução por setor (ipt_report_linhas, encerrados, últimos 90 dias)
           (async () => {
             try {
               const rows = await pool.query<{ plano: string; data: string; pct: string | null }>(
