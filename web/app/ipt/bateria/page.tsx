@@ -146,11 +146,18 @@ interface ModuleData {
   diasOff: number;
   diasOffConsecutivos?: number;
   produtividade: number;
+  bateriaPorDia?: BateriaDia[];
 }
 
 interface ExecucaoSelimpDia {
   data: string;
   percentual: number;
+}
+
+interface BateriaDia {
+  data: string;
+  percentual: number | null;
+  desatualizada: boolean;
 }
 
 interface ModuleSetorDia {
@@ -491,13 +498,6 @@ function exportCSV(data: ModuleData[]) {
 
 // --- Page Component ---
 
-interface ConclusaoForm {
-  sucesso: boolean;
-  percentual: string;
-  dataTroca: string;
-  ultimaComunicacao: string;
-}
-
 /** Motivo da troca derivado do status atual da bateria (mock até backend). */
 function motivoFromModule(m: ModuleData): string {
   switch (m.statusBateria) {
@@ -627,11 +627,14 @@ function statusBateriaFromPct(percent?: number | null): string | null {
 
 function trocaStatusLabel(item: Pick<TrocaRecord, "status" | "sucesso">): string {
   if (item.status === "agendada") return "Agendada";
+  // sucesso é automático e tem 3 estados: indefinido = ainda sem leitura pós-troca.
+  if (item.sucesso == null) return "Aguardando avaliação";
   return item.sucesso ? "Concluída com sucesso" : "Concluída sem sucesso";
 }
 
 function trocaStatusBadgeClass(item: Pick<TrocaRecord, "status" | "sucesso">): string {
   if (item.status === "agendada") return "bg-amber-500/15 text-amber-600 border-amber-500/30 dark:text-amber-400";
+  if (item.sucesso == null) return "bg-amber-500/15 text-amber-700 border-amber-500/30 dark:text-amber-300";
   return item.sucesso
     ? "bg-emerald-500/15 text-emerald-600 border-emerald-500/30 dark:text-emerald-400"
     : "bg-red-500/15 text-red-600 border-red-500/30 dark:text-red-400";
@@ -713,6 +716,21 @@ function mediaExecucaoSelimp(m: ModuleData): number | null {
   return m.produtividadeExecucao != null ? Math.round(m.produtividadeExecucao * 10) / 10 : null;
 }
 
+/** Leitura de bateria do módulo numa data exata (yyyy-MM-dd); null quando não houver leitura. */
+function bateriaDoDia(m: ModuleData, data: string): BateriaDia | null {
+  const dia = data.slice(0, 10);
+  return (m.bateriaPorDia ?? []).find((b) => b.data.slice(0, 10) === dia) ?? null;
+}
+
+/** Cor do texto do percentual de bateria por faixa (cinza quando desatualizada). */
+function bateriaDiaColor(b: BateriaDia): string {
+  if (b.desatualizada) return "text-zinc-500 dark:text-zinc-400";
+  const p = b.percentual ?? 0;
+  if (p > 70) return "text-emerald-600 dark:text-emerald-400";
+  if (p > 30) return "text-yellow-600 dark:text-yellow-400";
+  return "text-red-600 dark:text-red-400";
+}
+
 const STATUS_BAT_BADGE: Record<string, string> = {
   ALTA: "bg-emerald-500/15 text-emerald-600 border-emerald-500/30 dark:text-emerald-400",
   REGULAR: "bg-orange-500/15 text-orange-600 border-orange-500/30 dark:text-orange-400",
@@ -721,6 +739,23 @@ const STATUS_BAT_BADGE: Record<string, string> = {
 };
 function statusBatBadge(status: string): string {
   return STATUS_BAT_BADGE[status] ?? "bg-zinc-500/15 text-zinc-600 border-zinc-500/30 dark:text-zinc-300";
+}
+
+/** Prévia do resultado da troca a partir do status atual (desatualizada → tende a sem sucesso).
+ * A classificação final é automática (snapshot pós-troca); isto é só uma indicação visual. */
+function sucessoPreviewChip(m: ModuleData) {
+  const semSucesso = m.statusBateria === "DESATUALIZADA";
+  return (
+    <Badge
+      className={
+        semSucesso
+          ? "bg-red-500/15 text-red-600 border-red-500/30 dark:text-red-400"
+          : "bg-emerald-500/15 text-emerald-600 border-emerald-500/30 dark:text-emerald-400"
+      }
+    >
+      {semSucesso ? "Prévia: sem sucesso" : "Prévia: com sucesso"}
+    </Badge>
+  );
 }
 
 /** Badge por status de manutenção do MÓDULO (Pendente → Ativa → Realizada). */
@@ -954,17 +989,17 @@ export default function BateriaDashboardPage() {
   const [alertModule, setAlertModule] = useState<ModuleData | null>(null);
   const [agendarModule, setAgendarModule] = useState<ModuleData | null>(null);
   const [agendarDate, setAgendarDate] = useState("");
+  // Modal de ações do agendamento (avulso): concluir ou reagendar.
+  const [agendadoModule, setAgendadoModule] = useState<ModuleData | null>(null);
+  const [agendadoDate, setAgendadoDate] = useState("");
   const [concluirModule, setConcluirModule] = useState<ModuleData | null>(null);
-  const [concluirForm, setConcluirForm] = useState<ConclusaoForm>({
-    sucesso: true,
-    percentual: "",
-    dataTroca: "",
-    ultimaComunicacao: "",
-  });
+  // Conclusão: só a data da troca; bateria/status/sucesso são automáticos.
+  const [concluirDate, setConcluirDate] = useState("");
   const [bulkAgendarOpen, setBulkAgendarOpen] = useState(false);
   const [bulkAgendarDate, setBulkAgendarDate] = useState("");
+  const [bulkAgendarMode, setBulkAgendarMode] = useState<"agendar" | "reagendar">("agendar");
   const [bulkConcluirOpen, setBulkConcluirOpen] = useState(false);
-  const [bulkForm, setBulkForm] = useState<Record<string, ConclusaoForm>>({});
+  const [bulkConcluirDate, setBulkConcluirDate] = useState("");
   const [bulkManutOpen, setBulkManutOpen] = useState(false);
   const [bulkManutMotivo, setBulkManutMotivo] = useState("");
   const { resolvedTheme } = useTheme();
@@ -1366,6 +1401,14 @@ export default function BateriaDashboardPage() {
     // Ordenação (não muta a fonte): cópia antes de sort.
     if (trocasSort !== "default") {
       const rank = (m: ModuleData) => STATUS_BAT_RANK[m.statusBateria] ?? -1;
+      // Data da última troca concluída (estado corrente; senão o evento concluído mais recente).
+      const ultimaTroca = (m: ModuleData): string => {
+        const rec = troca.records[m.numeroSelimp];
+        if (rec?.status === "concluida" && rec.dataTroca) return rec.dataTroca;
+        const concl = (troca.history[m.numeroSelimp] ?? []).find((h) => h.status === "concluida" && h.dataTroca);
+        return concl?.dataTroca ?? "";
+      };
+      const exec = (m: ModuleData): number | null => mediaExecucaoSelimp(m);
       result = [...result].sort((a, b) => {
         switch (trocasSort) {
           case "cargas-desc":
@@ -1376,6 +1419,13 @@ export default function BateriaDashboardPage() {
             return rank(b) - rank(a) || b.bateriaPercentual - a.bateriaPercentual;
           case "bateria-asc":
             return rank(a) - rank(b) || a.bateriaPercentual - b.bateriaPercentual;
+          case "ultima-troca":
+            // Mais recente → mais antiga; sem troca vai para o fim.
+            return ultimaTroca(b).localeCompare(ultimaTroca(a));
+          case "exec-desc":
+            return (exec(b) ?? -1) - (exec(a) ?? -1);
+          case "exec-asc":
+            return (exec(a) ?? 101) - (exec(b) ?? 101);
           default:
             return 0;
         }
@@ -1392,6 +1442,7 @@ export default function BateriaDashboardPage() {
     trocasBateriaFilter,
     trocasSort,
     troca.records,
+    troca.history,
     manutStatusForModule,
   ]);
 
@@ -1450,13 +1501,14 @@ export default function BateriaDashboardPage() {
   // ===== Handlers de agendamento / conclusão =====
   function openConcluir(m: ModuleData) {
     const rec = troca.records[m.numeroSelimp];
-    setConcluirForm({
-      sucesso: rec?.sucesso ?? true,
-      percentual: rec?.percentualEntrada != null ? String(rec.percentualEntrada) : "",
-      dataTroca: rec?.dataTroca ?? isoToday(),
-      ultimaComunicacao: rec?.ultimaComunicacao ?? isoToday(),
-    });
+    setConcluirDate(rec?.dataTroca ?? isoToday());
     setConcluirModule(m);
+  }
+
+  function openAgendado(m: ModuleData) {
+    const rec = troca.records[m.numeroSelimp];
+    setAgendadoDate(rec?.dataAgendada ?? isoToday());
+    setAgendadoModule(m);
   }
 
   function confirmAgendar() {
@@ -1470,18 +1522,25 @@ export default function BateriaDashboardPage() {
     setAgendarModule(null);
   }
 
+  /** Reagenda (avulso) o módulo já agendado para uma nova data (upsert no backend). */
+  function confirmReagendar() {
+    if (!agendadoModule || !agendadoDate) return;
+    troca.agendar({
+      selimp: agendadoModule.numeroSelimp,
+      setor: agendadoModule.setor,
+      dataAgendada: agendadoDate,
+      tipoTroca: motivoFromModule(agendadoModule),
+    });
+    setAgendadoModule(null);
+  }
+
   function confirmConcluir() {
-    if (!concluirModule) return;
-    const percentualEntrada = concluirForm.sucesso && concluirForm.percentual.trim() !== ""
-      ? Number(concluirForm.percentual)
-      : undefined;
+    if (!concluirModule || !concluirDate) return;
     troca.concluir({
       selimp: concluirModule.numeroSelimp,
       setor: concluirModule.setor,
-      sucesso: concluirForm.sucesso,
-      percentualEntrada: Number.isFinite(percentualEntrada) ? percentualEntrada : undefined,
-      dataTroca: concluirForm.dataTroca,
-      // Última comunicação e tipo da troca são determinados pelo servidor (planilhas de bateria).
+      dataTroca: concluirDate,
+      // Bateria/sinal/última comunicação e o sucesso são determinados automaticamente (snapshots).
       ultimaComunicacao: "",
       bateriaAntes: concluirModule.bateria,
       bateriaAntesPercentual: concluirModule.bateriaPercentual,
@@ -1505,17 +1564,7 @@ export default function BateriaDashboardPage() {
   }
 
   function openBulkConcluir() {
-    const form: Record<string, ConclusaoForm> = {};
-    for (const m of selectedModules) {
-      const rec = troca.records[m.numeroSelimp];
-      form[m.numeroSelimp] = {
-        sucesso: rec?.sucesso ?? true,
-        percentual: rec?.percentualEntrada != null ? String(rec.percentualEntrada) : "",
-        dataTroca: rec?.dataTroca ?? isoToday(),
-        ultimaComunicacao: rec?.ultimaComunicacao ?? isoToday(),
-      };
-    }
-    setBulkForm(form);
+    setBulkConcluirDate(isoToday());
     setBulkConcluirOpen(true);
   }
 
@@ -1549,23 +1598,18 @@ export default function BateriaDashboardPage() {
   }
 
   function confirmBulkConcluir() {
+    if (!bulkConcluirDate || selectedModules.length === 0) return;
     troca.concluir(
-      selectedModules.map((m) => {
-        const f = bulkForm[m.numeroSelimp] ?? { sucesso: true, percentual: "", dataTroca: isoToday(), ultimaComunicacao: isoToday() };
-        const percentualEntrada = f.sucesso && f.percentual.trim() !== "" ? Number(f.percentual) : undefined;
-        return {
-          selimp: m.numeroSelimp,
-          setor: m.setor,
-          sucesso: f.sucesso,
-          percentualEntrada: Number.isFinite(percentualEntrada) ? percentualEntrada : undefined,
-          dataTroca: f.dataTroca,
-          // Última comunicação e tipo da troca são determinados pelo servidor.
-          ultimaComunicacao: "",
-          bateriaAntes: m.bateria,
-          bateriaAntesPercentual: m.bateriaPercentual,
-          statusBateriaAntes: m.statusBateria,
-        };
-      }),
+      selectedModules.map((m) => ({
+        selimp: m.numeroSelimp,
+        setor: m.setor,
+        dataTroca: bulkConcluirDate,
+        // Bateria/sinal/última comunicação e o sucesso são automáticos (snapshots).
+        ultimaComunicacao: "",
+        bateriaAntes: m.bateria,
+        bateriaAntesPercentual: m.bateriaPercentual,
+        statusBateriaAntes: m.statusBateria,
+      })),
     );
     setBulkConcluirOpen(false);
     toggleSelMode();
@@ -2301,23 +2345,34 @@ export default function BateriaDashboardPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       {selMode && selected.size > 0 && (
                         <>
-                          {/* Troca: "Concluir" substitui "Agendar" quando todos já estão agendados */}
+                          {/* Troca: "Concluir" + "Reagendar" substituem "Agendar" quando todos já estão agendados */}
                           {selectedAllAgendadas ? (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-9 gap-1.5 border-sky-500/50 text-sky-600 hover:bg-sky-500/10 dark:text-sky-400"
-                              disabled={selectedOpenManutModules.length > 0}
-                              onClick={openBulkConcluir}
-                            >
-                              <CalendarCheck2 className="h-4 w-4" /> Concluir ({selected.size})
-                            </Button>
+                            <>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-9 gap-1.5 border-sky-500/50 text-sky-600 hover:bg-sky-500/10 dark:text-sky-400"
+                                disabled={selectedOpenManutModules.length > 0}
+                                onClick={openBulkConcluir}
+                              >
+                                <CalendarCheck2 className="h-4 w-4" /> Concluir ({selected.size})
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-9 gap-1.5 border-amber-500/50 text-amber-600 hover:bg-amber-500/10 dark:text-amber-400"
+                                disabled={selectedOpenManutModules.length > 0}
+                                onClick={() => { setBulkAgendarMode("reagendar"); setBulkAgendarDate(isoToday()); setBulkAgendarOpen(true); }}
+                              >
+                                <RefreshCw className="h-4 w-4" /> Reagendar ({selected.size})
+                              </Button>
+                            </>
                           ) : (
                             <Button
                               size="sm"
                               className="h-9 gap-1.5 bg-emerald-600 font-semibold text-white hover:bg-emerald-700"
                               disabled={selectedOpenManutModules.length > 0}
-                              onClick={() => { setBulkAgendarDate(isoToday()); setBulkAgendarOpen(true); }}
+                              onClick={() => { setBulkAgendarMode("agendar"); setBulkAgendarDate(isoToday()); setBulkAgendarOpen(true); }}
                             >
                               <CalendarPlus className="h-4 w-4" /> Agendar ({selected.size})
                             </Button>
@@ -2422,10 +2477,13 @@ export default function BateriaDashboardPage() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="default">Ordenar: padrão</SelectItem>
+                        <SelectItem value="ultima-troca">Última troca: recente → antiga</SelectItem>
                         <SelectItem value="cargas-desc">Mais cargas</SelectItem>
                         <SelectItem value="cargas-asc">Menos cargas</SelectItem>
                         <SelectItem value="bateria-desc">Bateria: melhor → pior</SelectItem>
                         <SelectItem value="bateria-asc">Bateria: pior → melhor</SelectItem>
+                        <SelectItem value="exec-desc">Execução: melhor → pior</SelectItem>
+                        <SelectItem value="exec-asc">Execução: pior → melhor</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -2461,6 +2519,8 @@ export default function BateriaDashboardPage() {
                           const historySemData = Math.max(0, (m.quantidadeTrocas || 0) - historyConcluidas);
                           const execucaoHistory = execucaoSelimpHistoryOf(m);
                           const execucaoMedia = mediaExecucaoSelimp(m);
+                          // Nº de vezes que o módulo foi efetivamente à manutenção (eventos REALIZADA).
+                          const vezesEmManutencao = (moduloManut.history[m.numeroSelimp] ?? []).filter((e) => e.status === "REALIZADA").length;
                           // Troca concluída mais recente (history vem em ordem decrescente por data): só nela
                           // usamos a bateria/sinal atual do módulo como "estado depois".
                           const latestConcluidaId = history.find((h) => h.status === "concluida")?.id;
@@ -2573,7 +2633,7 @@ export default function BateriaDashboardPage() {
                                     size="sm"
                                     disabled={selMode}
                                     className="h-7 gap-1 bg-amber-500 text-white hover:bg-amber-600"
-                                    onClick={() => openConcluir(m)}
+                                    onClick={() => openAgendado(m)}
                                   >
                                     <Clock className="h-3.5 w-3.5" /> Agendado · {fmtIsoBr(rec.dataAgendada)}
                                   </Button>
@@ -2585,12 +2645,14 @@ export default function BateriaDashboardPage() {
                                     onClick={() => openConcluir(m)}
                                     className={cn(
                                       "h-7 gap-1",
-                                      rec.sucesso
-                                        ? "border-emerald-500/50 text-emerald-600 hover:bg-emerald-500/10 dark:text-emerald-400"
-                                        : "border-red-500/50 text-red-600 hover:bg-red-500/10 dark:text-red-400",
+                                      rec.sucesso == null
+                                        ? "border-amber-500/50 text-amber-600 hover:bg-amber-500/10 dark:text-amber-400"
+                                        : rec.sucesso
+                                          ? "border-emerald-500/50 text-emerald-600 hover:bg-emerald-500/10 dark:text-emerald-400"
+                                          : "border-red-500/50 text-red-600 hover:bg-red-500/10 dark:text-red-400",
                                     )}
                                   >
-                                    <CheckCircle2 className="h-3.5 w-3.5" /> {rec.sucesso ? "Concluída" : "Sem sucesso"}
+                                    <CheckCircle2 className="h-3.5 w-3.5" /> {rec.sucesso == null ? "Aguardando" : rec.sucesso ? "Concluída" : "Sem sucesso"}
                                   </Button>
                                 )}
                               </TableCell>
@@ -2615,7 +2677,7 @@ export default function BateriaDashboardPage() {
                               <TableRow className="border-emerald-500/20 bg-emerald-500/5 hover:bg-emerald-500/5">
                                 <TableCell colSpan={13} className="p-0 align-middle">
                                   <div className="space-y-4 px-4 py-4">
-                                    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                                    <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
                                       <div className="rounded-lg border border-border/60 bg-background/70 p-3">
                                         <span className="block text-xs text-muted-foreground">Trocas registradas</span>
                                         <span className="mt-1 block text-xl font-bold tabular-nums text-foreground">{history.length}</span>
@@ -2632,6 +2694,10 @@ export default function BateriaDashboardPage() {
                                         <span className="block text-xs text-muted-foreground">Última comunicação atual</span>
                                         <span className="mt-1 block text-xs font-medium tabular-nums text-foreground">{m.ultimaComunicacao || "—"}</span>
                                       </div>
+                                      <div className="rounded-lg border border-border/60 bg-background/70 p-3">
+                                        <span className="flex items-center gap-1 text-xs text-muted-foreground"><Wrench className="h-3.5 w-3.5 text-zinc-500" /> Vezes em manutenção</span>
+                                        <span className="mt-1 block text-xl font-bold tabular-nums text-foreground">{vezesEmManutencao}</span>
+                                      </div>
                                     </div>
 
                                     <div className="rounded-xl border border-border/60 bg-background/60 px-3 py-2">
@@ -2646,7 +2712,9 @@ export default function BateriaDashboardPage() {
                                       </div>
                                       {execucaoHistory.length > 0 ? (
                                         <div className="grid grid-cols-2 gap-2 sm:grid-cols-5 xl:grid-cols-10">
-                                          {execucaoHistory.map((item, idx) => (
+                                          {execucaoHistory.map((item, idx) => {
+                                            const bat = bateriaDoDia(m, item.data);
+                                            return (
                                             <div key={`${item.data}-${idx}`} className="rounded-lg border border-border/50 bg-muted/20 px-2 py-2">
                                               <div className="flex items-center justify-between gap-1">
                                                 <span className="text-[11px] font-medium tabular-nums text-muted-foreground">{fmtIsoBr(item.data).slice(0, 5)}</span>
@@ -2655,8 +2723,15 @@ export default function BateriaDashboardPage() {
                                               <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
                                                 <div className="h-full rounded-full bg-sky-500" style={{ width: `${Math.max(0, Math.min(100, item.percentual))}%` }} />
                                               </div>
+                                              <div className="mt-1.5 flex items-center gap-1">
+                                                <Battery className={cn("h-3 w-3 shrink-0", bat ? bateriaDiaColor(bat) : "text-muted-foreground/50")} />
+                                                <span className={cn("text-[11px] font-semibold tabular-nums", bat ? bateriaDiaColor(bat) : "text-muted-foreground")}>
+                                                  {bat ? (bat.desatualizada ? "Desat." : bat.percentual != null ? `${Math.round(bat.percentual)}%` : "—") : "—"}
+                                                </span>
+                                              </div>
                                             </div>
-                                          ))}
+                                            );
+                                          })}
                                         </div>
                                       ) : (
                                         <p className="rounded-lg bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
@@ -3636,6 +3711,48 @@ export default function BateriaDashboardPage() {
           </DialogContent>
         </Dialog>
 
+        {/* ===== Modal de Ações do Agendamento (avulso): Concluir ou Reagendar ===== */}
+        <Dialog open={!!agendadoModule} onOpenChange={(o) => !o && setAgendadoModule(null)}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-base">
+                <Clock className="h-5 w-5 text-amber-500" />
+                Troca agendada
+              </DialogTitle>
+              <DialogDescription>
+                {agendadoModule?.setor} · {agendadoModule?.numeroSelimp}
+              </DialogDescription>
+            </DialogHeader>
+            {agendadoModule && (
+              <div className="space-y-4">
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2.5 text-sm">
+                  Agendada para <strong className="tabular-nums">{fmtIsoBr(troca.records[agendadoModule.numeroSelimp]?.dataAgendada)}</strong>. Conclua a troca ou escolha uma nova data de agendamento.
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-foreground">Nova data de agendamento</label>
+                  <DatePicker value={agendadoDate} onChange={setAgendadoDate} />
+                </div>
+              </div>
+            )}
+            <DialogFooter className="gap-2 sm:justify-between">
+              <Button
+                variant="outline"
+                className="border-amber-500/50 text-amber-600 hover:bg-amber-500/10 dark:text-amber-400"
+                disabled={!agendadoDate}
+                onClick={confirmReagendar}
+              >
+                <RefreshCw className="mr-1.5 h-4 w-4" /> Reagendar
+              </Button>
+              <Button
+                className="bg-sky-600 text-white hover:bg-sky-700"
+                onClick={() => { const m = agendadoModule; setAgendadoModule(null); if (m) openConcluir(m); }}
+              >
+                <CalendarCheck2 className="mr-1.5 h-4 w-4" /> Concluir troca
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         {/* ===== Modal de Conclusão ===== */}
         <Dialog open={!!concluirModule} onOpenChange={(o) => !o && setConcluirModule(null)}>
           <DialogContent className="max-w-md">
@@ -3650,41 +3767,28 @@ export default function BateriaDashboardPage() {
             </DialogHeader>
             {concluirModule && (
               <div className="space-y-4">
-                <div className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5">
-                  <span className="text-sm font-medium text-foreground">
-                    {concluirForm.sucesso ? "Troca com sucesso" : "Troca sem sucesso"}
-                  </span>
-                  <Switch
-                    checked={concluirForm.sucesso}
-                    onCheckedChange={(v) => setConcluirForm((f) => ({ ...f, sucesso: v }))}
-                  />
-                </div>
-                {concluirForm.sucesso && (
-                  <div>
-                    <label className="mb-1.5 block text-sm font-medium text-foreground">Percentual de entrada no setor (%)</label>
-                    <Input
-                      type="number"
-                      min={0}
-                      max={100}
-                      placeholder="Ex.: 85"
-                      value={concluirForm.percentual}
-                      onChange={(e) => setConcluirForm((f) => ({ ...f, percentual: e.target.value }))}
-                    />
-                  </div>
-                )}
                 <div>
                   <label className="mb-1.5 block text-sm font-medium text-foreground">Data da troca</label>
-                  <DatePicker value={concluirForm.dataTroca} onChange={(v) => setConcluirForm((f) => ({ ...f, dataTroca: v }))} />
+                  <DatePicker value={concluirDate} onChange={setConcluirDate} />
+                </div>
+                <div className="flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground">Status atual</span>
+                    <Badge className={statusBatBadge(concluirModule.statusBateria)}>{concluirModule.statusBateria || "—"}</Badge>
+                    <span className="text-xs font-medium tabular-nums text-foreground">{batteryLabel(concluirModule.bateria, concluirModule.bateriaPercentual)}</span>
+                  </div>
+                  {sucessoPreviewChip(concluirModule)}
                 </div>
                 <p className="rounded-lg bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                  A última comunicação e o tipo da troca (corretiva, preventiva ou desnecessária) são
-                  determinados automaticamente pelas planilhas de bateria a partir da data da troca.
+                  Bateria, status, última comunicação e o resultado (com/sem sucesso) são determinados
+                  automaticamente pelas planilhas de bateria. Trocas que continuarem desatualizadas após a
+                  troca são classificadas como <strong>sem sucesso</strong>.
                 </p>
               </div>
             )}
             <DialogFooter className="gap-2">
               <Button variant="ghost" onClick={() => setConcluirModule(null)}>Cancelar</Button>
-              <Button className="bg-sky-600 text-white hover:bg-sky-700" disabled={!concluirForm.dataTroca} onClick={confirmConcluir}>
+              <Button className="bg-sky-600 text-white hover:bg-sky-700" disabled={!concluirDate} onClick={confirmConcluir}>
                 Registrar conclusão
               </Button>
             </DialogFooter>
@@ -3696,10 +3800,14 @@ export default function BateriaDashboardPage() {
           <DialogContent className="max-w-md">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 text-base">
-                <CalendarPlus className="h-5 w-5 text-emerald-500" />
-                Agendar troca — {selectedModules.length} setor(es)
+                {bulkAgendarMode === "reagendar" ? <RefreshCw className="h-5 w-5 text-amber-500" /> : <CalendarPlus className="h-5 w-5 text-emerald-500" />}
+                {bulkAgendarMode === "reagendar" ? "Reagendar troca" : "Agendar troca"} — {selectedModules.length} setor(es)
               </DialogTitle>
-              <DialogDescription>Todos os setores selecionados serão agendados para a mesma data.</DialogDescription>
+              <DialogDescription>
+                {bulkAgendarMode === "reagendar"
+                  ? "Todos os setores selecionados serão reagendados para a nova data."
+                  : "Todos os setores selecionados serão agendados para a mesma data."}
+              </DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
               <div className="max-h-40 overflow-y-auto rounded-lg border border-border/60 bg-muted/20 p-2">
@@ -3713,14 +3821,20 @@ export default function BateriaDashboardPage() {
                 </ul>
               </div>
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-foreground">Data Agendamento</label>
+                <label className="mb-1.5 block text-sm font-medium text-foreground">
+                  {bulkAgendarMode === "reagendar" ? "Nova data de agendamento" : "Data Agendamento"}
+                </label>
                 <DatePicker value={bulkAgendarDate} onChange={setBulkAgendarDate} />
               </div>
             </div>
             <DialogFooter className="gap-2">
               <Button variant="ghost" onClick={() => setBulkAgendarOpen(false)}>Cancelar</Button>
-              <Button className="bg-emerald-600 text-white hover:bg-emerald-700" disabled={!bulkAgendarDate} onClick={confirmBulkAgendar}>
-                Agendar {selectedModules.length}
+              <Button
+                className={bulkAgendarMode === "reagendar" ? "bg-amber-600 text-white hover:bg-amber-700" : "bg-emerald-600 text-white hover:bg-emerald-700"}
+                disabled={!bulkAgendarDate}
+                onClick={confirmBulkAgendar}
+              >
+                {bulkAgendarMode === "reagendar" ? "Reagendar" : "Agendar"} {selectedModules.length}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -3779,48 +3893,37 @@ export default function BateriaDashboardPage() {
                 <CalendarCheck2 className="h-5 w-5 text-sky-500" />
                 Concluir trocas — {selectedModules.length} setor(es)
               </DialogTitle>
-              <DialogDescription>Marque o sucesso e complete os dados de cada setor.</DialogDescription>
+              <DialogDescription>
+                Uma data para todos. Bateria, status e o resultado (com/sem sucesso) são automáticos.
+              </DialogDescription>
             </DialogHeader>
-            <div className="space-y-2">
-              {selectedModules.map((m) => {
-                const f = bulkForm[m.numeroSelimp] ?? { sucesso: true, percentual: "", dataTroca: isoToday(), ultimaComunicacao: isoToday() };
-                const update = (patch: Partial<ConclusaoForm>) =>
-                  setBulkForm((prev) => ({ ...prev, [m.numeroSelimp]: { ...f, ...patch } }));
-                return (
-                  <div key={m.numeroSelimp} className="rounded-lg border border-border/60 bg-muted/15 p-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate font-mono text-xs text-foreground">{m.setor}</p>
-                        <p className="text-xs text-muted-foreground">{m.numeroSelimp}</p>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-2">
-                        <span className={cn("text-xs font-medium", f.sucesso ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400")}>
-                          {f.sucesso ? "Sucesso" : "Sem sucesso"}
-                        </span>
-                        <Switch checked={f.sucesso} onCheckedChange={(v) => update({ sucesso: v })} />
-                      </div>
+            <div className="space-y-4">
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-foreground">Data da troca</label>
+                <DatePicker value={bulkConcluirDate} onChange={setBulkConcluirDate} />
+              </div>
+              <div className="max-h-72 space-y-2 overflow-y-auto rounded-lg border border-border/60 bg-muted/15 p-2">
+                {selectedModules.map((m) => (
+                  <div key={m.numeroSelimp} className="flex items-center justify-between gap-2 rounded-md bg-background/70 px-2.5 py-2">
+                    <div className="min-w-0">
+                      <p className="truncate font-mono text-xs text-foreground">{m.setor}</p>
+                      <p className="text-xs text-muted-foreground">{m.numeroSelimp}</p>
                     </div>
-                    <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                      {f.sucesso && (
-                        <Input
-                          type="number"
-                          min={0}
-                          max={100}
-                          placeholder="% entrada"
-                          className="h-9"
-                          value={f.percentual}
-                          onChange={(e) => update({ percentual: e.target.value })}
-                        />
-                      )}
-                      <DatePicker value={f.dataTroca} onChange={(v) => update({ dataTroca: v })} placeholder="Data da troca" />
+                    <div className="flex shrink-0 items-center gap-2">
+                      <Badge className={statusBatBadge(m.statusBateria)}>{m.statusBateria || "—"}</Badge>
+                      {sucessoPreviewChip(m)}
                     </div>
                   </div>
-                );
-              })}
+                ))}
+              </div>
+              <p className="rounded-lg bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                A prévia usa o status atual; o resultado final fica como <strong>Aguardando</strong> até a próxima
+                leitura de bateria após a troca.
+              </p>
             </div>
             <DialogFooter className="gap-2">
               <Button variant="ghost" onClick={() => setBulkConcluirOpen(false)}>Cancelar</Button>
-              <Button className="bg-sky-600 text-white hover:bg-sky-700" onClick={confirmBulkConcluir}>
+              <Button className="bg-sky-600 text-white hover:bg-sky-700" disabled={!bulkConcluirDate} onClick={confirmBulkConcluir}>
                 Concluir {selectedModules.length}
               </Button>
             </DialogFooter>

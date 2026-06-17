@@ -91,6 +91,19 @@ function statusBateriaFromSnapshot(
   return "CRÍTICA";
 }
 
+/**
+ * Sucesso automático da troca a partir do snapshot logo APÓS a data da troca:
+ * - false quando a bateria continua desatualizada (não recuperou o status);
+ * - true quando recuperou;
+ * - undefined quando ainda não há leitura posterior à troca ("Aguardando avaliação").
+ */
+function sucessoFromDepois(r: TrocaEventoRow): boolean | undefined {
+  const hasDepois = r.snap_depois_raw != null || r.snap_depois_pct != null;
+  if (!hasDepois) return undefined;
+  const desat = Boolean(r.snap_depois_desat) || /desatualizada/i.test(String(r.snap_depois_raw ?? ""));
+  return !desat;
+}
+
 /** Tem sinal = comunicação ON e bateria não desatualizada. */
 function temSinal(sinal: string | null, raw: string | null, desat: boolean | null): boolean {
   const on = String(sinal ?? "").trim().toUpperCase() === "ON";
@@ -173,9 +186,13 @@ function mapTrocaHistory(r: TrocaEventoRow): TrocaHistoryDto {
           r.snap_depois_desat,
         )
       : undefined;
+  // Sucesso automático: a troca foi "sem sucesso" se o snapshot logo após continua desatualizado.
+  // Sem leitura posterior à troca → undefined ("Aguardando avaliação").
+  const sucessoAuto = r.status === "concluida" ? sucessoFromDepois(r) : undefined;
   return {
     ...mapTroca(r),
     id: String(r.id),
+    sucesso: sucessoAuto,
     tipoTroca: tipoAuto ?? r.tipo_troca ?? undefined,
     bateriaAntes: r.snap_antes_raw ?? r.bateria_antes_raw ?? undefined,
     bateriaAntesPercentual: antesPct,
@@ -295,6 +312,12 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
     for (const r of eventos.rows) {
       if (!history[r.modulo_selimp]) history[r.modulo_selimp] = [];
       history[r.modulo_selimp].push(mapTrocaHistory(r));
+    }
+    // Estado corrente: sucesso = derivado do evento concluído mais recente (history vem em ordem desc).
+    for (const [selimp, rec] of Object.entries(records)) {
+      if (rec.status !== "concluida") continue;
+      const ultimaConcluida = history[selimp]?.find((h) => h.status === "concluida");
+      rec.sucesso = ultimaConcluida ? ultimaConcluida.sucesso : undefined;
     }
     for (const r of res.rows) {
       if (!history[r.modulo_selimp]?.length) {

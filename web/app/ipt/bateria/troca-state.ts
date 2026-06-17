@@ -99,7 +99,7 @@ export interface AgendarInput {
 export interface ConcluirInput {
   selimp: string;
   setor?: string;
-  sucesso: boolean;
+  /** Sucesso é automático (derivado no servidor); não é mais informado na conclusão. */
   percentualEntrada?: number;
   dataTroca: string;
   ultimaComunicacao: string;
@@ -159,7 +159,7 @@ export function useTrocaState() {
         selimp: it.selimp,
         setor: it.setor ?? nextRecords[it.selimp]?.setor,
         status: "concluida",
-        sucesso: it.sucesso,
+        sucesso: undefined,
         percentualEntrada: it.percentualEntrada,
         dataTroca: it.dataTroca,
         ultimaComunicacao: it.ultimaComunicacao,
@@ -169,7 +169,7 @@ export function useTrocaState() {
         selimp: it.selimp,
         setor: it.setor ?? nextRecords[it.selimp]?.setor,
         status: "concluida",
-        sucesso: it.sucesso,
+        sucesso: undefined,
         percentualEntrada: it.percentualEntrada,
         dataTroca: it.dataTroca,
         ultimaComunicacao: it.ultimaComunicacao,
@@ -183,10 +183,14 @@ export function useTrocaState() {
       });
     }
     commitLocal({ records: nextRecords, history: nextHistory });
-    apiService.concluirBateriaTrocas(list).catch((err) => {
-      console.error("Erro ao concluir trocas", err);
-      reloadFromApi();
-    });
+    // Recarrega para obter sucesso/tipo derivados dos snapshots no servidor.
+    apiService
+      .concluirBateriaTrocas(list)
+      .then(() => reloadFromApi())
+      .catch((err) => {
+        console.error("Erro ao concluir trocas", err);
+        reloadFromApi();
+      });
   }, []);
 
   const remover = useCallback((selimp: string) => {

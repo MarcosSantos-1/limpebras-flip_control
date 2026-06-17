@@ -2031,6 +2031,8 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         const kmMap = new Map<string, number>();
         const pracaMap = new Map<string, string>();
         const offStreakMap = new Map<string, number>();
+        // Bateria diária por módulo (últimos ~35 dias) — usado no accordion (bateria por dia da execução).
+        const bateriaPorDiaMap = new Map<string, { data: string; percentual: number | null; desatualizada: boolean }[]>();
         let evolucaoProdutividade: { data: string; produtividade: number }[] = [];
         // Execução SELIMP por tipo de serviço × subprefeitura (mês corrente) — gráfico "Produtividade dos Setores".
         let execucaoPorServicoSub: { servico: string; sub: string; execucao: number }[] = [];
@@ -2172,6 +2174,35 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
               /* execução por serviço é opcional */
             }
           })(),
+          // Bateria diária por módulo (últimos ~35 dias) para casar com os dias de execução no accordion.
+          (async () => {
+            try {
+              const rows = await pool.query<{ selimp: string; data: string; pct: number | null; desat: boolean | null }>(
+                `SELECT DISTINCT ON (TRIM(selimp_id), data_exportacao)
+                        TRIM(selimp_id) AS selimp,
+                        data_exportacao::text AS data,
+                        bateria_percentual::float8 AS pct,
+                        bateria_desatualizada AS desat
+                   FROM ipt_dados_bateria
+                  WHERE selimp_id IS NOT NULL AND TRIM(selimp_id) <> ''
+                    AND data_exportacao >= (CURRENT_DATE - 35)
+                  ORDER BY TRIM(selimp_id), data_exportacao DESC, updated_at DESC, id DESC`,
+              );
+              for (const r of rows.rows) {
+                const selimp = String(r.selimp ?? "").trim();
+                if (!selimp) continue;
+                const list = bateriaPorDiaMap.get(selimp) ?? [];
+                list.push({
+                  data: String(r.data).slice(0, 10),
+                  percentual: r.pct == null ? null : Number(r.pct),
+                  desatualizada: Boolean(r.desat),
+                });
+                bateriaPorDiaMap.set(selimp, list);
+              }
+            } catch {
+              /* bateria por dia é opcional */
+            }
+          })(),
         ]);
 
         const modules = result.rows.map((r) => {
@@ -2228,6 +2259,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
             diasOff: Number(r.dias_off ?? 0),
             diasOffConsecutivos: offStreakMap.get(String(r.modulo_selimp ?? "").trim()) ?? 0,
             produtividade: Number(r.produtividade_bateria ?? 0),
+            bateriaPorDia: bateriaPorDiaMap.get(String(r.modulo_selimp ?? "").trim()) ?? [],
           };
         });
 

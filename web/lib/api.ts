@@ -518,6 +518,8 @@ export interface IptModuloBateriaModule {
   /** Streak mais recente de exportações OFF consecutivas (de ipt_dados_bateria). */
   diasOffConsecutivos?: number;
   produtividade: number;
+  /** Leitura de bateria por dia (últimos ~35 dias) para casar com os dias de execução. */
+  bateriaPorDia?: { data: string; percentual: number | null; desatualizada: boolean }[];
 }
 
 // ===== Trocas e manutenções de bateria (página Bateria) =====
@@ -1144,7 +1146,7 @@ export const apiService = {
     items: {
       selimp: string;
       setor?: string;
-      sucesso: boolean;
+      sucesso?: boolean;
       percentualEntrada?: number;
       dataTroca: string;
       ultimaComunicacao: string;
