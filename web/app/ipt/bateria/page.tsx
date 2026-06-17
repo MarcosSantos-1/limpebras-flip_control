@@ -509,6 +509,15 @@ function xlsxNumber(value: number | null | undefined, decimals = 1): number | st
   return Number(Number(value).toFixed(decimals));
 }
 
+function compareNumberDesc(a: number | null | undefined, b: number | null | undefined): number {
+  const av = a == null || !Number.isFinite(Number(a)) ? null : Number(a);
+  const bv = b == null || !Number.isFinite(Number(b)) ? null : Number(b);
+  if (av == null && bv == null) return 0;
+  if (av == null) return 1;
+  if (bv == null) return -1;
+  return bv - av;
+}
+
 function exportTrocasBateriaXlsx(
   modules: ModuleData[],
   options: {
@@ -541,8 +550,8 @@ function exportTrocasBateriaXlsx(
     `Trocas sem sucesso (${periodLabel})`,
     `Agendadas (${periodLabel})`,
     `Duração Bat. (${periodLabel})`,
-    "Execução média 90d (%)",
-    "Registros execução 90d",
+    "Execução média SELIMP 60d (%)",
+    "Execução média SELIMP 30d (%)",
     "Produtividade bateria (%)",
     "Dias ON",
     "Dias OFF",
@@ -559,7 +568,6 @@ function exportTrocasBateriaXlsx(
     const history = trocaHistoryOf(m, options.records[m.numeroSelimp], options.history[m.numeroSelimp]);
     const concluidasPeriodo = history.filter((h) => h.status === "concluida" && trocaInPeriod(h, options.period));
     const agendadasPeriodo = history.filter((h) => h.status === "agendada" && trocaInPeriod(h, options.period));
-    const exec90 = execucaoSelimpHistoryOf(m, 999, 90);
     const manut = options.manutRecords[m.numeroSelimp];
     const duracao = average(duracoesBateriaAtualizada(m, history, options.period));
     return [
@@ -582,8 +590,8 @@ function exportTrocasBateriaXlsx(
       concluidasPeriodo.filter((h) => h.sucesso === false).length,
       agendadasPeriodo.length,
       duracao ?? "",
-      xlsxNumber(mediaExecucaoSelimp(m, 90), 1),
-      exec90.length,
+      xlsxNumber(mediaExecucaoSelimp(m, 60), 1),
+      xlsxNumber(mediaExecucaoSelimp(m, 30), 1),
       xlsxNumber(m.produtividade, 0),
       m.diasOn,
       m.diasOff,
@@ -654,7 +662,7 @@ function exportTrocasBateriaXlsx(
     ["Período selecionado", periodLabel],
     ["Módulos exportados", modules.length],
     ["Eventos de troca exportados", trocaRows.length],
-    ["Execução média", "Últimos 90 dias, percentual somente"],
+    ["Execução média SELIMP", "Últimos 60 e 30 dias, percentual somente"],
     ["Exportado em", new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })],
   ]);
   metaSheet["!cols"] = [{ wch: 28 }, { wch: 48 }];
@@ -736,7 +744,8 @@ function average(values: number[]): number | null {
 
 function periodStartDate(period: string, now = new Date()): Date | null {
   if (period === "all") return null;
-  const days = period === "7d" ? 7 : period === "90d" ? 90 : 30;
+  const match = /^(\d+)d$/.exec(period);
+  const days = match ? Number(match[1]) : 30;
   const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   start.setDate(start.getDate() - days);
   return start;
@@ -881,7 +890,7 @@ function mediaExecucaoSelimp(m: ModuleData, days = 30): number | null {
     .map((item) => item.percentual)
     .filter((value) => Number.isFinite(value));
   if (vals.length > 0) return Math.round((vals.reduce((sum, value) => sum + value, 0) / vals.length) * 10) / 10;
-  return days >= 90 && m.produtividadeExecucao != null ? Math.round(m.produtividadeExecucao * 10) / 10 : null;
+  return days >= 60 && m.produtividadeExecucao != null ? Math.round(m.produtividadeExecucao * 10) / 10 : null;
 }
 
 /** Leitura de bateria do módulo numa data exata (yyyy-MM-dd); null quando não houver leitura. */
@@ -1254,8 +1263,8 @@ export default function BateriaDashboardPage() {
       result = result.filter((m) => isMaintenanceSignalStatus(m.statusSinalGeral));
     }
 
-    if (batteryFilter === "critico") result = result.filter((m) => m.bateriaPercentual < 20);
-    else if (batteryFilter === "baixo") result = result.filter((m) => m.bateriaPercentual >= 20 && m.bateriaPercentual < 50);
+    if (batteryFilter === "critico") result = result.filter((m) => m.bateriaPercentual <= 20);
+    else if (batteryFilter === "baixo") result = result.filter((m) => m.bateriaPercentual > 20 && m.bateriaPercentual < 50);
     else if (batteryFilter === "operacional") result = result.filter((m) => m.bateriaPercentual >= 50 && m.bateriaPercentual <= 80);
     else if (batteryFilter === "cheia") result = result.filter((m) => m.bateriaPercentual > 80);
 
@@ -1264,9 +1273,25 @@ export default function BateriaDashboardPage() {
     } else if (statusFilter === "atencao") {
       result = result.filter((m) => m.produtividade >= 20 && m.produtividade < 40);
     } else if (statusFilter === "alerta") {
-      result = result.filter((m) => m.produtividade >= 40 && m.produtividade <= 60);
+      result = result.filter((m) => m.produtividade >= 40 && m.produtividade < 60);
     } else if (statusFilter === "alta") {
-      result = result.filter((m) => m.produtividade > 60);
+      result = result.filter((m) => m.produtividade >= 60);
+    }
+
+    if (batteryFilter !== "all" || statusFilter !== "all") {
+      const sorted = [...result];
+      sorted.sort((a, b) => {
+        const primary = statusFilter !== "all"
+          ? compareNumberDesc(a.produtividade, b.produtividade)
+          : compareNumberDesc(a.bateriaPercentual, b.bateriaPercentual);
+        if (primary !== 0) return primary;
+        const secondary = statusFilter !== "all"
+          ? compareNumberDesc(a.bateriaPercentual, b.bateriaPercentual)
+          : compareNumberDesc(a.produtividade, b.produtividade);
+        if (secondary !== 0) return secondary;
+        return a.numeroSelimp.localeCompare(b.numeroSelimp, "pt-BR");
+      });
+      return sorted;
     }
 
     return result;
@@ -3573,8 +3598,8 @@ export default function BateriaDashboardPage() {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="all">Todas</SelectItem>
-                          <SelectItem value="critico">Crítico (&lt; 20%)</SelectItem>
-                          <SelectItem value="baixo">Baixo (20% - 50%)</SelectItem>
+                          <SelectItem value="critico">Crítico (&lt;= 20%)</SelectItem>
+                          <SelectItem value="baixo">Baixo (21% - 49%)</SelectItem>
                           <SelectItem value="operacional">Operacional (50% - 80%)</SelectItem>
                           <SelectItem value="cheia">Cheia (&gt; 80%)</SelectItem>
                         </SelectContent>
@@ -3582,7 +3607,7 @@ export default function BateriaDashboardPage() {
                     </div>
                     <div className="space-y-1">
                       <p className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
-                        <ShieldAlert className="h-3.5 w-3.5" /> Produtividade Geral
+                        <ShieldAlert className="h-3.5 w-3.5" /> Produtividade da Bateria
                       </p>
                       <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setCurrentPage(1); }}>
                         <SelectTrigger className="w-full">
@@ -3592,9 +3617,9 @@ export default function BateriaDashboardPage() {
                         <SelectContent>
                           <SelectItem value="all">Todos</SelectItem>
                           <SelectItem value="baixa">Baixa (&lt; 20%)</SelectItem>
-                          <SelectItem value="atencao">Atenção (20% - 40%)</SelectItem>
-                          <SelectItem value="alerta">Alerta (40% - 60%)</SelectItem>
-                          <SelectItem value="alta">Alta (&gt; 60%)</SelectItem>
+                          <SelectItem value="atencao">Atenção (20% - 39%)</SelectItem>
+                          <SelectItem value="alerta">Alerta (40% - 59%)</SelectItem>
+                          <SelectItem value="alta">Alta (60%+)</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
