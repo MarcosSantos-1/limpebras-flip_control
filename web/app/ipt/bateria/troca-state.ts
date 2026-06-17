@@ -87,6 +87,31 @@ function prependHistory(history: TrocaHistoryMap, item: TrocaHistoryRecord): Tro
   };
 }
 
+function upsertScheduledHistory(history: TrocaHistoryMap, item: TrocaHistoryRecord): TrocaHistoryMap {
+  const current = history[item.selimp] ?? [];
+  const previous = current.find((h) => h.status === "agendada");
+  const scheduled: TrocaHistoryRecord = {
+    ...previous,
+    ...item,
+    id: previous?.id ?? item.id,
+    dataPrimeiroAgendamento:
+      previous?.dataPrimeiroAgendamento ?? previous?.dataAgendada ?? item.dataPrimeiroAgendamento ?? item.dataAgendada,
+    createdAt: previous?.createdAt ?? item.createdAt,
+  };
+  return {
+    ...history,
+    [item.selimp]: [scheduled, ...current.filter((h) => h.status !== "agendada")],
+  };
+}
+
+function removeScheduledHistory(history: TrocaHistoryMap, selimp: string): TrocaHistoryMap {
+  const current = history[selimp] ?? [];
+  return {
+    ...history,
+    [selimp]: current.filter((h) => h.status !== "agendada"),
+  };
+}
+
 // ===== Hook =====
 
 export interface AgendarInput {
@@ -124,19 +149,26 @@ export function useTrocaState() {
     const nextRecords = { ...cache.records };
     let nextHistory = cache.history;
     for (const it of list) {
+      const previous = nextRecords[it.selimp];
+      const dataPrimeiroAgendamento =
+        previous?.status === "agendada"
+          ? previous.dataPrimeiroAgendamento ?? previous.dataAgendada ?? it.dataAgendada
+          : it.dataAgendada;
       nextRecords[it.selimp] = {
-        ...nextRecords[it.selimp],
+        ...previous,
         selimp: it.selimp,
         setor: it.setor,
         status: "agendada",
         dataAgendada: it.dataAgendada,
+        dataPrimeiroAgendamento,
       };
-      nextHistory = prependHistory(nextHistory, {
+      nextHistory = upsertScheduledHistory(nextHistory, {
         id: nowLocalId("agendada", it.selimp),
         selimp: it.selimp,
         setor: it.setor,
         status: "agendada",
         dataAgendada: it.dataAgendada,
+        dataPrimeiroAgendamento,
         tipoTroca: it.tipoTroca,
         createdAt: new Date().toISOString(),
       });
@@ -164,7 +196,7 @@ export function useTrocaState() {
         dataTroca: it.dataTroca,
         ultimaComunicacao: it.ultimaComunicacao,
       };
-      nextHistory = prependHistory(nextHistory, {
+      nextHistory = prependHistory(removeScheduledHistory(nextHistory, it.selimp), {
         id: nowLocalId("concluida", it.selimp),
         selimp: it.selimp,
         setor: it.setor ?? nextRecords[it.selimp]?.setor,
@@ -196,7 +228,7 @@ export function useTrocaState() {
   const remover = useCallback((selimp: string) => {
     const nextRecords = { ...cache.records };
     delete nextRecords[selimp];
-    commitLocal({ ...cache, records: nextRecords });
+    commitLocal({ ...cache, records: nextRecords, history: removeScheduledHistory(cache.history, selimp) });
     apiService.removerBateriaTroca(selimp).catch((err) => {
       console.error("Erro ao remover troca", err);
       reloadFromApi();

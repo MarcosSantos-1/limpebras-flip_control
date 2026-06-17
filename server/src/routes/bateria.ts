@@ -20,6 +20,7 @@ export interface TrocaRecordDto {
   setor?: string;
   status: "agendada" | "concluida";
   dataAgendada?: string;
+  dataPrimeiroAgendamento?: string;
   sucesso?: boolean;
   percentualEntrada?: number;
   dataTroca?: string;
@@ -47,6 +48,7 @@ interface TrocaRow {
   setor: string | null;
   status: string;
   data_agendada: string | null;
+  data_primeiro_agendamento: string | null;
   sucesso: boolean | null;
   percentual_entrada: string | null;
   data_troca: string | null;
@@ -149,6 +151,7 @@ function mapTroca(r: TrocaRow): TrocaRecordDto {
     setor: r.setor ?? undefined,
     status: r.status === "concluida" ? "concluida" : "agendada",
     dataAgendada: r.data_agendada ?? undefined,
+    dataPrimeiroAgendamento: r.data_primeiro_agendamento ?? undefined,
     sucesso: r.sucesso ?? undefined,
     percentualEntrada: r.percentual_entrada != null ? Number(r.percentual_entrada) : undefined,
     dataTroca: r.data_troca ?? undefined,
@@ -221,6 +224,7 @@ function currentToHistory(r: TrocaRow): TrocaHistoryDto {
 const SELECT_TROCA = `
   SELECT modulo_selimp, setor, status,
          data_agendada::text AS data_agendada,
+         data_primeiro_agendamento::text AS data_primeiro_agendamento,
          sucesso, percentual_entrada,
          data_troca::text AS data_troca,
          ultima_comunicacao::text AS ultima_comunicacao
@@ -231,6 +235,7 @@ const SELECT_TROCA = `
 const SELECT_TROCA_EVENTO = `
   SELECT e.id, e.modulo_selimp, e.setor, e.status, e.tipo_troca,
          e.data_agendada::text AS data_agendada,
+         e.data_primeiro_agendamento::text AS data_primeiro_agendamento,
          e.sucesso, e.percentual_entrada,
          e.data_troca::text AS data_troca,
          e.ultima_comunicacao::text AS ultima_comunicacao,
@@ -255,8 +260,8 @@ const SELECT_TROCA_EVENTO = `
       SELECT d.bateria_percentual, d.bateria_raw, d.bateria_desatualizada, d.status_comunicacao, d.ultima_comunicacao
         FROM ipt_dados_bateria d
        WHERE d.selimp_id = e.modulo_selimp
-         AND e.data_troca IS NOT NULL
-         AND d.data_exportacao < e.data_troca
+         AND COALESCE(e.data_primeiro_agendamento, e.data_agendada, e.data_troca) IS NOT NULL
+         AND d.data_exportacao < COALESCE(e.data_primeiro_agendamento, e.data_agendada, e.data_troca)
        ORDER BY d.data_exportacao DESC
        LIMIT 1
     ) antes ON TRUE
@@ -265,7 +270,7 @@ const SELECT_TROCA_EVENTO = `
         FROM ipt_dados_bateria d
        WHERE d.selimp_id = e.modulo_selimp
          AND e.data_troca IS NOT NULL
-         AND d.data_exportacao > e.data_troca
+         AND d.data_exportacao >= e.data_troca
        ORDER BY d.data_exportacao ASC
        LIMIT 1
     ) depois ON TRUE`;
@@ -307,11 +312,30 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
       pool.query<TrocaEventoRow>(`${SELECT_TROCA_EVENTO} ORDER BY e.modulo_selimp, COALESCE(e.data_troca, e.data_agendada) DESC NULLS LAST, e.created_at DESC, e.id DESC`),
     ]);
     const records: Record<string, TrocaRecordDto> = {};
+    const currentRows: Record<string, TrocaRow> = {};
     const history: Record<string, TrocaHistoryDto[]> = {};
-    for (const r of res.rows) records[r.modulo_selimp] = mapTroca(r);
+    for (const r of res.rows) {
+      records[r.modulo_selimp] = mapTroca(r);
+      currentRows[r.modulo_selimp] = r;
+    }
     for (const r of eventos.rows) {
       if (!history[r.modulo_selimp]) history[r.modulo_selimp] = [];
       history[r.modulo_selimp].push(mapTrocaHistory(r));
+    }
+    // Um módulo pode ter legado com vários reagendamentos append-only. Na API, expomos
+    // apenas o agendamento aberto atual; quando a troca já foi concluída, o agendamento
+    // aberto deixa de aparecer no histórico.
+    for (const [selimp, items] of Object.entries(history)) {
+      const rec = records[selimp];
+      const concluidas = items.filter((h) => h.status === "concluida");
+      if (rec?.status === "agendada") {
+        const agendada = items.find((h) => h.status === "agendada") ?? currentToHistory(currentRows[selimp]);
+        history[selimp] = agendada
+          ? [{ ...agendada, dataAgendada: rec.dataAgendada, dataPrimeiroAgendamento: rec.dataPrimeiroAgendamento }, ...concluidas]
+          : concluidas;
+      } else {
+        history[selimp] = concluidas;
+      }
     }
     // Estado corrente: sucesso = derivado do evento concluído mais recente (history vem em ordem desc).
     for (const [selimp, rec] of Object.entries(records)) {
@@ -347,20 +371,58 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
     try {
       await client.query("BEGIN");
       for (const it of valid) {
+        const agendamentoAtual = await client.query<{ primeiro: string | null; criado_em: string | null }>(
+          `SELECT
+              COALESCE(
+                (SELECT MIN(COALESCE(data_primeiro_agendamento, data_agendada))::text
+                   FROM bateria_trocas_eventos
+                  WHERE modulo_selimp = $1
+                    AND status = 'agendada'),
+                (SELECT COALESCE(data_primeiro_agendamento, data_agendada)::text
+                   FROM bateria_trocas
+                  WHERE modulo_selimp = $1
+                    AND status = 'agendada'),
+                $2::date::text
+              ) AS primeiro,
+              (SELECT MIN(created_at)::text
+                 FROM bateria_trocas_eventos
+                WHERE modulo_selimp = $1
+                  AND status = 'agendada') AS criado_em`,
+          [it.selimp, it.dataAgendada],
+        );
+        const primeiroAgendamento = agendamentoAtual.rows[0]?.primeiro ?? it.dataAgendada;
+        const criadoEm = agendamentoAtual.rows[0]?.criado_em ?? null;
         await client.query(
-          `INSERT INTO bateria_trocas (modulo_selimp, setor, status, data_agendada, updated_at)
-           VALUES ($1, $2, 'agendada', $3::date, NOW())
+          `INSERT INTO bateria_trocas (modulo_selimp, setor, status, data_agendada, data_primeiro_agendamento, updated_at)
+           VALUES ($1, $2, 'agendada', $3::date, $4::date, NOW())
            ON CONFLICT (modulo_selimp) DO UPDATE SET
              setor = COALESCE(EXCLUDED.setor, bateria_trocas.setor),
              status = 'agendada',
              data_agendada = EXCLUDED.data_agendada,
+             data_primeiro_agendamento = CASE
+               WHEN bateria_trocas.status = 'agendada' THEN COALESCE(
+                 bateria_trocas.data_primeiro_agendamento,
+                 bateria_trocas.data_agendada,
+                 EXCLUDED.data_primeiro_agendamento
+               )
+               ELSE EXCLUDED.data_primeiro_agendamento
+             END,
              updated_at = NOW()`,
-          [it.selimp, it.setor, it.dataAgendada]
+          [it.selimp, it.setor, it.dataAgendada, primeiroAgendamento]
         );
         await client.query(
-          `INSERT INTO bateria_trocas_eventos (modulo_selimp, setor, status, tipo_troca, data_agendada)
-           VALUES ($1, $2, 'agendada', $3, $4::date)`,
-          [it.selimp, it.setor, it.tipoTroca, it.dataAgendada]
+          `DELETE FROM bateria_trocas_eventos
+            WHERE modulo_selimp = $1
+              AND status = 'agendada'`,
+          [it.selimp],
+        );
+        await client.query(
+          `INSERT INTO bateria_trocas_eventos (
+             modulo_selimp, setor, status, tipo_troca, data_agendada,
+             data_primeiro_agendamento, created_at
+           )
+           VALUES ($1, $2, 'agendada', $3, $4::date, $5::date, COALESCE($6::timestamptz, NOW()))`,
+          [it.selimp, it.setor, it.tipoTroca, it.dataAgendada, primeiroAgendamento, criadoEm]
         );
       }
       await client.query("COMMIT");
@@ -425,6 +487,37 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
     try {
       await client.query("BEGIN");
       for (const it of valid) {
+        const agendamento = await client.query<{
+          data_agendada: string | null;
+          data_primeiro_agendamento: string | null;
+        }>(
+          `SELECT
+              COALESCE(bt.data_agendada::text, ev.data_agendada::text) AS data_agendada,
+              COALESCE(
+                bt.data_primeiro_agendamento::text,
+                ev.data_primeiro_agendamento::text,
+                ev.data_agendada::text,
+                bt.data_agendada::text,
+                $2::date::text
+              ) AS data_primeiro_agendamento
+             FROM (SELECT 1) base
+             LEFT JOIN bateria_trocas bt
+               ON bt.modulo_selimp = $1
+              AND bt.status = 'agendada'
+             LEFT JOIN LATERAL (
+               SELECT data_agendada, data_primeiro_agendamento
+                 FROM bateria_trocas_eventos
+                WHERE modulo_selimp = $1
+                  AND status = 'agendada'
+                ORDER BY COALESCE(data_primeiro_agendamento, data_agendada) ASC NULLS LAST,
+                         created_at ASC,
+                         id ASC
+                LIMIT 1
+             ) ev ON TRUE`,
+          [it.selimp, it.dataTroca],
+        );
+        const dataAgendada = agendamento.rows[0]?.data_agendada ?? null;
+        const dataPrimeiroAgendamento = agendamento.rows[0]?.data_primeiro_agendamento ?? it.dataTroca;
         // Última comunicação automática: snapshot logo após a troca; senão o mais recente.
         if (!it.ultimaComunicacao && it.dataTroca) {
           const auto = await client.query<{ u: string | null }>(
@@ -441,30 +534,50 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
           it.ultimaComunicacao = auto.rows[0]?.u ?? null;
         }
         await client.query(
-          `INSERT INTO bateria_trocas (modulo_selimp, setor, status, sucesso, percentual_entrada, data_troca, ultima_comunicacao, updated_at)
-           VALUES ($1, $2, 'concluida', $3, $4, $5::date, $6::date, NOW())
+          `INSERT INTO bateria_trocas (
+             modulo_selimp, setor, status, data_agendada, data_primeiro_agendamento,
+             sucesso, percentual_entrada, data_troca, ultima_comunicacao, updated_at
+           )
+           VALUES ($1, $2, 'concluida', $3::date, $4::date, $5, $6, $7::date, $8::date, NOW())
            ON CONFLICT (modulo_selimp) DO UPDATE SET
              setor = COALESCE(EXCLUDED.setor, bateria_trocas.setor),
              status = 'concluida',
+             data_agendada = COALESCE(bateria_trocas.data_agendada, EXCLUDED.data_agendada),
+             data_primeiro_agendamento = COALESCE(
+               bateria_trocas.data_primeiro_agendamento,
+               EXCLUDED.data_primeiro_agendamento
+             ),
              sucesso = EXCLUDED.sucesso,
              percentual_entrada = EXCLUDED.percentual_entrada,
              data_troca = EXCLUDED.data_troca,
              ultima_comunicacao = EXCLUDED.ultima_comunicacao,
              updated_at = NOW()`,
-          [it.selimp, it.setor, it.sucesso, it.percentualEntrada, it.dataTroca, it.ultimaComunicacao]
+          [
+            it.selimp,
+            it.setor,
+            dataAgendada,
+            dataPrimeiroAgendamento,
+            it.sucesso,
+            it.percentualEntrada,
+            it.dataTroca,
+            it.ultimaComunicacao,
+          ]
         );
         await client.query(
           `INSERT INTO bateria_trocas_eventos (
-             modulo_selimp, setor, status, tipo_troca, sucesso, percentual_entrada,
+             modulo_selimp, setor, status, tipo_troca, data_agendada,
+             data_primeiro_agendamento, sucesso, percentual_entrada,
              data_troca, ultima_comunicacao, bateria_antes_raw,
              bateria_antes_percentual, status_bateria_antes,
              bateria_depois_percentual, status_sinal_depois
            )
-           VALUES ($1, $2, 'concluida', $3, $4, $5, $6::date, $7::date, $8, $9, $10, $11, $12)`,
+           VALUES ($1, $2, 'concluida', $3, $4::date, $5::date, $6, $7, $8::date, $9::date, $10, $11, $12, $13, $14)`,
           [
             it.selimp,
             it.setor,
             it.tipoTroca,
+            dataAgendada,
+            dataPrimeiroAgendamento,
             it.sucesso,
             it.percentualEntrada,
             it.dataTroca,
@@ -475,6 +588,12 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
             it.bateriaDepoisPercentual ?? it.percentualEntrada,
             it.statusSinalDepois,
           ]
+        );
+        await client.query(
+          `DELETE FROM bateria_trocas_eventos
+            WHERE modulo_selimp = $1
+              AND status = 'agendada'`,
+          [it.selimp],
         );
       }
       await client.query("COMMIT");
@@ -490,7 +609,18 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.delete<{ Params: { selimp: string } }>("/bateria/trocas/:selimp", async (request, reply) => {
     const selimp = cleanSelimp(request.params.selimp);
     if (!selimp) return reply.code(400).send({ detail: "selimp é obrigatório" });
-    await pool.query(`DELETE FROM bateria_trocas WHERE modulo_selimp = $1`, [selimp]);
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(`DELETE FROM bateria_trocas WHERE modulo_selimp = $1 AND status = 'agendada'`, [selimp]);
+      await client.query(`DELETE FROM bateria_trocas_eventos WHERE modulo_selimp = $1 AND status = 'agendada'`, [selimp]);
+      await client.query("COMMIT");
+    } catch (err) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
     return { ok: true };
   });
 

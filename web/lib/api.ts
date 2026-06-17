@@ -530,6 +530,8 @@ export interface BateriaTrocaRecord {
   status: "agendada" | "concluida";
   /** yyyy-MM-dd */
   dataAgendada?: string;
+  /** yyyy-MM-dd */
+  dataPrimeiroAgendamento?: string;
   sucesso?: boolean;
   percentualEntrada?: number;
   /** yyyy-MM-dd */

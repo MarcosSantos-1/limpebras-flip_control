@@ -1169,12 +1169,14 @@ export default function BateriaDashboardPage() {
   // Modal de ações do agendamento (avulso): concluir ou reagendar.
   const [agendadoModule, setAgendadoModule] = useState<ModuleData | null>(null);
   const [agendadoDate, setAgendadoDate] = useState("");
+  const [agendadoReagendarOpen, setAgendadoReagendarOpen] = useState(false);
   const [concluirModule, setConcluirModule] = useState<ModuleData | null>(null);
   // Conclusão: só a data da troca; bateria/status/sucesso são automáticos.
   const [concluirDate, setConcluirDate] = useState("");
   const [bulkAgendarOpen, setBulkAgendarOpen] = useState(false);
   const [bulkAgendarDate, setBulkAgendarDate] = useState("");
   const [bulkAgendarMode, setBulkAgendarMode] = useState<"agendar" | "reagendar">("agendar");
+  const [bulkCancelarTrocaOpen, setBulkCancelarTrocaOpen] = useState(false);
   const [bulkConcluirOpen, setBulkConcluirOpen] = useState(false);
   const [bulkConcluirDate, setBulkConcluirDate] = useState("");
   const [bulkManutOpen, setBulkManutOpen] = useState(false);
@@ -1685,22 +1687,26 @@ export default function BateriaDashboardPage() {
     () => selectedModules.filter((m) => isOpenManutStatus(manutStatusForModule(m))),
     [selectedModules, manutStatusForModule],
   );
+  const selectedAgendadas = useMemo(
+    () => selectedModules.filter((m) => troca.records[m.numeroSelimp]?.status === "agendada"),
+    [selectedModules, troca.records],
+  );
   const selectedOnlyOpenManut = selectedModules.length > 0 && selectedOpenManutModules.length === selectedModules.length;
   /** Todos os selecionados já estão agendados → ação de troca vira "Concluir". */
   const selectedAllAgendadas =
     selectedModules.length > 0 &&
-    selectedModules.every((m) => troca.records[m.numeroSelimp]?.status === "agendada");
+    selectedAgendadas.length === selectedModules.length;
 
   // ===== Handlers de agendamento / conclusão =====
   function openConcluir(m: ModuleData) {
-    const rec = troca.records[m.numeroSelimp];
-    setConcluirDate(rec?.dataTroca ?? isoToday());
+    setConcluirDate(isoToday());
     setConcluirModule(m);
   }
 
   function openAgendado(m: ModuleData) {
     const rec = troca.records[m.numeroSelimp];
     setAgendadoDate(rec?.dataAgendada ?? isoToday());
+    setAgendadoReagendarOpen(false);
     setAgendadoModule(m);
   }
 
@@ -1724,7 +1730,22 @@ export default function BateriaDashboardPage() {
       dataAgendada: agendadoDate,
       tipoTroca: motivoFromModule(agendadoModule),
     });
+    setAgendadoReagendarOpen(false);
     setAgendadoModule(null);
+  }
+
+  function confirmCancelarTroca() {
+    if (!agendadoModule) return;
+    troca.remover(agendadoModule.numeroSelimp);
+    setAgendadoReagendarOpen(false);
+    setAgendadoModule(null);
+  }
+
+  function confirmBulkCancelarTroca() {
+    if (selectedAgendadas.length === 0) return;
+    for (const m of selectedAgendadas) troca.remover(m.numeroSelimp);
+    setBulkCancelarTrocaOpen(false);
+    toggleSelMode();
   }
 
   function confirmConcluir() {
@@ -2538,6 +2559,16 @@ export default function BateriaDashboardPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       {selMode && selected.size > 0 && (
                         <>
+                          {selectedAgendadas.length > 0 && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-9 gap-1.5 border-red-500/50 text-red-600 hover:bg-red-500/10 dark:text-red-400"
+                              onClick={() => setBulkCancelarTrocaOpen(true)}
+                            >
+                              <XCircle className="h-4 w-4" /> Cancelar Troca ({selectedAgendadas.length})
+                            </Button>
+                          )}
                           {/* Troca: "Concluir" + "Reagendar" substituem "Agendar" quando todos já estão agendados */}
                           {selectedAllAgendadas ? (
                             <>
@@ -2592,22 +2623,24 @@ export default function BateriaDashboardPage() {
                           )}
                         </>
                       )}
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-9 gap-1.5"
-                        disabled={trocasModules.length === 0}
-                        onClick={() =>
-                          exportTrocasBateriaXlsx(trocasModules, {
-                            records: troca.records,
-                            history: troca.history,
-                            manutRecords: moduloManut.records,
-                            period: trocasPeriod,
-                          })
-                        }
-                      >
-                        <Download className="h-4 w-4" /> Exportar Excel
-                      </Button>
+                      {!selMode && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-9 gap-1.5"
+                          disabled={trocasModules.length === 0}
+                          onClick={() =>
+                            exportTrocasBateriaXlsx(trocasModules, {
+                              records: troca.records,
+                              history: troca.history,
+                              manutRecords: moduloManut.records,
+                              period: trocasPeriod,
+                            })
+                          }
+                        >
+                          <Download className="h-4 w-4" /> Exportar Excel
+                        </Button>
+                      )}
                       <Button
                         size="sm"
                         variant="outline"
@@ -3885,7 +3918,7 @@ export default function BateriaDashboardPage() {
 
         {/* ===== Modal de Agendamento ===== */}
         <Dialog open={!!agendarModule} onOpenChange={(o) => !o && setAgendarModule(null)}>
-          <DialogContent className="max-w-md">
+          <DialogContent className="max-w-xl">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 text-base">
                 <CalendarPlus className="h-5 w-5 text-emerald-500" />
@@ -3921,42 +3954,64 @@ export default function BateriaDashboardPage() {
         </Dialog>
 
         {/* ===== Modal de Ações do Agendamento (avulso): Concluir ou Reagendar ===== */}
-        <Dialog open={!!agendadoModule} onOpenChange={(o) => !o && setAgendadoModule(null)}>
-          <DialogContent className="max-w-md">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2 text-base">
-                <Clock className="h-5 w-5 text-amber-500" />
-                Troca agendada
+        <Dialog
+          open={!!agendadoModule}
+          onOpenChange={(o) => {
+            if (o) return;
+            setAgendadoReagendarOpen(false);
+            setAgendadoModule(null);
+          }}
+        >
+          <DialogContent className="w-[calc(100vw-2rem)] max-w-2xl overflow-hidden">
+            <DialogHeader className="min-w-0 pr-6">
+              <DialogTitle className="flex min-w-0 items-center gap-2 text-base">
+                <Clock className="h-5 w-5 shrink-0 text-amber-500" />
+                <span className="min-w-0 truncate">Troca agendada</span>
               </DialogTitle>
-              <DialogDescription>
+              <DialogDescription className="min-w-0 break-words">
                 {agendadoModule?.setor} · {agendadoModule?.numeroSelimp}
               </DialogDescription>
             </DialogHeader>
             {agendadoModule && (
-              <div className="space-y-4">
-                <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2.5 text-sm">
-                  Agendada para <strong className="tabular-nums">{fmtIsoBr(troca.records[agendadoModule.numeroSelimp]?.dataAgendada)}</strong>. Conclua a troca ou escolha uma nova data de agendamento.
+              <div className="min-w-0 space-y-4">
+                <div className="min-w-0 break-words rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2.5 text-sm">
+                  Agendada para <strong className="tabular-nums">{fmtIsoBr(troca.records[agendadoModule.numeroSelimp]?.dataAgendada)}</strong>. Conclua, reagende ou cancele esta troca.
                 </div>
-                <div>
-                  <label className="mb-1.5 block text-sm font-medium text-foreground">Nova data de agendamento</label>
-                  <DatePicker value={agendadoDate} onChange={setAgendadoDate} />
-                </div>
+                {agendadoReagendarOpen && (
+                  <div className="min-w-0">
+                    <label className="mb-1.5 block text-sm font-medium text-foreground">Nova data de agendamento</label>
+                    <DatePicker value={agendadoDate} onChange={setAgendadoDate} />
+                  </div>
+                )}
               </div>
             )}
-            <DialogFooter className="gap-2 sm:justify-between">
+            <DialogFooter className="grid grid-cols-1 gap-2 sm:grid-cols-3 sm:space-x-0">
               <Button
                 variant="outline"
-                className="border-amber-500/50 text-amber-600 hover:bg-amber-500/10 dark:text-amber-400"
-                disabled={!agendadoDate}
-                onClick={confirmReagendar}
+                className="w-full min-w-0 justify-center whitespace-nowrap border-red-500/50 px-3 text-red-600 hover:bg-red-500/10 dark:text-red-400"
+                onClick={confirmCancelarTroca}
               >
-                <RefreshCw className="mr-1.5 h-4 w-4" /> Reagendar
+                <XCircle className="mr-1.5 h-4 w-4 shrink-0" /> <span className="truncate">Cancelar troca</span>
               </Button>
               <Button
-                className="bg-sky-600 text-white hover:bg-sky-700"
-                onClick={() => { const m = agendadoModule; setAgendadoModule(null); if (m) openConcluir(m); }}
+                variant="outline"
+                className="w-full min-w-0 justify-center whitespace-nowrap border-amber-500/50 px-3 text-amber-600 hover:bg-amber-500/10 dark:text-amber-400"
+                disabled={agendadoReagendarOpen && !agendadoDate}
+                onClick={() => {
+                  if (!agendadoReagendarOpen) {
+                    setAgendadoReagendarOpen(true);
+                    return;
+                  }
+                  confirmReagendar();
+                }}
               >
-                <CalendarCheck2 className="mr-1.5 h-4 w-4" /> Concluir troca
+                <RefreshCw className="mr-1.5 h-4 w-4 shrink-0" /> <span className="truncate">{agendadoReagendarOpen ? "Salvar reagendamento" : "Reagendar"}</span>
+              </Button>
+              <Button
+                className="w-full min-w-0 justify-center whitespace-nowrap bg-sky-600 px-3 text-white hover:bg-sky-700"
+                onClick={() => { const m = agendadoModule; setAgendadoReagendarOpen(false); setAgendadoModule(null); if (m) openConcluir(m); }}
+              >
+                <CalendarCheck2 className="mr-1.5 h-4 w-4 shrink-0" /> <span className="truncate">Concluir troca</span>
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -3999,6 +4054,46 @@ export default function BateriaDashboardPage() {
               <Button variant="ghost" onClick={() => setConcluirModule(null)}>Cancelar</Button>
               <Button className="bg-sky-600 text-white hover:bg-sky-700" disabled={!concluirDate} onClick={confirmConcluir}>
                 Registrar conclusão
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ===== Confirmação de cancelamento de trocas em lote ===== */}
+        <Dialog open={bulkCancelarTrocaOpen} onOpenChange={setBulkCancelarTrocaOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-base">
+                <AlertTriangle className="h-5 w-5 text-red-500" />
+                Cancelar trocas agendadas
+              </DialogTitle>
+              <DialogDescription>
+                Esta ação remove o agendamento de troca dos módulos selecionados.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3">
+              <div className="rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-2 text-sm text-red-700 dark:text-red-300">
+                {selectedAgendadas.length} troca(s) agendada(s) serão canceladas.
+              </div>
+              <div className="max-h-44 overflow-y-auto rounded-lg border border-border/60 bg-muted/20 p-2">
+                <ul className="space-y-1 text-sm">
+                  {selectedAgendadas.map((m) => (
+                    <li key={m.numeroSelimp} className="flex items-center justify-between gap-2">
+                      <span className="truncate font-mono text-xs">{m.setor}</span>
+                      <span className="shrink-0 text-xs text-muted-foreground">{m.numeroSelimp}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+            <DialogFooter className="gap-2">
+              <Button variant="ghost" onClick={() => setBulkCancelarTrocaOpen(false)}>Voltar</Button>
+              <Button
+                className="bg-red-600 text-white hover:bg-red-700"
+                disabled={selectedAgendadas.length === 0}
+                onClick={confirmBulkCancelarTroca}
+              >
+                <XCircle className="mr-1.5 h-4 w-4" /> Cancelar {selectedAgendadas.length}
               </Button>
             </DialogFooter>
           </DialogContent>
