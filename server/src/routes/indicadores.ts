@@ -2031,6 +2031,12 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         const kmMap = new Map<string, number>();
         const pracaMap = new Map<string, string>();
         const offStreakMap = new Map<string, number>();
+        // Métricas de bateria contadas A PARTIR da última troca concluída (ou da instalação, se nunca trocou).
+        // Evita que a contagem absoluta de dias fique sem sentido com o tempo — cada troca "zera" a janela.
+        const trocaMetricsMap = new Map<
+          string,
+          { diasOn: number; diasOff: number; streak: number; produtividade: number; desde: string | null }
+        >();
         // Bateria diária por módulo (últimos ~35 dias) — usado no accordion (bateria por dia da execução).
         const bateriaPorDiaMap = new Map<string, { data: string; percentual: number | null; desatualizada: boolean }[]>();
         let evolucaoProdutividade: { data: string; produtividade: number }[] = [];
@@ -2128,6 +2134,67 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
               /* streak é opcional */
             }
           })(),
+          // Dias ON/OFF, produtividade e streak contados A PARTIR da última troca concluída.
+          (async () => {
+            try {
+              const rows = await pool.query<{
+                selimp: string;
+                dias_on: number;
+                dias_off: number;
+                streak: number;
+                desde: string | null;
+              }>(
+                `WITH troca AS (
+                   SELECT modulo_selimp, MAX(data_troca) AS ult_troca
+                     FROM bateria_trocas
+                    WHERE status = 'concluida' AND data_troca IS NOT NULL
+                    GROUP BY modulo_selimp
+                 ),
+                 cut AS (
+                   SELECT m.modulo_selimp AS selimp, GREATEST(m.data_selimp, t.ult_troca) AS dt
+                     FROM modulo_selimp m
+                     LEFT JOIN troca t ON t.modulo_selimp = m.modulo_selimp
+                 ),
+                 dias AS (
+                   SELECT c.selimp, c.dt, d.data_exportacao,
+                          BOOL_OR(UPPER(TRIM(COALESCE(d.status_comunicacao, ''))) = 'ON') AS is_on
+                     FROM cut c
+                     JOIN ipt_dados_bateria d
+                       ON TRIM(d.selimp_id) = c.selimp
+                      AND (c.dt IS NULL OR d.data_exportacao >= c.dt)
+                    GROUP BY c.selimp, c.dt, d.data_exportacao
+                 ),
+                 ordenado AS (
+                   SELECT selimp, dt, is_on,
+                          SUM(CASE WHEN is_on THEN 1 ELSE 0 END) OVER (
+                            PARTITION BY selimp ORDER BY data_exportacao DESC
+                          ) AS ons_depois
+                     FROM dias
+                 )
+                 SELECT selimp,
+                        MAX(dt)::text AS desde,
+                        COUNT(*) FILTER (WHERE is_on)::int AS dias_on,
+                        COUNT(*) FILTER (WHERE NOT is_on)::int AS dias_off,
+                        COUNT(*) FILTER (WHERE NOT is_on AND ons_depois = 0)::int AS streak
+                   FROM ordenado
+                  GROUP BY selimp`,
+              );
+              for (const r of rows.rows) {
+                const diasOn = Number(r.dias_on ?? 0);
+                const diasOff = Number(r.dias_off ?? 0);
+                const total = diasOn + diasOff;
+                trocaMetricsMap.set(r.selimp, {
+                  diasOn,
+                  diasOff,
+                  streak: Number(r.streak ?? 0),
+                  produtividade: total > 0 ? Math.round((diasOn / total) * 100) : 0,
+                  desde: r.desde ?? null,
+                });
+              }
+            } catch {
+              /* métricas por troca são opcionais (fallback para o snapshot global) */
+            }
+          })(),
           // Série temporal de produtividade das baterias (% ON por data de exportação)
           (async () => {
             try {
@@ -2208,6 +2275,8 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         const modules = result.rows.map((r) => {
           const ultima = r.ultima_comunicacao;
           const statusSinal = String(r.status_sinal_manual ?? r.status_sinal_calculado ?? "");
+          const selimpKey = String(r.modulo_selimp ?? "").trim();
+          const tm = trocaMetricsMap.get(selimpKey);
           const setoresDias = (Array.isArray(r.setores_dias)
             ? (r.setores_dias as { setor?: unknown; dias?: unknown }[])
             : []
@@ -2255,11 +2324,13 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
             statusBateria: String(r.status_bateria ?? ""),
             dataInstalacao: formatDataInstalacaoBr(String(r.data_selimp ?? "")),
             quantidadeTrocas: Number(r.qtd_trocas ?? 0),
-            diasOn: Number(r.dias_on ?? 0),
-            diasOff: Number(r.dias_off ?? 0),
-            diasOffConsecutivos: offStreakMap.get(String(r.modulo_selimp ?? "").trim()) ?? 0,
-            produtividade: Number(r.produtividade_bateria ?? 0),
-            bateriaPorDia: bateriaPorDiaMap.get(String(r.modulo_selimp ?? "").trim()) ?? [],
+            // Contagem a partir da última troca quando disponível; senão, o snapshot global (desde a instalação).
+            diasOn: tm ? tm.diasOn : Number(r.dias_on ?? 0),
+            diasOff: tm ? tm.diasOff : Number(r.dias_off ?? 0),
+            diasOffConsecutivos: tm ? tm.streak : offStreakMap.get(selimpKey) ?? 0,
+            produtividade: tm ? tm.produtividade : Number(r.produtividade_bateria ?? 0),
+            contagemDesde: tm?.desde ?? null,
+            bateriaPorDia: bateriaPorDiaMap.get(selimpKey) ?? [],
           };
         });
 

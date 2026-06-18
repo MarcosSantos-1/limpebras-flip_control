@@ -8,6 +8,8 @@ import {
   Activity,
   AlertTriangle,
   ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
   Battery,
   BatteryCharging,
   Bell,
@@ -148,6 +150,7 @@ interface ModuleData {
   diasOff: number;
   diasOffConsecutivos?: number;
   produtividade: number;
+  contagemDesde?: string | null;
   bateriaPorDia?: BateriaDia[];
 }
 
@@ -313,6 +316,30 @@ function getProductivityColor(value: number) {
   if (value >= 70) return "text-green-500";
   if (value >= 50) return "text-yellow-500";
   return "text-red-500";
+}
+
+/** Cabeçalho clicável com toggle de ordenação (desc → asc → nenhum). */
+function SortToggle({ label, dir, onClick }: { label: string; dir: "asc" | "desc" | null; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "inline-flex items-center gap-1 transition-colors hover:text-foreground",
+        dir ? "font-semibold text-emerald-600 dark:text-emerald-400" : "text-muted-foreground",
+      )}
+      title="Ordenar"
+    >
+      {label}
+      {dir === "desc" ? (
+        <ArrowDown className="h-3.5 w-3.5" />
+      ) : dir === "asc" ? (
+        <ArrowUp className="h-3.5 w-3.5" />
+      ) : (
+        <ArrowUpDown className="h-3 w-3 opacity-40" />
+      )}
+    </button>
+  );
 }
 
 function SetorCell({ value }: { value: string }) {
@@ -1716,6 +1743,17 @@ export default function BateriaDashboardPage() {
     selectedModules.length > 0 &&
     selectedAgendadas.length === selectedModules.length;
 
+  // ===== Ordenação por coluna (Trocas) =====
+  // O dropdown só guarda a recência de troca; as colunas usam o mesmo estado trocasSort.
+  const trocaRecencia =
+    trocasSort === "ultima-troca" || trocasSort === "ultima-troca-asc" ? trocasSort : "default";
+  const colSortDir = (col: "bateria" | "exec" | "cargas"): "asc" | "desc" | null =>
+    trocasSort === `${col}-desc` ? "desc" : trocasSort === `${col}-asc` ? "asc" : null;
+  const cycleColSort = (col: "bateria" | "exec" | "cargas") =>
+    setTrocasSort((prev) =>
+      prev === `${col}-desc` ? `${col}-asc` : prev === `${col}-asc` ? "default" : `${col}-desc`,
+    );
+
   // ===== Handlers de agendamento / conclusão =====
   function openConcluir(m: ModuleData) {
     setConcluirDate(isoToday());
@@ -1948,12 +1986,14 @@ export default function BateriaDashboardPage() {
         data: manutEventoAlertDate(ev),
         descricao: manutEventoDescricao(ev),
       }));
-      return computeAlerta(m, troca.records[m.numeroSelimp], [
-        ...historicoModulo,
-        ...historicoFromManutencao(manut.overrides[m.numeroSelimp]),
-      ]);
+      return computeAlerta(
+        m,
+        troca.records[m.numeroSelimp],
+        [...historicoModulo, ...historicoFromManutencao(manut.overrides[m.numeroSelimp])],
+        troca.history[m.numeroSelimp] ?? [],
+      );
     },
-    [manut.overrides, moduloManut.history, troca.records],
+    [manut.overrides, moduloManut.history, troca.records, troca.history],
   );
 
   const manutStats = useMemo(() => {
@@ -2748,21 +2788,15 @@ export default function BateriaDashboardPage() {
                         <SelectItem value="nao">Sem troca programada</SelectItem>
                       </SelectContent>
                     </Select>
-                    <Select value={trocasSort} onValueChange={setTrocasSort}>
-                      <SelectTrigger className="h-9 w-[180px]">
+                    <Select value={trocaRecencia} onValueChange={setTrocasSort}>
+                      <SelectTrigger className="h-9 w-[200px]">
                         <ArrowUpDown className="mr-1 h-4 w-4 text-muted-foreground" />
-                        <SelectValue placeholder="Ordenar" />
+                        <SelectValue placeholder="Trocas por data" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="default">Ordenar: padrão</SelectItem>
-                        <SelectItem value="ultima-troca">Última troca: recente → antiga</SelectItem>
-                        <SelectItem value="ultima-troca-asc">Última troca: antiga → recente</SelectItem>
-                        <SelectItem value="cargas-desc">Mais cargas</SelectItem>
-                        <SelectItem value="cargas-asc">Menos cargas</SelectItem>
-                        <SelectItem value="bateria-desc">Bateria: melhor → pior</SelectItem>
-                        <SelectItem value="bateria-asc">Bateria: pior → melhor</SelectItem>
-                        <SelectItem value="exec-desc">Execução: melhor → pior</SelectItem>
-                        <SelectItem value="exec-asc">Execução: pior → melhor</SelectItem>
+                        <SelectItem value="default">Trocas: ordem padrão</SelectItem>
+                        <SelectItem value="ultima-troca">Trocas recentes → antigas</SelectItem>
+                        <SelectItem value="ultima-troca-asc">Trocas antigas → recentes</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -2778,11 +2812,17 @@ export default function BateriaDashboardPage() {
                           <TableHead>SELIMP</TableHead>
                           <TableHead>Dias de execução</TableHead>
                           <TableHead>Última Comunicação</TableHead>
-                          <TableHead>Bateria</TableHead>
-                          <TableHead className="text-center">Execução</TableHead>
+                          <TableHead>
+                            <SortToggle label="Bateria" dir={colSortDir("bateria")} onClick={() => cycleColSort("bateria")} />
+                          </TableHead>
+                          <TableHead className="text-center">
+                            <SortToggle label="Execução" dir={colSortDir("exec")} onClick={() => cycleColSort("exec")} />
+                          </TableHead>
                           <TableHead>Sinal</TableHead>
                           <TableHead>Status da Bateria</TableHead>
-                          <TableHead className="text-center">Qtd. Cargas</TableHead>
+                          <TableHead className="text-center">
+                            <SortToggle label="Qtd. Cargas" dir={colSortDir("cargas")} onClick={() => cycleColSort("cargas")} />
+                          </TableHead>
                           <TableHead className="text-center">Troca</TableHead>
                           <TableHead className="text-center">Alertas</TableHead>
                         </TableRow>
@@ -2940,15 +2980,36 @@ export default function BateriaDashboardPage() {
                                   type="button"
                                   disabled={!alerta.hasAlert || selMode}
                                   onClick={() => setAlertModule(m)}
-                                  aria-label={alerta.hasAlert ? "Ver alertas" : "Sem alerta"}
+                                  aria-label={
+                                    alerta.level === "problema"
+                                      ? "Módulo problemático"
+                                      : alerta.level === "observacao"
+                                        ? "Módulo em observação"
+                                        : "Sem alerta"
+                                  }
+                                  title={
+                                    alerta.level === "problema"
+                                      ? "Problemático"
+                                      : alerta.level === "observacao"
+                                        ? "Em observação"
+                                        : "Sem alerta"
+                                  }
                                   className={cn(
                                     "inline-flex h-7 w-7 items-center justify-center rounded-md border transition-colors",
-                                    alerta.hasAlert
+                                    alerta.level === "problema"
                                       ? "border-red-500/50 bg-red-500/15 text-red-600 hover:bg-red-500/25 dark:text-red-400"
-                                      : "cursor-default border-border/50 bg-muted/40 text-muted-foreground/40",
+                                      : alerta.level === "observacao"
+                                        ? "border-amber-500/50 bg-amber-500/15 text-amber-600 hover:bg-amber-500/25 dark:text-amber-400"
+                                        : "cursor-default border-border/50 bg-muted/40 text-muted-foreground/40",
                                   )}
                                 >
-                                  {alerta.hasAlert ? <BellRing className="h-4 w-4" /> : <Bell className="h-4 w-4" />}
+                                  {alerta.level === "problema" ? (
+                                    <BellRing className="h-4 w-4" />
+                                  ) : alerta.level === "observacao" ? (
+                                    <AlertTriangle className="h-4 w-4" />
+                                  ) : (
+                                    <Bell className="h-4 w-4" />
+                                  )}
                                 </button>
                               </TableCell>
                             </TableRow>
@@ -3876,8 +3937,17 @@ export default function BateriaDashboardPage() {
           <DialogContent className="max-w-lg">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 text-base">
-                <BellRing className="h-5 w-5 text-red-500" />
-                Alertas do módulo {alertModule?.numeroSelimp}
+                {alertModule && alertaOf(alertModule).level === "observacao" ? (
+                  <>
+                    <AlertTriangle className="h-5 w-5 text-amber-500" />
+                    Módulo em observação — {alertModule?.numeroSelimp}
+                  </>
+                ) : (
+                  <>
+                    <BellRing className="h-5 w-5 text-red-500" />
+                    Módulo problemático — {alertModule?.numeroSelimp}
+                  </>
+                )}
               </DialogTitle>
               <DialogDescription>{alertModule?.setor}</DialogDescription>
             </DialogHeader>
@@ -3885,24 +3955,79 @@ export default function BateriaDashboardPage() {
               const a: AlertaInfo = alertaOf(alertModule);
               return (
                 <div className="space-y-3">
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
-                      <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400">
-                        <WifiOff className="h-4 w-4" />
-                        <span className="text-xs font-semibold uppercase tracking-wide">Trocas sem atualizar sinal</span>
+                  {/* Mensagem: por que o módulo está sinalizado */}
+                  {a.reasons.length > 0 && (
+                    <div className={cn(
+                      "rounded-lg border p-3",
+                      a.level === "problema"
+                        ? "border-red-500/40 bg-red-500/10"
+                        : "border-amber-500/40 bg-amber-500/10",
+                    )}>
+                      <div className={cn(
+                        "mb-1.5 flex items-center gap-2 text-sm font-semibold",
+                        a.level === "problema" ? "text-red-600 dark:text-red-400" : "text-amber-600 dark:text-amber-400",
+                      )}>
+                        {a.level === "problema" ? <BellRing className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
+                        {a.level === "problema" ? "Classificado como problemático porque:" : "Em observação porque:"}
                       </div>
-                      <p className="mt-1 text-2xl font-bold tabular-nums text-foreground">{a.trocasSemAtualizarSinal}</p>
+                      <ul className="space-y-1">
+                        {a.reasons.map((r, i) => (
+                          <li key={i} className="flex items-start gap-2 text-xs">
+                            <span className={cn(
+                              "mt-1 h-1.5 w-1.5 shrink-0 rounded-full",
+                              r.severity === "problema" ? "bg-red-500" : "bg-amber-500",
+                            )} />
+                            <span className="text-foreground">{r.text}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Barra: trocas com sucesso (verde) × sem sucesso (vermelho) */}
+                  <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
+                    <div className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      <span className="flex items-center gap-1.5"><Repeat className="h-4 w-4" /> Trocas de bateria</span>
+                      <span className="tabular-nums">{a.trocasComSucesso + a.trocasSemSucesso} total</span>
+                    </div>
+                    {a.trocasComSucesso + a.trocasSemSucesso > 0 ? (
+                      <>
+                        <div className="flex h-3 overflow-hidden rounded-full bg-muted">
+                          <div className="bg-emerald-500" style={{ width: `${(a.trocasComSucesso / (a.trocasComSucesso + a.trocasSemSucesso)) * 100}%` }} />
+                          <div className="bg-red-500" style={{ width: `${(a.trocasSemSucesso / (a.trocasComSucesso + a.trocasSemSucesso)) * 100}%` }} />
+                        </div>
+                        <div className="mt-1.5 flex items-center justify-between text-xs">
+                          <span className="font-medium text-emerald-600 dark:text-emerald-400">{a.trocasComSucesso} com sucesso</span>
+                          <span className="font-medium text-red-600 dark:text-red-400">{a.trocasSemSucesso} sem sucesso</span>
+                        </div>
+                      </>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">Nenhuma troca registrada para este módulo.</p>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className={cn(
+                      "rounded-lg border p-3",
+                      a.produtividade < 40 ? "border-red-500/30 bg-red-500/10" : "border-border/50 bg-muted/30",
+                    )}>
+                      <div className={cn("flex items-center gap-2", a.produtividade < 40 ? "text-red-600 dark:text-red-400" : "text-muted-foreground")}>
+                        <ShieldAlert className="h-4 w-4" />
+                        <span className="text-xs font-semibold uppercase tracking-wide">Prod. bateria</span>
+                      </div>
+                      <p className="mt-1 text-2xl font-bold tabular-nums text-foreground">{a.produtividade}%</p>
                     </div>
                     <div className={cn(
                       "rounded-lg border p-3",
-                      a.baixaProdutividade ? "border-red-500/30 bg-red-500/10" : "border-border/50 bg-muted/30",
+                      a.produtividadeExecucao != null && a.produtividadeExecucao < 60 ? "border-amber-500/30 bg-amber-500/10" : "border-border/50 bg-muted/30",
                     )}>
-                      <div className={cn("flex items-center gap-2", a.baixaProdutividade ? "text-red-600 dark:text-red-400" : "text-muted-foreground")}>
-                        <ShieldAlert className="h-4 w-4" />
-                        <span className="text-xs font-semibold uppercase tracking-wide">Produtividade</span>
+                      <div className="flex items-center gap-2 text-sky-600 dark:text-sky-400">
+                        <Percent className="h-4 w-4" />
+                        <span className="text-xs font-semibold uppercase tracking-wide">Execução 30d</span>
                       </div>
-                      <p className="mt-1 text-2xl font-bold tabular-nums text-foreground">{a.produtividade}%</p>
-                      {a.baixaProdutividade && <p className="text-xs font-medium text-red-600 dark:text-red-400">Baixa produtividade</p>}
+                      <p className="mt-1 text-2xl font-bold tabular-nums text-foreground">
+                        {a.produtividadeExecucao != null ? `${a.produtividadeExecucao}%` : "—"}
+                      </p>
                     </div>
                     <div className="rounded-lg border border-orange-500/30 bg-orange-500/10 p-3">
                       <div className="flex items-center gap-2 text-orange-600 dark:text-orange-400">
@@ -3919,6 +4044,12 @@ export default function BateriaDashboardPage() {
                       <p className="mt-1 text-2xl font-bold tabular-nums text-foreground">{a.diasOfflineConsecutivos}</p>
                     </div>
                   </div>
+                  {alertModule?.contagemDesde && (
+                    <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                      <Clock className="h-3 w-3" />
+                      Bateria, dias ON/OFF e produtividade contados desde {fmtIsoBr(alertModule.contagemDesde)} (instalação ou última troca).
+                    </p>
+                  )}
                   <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
                     <div className="mb-2 flex items-center gap-2 text-foreground">
                       <History className="h-4 w-4 text-sky-500" />

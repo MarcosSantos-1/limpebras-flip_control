@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { MapPin, Search, Pencil, RefreshCw, Hash, Radio } from "lucide-react";
+import { MapPin, Search, Pencil, RefreshCw, Hash, Radio, Loader2, AlertTriangle } from "lucide-react";
 import { apiService, type SetorModulo } from "@/lib/api";
 import { servicoLabel } from "@/lib/ipt-utils";
 import { cn } from "@/lib/utils";
@@ -44,6 +44,7 @@ interface EditForm {
 export function SetoresTab() {
   const [setores, setSetores] = useState<SetorModulo[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [subFilter, setSubFilter] = useState("all");
   const [servicoFilter, setServicoFilter] = useState("all");
@@ -56,10 +57,11 @@ export function SetoresTab() {
   const load = useCallback(async () => {
     try {
       setLoading(true);
+      setError(null);
       const { setores } = await apiService.getSetores();
       setSetores(setores ?? []);
-    } catch {
-      console.error("Erro ao carregar setores");
+    } catch (err) {
+      setError(apiService.extractErrorMessage(err, "Erro ao carregar setores"));
     } finally {
       setLoading(false);
     }
@@ -176,6 +178,21 @@ export function SetoresTab() {
         </div>
       </CardHeader>
       <CardContent>
+        {loading && setores.length === 0 ? (
+          <div className="flex flex-col items-center justify-center gap-3 py-20 text-muted-foreground">
+            <Loader2 className="h-10 w-10 animate-spin text-emerald-500" />
+            <p className="text-sm font-medium">Carregando setores…</p>
+          </div>
+        ) : error && setores.length === 0 ? (
+          <div className="flex flex-col items-center justify-center gap-3 py-20 text-center">
+            <AlertTriangle className="h-10 w-10 text-red-500" />
+            <p className="text-sm font-medium text-foreground">Erro ao carregar setores</p>
+            <p className="max-w-md text-xs text-muted-foreground">{error}</p>
+            <Button variant="outline" size="sm" className="mt-1 gap-1.5" onClick={() => void load()}>
+              <RefreshCw className="h-4 w-4" /> Tentar novamente
+            </Button>
+          </div>
+        ) : (
         <div className="overflow-hidden rounded-xl bg-muted/15 shadow-sm ring-1 ring-zinc-200/80 dark:ring-zinc-700/60">
           <Table className="[&_tbody_tr]:border-b [&_tbody_tr]:border-border/30 [&_thead_tr]:border-b [&_thead_tr]:border-border/30">
             <TableHeader>
@@ -227,15 +244,13 @@ export function SetoresTab() {
                   </TableCell>
                 </TableRow>
               ))}
-              {!loading && filtered.length === 0 && (
+              {filtered.length === 0 && (
                 <TableRow><TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">Nenhum setor encontrado.</TableCell></TableRow>
-              )}
-              {loading && (
-                <TableRow><TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">Carregando…</TableCell></TableRow>
               )}
             </TableBody>
           </Table>
         </div>
+        )}
         <p className="mt-3 text-xs text-muted-foreground">
           Edição apenas de atribuição de módulos. Ao salvar, o snapshot por módulo é reconstruído automaticamente.
         </p>

@@ -432,6 +432,8 @@ export async function runMigrations() {
         updated_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
+    // km_prod foi adicionado depois — garante a coluna em bancos já existentes (CREATE IF NOT EXISTS não altera tabela).
+    await client.query("ALTER TABLE setores_modulos ADD COLUMN IF NOT EXISTS km_prod NUMERIC(12,6)").catch(() => {});
     await client.query("CREATE INDEX IF NOT EXISTS idx_setores_modulos_subpref ON setores_modulos(subprefeitura)").catch(() => {});
     await client.query("CREATE INDEX IF NOT EXISTS idx_setores_modulos_selimp ON setores_modulos(selimp_codigo)").catch(() => {});
     await client.query("CREATE INDEX IF NOT EXISTS idx_setores_modulos_ddmx ON setores_modulos(ddmx_codigo)").catch(() => {});
@@ -775,6 +777,24 @@ export async function runMigrations() {
     await client.query("ALTER TABLE modulo_manutencoes ADD COLUMN IF NOT EXISTS data_retirada DATE").catch(() => {});
     // Manutenção oficial (TRUE) x não oficial (FALSE). Persiste independente do status.
     await client.query("ALTER TABLE modulo_manutencoes ADD COLUMN IF NOT EXISTS oficial BOOLEAN NOT NULL DEFAULT TRUE").catch(() => {});
+    // Correção idempotente: se a coluna foi criada antes com DEFAULT FALSE (o ADD IF NOT EXISTS acima
+    // é no-op nesse caso), conserta o default e faz backfill UMA única vez. Após o default virar TRUE,
+    // o bloco é pulado — então marcações "não oficial" feitas depois são preservadas.
+    await client
+      .query(
+        `DO $$
+         DECLARE def text;
+         BEGIN
+           SELECT column_default INTO def
+             FROM information_schema.columns
+            WHERE table_name = 'modulo_manutencoes' AND column_name = 'oficial';
+           IF def IS NULL OR def NOT ILIKE '%true%' THEN
+             UPDATE modulo_manutencoes SET oficial = TRUE WHERE oficial = FALSE;
+             ALTER TABLE modulo_manutencoes ALTER COLUMN oficial SET DEFAULT TRUE;
+           END IF;
+         END $$;`,
+      )
+      .catch(() => {});
 
     const adminEncryptedPassword = encryptPassword("1515");
     const userResult = await client.query<{ id: number }>(

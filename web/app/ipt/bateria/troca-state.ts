@@ -240,13 +240,25 @@ export function useTrocaState() {
 
 // ===== Alertas (derivados de dados reais) =====
 
+/** Triagem do alerta: sem alerta · em observação (amarelo) · problemático (vermelho). */
+export type AlertaLevel = "none" | "observacao" | "problema";
+
+export interface AlertaReason {
+  text: string;
+  severity: "problema" | "observacao";
+}
+
 export interface AlertaInfo {
+  level: AlertaLevel;
+  /** Mantido por compatibilidade: true quando level !== "none". */
   hasAlert: boolean;
-  trocasSemAtualizarSinal: number;
-  baixaProdutividade: boolean;
+  reasons: AlertaReason[];
   produtividade: number;
+  produtividadeExecucao: number | null;
   diasOffline: number;
   diasOfflineConsecutivos: number;
+  trocasComSucesso: number;
+  trocasSemSucesso: number;
   historicoManutencoes: { data: string; descricao: string }[];
 }
 
@@ -254,39 +266,75 @@ export interface AlertaModuleInput {
   numeroSelimp: string;
   statusBateria: string;
   produtividade: number;
+  produtividadeExecucao?: number | null;
   diasOff: number;
   diasOffConsecutivos?: number;
 }
 
-/** Deriva os alertas de um módulo a partir de dados reais:
- * status/produtividade/dias OFF do snapshot importado, troca registrada no
- * painel e histórico de manutenção registrado. */
+/**
+ * Triagem do módulo a partir de dados reais. Duas classificações para evitar
+ * que "tudo fique vermelho": vermelho (problemático) só para condições severas;
+ * amarelo (em observação) para sinais de atenção. Critérios considerados:
+ * produtividade de execução (30d), trocas com/sem sucesso (a partir da troca),
+ * produtividade baixa de bateria, dias ON/OFF e dias offline consecutivos.
+ */
 export function computeAlerta(
   m: AlertaModuleInput,
-  troca?: TrocaRecord,
+  _troca?: TrocaRecord,
   historicoManutencoes: { data: string; descricao: string }[] = [],
+  trocaHistory: TrocaHistoryRecord[] = [],
 ): AlertaInfo {
-  // Troca concluída em que sinal/bateria não atualizaram (registrada como "sem sucesso").
-  const trocasSemAtualizarSinal = troca?.status === "concluida" && troca.sucesso === false ? 1 : 0;
+  const concluidas = trocaHistory.filter((h) => h.status === "concluida");
+  const trocasComSucesso = concluidas.filter((h) => h.sucesso === true).length;
+  const trocasSemSucesso = concluidas.filter((h) => h.sucesso === false).length;
   const diasOfflineConsecutivos = m.diasOffConsecutivos ?? 0;
-  const baixaProdutividade = m.produtividade < 20;
+  const execucao = m.produtividadeExecucao ?? null;
+  const teveTroca = concluidas.length > 0;
 
-  const statusCritico = m.statusBateria === "DESATUALIZADA" || m.statusBateria === "CRÍTICA";
-  const hasAlert =
-    statusCritico ||
-    trocasSemAtualizarSinal > 0 ||
-    baixaProdutividade ||
-    m.diasOff >= 7 ||
-    diasOfflineConsecutivos >= 3 ||
-    historicoManutencoes.length > 0;
+  const reasons: AlertaReason[] = [];
+  const add = (severity: AlertaReason["severity"], text: string) => reasons.push({ severity, text });
+
+  // Troca sem sucesso (sinal/bateria não recuperaram após a troca) → problemático.
+  if (trocasSemSucesso > 0) {
+    add("problema", `${trocasSemSucesso} troca(s) sem sucesso — sinal/bateria não recuperaram após a troca`);
+  }
+  // Status da bateria.
+  if (m.statusBateria === "DESATUALIZADA") add("problema", "Bateria desatualizada — módulo sem comunicar");
+  else if (m.statusBateria === "CRÍTICA") add("observacao", "Bateria em nível crítico");
+
+  // Produtividade de bateria (a partir da troca, quando houve troca).
+  const ctxBateria = teveTroca ? " desde a última troca" : "";
+  if (m.produtividade < 20) add("problema", `Produtividade de bateria muito baixa (${m.produtividade}%)${ctxBateria}`);
+  else if (m.produtividade < 40) add("observacao", `Produtividade de bateria baixa (${m.produtividade}%)${ctxBateria}`);
+
+  // Produtividade de execução do serviço (30 dias).
+  if (execucao != null) {
+    if (execucao < 30) add("problema", `Execução do serviço muito baixa (${execucao}% em 30 dias)`);
+    else if (execucao < 60) add("observacao", `Execução do serviço abaixo do ideal (${execucao}% em 30 dias)`);
+  }
+  // Offline consecutivos.
+  if (diasOfflineConsecutivos >= 7) add("problema", `${diasOfflineConsecutivos} dias offline consecutivos`);
+  else if (diasOfflineConsecutivos >= 3) add("observacao", `${diasOfflineConsecutivos} dias offline consecutivos`);
+  // Offline acumulado no período.
+  if (m.diasOff >= 21) add("problema", `${m.diasOff} dias offline no período`);
+  else if (m.diasOff >= 10) add("observacao", `${m.diasOff} dias offline no período`);
+
+  const level: AlertaLevel = reasons.some((r) => r.severity === "problema")
+    ? "problema"
+    : reasons.length > 0
+      ? "observacao"
+      : "none";
 
   return {
-    hasAlert,
-    trocasSemAtualizarSinal,
-    baixaProdutividade,
+    level,
+    hasAlert: level !== "none",
+    reasons,
     produtividade: m.produtividade,
+    produtividadeExecucao: execucao,
     diasOffline: m.diasOff,
     diasOfflineConsecutivos,
+    trocasComSucesso,
+    trocasSemSucesso,
     historicoManutencoes,
   };
 }

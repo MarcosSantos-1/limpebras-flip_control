@@ -518,6 +518,8 @@ export interface IptModuloBateriaModule {
   /** Streak mais recente de exportações OFF consecutivas (de ipt_dados_bateria). */
   diasOffConsecutivos?: number;
   produtividade: number;
+  /** Data (yyyy-MM-dd) a partir da qual ON/OFF/produtividade são contados (última troca ou instalação). */
+  contagemDesde?: string | null;
   /** Leitura de bateria por dia (últimos ~35 dias) para casar com os dias de execução. */
   bateriaPorDia?: { data: string; percentual: number | null; desatualizada: boolean }[];
 }
