@@ -1611,12 +1611,15 @@ export default function BateriaDashboardPage() {
         return concl?.dataTroca ?? "";
       };
       const exec = (m: ModuleData): number | null => mediaExecucaoSelimp(m);
+      // Qtd. de cargas = trocas registradas no painel (inclui manuais) — mesmo valor exibido na coluna.
+      const cargas = (m: ModuleData): number =>
+        trocaHistoryOf(m, troca.records[m.numeroSelimp], troca.history[m.numeroSelimp]).length;
       result = [...result].sort((a, b) => {
         switch (trocasSort) {
           case "cargas-desc":
-            return b.quantidadeTrocas - a.quantidadeTrocas;
+            return cargas(b) - cargas(a);
           case "cargas-asc":
-            return a.quantidadeTrocas - b.quantidadeTrocas;
+            return cargas(a) - cargas(b);
           case "bateria-desc":
             return rank(b) - rank(a) || b.bateriaPercentual - a.bateriaPercentual;
           case "bateria-asc":
@@ -1624,6 +1627,15 @@ export default function BateriaDashboardPage() {
           case "ultima-troca":
             // Mais recente → mais antiga; sem troca vai para o fim.
             return ultimaTroca(b).localeCompare(ultimaTroca(a));
+          case "ultima-troca-asc": {
+            // Mais antiga → mais recente; sem troca vai para o fim.
+            const da = ultimaTroca(a);
+            const db = ultimaTroca(b);
+            if (!da && !db) return 0;
+            if (!da) return 1;
+            if (!db) return -1;
+            return da.localeCompare(db);
+          }
           case "exec-desc":
             return (exec(b) ?? -1) - (exec(a) ?? -1);
           case "exec-asc":
@@ -2744,6 +2756,7 @@ export default function BateriaDashboardPage() {
                       <SelectContent>
                         <SelectItem value="default">Ordenar: padrão</SelectItem>
                         <SelectItem value="ultima-troca">Última troca: recente → antiga</SelectItem>
+                        <SelectItem value="ultima-troca-asc">Última troca: antiga → recente</SelectItem>
                         <SelectItem value="cargas-desc">Mais cargas</SelectItem>
                         <SelectItem value="cargas-asc">Menos cargas</SelectItem>
                         <SelectItem value="bateria-desc">Bateria: melhor → pior</SelectItem>
@@ -2878,7 +2891,7 @@ export default function BateriaDashboardPage() {
                                   <Badge className={statusBatBadge(m.statusBateria)}>{m.statusBateria}</Badge>
                                 </div>
                               </TableCell>
-                              <TableCell className="text-center font-medium tabular-nums align-middle">{m.quantidadeTrocas}</TableCell>
+                              <TableCell className="text-center font-medium tabular-nums align-middle">{history.length}</TableCell>
                               <TableCell className="text-center align-middle" onClick={(e) => e.stopPropagation()}>
                                 {manutStatusOpen ? (
                                   <Badge className={cn("border", STATUS_MODULO_MANUT_BADGE[manutStatusOpen])}>
