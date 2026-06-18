@@ -49,6 +49,7 @@ import {
   Trash2,
   RefreshCw,
   Pencil,
+  PackageX,
 } from "lucide-react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faTree, faBroom } from "@fortawesome/free-solid-svg-icons";
@@ -939,12 +940,13 @@ function sucessoPreviewChip(m: ModuleData) {
 const STATUS_MODULO_MANUT_BADGE: Record<ManutencaoModuloStatus, string> = {
   EM_ANALISE: "bg-violet-500/15 text-violet-600 border-violet-500/30 dark:text-violet-400",
   PENDENTE: "bg-amber-500/15 text-amber-600 border-amber-500/30 dark:text-amber-400",
+  RETIRADO: "bg-rose-500/15 text-rose-600 border-rose-500/30 dark:text-rose-400",
   ATIVA: "bg-sky-500/15 text-sky-600 border-sky-500/30 dark:text-sky-400",
   REALIZADA: "bg-emerald-500/15 text-emerald-600 border-emerald-500/30 dark:text-emerald-400",
   SINAL_RECUPERADO: "bg-green-800/20 text-green-800 border-green-800/40 dark:bg-green-900/30 dark:text-green-400",
 };
 
-const MANUT_OPEN_STATUSES = new Set<ManutencaoModuloStatus>(["EM_ANALISE", "PENDENTE", "ATIVA"]);
+const MANUT_OPEN_STATUSES = new Set<ManutencaoModuloStatus>(["EM_ANALISE", "PENDENTE", "RETIRADO", "ATIVA"]);
 
 function isOpenManutStatus(status: ManutencaoModuloStatus | null): status is ManutencaoModuloStatus {
   return status != null && MANUT_OPEN_STATUSES.has(status);
@@ -993,9 +995,11 @@ interface ManutEntry {
   sub: string;
   module: ModuleData | null;
   status: ManutencaoModuloStatus;
+  dataRetirada?: string;
   dataOrdenado?: string;
   dataManutencao?: string;
   sinalRecuperado: boolean;
+  oficial: boolean;
   motivo?: string;
   createdAt?: string;
   quantidadeTrocas: number;
@@ -1112,7 +1116,8 @@ export default function BateriaDashboardPage() {
   const [manutPeriod, setManutPeriod] = useState("30d");
   const [manutSearch, setManutSearch] = useState("");
   const [manutSubFilter, setManutSubFilter] = useState("all");
-  const [manutStatusFilter, setManutStatusFilter] = useState("all"); // all | EM_ANALISE | PENDENTE | ATIVA | REALIZADA (+ SINAL_RECUPERADO)
+  const [manutStatusFilter, setManutStatusFilter] = useState("all"); // all | EM_ANALISE | PENDENTE | RETIRADO | ATIVA | REALIZADA (+ SINAL_RECUPERADO)
+  const [manutOficialFilter, setManutOficialFilter] = useState("all"); // all | oficial | nao
   const [histModule, setHistModule] = useState<ModuleData | null>(null);
 
   // Paginação das listagens de Trocas e Manutenções
@@ -1125,12 +1130,14 @@ export default function BateriaDashboardPage() {
   );
   const [manutForm, setManutForm] = useState({
     selimp: "",
-    // status base do dropdown (EM_ANALISE | PENDENTE | ATIVA | REALIZADA); SINAL_RECUPERADO vem do toggle.
-    status: "REALIZADA" as "EM_ANALISE" | "PENDENTE" | "ATIVA" | "REALIZADA",
+    // status base do dropdown (EM_ANALISE | PENDENTE | RETIRADO | ATIVA | REALIZADA); SINAL_RECUPERADO vem do toggle.
+    status: "REALIZADA" as "EM_ANALISE" | "PENDENTE" | "RETIRADO" | "ATIVA" | "REALIZADA",
     motivo: "",
+    dataRetirada: "",
     dataOrdenado: "",
     dataManutencao: "",
     sinalRecuperado: false,
+    oficial: true,
   });
   const [manutPickerSearch, setManutPickerSearch] = useState("");
 
@@ -1851,9 +1858,11 @@ export default function BateriaDashboardPage() {
           sub: mod?.subprefeitura ?? "",
           module: mod,
           status: ev.status,
+          dataRetirada: ev.dataRetirada,
           dataOrdenado: ev.dataOrdenado,
           dataManutencao: ev.dataManutencao,
           sinalRecuperado: ev.sinalRecuperado,
+          oficial: ev.oficial,
           motivo: ev.motivo,
           createdAt: ev.createdAt,
           quantidadeTrocas: mod?.quantidadeTrocas ?? 0,
@@ -1876,6 +1885,7 @@ export default function BateriaDashboardPage() {
         status: "PENDENTE",
         dataOrdenado: manut.overrides[m.numeroSelimp]?.dataSolicitacao,
         sinalRecuperado: false,
+        oficial: true,
         quantidadeTrocas: m.quantidadeTrocas,
         ultimaComunicacao: m.ultimaComunicacao,
       });
@@ -1884,6 +1894,8 @@ export default function BateriaDashboardPage() {
     const term = manutSearch.trim().toLowerCase();
     let result = entries;
     if (manutSubFilter !== "all") result = result.filter((e) => e.sub === manutSubFilter);
+    if (manutOficialFilter === "oficial") result = result.filter((e) => e.oficial);
+    else if (manutOficialFilter === "nao") result = result.filter((e) => !e.oficial);
     if (manutStatusFilter !== "all") {
       result =
         manutStatusFilter === "REALIZADA"
@@ -1906,7 +1918,7 @@ export default function BateriaDashboardPage() {
       const db = b.createdAt ?? b.dataManutencao ?? b.dataOrdenado ?? "";
       return db.localeCompare(da);
     });
-  }, [modules, modulesBySelimp, moduloManut.history, manut.overrides, isEnviadoManutencao, manutSubFilter, manutSearch, manutStatusFilter]);
+  }, [modules, modulesBySelimp, moduloManut.history, manut.overrides, isEnviadoManutencao, manutSubFilter, manutSearch, manutStatusFilter, manutOficialFilter]);
 
   const totalManutPages = Math.max(1, Math.ceil(manutEntries.length / ITEMS_PER_PAGE));
   const paginatedManut = useMemo(
@@ -1933,7 +1945,7 @@ export default function BateriaDashboardPage() {
   );
 
   const manutStats = useMemo(() => {
-    const counts: Record<ManutencaoModuloStatus, number> = { EM_ANALISE: 0, PENDENTE: 0, ATIVA: 0, REALIZADA: 0, SINAL_RECUPERADO: 0 };
+    const counts: Record<ManutencaoModuloStatus, number> = { EM_ANALISE: 0, PENDENTE: 0, RETIRADO: 0, ATIVA: 0, REALIZADA: 0, SINAL_RECUPERADO: 0 };
     let total = 0;
     for (const events of Object.values(moduloManut.history)) {
       for (const ev of events) { counts[ev.status] += 1; total += 1; }
@@ -1965,13 +1977,17 @@ export default function BateriaDashboardPage() {
       const base = ev
         ? ev.status === "SINAL_RECUPERADO" ? "REALIZADA" : ev.status
         : opts?.status === "SINAL_RECUPERADO" ? "REALIZADA" : opts?.status ?? "REALIZADA";
+      // Datas: ao editar mantém as do registro; em novas interações já vêm com a data de hoje.
+      const today = isoToday();
       setManutForm({
         selimp: ev?.selimp ?? module?.numeroSelimp ?? opts?.selimp ?? "",
-        status: base as "EM_ANALISE" | "PENDENTE" | "ATIVA" | "REALIZADA",
+        status: base as "EM_ANALISE" | "PENDENTE" | "RETIRADO" | "ATIVA" | "REALIZADA",
         motivo: ev?.motivo ?? "",
-        dataOrdenado: ev?.dataOrdenado ?? "",
-        dataManutencao: ev?.dataManutencao ?? "",
+        dataRetirada: ev ? ev.dataRetirada ?? "" : today,
+        dataOrdenado: ev ? ev.dataOrdenado ?? "" : today,
+        dataManutencao: ev ? ev.dataManutencao ?? "" : today,
         sinalRecuperado: ev ? ev.status === "SINAL_RECUPERADO" : false,
+        oficial: ev ? ev.oficial : true,
       });
       setManutPickerSearch("");
       setManutModal({ open: true, module, editEventId: ev?.id ?? null });
@@ -1986,19 +2002,25 @@ export default function BateriaDashboardPage() {
     const base = manutForm.status;
     const finalStatus: ManutencaoModuloStatus =
       base === "REALIZADA" && manutForm.sinalRecuperado ? "SINAL_RECUPERADO" : base;
-    // Datas conforme o status: Em análise/Pendente não têm datas; Realizada (com manutenção) tem data realizada.
-    const dataOrdenado = base === "EM_ANALISE" || base === "PENDENTE" ? "" : manutForm.dataOrdenado || "";
+    // Datas cumulativas conforme a etapa: Retirado (retirada) → Ativo (+ordenado) → Realizado (+realizada).
+    const hasRetirada = base === "RETIRADO" || base === "ATIVA" || base === "REALIZADA";
+    const hasOrdenado = base === "ATIVA" || base === "REALIZADA";
+    const dataRetirada = hasRetirada ? manutForm.dataRetirada || "" : "";
+    const dataOrdenado = hasOrdenado ? manutForm.dataOrdenado || "" : "";
     const dataManutencao = base === "REALIZADA" && !manutForm.sinalRecuperado ? manutForm.dataManutencao || "" : "";
     const sinalRecuperado = base === "REALIZADA" ? manutForm.sinalRecuperado : false;
+    const oficial = manutForm.oficial;
     const motivo = manutForm.motivo.trim();
 
     if (manutModal.editEventId != null) {
-      // Edição: envia valores explícitos (strings vazias limpam as datas).
+      // Edição: envia valores explícitos (strings vazias limpam as datas); motivo/oficial persistem.
       void moduloManut.atualizar(manutModal.editEventId, selimp, {
         motivo,
+        dataRetirada,
         dataOrdenado,
         dataManutencao,
         sinalRecuperado,
+        oficial,
         status: finalStatus,
       });
     } else {
@@ -2011,9 +2033,11 @@ export default function BateriaDashboardPage() {
         setor: setores || undefined,
         execucao: execucao || undefined,
         motivo: motivo || undefined,
+        dataRetirada: dataRetirada || undefined,
         dataOrdenado: dataOrdenado || undefined,
         dataManutencao: dataManutencao || undefined,
         sinalRecuperado,
+        oficial,
         status: finalStatus,
       });
     }
@@ -3126,31 +3150,38 @@ export default function BateriaDashboardPage() {
                       Registros de manutenção do módulo
                     </p>
                   </div>
-                  <div className="grid flex-1 min-w-[220px] grid-cols-2 gap-4 xl:max-w-2xl">
+                  <div className="grid flex-1 min-w-[220px] grid-cols-2 gap-4 sm:grid-cols-3 xl:max-w-3xl">
                     <div className="flex flex-col justify-between rounded-xl border border-white/20 bg-white/10 p-4 backdrop-blur-sm">
                       <div className="flex items-start justify-between gap-2">
-                        <p className="text-xs font-medium uppercase tracking-wide text-white/80">Em análise</p>
+                        <p className="text-xs font-medium uppercase tracking-wide text-white/80">1. Em análise</p>
                         <Eye className="size-6 shrink-0 text-violet-200/95" aria-hidden />
                       </div>
                       <p className="mt-4 font-mono text-3xl font-bold tabular-nums text-white">{manutStats.EM_ANALISE}</p>
                     </div>
                     <div className="flex flex-col justify-between rounded-xl border border-white/20 bg-white/10 p-4 backdrop-blur-sm">
                       <div className="flex items-start justify-between gap-2">
-                        <p className="text-xs font-medium uppercase tracking-wide text-white/80">Pendentes</p>
+                        <p className="text-xs font-medium uppercase tracking-wide text-white/80">2. Pendentes</p>
                         <AlertTriangle className="size-6 shrink-0 text-amber-200/95" aria-hidden />
                       </div>
                       <p className="mt-4 font-mono text-3xl font-bold tabular-nums text-white">{manutStats.PENDENTE}</p>
                     </div>
                     <div className="flex flex-col justify-between rounded-xl border border-white/20 bg-white/10 p-4 backdrop-blur-sm">
                       <div className="flex items-start justify-between gap-2">
-                        <p className="text-xs font-medium uppercase tracking-wide text-white/80">Manutenções Ativas</p>
+                        <p className="text-xs font-medium uppercase tracking-wide text-white/80">3. Retirados</p>
+                        <PackageX className="size-6 shrink-0 text-rose-200/95" aria-hidden />
+                      </div>
+                      <p className="mt-4 font-mono text-3xl font-bold tabular-nums text-white">{manutStats.RETIRADO}</p>
+                    </div>
+                    <div className="flex flex-col justify-between rounded-xl border border-white/20 bg-white/10 p-4 backdrop-blur-sm">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="text-xs font-medium uppercase tracking-wide text-white/80">4. Ativas</p>
                         <Clock className="size-6 shrink-0 text-sky-200/95" aria-hidden />
                       </div>
                       <p className="mt-4 font-mono text-3xl font-bold tabular-nums text-white">{manutStats.ATIVA}</p>
                     </div>
                     <div className="flex flex-col justify-between rounded-xl border border-white/20 bg-white/10 p-4 backdrop-blur-sm">
                       <div className="flex items-start justify-between gap-2">
-                        <p className="text-xs font-medium uppercase tracking-wide text-white/80">Manutenções Realizadas</p>
+                        <p className="text-xs font-medium uppercase tracking-wide text-white/80">5. Realizadas</p>
                         <CheckCircle2 className="size-6 shrink-0 text-emerald-200/95" aria-hidden />
                       </div>
                       <p className="mt-4 font-mono text-3xl font-bold tabular-nums text-white">{manutStats.realizadasTotal}</p>
@@ -3229,10 +3260,22 @@ export default function BateriaDashboardPage() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="all">Todos status</SelectItem>
-                        <SelectItem value="EM_ANALISE">Em análise</SelectItem>
-                        <SelectItem value="PENDENTE">Pendente</SelectItem>
-                        <SelectItem value="ATIVA">Ativa</SelectItem>
-                        <SelectItem value="REALIZADA">Manutenções Realizadas</SelectItem>
+                        <SelectItem value="EM_ANALISE">1. Em análise</SelectItem>
+                        <SelectItem value="PENDENTE">2. Pendente</SelectItem>
+                        <SelectItem value="RETIRADO">3. Retirado</SelectItem>
+                        <SelectItem value="ATIVA">4. Ativo</SelectItem>
+                        <SelectItem value="REALIZADA">5. Realizado</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Select value={manutOficialFilter} onValueChange={setManutOficialFilter}>
+                      <SelectTrigger className="h-9 w-[150px]">
+                        <ShieldCheck className="mr-1 h-4 w-4 text-muted-foreground" />
+                        <SelectValue placeholder="Oficial" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Todas</SelectItem>
+                        <SelectItem value="oficial">Oficiais</SelectItem>
+                        <SelectItem value="nao">Não oficiais</SelectItem>
                       </SelectContent>
                     </Select>
                     <Select value={manutSubFilter} onValueChange={setManutSubFilter}>
@@ -3250,7 +3293,7 @@ export default function BateriaDashboardPage() {
                   </div>
                   {!manutSearch.trim() && (
                     <p className="text-xs text-muted-foreground">
-                      Histórico de manutenções (Em análise → Pendente → Ativa → Manutenções Realizadas). Módulos enviados à manutenção pela aba Trocas entram como Pendente.
+                      Histórico de manutenções (1. Em análise → 2. Pendente → 3. Retirado → 4. Ativo → 5. Realizado). Módulos enviados à manutenção pela aba Trocas entram como Pendente.
                     </p>
                   )}
                 </CardHeader>
@@ -3280,7 +3323,12 @@ export default function BateriaDashboardPage() {
                               <TableCell className="text-center font-medium align-top">{e.sub || "—"}</TableCell>
                               <TableCell className="align-top"><SetorCell value={e.setor} /></TableCell>
                               <TableCell className="align-top">
-                                <Badge className={STATUS_MODULO_MANUT_BADGE[e.status]}>{MANUT_STATUS_LABEL[e.status]}</Badge>
+                                <div className="flex flex-col items-start gap-1">
+                                  <Badge className={STATUS_MODULO_MANUT_BADGE[e.status]}>{MANUT_STATUS_LABEL[e.status]}</Badge>
+                                  {!e.oficial && (
+                                    <Badge className="bg-zinc-500/15 text-zinc-600 border-zinc-500/30 text-[10px] dark:text-zinc-300">N/ OFICIAL</Badge>
+                                  )}
+                                </div>
                               </TableCell>
                               <TableCell className="align-top">{e.selimp}</TableCell>
                               <TableCell className="align-top">
@@ -3299,6 +3347,7 @@ export default function BateriaDashboardPage() {
                               </TableCell>
                               <TableCell className="align-top text-xs tabular-nums">
                                 <div className="space-y-0.5">
+                                  <div><span className="text-muted-foreground">Retirada:</span> {isoBr(e.dataRetirada)}</div>
                                   <div><span className="text-muted-foreground">Ordenado:</span> {isoBr(e.dataOrdenado)}</div>
                                   <div>
                                     <span className="text-muted-foreground">Realizada:</span>{" "}
@@ -3331,9 +3380,11 @@ export default function BateriaDashboardPage() {
                                                 selimp: e.selimp,
                                                 status: e.status,
                                                 motivo: e.motivo,
+                                                dataRetirada: e.dataRetirada,
                                                 dataOrdenado: e.dataOrdenado,
                                                 dataManutencao: e.dataManutencao,
                                                 sinalRecuperado: e.sinalRecuperado,
+                                                oficial: e.oficial,
                                                 createdAt: e.createdAt,
                                               },
                                             })
@@ -4236,7 +4287,7 @@ export default function BateriaDashboardPage() {
 
         {/* ===== Modal de Histórico consolidado do módulo ===== */}
         <Dialog open={!!histModule} onOpenChange={(o) => !o && setHistModule(null)}>
-          <DialogContent className="max-w-lg">
+          <DialogContent className="max-w-lg max-h-[88vh] overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 text-base">
                 <History className="h-5 w-5 text-zinc-500" />
@@ -4249,29 +4300,65 @@ export default function BateriaDashboardPage() {
               const rec = troca.records[m.numeroSelimp];
               const trocasAposUltimaComunicacao =
                 rec?.status === "concluida" && rec.dataTroca && rec.ultimaComunicacao && rec.dataTroca > rec.ultimaComunicacao ? 1 : 0;
+              // Estado de manutenção corrente (evento mais recente) → datas e dias em manutenção.
+              const manutRec = moduloManut.records[m.numeroSelimp];
+              const startIso = manutRec?.dataRetirada || manutRec?.dataOrdenado;
+              const realizadaIso = manutRec?.dataManutencao;
+              const fechado = manutRec?.status === "REALIZADA" || manutRec?.status === "SINAL_RECUPERADO";
+              const endIso = realizadaIso || (fechado ? undefined : isoToday());
+              const diasEmManutencao =
+                startIso && endIso
+                  ? Math.max(0, Math.round((Date.parse(endIso) - Date.parse(startIso)) / 86400000))
+                  : "—";
               const items: { label: string; value: number | string; icon: typeof Wrench; color: string }[] = [
                 { label: "Manutenções", value: (moduloManut.history[m.numeroSelimp] ?? []).length, icon: Wrench, color: "text-zinc-600 dark:text-zinc-300" },
                 { label: "Trocas de bateria", value: m.quantidadeTrocas, icon: Repeat, color: "text-emerald-600 dark:text-emerald-400" },
                 { label: "Trocas após últ. comunicação", value: trocasAposUltimaComunicacao, icon: BatteryCharging, color: "text-sky-600 dark:text-sky-400" },
+                { label: "Produtividade bateria", value: `${m.produtividade}%`, icon: Battery, color: "text-emerald-600 dark:text-emerald-400" },
                 { label: "Dias ON", value: m.diasOn, icon: Wifi, color: "text-emerald-600 dark:text-emerald-400" },
                 { label: "Dias OFF", value: m.diasOff, icon: WifiOff, color: "text-red-600 dark:text-red-400" },
-                { label: "Dias sem atualização", value: m.diasOff, icon: Clock, color: "text-amber-600 dark:text-amber-400" },
+                { label: "Dias em manutenção", value: diasEmManutencao, icon: Clock, color: "text-amber-600 dark:text-amber-400" },
               ];
               return (
-                <div className="grid grid-cols-2 gap-3">
-                  {items.map((it) => {
-                    const Icon = it.icon;
-                    return (
-                      <div key={it.label} className="rounded-lg border border-border/60 bg-muted/20 p-3">
-                        <div className={cn("flex items-center gap-2", it.color)}>
-                          <Icon className="h-4 w-4" />
-                          <span className="text-xs font-semibold uppercase tracking-wide">{it.label}</span>
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    {items.map((it) => {
+                      const Icon = it.icon;
+                      return (
+                        <div key={it.label} className="rounded-lg border border-border/60 bg-muted/20 p-3">
+                          <div className={cn("flex items-center gap-2", it.color)}>
+                            <Icon className="h-4 w-4" />
+                            <span className="text-xs font-semibold uppercase tracking-wide">{it.label}</span>
+                          </div>
+                          <p className="mt-1 text-2xl font-bold tabular-nums text-foreground">{it.value}</p>
                         </div>
-                        <p className="mt-1 text-2xl font-bold tabular-nums text-foreground">{it.value}</p>
+                      );
+                    })}
+                  </div>
+                  {/* Datas e situação do ciclo de manutenção corrente */}
+                  {manutRec && (
+                    <div className="mt-3 rounded-lg border border-border/60 bg-muted/20 p-3">
+                      <div className="mb-2 flex items-center gap-2">
+                        <Badge className={STATUS_MODULO_MANUT_BADGE[manutRec.status]}>{MANUT_STATUS_LABEL[manutRec.status]}</Badge>
+                        {!manutRec.oficial && (
+                          <Badge className="bg-zinc-500/15 text-zinc-600 border-zinc-500/30 text-[10px] dark:text-zinc-300">N/ OFICIAL</Badge>
+                        )}
                       </div>
-                    );
-                  })}
-                </div>
+                      <div className="grid grid-cols-3 gap-x-4 gap-y-1 text-xs tabular-nums">
+                        <div><span className="block text-[10px] uppercase tracking-wide text-muted-foreground">Retirada</span>{isoBr(manutRec.dataRetirada)}</div>
+                        <div><span className="block text-[10px] uppercase tracking-wide text-muted-foreground">Ordenado</span>{isoBr(manutRec.dataOrdenado)}</div>
+                        <div>
+                          <span className="block text-[10px] uppercase tracking-wide text-muted-foreground">Realizada</span>
+                          {manutRec.dataManutencao
+                            ? isoBr(manutRec.dataManutencao)
+                            : manutRec.sinalRecuperado
+                              ? <span className="text-green-700 dark:text-green-400">Sinal recup.</span>
+                              : "—"}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </>
               );
             })()}
 
@@ -4290,7 +4377,12 @@ export default function BateriaDashboardPage() {
                       {eventos.map((ev) => (
                         <div key={ev.id} className="rounded-lg border border-border/60 bg-muted/20 p-3">
                           <div className="flex items-start justify-between gap-2">
-                            <Badge className={STATUS_MODULO_MANUT_BADGE[ev.status]}>{MANUT_STATUS_LABEL[ev.status]}</Badge>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <Badge className={STATUS_MODULO_MANUT_BADGE[ev.status]}>{MANUT_STATUS_LABEL[ev.status]}</Badge>
+                              {!ev.oficial && (
+                                <Badge className="bg-zinc-500/15 text-zinc-600 border-zinc-500/30 text-[10px] dark:text-zinc-300">N/ OFICIAL</Badge>
+                              )}
+                            </div>
                             <div className="flex items-center gap-2">
                               <button
                                 type="button"
@@ -4310,7 +4402,8 @@ export default function BateriaDashboardPage() {
                               </button>
                             </div>
                           </div>
-                          <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                          <div className="mt-2 grid grid-cols-3 gap-x-4 gap-y-1 text-xs">
+                            <div><span className="text-muted-foreground">Retirada:</span> {isoBr(ev.dataRetirada)}</div>
                             <div><span className="text-muted-foreground">Ordenado:</span> {isoBr(ev.dataOrdenado)}</div>
                             <div>
                               <span className="text-muted-foreground">Realizada:</span>{" "}
@@ -4346,7 +4439,7 @@ export default function BateriaDashboardPage() {
 
         {/* ===== Modal de Registrar manutenção do módulo ===== */}
         <Dialog open={manutModal.open} onOpenChange={(o) => !o && setManutModal({ open: false, module: null, editEventId: null })}>
-          <DialogContent className="max-w-md">
+          <DialogContent className="max-w-2xl max-h-[88vh] overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 text-base">
                 <Wrench className="h-5 w-5 text-emerald-500" />
@@ -4418,7 +4511,7 @@ export default function BateriaDashboardPage() {
                       onValueChange={(v) =>
                         setManutForm((f) => ({
                           ...f,
-                          status: v as "EM_ANALISE" | "PENDENTE" | "ATIVA" | "REALIZADA",
+                          status: v as "EM_ANALISE" | "PENDENTE" | "RETIRADO" | "ATIVA" | "REALIZADA",
                           sinalRecuperado: v === "REALIZADA" ? f.sinalRecuperado : false,
                         }))
                       }
@@ -4427,13 +4520,28 @@ export default function BateriaDashboardPage() {
                         <SelectValue placeholder="Status" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="EM_ANALISE">Em análise</SelectItem>
-                        <SelectItem value="PENDENTE">Pendente</SelectItem>
-                        <SelectItem value="ATIVA">Ativa</SelectItem>
-                        <SelectItem value="REALIZADA">Realizado</SelectItem>
+                        <SelectItem value="EM_ANALISE">1. Em análise</SelectItem>
+                        <SelectItem value="PENDENTE">2. Pendente</SelectItem>
+                        <SelectItem value="RETIRADO">3. Retirado</SelectItem>
+                        <SelectItem value="ATIVA">4. Ativo</SelectItem>
+                        <SelectItem value="REALIZADA">5. Realizado</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
+
+                  {/* Manutenção oficial x não oficial — persiste mesmo trocando o status */}
+                  <label className="flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-muted/20 p-3">
+                    <span className="text-xs text-foreground">
+                      Manutenção oficial
+                      <span className="block text-[11px] text-muted-foreground">
+                        {manutForm.oficial ? "Registro oficial." : "Não oficial — receberá o selo “N/ OFICIAL”."}
+                      </span>
+                    </span>
+                    <Switch
+                      checked={manutForm.oficial}
+                      onCheckedChange={(v) => setManutForm((f) => ({ ...f, oficial: v }))}
+                    />
+                  </label>
 
                   <div className="space-y-1.5">
                     <label className="text-xs font-medium text-muted-foreground">Motivo da manutenção</label>
@@ -4446,14 +4554,25 @@ export default function BateriaDashboardPage() {
                   </div>
 
                   {manutForm.status !== "EM_ANALISE" && manutForm.status !== "PENDENTE" && (
-                    <div className={cn("grid gap-3", manutForm.status === "REALIZADA" ? "grid-cols-2" : "grid-cols-1")}>
+                    <div className="grid grid-cols-3 gap-3">
+                      {/* Retirada: a partir de Retirado (cumulativa) */}
                       <div className="space-y-1.5">
-                        <label className="text-xs font-medium text-muted-foreground">Ordenado para Manutenção</label>
+                        <label className="text-xs font-medium text-muted-foreground">Data de Retirada</label>
                         <DatePicker
-                          value={manutForm.dataOrdenado}
-                          onChange={(v) => setManutForm((f) => ({ ...f, dataOrdenado: v }))}
+                          value={manutForm.dataRetirada}
+                          onChange={(v) => setManutForm((f) => ({ ...f, dataRetirada: v }))}
                         />
                       </div>
+                      {/* Ordenado: a partir de Ativo */}
+                      {(manutForm.status === "ATIVA" || manutForm.status === "REALIZADA") && (
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-medium text-muted-foreground">Ordenado para Manutenção</label>
+                          <DatePicker
+                            value={manutForm.dataOrdenado}
+                            onChange={(v) => setManutForm((f) => ({ ...f, dataOrdenado: v }))}
+                          />
+                        </div>
+                      )}
                       {manutForm.status === "REALIZADA" && (
                         <div className="space-y-1.5">
                           <label className={cn("text-xs font-medium", manutForm.sinalRecuperado ? "text-muted-foreground/50" : "text-muted-foreground")}>

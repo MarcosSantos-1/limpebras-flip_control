@@ -748,15 +748,17 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
     setor: string | null;
     execucao: string | null;
     motivo: string | null;
+    data_retirada: string | null;
     data_ordenado: string | null;
     data_manutencao: string | null;
     sinal_recuperado: boolean;
+    oficial: boolean;
     status: string | null;
     created_at: string;
   }
 
-  type ManutencaoStatus = "EM_ANALISE" | "PENDENTE" | "ATIVA" | "REALIZADA" | "SINAL_RECUPERADO";
-  const MANUT_STATUSES: ManutencaoStatus[] = ["EM_ANALISE", "PENDENTE", "ATIVA", "REALIZADA", "SINAL_RECUPERADO"];
+  type ManutencaoStatus = "EM_ANALISE" | "PENDENTE" | "RETIRADO" | "ATIVA" | "REALIZADA" | "SINAL_RECUPERADO";
+  const MANUT_STATUSES: ManutencaoStatus[] = ["EM_ANALISE", "PENDENTE", "RETIRADO", "ATIVA", "REALIZADA", "SINAL_RECUPERADO"];
   const cleanStatus = (v: unknown): ManutencaoStatus | null =>
     MANUT_STATUSES.includes(String(v ?? "").trim().toUpperCase() as ManutencaoStatus)
       ? (String(v).trim().toUpperCase() as ManutencaoStatus)
@@ -768,6 +770,7 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
     if (r.data_manutencao) return "REALIZADA";
     if (r.sinal_recuperado) return "SINAL_RECUPERADO";
     if (r.data_ordenado) return "ATIVA";
+    if (r.data_retirada) return "RETIRADO";
     return "PENDENTE";
   }
 
@@ -778,9 +781,11 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
       setor: r.setor ?? undefined,
       execucao: r.execucao ?? undefined,
       motivo: r.motivo ?? undefined,
+      dataRetirada: r.data_retirada ?? undefined,
       dataOrdenado: r.data_ordenado ?? undefined,
       dataManutencao: r.data_manutencao ?? undefined,
       sinalRecuperado: r.sinal_recuperado,
+      oficial: r.oficial,
       status: deriveStatus(r),
       createdAt: r.created_at,
     };
@@ -788,9 +793,10 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
 
   const SELECT_MANUT_MODULO = `
     SELECT id, modulo_selimp, setor, execucao, motivo,
+           data_retirada::text  AS data_retirada,
            data_ordenado::text  AS data_ordenado,
            data_manutencao::text AS data_manutencao,
-           sinal_recuperado, status,
+           sinal_recuperado, oficial, status,
            created_at::text AS created_at
       FROM modulo_manutencoes`;
 
@@ -818,9 +824,11 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
         setor?: string;
         execucao?: string;
         motivo?: string;
+        dataRetirada?: string;
         dataOrdenado?: string;
         dataManutencao?: string;
         sinalRecuperado?: boolean;
+        oficial?: boolean;
         status?: string;
       }[];
     };
@@ -831,9 +839,11 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
         setor: String(it?.setor ?? "").trim() || null,
         execucao: String(it?.execucao ?? "").trim() || null,
         motivo: String(it?.motivo ?? "").trim() || null,
+        dataRetirada: isIsoDate(it?.dataRetirada) ? it.dataRetirada : null,
         dataOrdenado: isIsoDate(it?.dataOrdenado) ? it.dataOrdenado : null,
         dataManutencao: isIsoDate(it?.dataManutencao) ? it.dataManutencao : null,
         sinalRecuperado: Boolean(it?.sinalRecuperado),
+        oficial: it?.oficial === undefined ? true : Boolean(it.oficial),
         status: cleanStatus(it?.status),
       }))
       .filter((it) => it.selimp);
@@ -848,12 +858,13 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
       for (const it of items) {
         const res = await client.query<ModuloManutencaoRow>(
           `INSERT INTO modulo_manutencoes
-             (modulo_selimp, setor, execucao, motivo, data_ordenado, data_manutencao, sinal_recuperado, status)
-           VALUES ($1, $2, $3, $4, $5::date, $6::date, $7, $8)
+             (modulo_selimp, setor, execucao, motivo, data_retirada, data_ordenado, data_manutencao, sinal_recuperado, oficial, status)
+           VALUES ($1, $2, $3, $4, $5::date, $6::date, $7::date, $8, $9, $10)
            RETURNING id, modulo_selimp, setor, execucao, motivo,
+             data_retirada::text AS data_retirada,
              data_ordenado::text AS data_ordenado, data_manutencao::text AS data_manutencao,
-             sinal_recuperado, status, created_at::text AS created_at`,
-          [it.selimp, it.setor, it.execucao, it.motivo, it.dataOrdenado, it.dataManutencao, it.sinalRecuperado, it.status]
+             sinal_recuperado, oficial, status, created_at::text AS created_at`,
+          [it.selimp, it.setor, it.execucao, it.motivo, it.dataRetirada, it.dataOrdenado, it.dataManutencao, it.sinalRecuperado, it.oficial, it.status]
         );
         if (res.rows[0]) inserted.push(mapManutencaoEvento(res.rows[0]));
       }
@@ -873,9 +884,11 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
       setor?: string;
       execucao?: string;
       motivo?: string;
+      dataRetirada?: string | null;
       dataOrdenado?: string | null;
       dataManutencao?: string | null;
       sinalRecuperado?: boolean;
+      oficial?: boolean;
       status?: string;
     };
   }>("/modulo/manutencoes/:id", async (request, reply) => {
@@ -887,23 +900,28 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
          setor = COALESCE($2, setor),
          execucao = COALESCE($3, execucao),
          motivo = COALESCE($4, motivo),
-         data_ordenado = CASE WHEN $5 = 'KEEP' THEN data_ordenado ELSE NULLIF($5,'')::date END,
-         data_manutencao = CASE WHEN $6 = 'KEEP' THEN data_manutencao ELSE NULLIF($6,'')::date END,
-         sinal_recuperado = COALESCE($7, sinal_recuperado),
-         status = COALESCE($8, status),
+         data_retirada = CASE WHEN $5 = 'KEEP' THEN data_retirada ELSE NULLIF($5,'')::date END,
+         data_ordenado = CASE WHEN $6 = 'KEEP' THEN data_ordenado ELSE NULLIF($6,'')::date END,
+         data_manutencao = CASE WHEN $7 = 'KEEP' THEN data_manutencao ELSE NULLIF($7,'')::date END,
+         sinal_recuperado = COALESCE($8, sinal_recuperado),
+         oficial = COALESCE($9, oficial),
+         status = COALESCE($10, status),
          updated_at = NOW()
        WHERE id = $1
        RETURNING id, modulo_selimp, setor, execucao, motivo,
+         data_retirada::text AS data_retirada,
          data_ordenado::text AS data_ordenado, data_manutencao::text AS data_manutencao,
-         sinal_recuperado, status, created_at::text AS created_at`,
+         sinal_recuperado, oficial, status, created_at::text AS created_at`,
       [
         id,
         b.setor != null ? String(b.setor).trim() : null,
         b.execucao != null ? String(b.execucao).trim() : null,
         b.motivo != null ? String(b.motivo).trim() : null,
+        b.dataRetirada === undefined ? "KEEP" : isIsoDate(b.dataRetirada) ? b.dataRetirada : "",
         b.dataOrdenado === undefined ? "KEEP" : isIsoDate(b.dataOrdenado) ? b.dataOrdenado : "",
         b.dataManutencao === undefined ? "KEEP" : isIsoDate(b.dataManutencao) ? b.dataManutencao : "",
         typeof b.sinalRecuperado === "boolean" ? b.sinalRecuperado : null,
+        typeof b.oficial === "boolean" ? b.oficial : null,
         cleanStatus(b.status),
       ]
     );
