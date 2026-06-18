@@ -2314,11 +2314,13 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
             comunicacao: String(r.comunicacao ?? "OFF"),
             bateria: String(r.bateria_raw ?? ""),
             bateriaPercentual: Number(r.bateria_percentual ?? 0),
+            // A hora gravada já é o horário local (a planilha é lida com Date.UTC do wall-clock),
+            // então formatamos em UTC para não aplicar -3h indevidamente. Ver parseModulosBateria.
             ultimaComunicacao:
               ultima instanceof Date
-                ? ultima.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })
+                ? ultima.toLocaleString("pt-BR", { timeZone: "UTC" })
                 : ultima
-                  ? new Date(String(ultima)).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })
+                  ? new Date(String(ultima)).toLocaleString("pt-BR", { timeZone: "UTC" })
                   : "",
             statusSinalGeral: statusSinal,
             statusBateria: String(r.status_bateria ?? ""),

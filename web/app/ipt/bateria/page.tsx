@@ -52,6 +52,7 @@ import {
   RefreshCw,
   Pencil,
   PackageX,
+  PackageCheck,
 } from "lucide-react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faTree, faBroom } from "@fortawesome/free-solid-svg-icons";
@@ -967,13 +968,16 @@ function sucessoPreviewChip(m: ModuleData) {
 const STATUS_MODULO_MANUT_BADGE: Record<ManutencaoModuloStatus, string> = {
   EM_ANALISE: "bg-violet-500/15 text-violet-600 border-violet-500/30 dark:text-violet-400",
   PENDENTE: "bg-amber-500/15 text-amber-600 border-amber-500/30 dark:text-amber-400",
-  RETIRADO: "bg-rose-500/15 text-rose-600 border-rose-500/30 dark:text-rose-400",
+  RETIRANDO: "bg-rose-500/15 text-rose-600 border-rose-500/30 dark:text-rose-400",
   ATIVA: "bg-sky-500/15 text-sky-600 border-sky-500/30 dark:text-sky-400",
+  REINSTALANDO: "bg-indigo-500/15 text-indigo-600 border-indigo-500/30 dark:text-indigo-400",
   REALIZADA: "bg-emerald-500/15 text-emerald-600 border-emerald-500/30 dark:text-emerald-400",
   SINAL_RECUPERADO: "bg-green-800/20 text-green-800 border-green-800/40 dark:bg-green-900/30 dark:text-green-400",
 };
 
-const MANUT_OPEN_STATUSES = new Set<ManutencaoModuloStatus>(["EM_ANALISE", "PENDENTE", "RETIRADO", "ATIVA"]);
+const MANUT_OPEN_STATUSES = new Set<ManutencaoModuloStatus>([
+  "EM_ANALISE", "PENDENTE", "RETIRANDO", "ATIVA", "REINSTALANDO",
+]);
 
 function isOpenManutStatus(status: ManutencaoModuloStatus | null): status is ManutencaoModuloStatus {
   return status != null && MANUT_OPEN_STATUSES.has(status);
@@ -1022,8 +1026,9 @@ interface ManutEntry {
   sub: string;
   module: ModuleData | null;
   status: ManutencaoModuloStatus;
-  dataRetirada?: string;
   dataOrdenado?: string;
+  dataRetirada?: string;
+  dataReinstalacao?: string;
   dataManutencao?: string;
   sinalRecuperado: boolean;
   oficial: boolean;
@@ -1119,7 +1124,7 @@ export default function BateriaDashboardPage() {
   const [data, setData] = useState<ApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
-  const [subFilter, setSubFilter] = useState("all");
+  const [subFilter, setSubFilter] = useState<string[]>([]);
   const [signalFilter, setSignalFilter] = useState("all");
   const [batteryFilter, setBatteryFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -1132,7 +1137,7 @@ export default function BateriaDashboardPage() {
   // Filtros da aba "Trocas de Bateria"
   const [trocasPeriod, setTrocasPeriod] = useState("30d");
   const [trocasSearch, setTrocasSearch] = useState("");
-  const [trocasSubFilter, setTrocasSubFilter] = useState("all");
+  const [trocasSubFilter, setTrocasSubFilter] = useState<string[]>([]);
   const [trocasDaysFilter, setTrocasDaysFilter] = useState<string[]>([]);
   const [trocasMotivoFilter, setTrocasMotivoFilter] = useState<string[]>([]);
   const [trocasAgendadaFilter, setTrocasAgendadaFilter] = useState("all"); // all | sim | nao
@@ -1142,8 +1147,8 @@ export default function BateriaDashboardPage() {
   // Filtros da aba "Manutenções"
   const [manutPeriod, setManutPeriod] = useState("30d");
   const [manutSearch, setManutSearch] = useState("");
-  const [manutSubFilter, setManutSubFilter] = useState("all");
-  const [manutStatusFilter, setManutStatusFilter] = useState("all"); // all | EM_ANALISE | PENDENTE | RETIRADO | ATIVA | REALIZADA (+ SINAL_RECUPERADO)
+  const [manutSubFilter, setManutSubFilter] = useState<string[]>([]);
+  const [manutStatusFilter, setManutStatusFilter] = useState("all"); // all | EM_ANALISE | PENDENTE | RETIRANDO | ATIVA | REINSTALANDO | REALIZADA (+ SINAL_RECUPERADO)
   const [manutOficialFilter, setManutOficialFilter] = useState("all"); // all | oficial | nao
   const [histModule, setHistModule] = useState<ModuleData | null>(null);
 
@@ -1157,11 +1162,12 @@ export default function BateriaDashboardPage() {
   );
   const [manutForm, setManutForm] = useState({
     selimp: "",
-    // status base do dropdown (EM_ANALISE | PENDENTE | RETIRADO | ATIVA | REALIZADA); SINAL_RECUPERADO vem do toggle.
-    status: "REALIZADA" as "EM_ANALISE" | "PENDENTE" | "RETIRADO" | "ATIVA" | "REALIZADA",
+    // status base do dropdown; SINAL_RECUPERADO vem do toggle em REALIZADA.
+    status: "REALIZADA" as "EM_ANALISE" | "PENDENTE" | "RETIRANDO" | "ATIVA" | "REINSTALANDO" | "REALIZADA",
     motivo: "",
-    dataRetirada: "",
     dataOrdenado: "",
+    dataRetirada: "",
+    dataReinstalacao: "",
     dataManutencao: "",
     sinalRecuperado: false,
     oficial: true,
@@ -1205,14 +1211,16 @@ export default function BateriaDashboardPage() {
   const [agendadoDate, setAgendadoDate] = useState("");
   const [agendadoReagendarOpen, setAgendadoReagendarOpen] = useState(false);
   const [concluirModule, setConcluirModule] = useState<ModuleData | null>(null);
-  // Conclusão: só a data da troca; bateria/status/sucesso são automáticos.
+  // Conclusão: a data da troca; bateria/status/sucesso são automáticos. "Desnecessária" é toggle manual.
   const [concluirDate, setConcluirDate] = useState("");
+  const [concluirDesnecessaria, setConcluirDesnecessaria] = useState(false);
   const [bulkAgendarOpen, setBulkAgendarOpen] = useState(false);
   const [bulkAgendarDate, setBulkAgendarDate] = useState("");
   const [bulkAgendarMode, setBulkAgendarMode] = useState<"agendar" | "reagendar">("agendar");
   const [bulkCancelarTrocaOpen, setBulkCancelarTrocaOpen] = useState(false);
   const [bulkConcluirOpen, setBulkConcluirOpen] = useState(false);
   const [bulkConcluirDate, setBulkConcluirDate] = useState("");
+  const [bulkConcluirDesnecessaria, setBulkConcluirDesnecessaria] = useState(false);
   const [bulkManutOpen, setBulkManutOpen] = useState(false);
   const [bulkManutMotivo, setBulkManutMotivo] = useState("");
   const { resolvedTheme } = useTheme();
@@ -1291,7 +1299,7 @@ export default function BateriaDashboardPage() {
           m.subprefeitura.toLowerCase().includes(term)
       );
     }
-    if (subFilter !== "all") result = result.filter((m) => m.subprefeitura === subFilter);
+    if (subFilter.length > 0) result = result.filter((m) => subFilter.includes(m.subprefeitura));
 
     if (signalFilter === "com-sinal") result = result.filter((m) => m.statusSinalGeral === "COM SINAL");
     else if (signalFilter === "sem-sinal") result = result.filter((m) => m.statusSinalGeral === "SEM SINAL");
@@ -1514,10 +1522,12 @@ export default function BateriaDashboardPage() {
     const bateriaVals: number[] = [];
     const fallbackModules = new Map<string, ModuleData>();
     for (const { item, module: m } of concluidas) {
-      const motivo = normalizeStatusKey(item.tipoTroca || motivoFromModule(m));
-      if (motivo.includes("CORRETIVA")) corretivas += 1;
+      // Desnecessária só conta quando marcada explicitamente (toggle) — não é mais automática.
+      const explicitTipo = normalizeStatusKey(item.tipoTroca ?? "");
+      const motivo = explicitTipo || normalizeStatusKey(motivoFromModule(m));
+      if (explicitTipo.includes("DESNECESS")) desnecessarias += 1;
+      else if (motivo.includes("CORRETIVA")) corretivas += 1;
       else if (motivo.includes("PREVENTIVA")) preventivas += 1;
-      else if (motivo.includes("DESNECESS")) desnecessarias += 1;
 
       const pct = normalizePercentValue(item.bateriaDepoisPercentual ?? item.percentualEntrada);
       if (pct != null) bateriaVals.push(pct);
@@ -1589,7 +1599,7 @@ export default function BateriaDashboardPage() {
   /** Listagem geral de setores (filtro + busca próprios da aba Trocas). */
   const trocasModules = useMemo(() => {
     let result = modules;
-    if (trocasSubFilter !== "all") result = result.filter((m) => m.subprefeitura === trocasSubFilter);
+    if (trocasSubFilter.length > 0) result = result.filter((m) => trocasSubFilter.includes(m.subprefeitura));
     if (trocasSearch) {
       const term = trocasSearch.toLowerCase();
       result = result.filter(
@@ -1757,6 +1767,7 @@ export default function BateriaDashboardPage() {
   // ===== Handlers de agendamento / conclusão =====
   function openConcluir(m: ModuleData) {
     setConcluirDate(isoToday());
+    setConcluirDesnecessaria(false);
     setConcluirModule(m);
   }
 
@@ -1812,6 +1823,8 @@ export default function BateriaDashboardPage() {
       setor: concluirModule.setor,
       dataTroca: concluirDate,
       // Bateria/sinal/última comunicação e o sucesso são determinados automaticamente (snapshots).
+      // "Desnecessária" é manual (toggle); senão o tipo (corretiva/preventiva) é automático.
+      tipoTroca: concluirDesnecessaria ? "Desnecessária" : undefined,
       ultimaComunicacao: "",
       bateriaAntes: concluirModule.bateria,
       bateriaAntesPercentual: concluirModule.bateriaPercentual,
@@ -1836,6 +1849,7 @@ export default function BateriaDashboardPage() {
 
   function openBulkConcluir() {
     setBulkConcluirDate(isoToday());
+    setBulkConcluirDesnecessaria(false);
     setBulkConcluirOpen(true);
   }
 
@@ -1876,6 +1890,7 @@ export default function BateriaDashboardPage() {
         setor: m.setor,
         dataTroca: bulkConcluirDate,
         // Bateria/sinal/última comunicação e o sucesso são automáticos (snapshots).
+        tipoTroca: bulkConcluirDesnecessaria ? "Desnecessária" : undefined,
         ultimaComunicacao: "",
         bateriaAntes: m.bateria,
         bateriaAntesPercentual: m.bateriaPercentual,
@@ -1908,8 +1923,9 @@ export default function BateriaDashboardPage() {
           sub: mod?.subprefeitura ?? "",
           module: mod,
           status: ev.status,
-          dataRetirada: ev.dataRetirada,
           dataOrdenado: ev.dataOrdenado,
+          dataRetirada: ev.dataRetirada,
+          dataReinstalacao: ev.dataReinstalacao,
           dataManutencao: ev.dataManutencao,
           sinalRecuperado: ev.sinalRecuperado,
           oficial: ev.oficial,
@@ -1943,7 +1959,7 @@ export default function BateriaDashboardPage() {
     // Filtros
     const term = manutSearch.trim().toLowerCase();
     let result = entries;
-    if (manutSubFilter !== "all") result = result.filter((e) => e.sub === manutSubFilter);
+    if (manutSubFilter.length > 0) result = result.filter((e) => manutSubFilter.includes(e.sub));
     if (manutOficialFilter === "oficial") result = result.filter((e) => e.oficial);
     else if (manutOficialFilter === "nao") result = result.filter((e) => !e.oficial);
     if (manutStatusFilter !== "all") {
@@ -1997,7 +2013,7 @@ export default function BateriaDashboardPage() {
   );
 
   const manutStats = useMemo(() => {
-    const counts: Record<ManutencaoModuloStatus, number> = { EM_ANALISE: 0, PENDENTE: 0, RETIRADO: 0, ATIVA: 0, REALIZADA: 0, SINAL_RECUPERADO: 0 };
+    const counts: Record<ManutencaoModuloStatus, number> = { EM_ANALISE: 0, PENDENTE: 0, RETIRANDO: 0, ATIVA: 0, REINSTALANDO: 0, REALIZADA: 0, SINAL_RECUPERADO: 0 };
     let total = 0;
     for (const events of Object.values(moduloManut.history)) {
       for (const ev of events) { counts[ev.status] += 1; total += 1; }
@@ -2033,10 +2049,11 @@ export default function BateriaDashboardPage() {
       const today = isoToday();
       setManutForm({
         selimp: ev?.selimp ?? module?.numeroSelimp ?? opts?.selimp ?? "",
-        status: base as "EM_ANALISE" | "PENDENTE" | "RETIRADO" | "ATIVA" | "REALIZADA",
+        status: base as "EM_ANALISE" | "PENDENTE" | "RETIRANDO" | "ATIVA" | "REINSTALANDO" | "REALIZADA",
         motivo: ev?.motivo ?? "",
-        dataRetirada: ev ? ev.dataRetirada ?? "" : today,
         dataOrdenado: ev ? ev.dataOrdenado ?? "" : today,
+        dataRetirada: ev ? ev.dataRetirada ?? "" : today,
+        dataReinstalacao: ev ? ev.dataReinstalacao ?? "" : today,
         dataManutencao: ev ? ev.dataManutencao ?? "" : today,
         sinalRecuperado: ev ? ev.status === "SINAL_RECUPERADO" : false,
         oficial: ev ? ev.oficial : true,
@@ -2054,12 +2071,13 @@ export default function BateriaDashboardPage() {
     const base = manutForm.status;
     const finalStatus: ManutencaoModuloStatus =
       base === "REALIZADA" && manutForm.sinalRecuperado ? "SINAL_RECUPERADO" : base;
-    // Datas cumulativas conforme a etapa: Retirado (retirada) → Ativo (+ordenado) → Realizado (+realizada).
-    const hasRetirada = base === "RETIRADO" || base === "ATIVA" || base === "REALIZADA";
-    const hasOrdenado = base === "ATIVA" || base === "REALIZADA";
-    const dataRetirada = hasRetirada ? manutForm.dataRetirada || "" : "";
+    // Datas cumulativas: Retirando (ordenado) → Ativo (+retirada) → Reinstalando (+reinstalação) → Realizado.
+    const hasOrdenado = base === "RETIRANDO" || base === "ATIVA" || base === "REINSTALANDO" || base === "REALIZADA";
+    const hasRetirada = base === "ATIVA" || base === "REINSTALANDO" || base === "REALIZADA";
+    const hasReinstalacao = (base === "REINSTALANDO" || base === "REALIZADA") && !manutForm.sinalRecuperado;
     const dataOrdenado = hasOrdenado ? manutForm.dataOrdenado || "" : "";
-    const dataManutencao = base === "REALIZADA" && !manutForm.sinalRecuperado ? manutForm.dataManutencao || "" : "";
+    const dataRetirada = hasRetirada ? manutForm.dataRetirada || "" : "";
+    const dataReinstalacao = hasReinstalacao ? manutForm.dataReinstalacao || "" : "";
     const sinalRecuperado = base === "REALIZADA" ? manutForm.sinalRecuperado : false;
     const oficial = manutForm.oficial;
     const motivo = manutForm.motivo.trim();
@@ -2068,9 +2086,9 @@ export default function BateriaDashboardPage() {
       // Edição: envia valores explícitos (strings vazias limpam as datas); motivo/oficial persistem.
       void moduloManut.atualizar(manutModal.editEventId, selimp, {
         motivo,
-        dataRetirada,
         dataOrdenado,
-        dataManutencao,
+        dataRetirada,
+        dataReinstalacao,
         sinalRecuperado,
         oficial,
         status: finalStatus,
@@ -2085,9 +2103,9 @@ export default function BateriaDashboardPage() {
         setor: setores || undefined,
         execucao: execucao || undefined,
         motivo: motivo || undefined,
-        dataRetirada: dataRetirada || undefined,
         dataOrdenado: dataOrdenado || undefined,
-        dataManutencao: dataManutencao || undefined,
+        dataRetirada: dataRetirada || undefined,
+        dataReinstalacao: dataReinstalacao || undefined,
         sinalRecuperado,
         oficial,
         status: finalStatus,
@@ -2741,18 +2759,15 @@ export default function BateriaDashboardPage() {
                         onChange={(e) => setTrocasSearch(e.target.value)}
                       />
                     </div>
-                    <Select value={trocasSubFilter} onValueChange={setTrocasSubFilter}>
-                      <SelectTrigger className="h-9 w-[120px]">
-                        <MapPin className="mr-1 h-4 w-4 text-muted-foreground" />
-                        <SelectValue placeholder="Sub" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">Todas</SelectItem>
-                        {uniqueSubs.map((s) => (
-                          <SelectItem key={s} value={s}>{s}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <MultiSelect
+                      compact
+                      className="w-[120px]"
+                      placeholder="Sub"
+                      emptyLabel="Todas subs"
+                      options={uniqueSubs.map((s) => ({ value: s, label: s }))}
+                      value={trocasSubFilter}
+                      onChange={setTrocasSubFilter}
+                    />
                     <MultiSelect
                       compact
                       className="w-[204px]"
@@ -2937,17 +2952,7 @@ export default function BateriaDashboardPage() {
                                   <Badge className={cn("border", STATUS_MODULO_MANUT_BADGE[manutStatusOpen])}>
                                     {trocaBlockedStatusLabel(manutStatusOpen)}
                                   </Badge>
-                                ) : !rec ? (
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    disabled={selMode}
-                                    className="h-7 gap-1 border-emerald-500/40 text-emerald-600 hover:bg-emerald-500/10 dark:text-emerald-400"
-                                    onClick={() => { setAgendarModule(m); setAgendarDate(isoToday()); }}
-                                  >
-                                    <CalendarPlus className="h-3.5 w-3.5" /> Agendar
-                                  </Button>
-                                ) : rec.status === "agendada" ? (
+                                ) : rec?.status === "agendada" ? (
                                   <Button
                                     size="sm"
                                     disabled={selMode}
@@ -2957,21 +2962,15 @@ export default function BateriaDashboardPage() {
                                     <Clock className="h-3.5 w-3.5" /> Agendado · {fmtIsoBr(rec.dataAgendada)}
                                   </Button>
                                 ) : (
+                                  // Default (sem troca em aberto, incluindo concluídas/sem sucesso): permite agendar.
                                   <Button
                                     size="sm"
                                     variant="outline"
                                     disabled={selMode}
-                                    onClick={() => openConcluir(m)}
-                                    className={cn(
-                                      "h-7 gap-1",
-                                      rec.sucesso == null
-                                        ? "border-amber-500/50 text-amber-600 hover:bg-amber-500/10 dark:text-amber-400"
-                                        : rec.sucesso
-                                          ? "border-emerald-500/50 text-emerald-600 hover:bg-emerald-500/10 dark:text-emerald-400"
-                                          : "border-red-500/50 text-red-600 hover:bg-red-500/10 dark:text-red-400",
-                                    )}
+                                    className="h-7 gap-1 border-emerald-500/40 text-emerald-600 hover:bg-emerald-500/10 dark:text-emerald-400"
+                                    onClick={() => { setAgendarModule(m); setAgendarDate(isoToday()); }}
                                   >
-                                    <CheckCircle2 className="h-3.5 w-3.5" /> {rec.sucesso == null ? "Aguardando" : rec.sucesso ? "Concluída" : "Sem sucesso"}
+                                    <CalendarPlus className="h-3.5 w-3.5" /> Agendar
                                   </Button>
                                 )}
                               </TableCell>
@@ -3241,10 +3240,10 @@ export default function BateriaDashboardPage() {
                     </div>
                     <div className="flex flex-col justify-between rounded-xl border border-white/20 bg-white/10 p-4 backdrop-blur-sm">
                       <div className="flex items-start justify-between gap-2">
-                        <p className="text-xs font-medium uppercase tracking-wide text-white/80">3. Retirados</p>
+                        <p className="text-xs font-medium uppercase tracking-wide text-white/80">3. Retirando</p>
                         <PackageX className="size-6 shrink-0 text-rose-200/95" aria-hidden />
                       </div>
-                      <p className="mt-4 font-mono text-3xl font-bold tabular-nums text-white">{manutStats.RETIRADO}</p>
+                      <p className="mt-4 font-mono text-3xl font-bold tabular-nums text-white">{manutStats.RETIRANDO}</p>
                     </div>
                     <div className="flex flex-col justify-between rounded-xl border border-white/20 bg-white/10 p-4 backdrop-blur-sm">
                       <div className="flex items-start justify-between gap-2">
@@ -3255,7 +3254,14 @@ export default function BateriaDashboardPage() {
                     </div>
                     <div className="flex flex-col justify-between rounded-xl border border-white/20 bg-white/10 p-4 backdrop-blur-sm">
                       <div className="flex items-start justify-between gap-2">
-                        <p className="text-xs font-medium uppercase tracking-wide text-white/80">5. Realizadas</p>
+                        <p className="text-xs font-medium uppercase tracking-wide text-white/80">5. Reinstalando</p>
+                        <PackageCheck className="size-6 shrink-0 text-indigo-200/95" aria-hidden />
+                      </div>
+                      <p className="mt-4 font-mono text-3xl font-bold tabular-nums text-white">{manutStats.REINSTALANDO}</p>
+                    </div>
+                    <div className="flex flex-col justify-between rounded-xl border border-white/20 bg-white/10 p-4 backdrop-blur-sm">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="text-xs font-medium uppercase tracking-wide text-white/80">6. Realizadas</p>
                         <CheckCircle2 className="size-6 shrink-0 text-emerald-200/95" aria-hidden />
                       </div>
                       <p className="mt-4 font-mono text-3xl font-bold tabular-nums text-white">{manutStats.realizadasTotal}</p>
@@ -3336,9 +3342,10 @@ export default function BateriaDashboardPage() {
                         <SelectItem value="all">Todos status</SelectItem>
                         <SelectItem value="EM_ANALISE">1. Em análise</SelectItem>
                         <SelectItem value="PENDENTE">2. Pendente</SelectItem>
-                        <SelectItem value="RETIRADO">3. Retirado</SelectItem>
+                        <SelectItem value="RETIRANDO">3. Retirando</SelectItem>
                         <SelectItem value="ATIVA">4. Ativo</SelectItem>
-                        <SelectItem value="REALIZADA">5. Realizado</SelectItem>
+                        <SelectItem value="REINSTALANDO">5. Reinstalando</SelectItem>
+                        <SelectItem value="REALIZADA">6. Realizado</SelectItem>
                       </SelectContent>
                     </Select>
                     <Select value={manutOficialFilter} onValueChange={setManutOficialFilter}>
@@ -3352,22 +3359,19 @@ export default function BateriaDashboardPage() {
                         <SelectItem value="nao">Não oficiais</SelectItem>
                       </SelectContent>
                     </Select>
-                    <Select value={manutSubFilter} onValueChange={setManutSubFilter}>
-                      <SelectTrigger className="h-9 w-[130px]">
-                        <MapPin className="mr-1 h-4 w-4 text-muted-foreground" />
-                        <SelectValue placeholder="Sub" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">Todas</SelectItem>
-                        {uniqueSubs.map((s) => (
-                          <SelectItem key={s} value={s}>{s}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <MultiSelect
+                      compact
+                      className="w-[130px]"
+                      placeholder="Sub"
+                      emptyLabel="Todas subs"
+                      options={uniqueSubs.map((s) => ({ value: s, label: s }))}
+                      value={manutSubFilter}
+                      onChange={setManutSubFilter}
+                    />
                   </div>
                   {!manutSearch.trim() && (
                     <p className="text-xs text-muted-foreground">
-                      Histórico de manutenções (1. Em análise → 2. Pendente → 3. Retirado → 4. Ativo → 5. Realizado). Módulos enviados à manutenção pela aba Trocas entram como Pendente.
+                      Histórico de manutenções (1. Em análise → 2. Pendente → 3. Retirando → 4. Ativo → 5. Reinstalando → 6. Realizado). Módulos enviados à manutenção pela aba Trocas entram como Pendente.
                     </p>
                   )}
                 </CardHeader>
@@ -3421,12 +3425,12 @@ export default function BateriaDashboardPage() {
                               </TableCell>
                               <TableCell className="align-top text-xs tabular-nums">
                                 <div className="space-y-0.5">
-                                  <div><span className="text-muted-foreground">Retirada:</span> {isoBr(e.dataRetirada)}</div>
                                   <div><span className="text-muted-foreground">Ordenado:</span> {isoBr(e.dataOrdenado)}</div>
+                                  <div><span className="text-muted-foreground">Retirada:</span> {isoBr(e.dataRetirada)}</div>
                                   <div>
-                                    <span className="text-muted-foreground">Realizada:</span>{" "}
-                                    {e.dataManutencao
-                                      ? isoBr(e.dataManutencao)
+                                    <span className="text-muted-foreground">Reinstalação:</span>{" "}
+                                    {e.dataReinstalacao
+                                      ? isoBr(e.dataReinstalacao)
                                       : e.sinalRecuperado
                                         ? <span className="font-medium text-green-700 dark:text-green-400">Sinal recuperado</span>
                                         : "—"}
@@ -3454,8 +3458,9 @@ export default function BateriaDashboardPage() {
                                                 selimp: e.selimp,
                                                 status: e.status,
                                                 motivo: e.motivo,
-                                                dataRetirada: e.dataRetirada,
                                                 dataOrdenado: e.dataOrdenado,
+                                                dataRetirada: e.dataRetirada,
+                                                dataReinstalacao: e.dataReinstalacao,
                                                 dataManutencao: e.dataManutencao,
                                                 sinalRecuperado: e.sinalRecuperado,
                                                 oficial: e.oficial,
@@ -3715,18 +3720,14 @@ export default function BateriaDashboardPage() {
                       <p className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
                         <MapPin className="h-3.5 w-3.5" /> Subprefeitura
                       </p>
-                      <Select value={subFilter} onValueChange={(v) => { setSubFilter(v); setCurrentPage(1); }}>
-                        <SelectTrigger className="w-full">
-                          <Filter className="mr-2 h-4 w-4 text-muted-foreground" />
-                          <SelectValue placeholder="Sub" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="all">Todas</SelectItem>
-                          {uniqueSubs.map((s) => (
-                            <SelectItem key={s} value={s}>{s}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <MultiSelect
+                        className="w-full"
+                        placeholder="Sub"
+                        emptyLabel="Todas subs"
+                        options={uniqueSubs.map((s) => ({ value: s, label: s }))}
+                        value={subFilter}
+                        onChange={(v) => { setSubFilter(v); setCurrentPage(1); }}
+                      />
                     </div>
                     <div className="space-y-1">
                       <p className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
@@ -4238,6 +4239,13 @@ export default function BateriaDashboardPage() {
                   </div>
                   {sucessoPreviewChip(concluirModule)}
                 </div>
+                <label className="flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-muted/20 p-3">
+                  <span className="text-xs text-foreground">
+                    Troca desnecessária
+                    <span className="block text-[11px] text-muted-foreground">Marque se a troca não era necessária. Com/sem sucesso continua automático.</span>
+                  </span>
+                  <Switch checked={concluirDesnecessaria} onCheckedChange={setConcluirDesnecessaria} />
+                </label>
                 <p className="rounded-lg bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
                   Bateria, status, última comunicação e o resultado (com/sem sucesso) são determinados
                   automaticamente pelas planilhas de bateria. Trocas que continuarem desatualizadas após a
@@ -4401,6 +4409,13 @@ export default function BateriaDashboardPage() {
                 <label className="mb-1.5 block text-sm font-medium text-foreground">Data da troca</label>
                 <DatePicker value={bulkConcluirDate} onChange={setBulkConcluirDate} />
               </div>
+              <label className="flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-muted/20 p-3">
+                <span className="text-xs text-foreground">
+                  Trocas desnecessárias
+                  <span className="block text-[11px] text-muted-foreground">Marca todas como desnecessárias. Com/sem sucesso continua automático.</span>
+                </span>
+                <Switch checked={bulkConcluirDesnecessaria} onCheckedChange={setBulkConcluirDesnecessaria} />
+              </label>
               <div className="max-h-72 space-y-2 overflow-y-auto rounded-lg border border-border/60 bg-muted/15 p-2">
                 {selectedModules.map((m) => (
                   <div key={m.numeroSelimp} className="flex items-center justify-between gap-2 rounded-md bg-background/70 px-2.5 py-2">
@@ -4447,7 +4462,7 @@ export default function BateriaDashboardPage() {
               // Estado de manutenção corrente (evento mais recente) → datas e dias em manutenção.
               const manutRec = moduloManut.records[m.numeroSelimp];
               const startIso = manutRec?.dataRetirada || manutRec?.dataOrdenado;
-              const realizadaIso = manutRec?.dataManutencao;
+              const realizadaIso = manutRec?.dataReinstalacao || manutRec?.dataManutencao;
               const fechado = manutRec?.status === "REALIZADA" || manutRec?.status === "SINAL_RECUPERADO";
               const endIso = realizadaIso || (fechado ? undefined : isoToday());
               const diasEmManutencao =
@@ -4489,12 +4504,12 @@ export default function BateriaDashboardPage() {
                         )}
                       </div>
                       <div className="grid grid-cols-3 gap-x-4 gap-y-1 text-xs tabular-nums">
-                        <div><span className="block text-[10px] uppercase tracking-wide text-muted-foreground">Retirada</span>{isoBr(manutRec.dataRetirada)}</div>
                         <div><span className="block text-[10px] uppercase tracking-wide text-muted-foreground">Ordenado</span>{isoBr(manutRec.dataOrdenado)}</div>
+                        <div><span className="block text-[10px] uppercase tracking-wide text-muted-foreground">Retirada</span>{isoBr(manutRec.dataRetirada)}</div>
                         <div>
-                          <span className="block text-[10px] uppercase tracking-wide text-muted-foreground">Realizada</span>
-                          {manutRec.dataManutencao
-                            ? isoBr(manutRec.dataManutencao)
+                          <span className="block text-[10px] uppercase tracking-wide text-muted-foreground">Reinstalação</span>
+                          {manutRec.dataReinstalacao
+                            ? isoBr(manutRec.dataReinstalacao)
                             : manutRec.sinalRecuperado
                               ? <span className="text-green-700 dark:text-green-400">Sinal recup.</span>
                               : "—"}
@@ -4547,12 +4562,12 @@ export default function BateriaDashboardPage() {
                             </div>
                           </div>
                           <div className="mt-2 grid grid-cols-3 gap-x-4 gap-y-1 text-xs">
-                            <div><span className="text-muted-foreground">Retirada:</span> {isoBr(ev.dataRetirada)}</div>
                             <div><span className="text-muted-foreground">Ordenado:</span> {isoBr(ev.dataOrdenado)}</div>
+                            <div><span className="text-muted-foreground">Retirada:</span> {isoBr(ev.dataRetirada)}</div>
                             <div>
-                              <span className="text-muted-foreground">Realizada:</span>{" "}
-                              {ev.dataManutencao
-                                ? isoBr(ev.dataManutencao)
+                              <span className="text-muted-foreground">Reinstalação:</span>{" "}
+                              {ev.dataReinstalacao
+                                ? isoBr(ev.dataReinstalacao)
                                 : ev.sinalRecuperado
                                   ? <span className="text-green-700 dark:text-green-400">Sinal recuperado</span>
                                   : "—"}
@@ -4655,7 +4670,7 @@ export default function BateriaDashboardPage() {
                       onValueChange={(v) =>
                         setManutForm((f) => ({
                           ...f,
-                          status: v as "EM_ANALISE" | "PENDENTE" | "RETIRADO" | "ATIVA" | "REALIZADA",
+                          status: v as "EM_ANALISE" | "PENDENTE" | "RETIRANDO" | "ATIVA" | "REINSTALANDO" | "REALIZADA",
                           sinalRecuperado: v === "REALIZADA" ? f.sinalRecuperado : false,
                         }))
                       }
@@ -4666,9 +4681,10 @@ export default function BateriaDashboardPage() {
                       <SelectContent>
                         <SelectItem value="EM_ANALISE">1. Em análise</SelectItem>
                         <SelectItem value="PENDENTE">2. Pendente</SelectItem>
-                        <SelectItem value="RETIRADO">3. Retirado</SelectItem>
+                        <SelectItem value="RETIRANDO">3. Retirando</SelectItem>
                         <SelectItem value="ATIVA">4. Ativo</SelectItem>
-                        <SelectItem value="REALIZADA">5. Realizado</SelectItem>
+                        <SelectItem value="REINSTALANDO">5. Reinstalando</SelectItem>
+                        <SelectItem value="REALIZADA">6. Realizado</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -4699,33 +4715,34 @@ export default function BateriaDashboardPage() {
 
                   {manutForm.status !== "EM_ANALISE" && manutForm.status !== "PENDENTE" && (
                     <div className="grid grid-cols-3 gap-3">
-                      {/* Retirada: a partir de Retirado (cumulativa) */}
+                      {/* Ordenado p/ manutenção (e-mail à SELIMP): a partir de Retirando */}
                       <div className="space-y-1.5">
-                        <label className="text-xs font-medium text-muted-foreground">Data de Retirada</label>
+                        <label className="text-xs font-medium text-muted-foreground">Ordenado p/ Manutenção</label>
                         <DatePicker
-                          value={manutForm.dataRetirada}
-                          onChange={(v) => setManutForm((f) => ({ ...f, dataRetirada: v }))}
+                          value={manutForm.dataOrdenado}
+                          onChange={(v) => setManutForm((f) => ({ ...f, dataOrdenado: v }))}
                         />
                       </div>
-                      {/* Ordenado: a partir de Ativo */}
-                      {(manutForm.status === "ATIVA" || manutForm.status === "REALIZADA") && (
+                      {/* Data de retirada do módulo: a partir de Ativo */}
+                      {(manutForm.status === "ATIVA" || manutForm.status === "REINSTALANDO" || manutForm.status === "REALIZADA") && (
                         <div className="space-y-1.5">
-                          <label className="text-xs font-medium text-muted-foreground">Ordenado para Manutenção</label>
+                          <label className="text-xs font-medium text-muted-foreground">Data de Retirada</label>
                           <DatePicker
-                            value={manutForm.dataOrdenado}
-                            onChange={(v) => setManutForm((f) => ({ ...f, dataOrdenado: v }))}
+                            value={manutForm.dataRetirada}
+                            onChange={(v) => setManutForm((f) => ({ ...f, dataRetirada: v }))}
                           />
                         </div>
                       )}
-                      {manutForm.status === "REALIZADA" && (
+                      {/* Data de reinstalação: a partir de Reinstalando */}
+                      {(manutForm.status === "REINSTALANDO" || manutForm.status === "REALIZADA") && (
                         <div className="space-y-1.5">
                           <label className={cn("text-xs font-medium", manutForm.sinalRecuperado ? "text-muted-foreground/50" : "text-muted-foreground")}>
-                            Data de Manutenção Realizada
+                            Data de Reinstalação
                           </label>
                           <DatePicker
-                            value={manutForm.sinalRecuperado ? "" : manutForm.dataManutencao}
+                            value={manutForm.sinalRecuperado ? "" : manutForm.dataReinstalacao}
                             disabled={manutForm.sinalRecuperado}
-                            onChange={(v) => setManutForm((f) => ({ ...f, dataManutencao: v }))}
+                            onChange={(v) => setManutForm((f) => ({ ...f, dataReinstalacao: v }))}
                           />
                         </div>
                       )}
@@ -4736,11 +4753,11 @@ export default function BateriaDashboardPage() {
                     <label className="flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-muted/20 p-3">
                       <span className="text-xs text-foreground">
                         Sinal recuperado no deslocamento
-                        <span className="block text-[11px] text-muted-foreground">Sem manutenção física — apenas restaurou o sinal.</span>
+                        <span className="block text-[11px] text-muted-foreground">Sem reinstalação física — apenas restaurou o sinal.</span>
                       </span>
                       <Switch
                         checked={manutForm.sinalRecuperado}
-                        onCheckedChange={(v) => setManutForm((f) => ({ ...f, sinalRecuperado: v, dataManutencao: v ? "" : f.dataManutencao }))}
+                        onCheckedChange={(v) => setManutForm((f) => ({ ...f, sinalRecuperado: v, dataReinstalacao: v ? "" : f.dataReinstalacao }))}
                       />
                     </label>
                   )}

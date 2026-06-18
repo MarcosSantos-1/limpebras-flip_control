@@ -567,7 +567,8 @@ export interface BateriaManutencaoRecord {
   naoHouve: boolean;
 }
 
-export type ManutencaoModuloStatus = "EM_ANALISE" | "PENDENTE" | "RETIRADO" | "ATIVA" | "REALIZADA" | "SINAL_RECUPERADO";
+export type ManutencaoModuloStatus =
+  | "EM_ANALISE" | "PENDENTE" | "RETIRANDO" | "ATIVA" | "REINSTALANDO" | "REALIZADA" | "SINAL_RECUPERADO";
 
 /** Registro de manutenção do MÓDULO (histórico append-only). */
 export interface ModuloManutencaoEvento {
@@ -576,11 +577,13 @@ export interface ModuloManutencaoEvento {
   setor?: string;
   execucao?: string;
   motivo?: string;
-  /** yyyy-MM-dd — "Data de retirada do módulo" (RETIRADO). */
-  dataRetirada?: string;
-  /** yyyy-MM-dd — "Ordenado para Manutenção" (comunicado à SELIMP). */
+  /** yyyy-MM-dd — "Ordenado para Manutenção" / e-mail à SELIMP (RETIRANDO). */
   dataOrdenado?: string;
-  /** yyyy-MM-dd — "Data de Manutenção Realizada". */
+  /** yyyy-MM-dd — "Data de retirada do módulo" (ATIVA). */
+  dataRetirada?: string;
+  /** yyyy-MM-dd — "Data de reinstalação do módulo" (REINSTALANDO). */
+  dataReinstalacao?: string;
+  /** yyyy-MM-dd — legado "Data de Manutenção Realizada". */
   dataManutencao?: string;
   sinalRecuperado: boolean;
   /** Manutenção oficial (true) ou não oficial (false). */
@@ -595,6 +598,7 @@ export interface ModuloManutencaoInput {
   execucao?: string;
   motivo?: string;
   dataRetirada?: string;
+  dataReinstalacao?: string;
   dataOrdenado?: string;
   dataManutencao?: string;
   sinalRecuperado?: boolean;

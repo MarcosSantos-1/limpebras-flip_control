@@ -114,34 +114,29 @@ function temSinal(sinal: string | null, raw: string | null, desat: boolean | nul
 }
 
 /**
- * Classifica automaticamente o tipo da troca a partir dos snapshots reais
- * (planilhas de bateria) antes e depois da troca:
- * - CORRETIVA: estava sem sinal/desatualizado antes e voltou a computar depois.
- * - PREVENTIVA: tinha sinal mas bateria baixa antes e a bateria subiu depois.
- * - DESNECESSÁRIA: bateria ficou menor que antes, ou tinha sinal e ficou sem sinal.
- * Retorna undefined quando ainda não há snapshot posterior para decidir.
+ * Classifica o tipo da troca a partir do estado ANTES da troca (motivo):
+ * - CORRETIVA: estava sem sinal/desatualizado antes (módulo sem comunicar).
+ * - PREVENTIVA: tinha sinal mas bateria baixa/crítica antes.
+ * DESNECESSÁRIA NÃO é mais automática — é marcada manualmente na conclusão (toggle).
+ * Retorna undefined quando não há dado "antes" para decidir (cai para o tipo gravado).
  */
 function classifyTipoTroca(
   antesPct: number | null,
   antesSinal: string | null,
   antesRaw: string | null,
   antesDesat: boolean | null,
-  depoisPct: number | null,
-  depoisSinal: string | null,
-  depoisRaw: string | null,
-  depoisDesat: boolean | null,
+  _depoisPct: number | null,
+  _depoisSinal: string | null,
+  _depoisRaw: string | null,
+  _depoisDesat: boolean | null,
 ): string | undefined {
-  // Sem nenhum dado "depois" não dá para classificar ainda.
-  if (depoisPct == null && (depoisSinal == null || depoisSinal === "")) return undefined;
+  const semDadosAntes =
+    antesPct == null && (antesSinal == null || antesSinal === "") && antesDesat == null && (antesRaw == null || antesRaw === "");
+  if (semDadosAntes) return undefined;
   const sinalAntes = temSinal(antesSinal, antesRaw, antesDesat);
-  const sinalDepois = temSinal(depoisSinal, depoisRaw, depoisDesat);
   const baixaAntes = antesPct != null && antesPct <= 30;
-  const aumentou = antesPct != null && depoisPct != null && depoisPct > antesPct;
-  const diminuiu = antesPct != null && depoisPct != null && depoisPct < antesPct;
-
-  if (!sinalAntes && sinalDepois) return "CORRETIVA";
-  if (diminuiu || (sinalAntes && !sinalDepois)) return "DESNECESSÁRIA";
-  if (sinalAntes && baixaAntes && aumentou) return "PREVENTIVA";
+  if (!sinalAntes) return "CORRETIVA";
+  if (baixaAntes) return "PREVENTIVA";
   return undefined;
 }
 
@@ -192,11 +187,13 @@ function mapTrocaHistory(r: TrocaEventoRow): TrocaHistoryDto {
   // Sucesso automático: a troca foi "sem sucesso" se o snapshot logo após continua desatualizado.
   // Sem leitura posterior à troca → undefined ("Aguardando avaliação").
   const sucessoAuto = r.status === "concluida" ? sucessoFromDepois(r) : undefined;
+  // "Desnecessária" é manual (toggle na conclusão): quando gravada, sempre prevalece.
+  const desnecManual = String(r.tipo_troca ?? "").toUpperCase().includes("DESNEC");
   return {
     ...mapTroca(r),
     id: String(r.id),
     sucesso: sucessoAuto,
-    tipoTroca: tipoAuto ?? r.tipo_troca ?? undefined,
+    tipoTroca: desnecManual ? r.tipo_troca ?? undefined : tipoAuto ?? r.tipo_troca ?? undefined,
     bateriaAntes: r.snap_antes_raw ?? r.bateria_antes_raw ?? undefined,
     bateriaAntesPercentual: antesPct,
     statusBateriaAntes:
@@ -749,6 +746,7 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
     execucao: string | null;
     motivo: string | null;
     data_retirada: string | null;
+    data_reinstalacao: string | null;
     data_ordenado: string | null;
     data_manutencao: string | null;
     sinal_recuperado: boolean;
@@ -757,20 +755,25 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
     created_at: string;
   }
 
-  type ManutencaoStatus = "EM_ANALISE" | "PENDENTE" | "RETIRADO" | "ATIVA" | "REALIZADA" | "SINAL_RECUPERADO";
-  const MANUT_STATUSES: ManutencaoStatus[] = ["EM_ANALISE", "PENDENTE", "RETIRADO", "ATIVA", "REALIZADA", "SINAL_RECUPERADO"];
-  const cleanStatus = (v: unknown): ManutencaoStatus | null =>
-    MANUT_STATUSES.includes(String(v ?? "").trim().toUpperCase() as ManutencaoStatus)
-      ? (String(v).trim().toUpperCase() as ManutencaoStatus)
-      : null;
+  type ManutencaoStatus =
+    | "EM_ANALISE" | "PENDENTE" | "RETIRANDO" | "ATIVA" | "REINSTALANDO" | "REALIZADA" | "SINAL_RECUPERADO";
+  const MANUT_STATUSES: ManutencaoStatus[] = [
+    "EM_ANALISE", "PENDENTE", "RETIRANDO", "ATIVA", "REINSTALANDO", "REALIZADA", "SINAL_RECUPERADO",
+  ];
+  const cleanStatus = (v: unknown): ManutencaoStatus | null => {
+    const s = String(v ?? "").trim().toUpperCase();
+    if (s === "RETIRADO") return "RETIRANDO"; // alias do nome antigo
+    return MANUT_STATUSES.includes(s as ManutencaoStatus) ? (s as ManutencaoStatus) : null;
+  };
 
   function deriveStatus(r: ModuloManutencaoRow): ManutencaoStatus {
     const explicit = cleanStatus(r.status);
     if (explicit) return explicit;
     if (r.data_manutencao) return "REALIZADA";
     if (r.sinal_recuperado) return "SINAL_RECUPERADO";
-    if (r.data_ordenado) return "ATIVA";
-    if (r.data_retirada) return "RETIRADO";
+    if (r.data_reinstalacao) return "REINSTALANDO";
+    if (r.data_retirada) return "ATIVA";
+    if (r.data_ordenado) return "RETIRANDO";
     return "PENDENTE";
   }
 
@@ -781,8 +784,9 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
       setor: r.setor ?? undefined,
       execucao: r.execucao ?? undefined,
       motivo: r.motivo ?? undefined,
-      dataRetirada: r.data_retirada ?? undefined,
       dataOrdenado: r.data_ordenado ?? undefined,
+      dataRetirada: r.data_retirada ?? undefined,
+      dataReinstalacao: r.data_reinstalacao ?? undefined,
       dataManutencao: r.data_manutencao ?? undefined,
       sinalRecuperado: r.sinal_recuperado,
       oficial: r.oficial,
@@ -793,9 +797,10 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
 
   const SELECT_MANUT_MODULO = `
     SELECT id, modulo_selimp, setor, execucao, motivo,
-           data_retirada::text  AS data_retirada,
-           data_ordenado::text  AS data_ordenado,
-           data_manutencao::text AS data_manutencao,
+           data_retirada::text     AS data_retirada,
+           data_reinstalacao::text AS data_reinstalacao,
+           data_ordenado::text     AS data_ordenado,
+           data_manutencao::text   AS data_manutencao,
            sinal_recuperado, oficial, status,
            created_at::text AS created_at
       FROM modulo_manutencoes`;
@@ -825,6 +830,7 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
         execucao?: string;
         motivo?: string;
         dataRetirada?: string;
+        dataReinstalacao?: string;
         dataOrdenado?: string;
         dataManutencao?: string;
         sinalRecuperado?: boolean;
@@ -840,6 +846,7 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
         execucao: String(it?.execucao ?? "").trim() || null,
         motivo: String(it?.motivo ?? "").trim() || null,
         dataRetirada: isIsoDate(it?.dataRetirada) ? it.dataRetirada : null,
+        dataReinstalacao: isIsoDate(it?.dataReinstalacao) ? it.dataReinstalacao : null,
         dataOrdenado: isIsoDate(it?.dataOrdenado) ? it.dataOrdenado : null,
         dataManutencao: isIsoDate(it?.dataManutencao) ? it.dataManutencao : null,
         sinalRecuperado: Boolean(it?.sinalRecuperado),
@@ -858,13 +865,13 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
       for (const it of items) {
         const res = await client.query<ModuloManutencaoRow>(
           `INSERT INTO modulo_manutencoes
-             (modulo_selimp, setor, execucao, motivo, data_retirada, data_ordenado, data_manutencao, sinal_recuperado, oficial, status)
-           VALUES ($1, $2, $3, $4, $5::date, $6::date, $7::date, $8, $9, $10)
+             (modulo_selimp, setor, execucao, motivo, data_retirada, data_reinstalacao, data_ordenado, data_manutencao, sinal_recuperado, oficial, status)
+           VALUES ($1, $2, $3, $4, $5::date, $6::date, $7::date, $8::date, $9, $10, $11)
            RETURNING id, modulo_selimp, setor, execucao, motivo,
-             data_retirada::text AS data_retirada,
+             data_retirada::text AS data_retirada, data_reinstalacao::text AS data_reinstalacao,
              data_ordenado::text AS data_ordenado, data_manutencao::text AS data_manutencao,
              sinal_recuperado, oficial, status, created_at::text AS created_at`,
-          [it.selimp, it.setor, it.execucao, it.motivo, it.dataRetirada, it.dataOrdenado, it.dataManutencao, it.sinalRecuperado, it.oficial, it.status]
+          [it.selimp, it.setor, it.execucao, it.motivo, it.dataRetirada, it.dataReinstalacao, it.dataOrdenado, it.dataManutencao, it.sinalRecuperado, it.oficial, it.status]
         );
         if (res.rows[0]) inserted.push(mapManutencaoEvento(res.rows[0]));
       }
@@ -885,6 +892,7 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
       execucao?: string;
       motivo?: string;
       dataRetirada?: string | null;
+      dataReinstalacao?: string | null;
       dataOrdenado?: string | null;
       dataManutencao?: string | null;
       sinalRecuperado?: boolean;
@@ -901,15 +909,16 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
          execucao = COALESCE($3, execucao),
          motivo = COALESCE($4, motivo),
          data_retirada = CASE WHEN $5 = 'KEEP' THEN data_retirada ELSE NULLIF($5,'')::date END,
-         data_ordenado = CASE WHEN $6 = 'KEEP' THEN data_ordenado ELSE NULLIF($6,'')::date END,
-         data_manutencao = CASE WHEN $7 = 'KEEP' THEN data_manutencao ELSE NULLIF($7,'')::date END,
-         sinal_recuperado = COALESCE($8, sinal_recuperado),
-         oficial = COALESCE($9, oficial),
-         status = COALESCE($10, status),
+         data_reinstalacao = CASE WHEN $6 = 'KEEP' THEN data_reinstalacao ELSE NULLIF($6,'')::date END,
+         data_ordenado = CASE WHEN $7 = 'KEEP' THEN data_ordenado ELSE NULLIF($7,'')::date END,
+         data_manutencao = CASE WHEN $8 = 'KEEP' THEN data_manutencao ELSE NULLIF($8,'')::date END,
+         sinal_recuperado = COALESCE($9, sinal_recuperado),
+         oficial = COALESCE($10, oficial),
+         status = COALESCE($11, status),
          updated_at = NOW()
        WHERE id = $1
        RETURNING id, modulo_selimp, setor, execucao, motivo,
-         data_retirada::text AS data_retirada,
+         data_retirada::text AS data_retirada, data_reinstalacao::text AS data_reinstalacao,
          data_ordenado::text AS data_ordenado, data_manutencao::text AS data_manutencao,
          sinal_recuperado, oficial, status, created_at::text AS created_at`,
       [
@@ -918,6 +927,7 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
         b.execucao != null ? String(b.execucao).trim() : null,
         b.motivo != null ? String(b.motivo).trim() : null,
         b.dataRetirada === undefined ? "KEEP" : isIsoDate(b.dataRetirada) ? b.dataRetirada : "",
+        b.dataReinstalacao === undefined ? "KEEP" : isIsoDate(b.dataReinstalacao) ? b.dataReinstalacao : "",
         b.dataOrdenado === undefined ? "KEEP" : isIsoDate(b.dataOrdenado) ? b.dataOrdenado : "",
         b.dataManutencao === undefined ? "KEEP" : isIsoDate(b.dataManutencao) ? b.dataManutencao : "",
         typeof b.sinalRecuperado === "boolean" ? b.sinalRecuperado : null,

@@ -773,8 +773,13 @@ export async function runMigrations() {
     // Status escolhido explicitamente no registro (EM_ANALISE/PENDENTE/RETIRADO/ATIVA/REALIZADA/SINAL_RECUPERADO);
     // quando nulo, derivado das datas/flag. Ver deriveStatus em routes/bateria.ts.
     await client.query("ALTER TABLE modulo_manutencoes ADD COLUMN IF NOT EXISTS status TEXT").catch(() => {});
-    // RETIRADO = módulo retirado de campo (data_retirada preenchida), aguardando envio à SELIMP.
+    // data_retirada = data em que o módulo foi fisicamente retirado de campo (status ATIVA).
     await client.query("ALTER TABLE modulo_manutencoes ADD COLUMN IF NOT EXISTS data_retirada DATE").catch(() => {});
+    // data_reinstalacao = data em que o módulo foi reinstalado (status REINSTALANDO).
+    await client.query("ALTER TABLE modulo_manutencoes ADD COLUMN IF NOT EXISTS data_reinstalacao DATE").catch(() => {});
+    // Fluxo de status: EM_ANALISE → PENDENTE → RETIRANDO (ordenado) → ATIVA (retirado) → REINSTALANDO → REALIZADA.
+    // "RETIRADO" (nome antigo) passou a ser "RETIRANDO": migra registros existentes.
+    await client.query("UPDATE modulo_manutencoes SET status = 'RETIRANDO' WHERE status = 'RETIRADO'").catch(() => {});
     // Manutenção oficial (TRUE) x não oficial (FALSE). Persiste independente do status.
     await client.query("ALTER TABLE modulo_manutencoes ADD COLUMN IF NOT EXISTS oficial BOOLEAN NOT NULL DEFAULT TRUE").catch(() => {});
     // Correção idempotente: se a coluna foi criada antes com DEFAULT FALSE (o ADD IF NOT EXISTS acima

@@ -75,8 +75,8 @@ function getServerSnapshot(): Snapshot {
 /** Estado corrente = evento mais recente (data_manutencao/ordenado/created) por módulo. */
 function pickLatest(events: ModuloManutencaoEvento[]): ModuloManutencaoEvento | undefined {
   return [...events].sort((a, b) => {
-    const ka = a.dataManutencao ?? a.dataOrdenado ?? a.dataRetirada ?? a.createdAt ?? "";
-    const kb = b.dataManutencao ?? b.dataOrdenado ?? b.dataRetirada ?? b.createdAt ?? "";
+    const ka = a.dataManutencao ?? a.dataReinstalacao ?? a.dataRetirada ?? a.dataOrdenado ?? a.createdAt ?? "";
+    const kb = b.dataManutencao ?? b.dataReinstalacao ?? b.dataRetirada ?? b.dataOrdenado ?? b.createdAt ?? "";
     if (ka !== kb) return kb.localeCompare(ka);
     return (b.createdAt ?? "").localeCompare(a.createdAt ?? "");
   })[0];
@@ -157,22 +157,24 @@ export function useModuloManutencaoState() {
 
 // ===== Helpers de exibição =====
 
-/** Rótulos numerados (são etapas do processo). Sinal Recuperado é desfecho de Realizado, sem número. */
+/** Rótulos numerados (etapas do processo). Sinal Recuperado é desfecho, sem número. */
 export const MANUT_STATUS_LABEL: Record<ManutencaoModuloStatus, string> = {
   EM_ANALISE: "1. Em análise",
   PENDENTE: "2. Pendente",
-  RETIRADO: "3. Retirado",
+  RETIRANDO: "3. Retirando",
   ATIVA: "4. Ativo",
-  REALIZADA: "5. Realizado",
+  REINSTALANDO: "5. Reinstalando",
+  REALIZADA: "6. Realizado",
   SINAL_RECUPERADO: "Sinal Recuperado",
 };
 
-/** Ordem de prioridade na listagem: Em análise → Pendente → Retirado → Ativo → Realizado → Sinal Recuperado. */
+/** Ordem: Em análise → Pendente → Retirando → Ativo → Reinstalando → Realizado → Sinal Recuperado. */
 export const MANUT_STATUS_ORDER: Record<ManutencaoModuloStatus, number> = {
   EM_ANALISE: 0,
   PENDENTE: 1,
-  RETIRADO: 2,
+  RETIRANDO: 2,
   ATIVA: 3,
-  REALIZADA: 4,
-  SINAL_RECUPERADO: 5,
+  REINSTALANDO: 4,
+  REALIZADA: 5,
+  SINAL_RECUPERADO: 6,
 };

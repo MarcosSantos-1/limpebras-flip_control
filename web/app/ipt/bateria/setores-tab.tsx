@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { MultiSelect } from "@/components/ui/multi-select";
 import { DatePicker } from "@/components/ui/date-picker";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
@@ -46,7 +47,7 @@ export function SetoresTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [subFilter, setSubFilter] = useState("all");
+  const [subFilter, setSubFilter] = useState<string[]>([]);
   const [servicoFilter, setServicoFilter] = useState("all");
   const [semSelimp, setSemSelimp] = useState(false);
 
@@ -82,7 +83,7 @@ export function SetoresTab() {
 
   const filtered = useMemo(() => {
     let result = setores;
-    if (subFilter !== "all") result = result.filter((s) => s.subprefeitura === subFilter);
+    if (subFilter.length > 0) result = result.filter((s) => subFilter.includes(s.subprefeitura ?? ""));
     if (servicoFilter !== "all") result = result.filter((s) => servicoLabel(s.servico) === servicoFilter);
     if (semSelimp) result = result.filter((s) => !s.selimp_codigo || !s.selimp_codigo.trim());
     const term = search.trim().toLowerCase();
@@ -153,13 +154,15 @@ export function SetoresTab() {
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input placeholder="Buscar setor, SELIMP, DDMX..." className="h-9 pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
           </div>
-          <Select value={subFilter} onValueChange={setSubFilter}>
-            <SelectTrigger className="h-9 w-[120px]"><MapPin className="mr-1 h-4 w-4 text-muted-foreground" /><SelectValue placeholder="Sub" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Todas as subs</SelectItem>
-              {subs.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-            </SelectContent>
-          </Select>
+          <MultiSelect
+            compact
+            className="w-[120px]"
+            placeholder="Sub"
+            emptyLabel="Todas as subs"
+            options={subs.map((s) => ({ value: s, label: s }))}
+            value={subFilter}
+            onChange={setSubFilter}
+          />
           <Select value={servicoFilter} onValueChange={setServicoFilter}>
             <SelectTrigger className="h-9 w-[190px]"><SelectValue placeholder="Serviço" /></SelectTrigger>
             <SelectContent>
