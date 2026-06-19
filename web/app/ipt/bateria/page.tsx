@@ -106,6 +106,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useTheme } from "next-themes";
+import { toast } from "react-toastify";
 import { apiService } from "@/lib/api";
 import { formatIptDataInstalacaoBr, servicoLabel, mesCorrenteLabel } from "@/lib/ipt-utils";
 import { SetoresTab } from "./setores-tab";
@@ -1032,6 +1033,9 @@ interface ManutEntry {
   dataManutencao?: string;
   sinalRecuperado: boolean;
   oficial: boolean;
+  contestado: boolean;
+  diasFrequencia: number;
+  diasContestados?: number;
   motivo?: string;
   createdAt?: string;
   quantidadeTrocas: number;
@@ -1929,6 +1933,9 @@ export default function BateriaDashboardPage() {
           dataManutencao: ev.dataManutencao,
           sinalRecuperado: ev.sinalRecuperado,
           oficial: ev.oficial,
+          contestado: ev.contestado,
+          diasFrequencia: ev.diasFrequencia,
+          diasContestados: ev.diasContestados,
           motivo: ev.motivo,
           createdAt: ev.createdAt,
           quantidadeTrocas: mod?.quantidadeTrocas ?? 0,
@@ -1952,6 +1959,8 @@ export default function BateriaDashboardPage() {
         dataOrdenado: manut.overrides[m.numeroSelimp]?.dataSolicitacao,
         sinalRecuperado: false,
         oficial: true,
+        contestado: false,
+        diasFrequencia: 0,
         quantidadeTrocas: m.quantidadeTrocas,
         ultimaComunicacao: m.ultimaComunicacao,
       });
@@ -1975,11 +1984,16 @@ export default function BateriaDashboardPage() {
           e.selimp.toLowerCase().includes(term) ||
           e.sub.toLowerCase().includes(term),
       );
-    // Ordena: Pendente → Ativa → Realizada → Sinal Recuperado; depois por data/horário desc.
+    // Ordena por status; dentro do status, pendentes de contestação primeiro; depois por data desc.
+    const pendenteContestacao = (e: ManutEntry) =>
+      isOpenManutStatus(e.status) && e.diasFrequencia > 0 && !e.contestado;
     return [...result].sort((a, b) => {
       const oa = MANUT_STATUS_ORDER[a.status];
       const ob = MANUT_STATUS_ORDER[b.status];
       if (oa !== ob) return oa - ob;
+      const pa = pendenteContestacao(a) ? 0 : 1;
+      const pb = pendenteContestacao(b) ? 0 : 1;
+      if (pa !== pb) return pa - pb;
       const da = a.createdAt ?? a.dataManutencao ?? a.dataOrdenado ?? "";
       const db = b.createdAt ?? b.dataManutencao ?? b.dataOrdenado ?? "";
       return db.localeCompare(da);
@@ -2113,6 +2127,18 @@ export default function BateriaDashboardPage() {
     }
     setManutModal({ open: false, module: null, editEventId: null });
   }, [manutForm, manutModal.module, manutModal.editEventId, modulesBySelimp, moduloManut]);
+
+  /** Alterna a contestação dos despachos perdidos na manutenção (clique único, com toast). */
+  const toggleContestacao = useCallback(
+    (e: ManutEntry) => {
+      if (e.eventId == null) return;
+      const novo = !e.contestado;
+      void moduloManut.atualizar(e.eventId, e.selimp, { contestado: novo });
+      if (novo) toast.success(`Contestação registrada — ${e.diasFrequencia} dia(s) de frequência.`);
+      else toast.info("Contestação cancelada.");
+    },
+    [moduloManut],
+  );
 
   if (loading) {
     return (
@@ -3445,44 +3471,70 @@ export default function BateriaDashboardPage() {
                               </TableCell>
                               <TableCell className="text-center font-medium tabular-nums align-top">{e.quantidadeTrocas}</TableCell>
                               <TableCell className="align-top">
-                                <div className="flex items-center justify-center gap-1.5">
-                                  {isOpenManutStatus(e.status) && (
-                                    <Button
-                                      size="sm"
-                                      className="h-7 gap-1 bg-emerald-600/90 text-white hover:bg-emerald-700"
-                                      onClick={() =>
-                                        e.eventId != null
-                                          ? openManutModal(mod, {
-                                              event: {
-                                                id: e.eventId,
-                                                selimp: e.selimp,
-                                                status: e.status,
-                                                motivo: e.motivo,
-                                                dataOrdenado: e.dataOrdenado,
-                                                dataRetirada: e.dataRetirada,
-                                                dataReinstalacao: e.dataReinstalacao,
-                                                dataManutencao: e.dataManutencao,
-                                                sinalRecuperado: e.sinalRecuperado,
-                                                oficial: e.oficial,
-                                                createdAt: e.createdAt,
-                                              },
-                                            })
-                                          : openManutModal(mod, { selimp: e.selimp, status: "PENDENTE" })
-                                      }
+                                <div className="flex flex-col items-center gap-1.5">
+                                  <div className="flex items-center justify-center gap-1.5">
+                                    {isOpenManutStatus(e.status) && (
+                                      <Button
+                                        size="sm"
+                                        className="h-7 gap-1 bg-emerald-600/90 text-white hover:bg-emerald-700"
+                                        onClick={() =>
+                                          e.eventId != null
+                                            ? openManutModal(mod, {
+                                                event: {
+                                                  id: e.eventId,
+                                                  selimp: e.selimp,
+                                                  status: e.status,
+                                                  motivo: e.motivo,
+                                                  dataOrdenado: e.dataOrdenado,
+                                                  dataRetirada: e.dataRetirada,
+                                                  dataReinstalacao: e.dataReinstalacao,
+                                                  dataManutencao: e.dataManutencao,
+                                                  sinalRecuperado: e.sinalRecuperado,
+                                                  oficial: e.oficial,
+                                                  contestado: e.contestado,
+                                                  diasContestados: e.diasContestados,
+                                                  diasFrequencia: e.diasFrequencia,
+                                                  createdAt: e.createdAt,
+                                                },
+                                              })
+                                            : openManutModal(mod, { selimp: e.selimp, status: "PENDENTE" })
+                                        }
+                                      >
+                                        <RefreshCw className="h-3.5 w-3.5" /> Atualizar
+                                      </Button>
+                                    )}
+                                    {mod && (
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="h-7 gap-1 border-zinc-400/50 text-zinc-600 hover:bg-zinc-500/10 dark:text-zinc-300"
+                                        onClick={() => setHistModule(mod)}
+                                      >
+                                        <History className="h-3.5 w-3.5" /> Histórico
+                                      </Button>
+                                    )}
+                                  </div>
+                                  {/* Contestação: só nos dias de frequência em manutenção (ordenado → reinstalação) */}
+                                  {isOpenManutStatus(e.status) && e.diasFrequencia > 0 && e.eventId != null ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleContestacao(e)}
+                                      title={e.contestado ? "Clique para cancelar a contestação" : "Clique para contestar os despachos perdidos"}
+                                      className={cn(
+                                        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold transition-colors",
+                                        e.contestado
+                                          ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/25 dark:text-emerald-300"
+                                          : "border-amber-500/50 bg-amber-400/20 text-amber-800 hover:bg-amber-400/30 dark:text-amber-200",
+                                      )}
                                     >
-                                      <RefreshCw className="h-3.5 w-3.5" /> Atualizar
-                                    </Button>
-                                  )}
-                                  {mod && (
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      className="h-7 gap-1 border-zinc-400/50 text-zinc-600 hover:bg-zinc-500/10 dark:text-zinc-300"
-                                      onClick={() => setHistModule(mod)}
-                                    >
-                                      <History className="h-3.5 w-3.5" /> Histórico
-                                    </Button>
-                                  )}
+                                      <ShieldAlert className="h-3 w-3 shrink-0" />
+                                      {e.contestado ? "Contestado" : "Pendente Contestação"} · {e.diasFrequencia}d
+                                    </button>
+                                  ) : e.contestado && (e.diasContestados ?? e.diasFrequencia) > 0 ? (
+                                    <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+                                      <ShieldCheck className="h-3 w-3 shrink-0" /> {e.diasContestados ?? e.diasFrequencia} dia(s) contestado(s)
+                                    </span>
+                                  ) : null}
                                 </div>
                               </TableCell>
                             </TableRow>

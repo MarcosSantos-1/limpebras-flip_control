@@ -780,6 +780,10 @@ export async function runMigrations() {
     // Fluxo de status: EM_ANALISE → PENDENTE → RETIRANDO (ordenado) → ATIVA (retirado) → REINSTALANDO → REALIZADA.
     // "RETIRADO" (nome antigo) passou a ser "RETIRANDO": migra registros existentes.
     await client.query("UPDATE modulo_manutencoes SET status = 'RETIRANDO' WHERE status = 'RETIRADO'").catch(() => {});
+    // Contestação dos dias de despacho perdidos enquanto o módulo está em manutenção (ordenado → reinstalação).
+    await client.query("ALTER TABLE modulo_manutencoes ADD COLUMN IF NOT EXISTS contestado BOOLEAN NOT NULL DEFAULT FALSE").catch(() => {});
+    // Qtd. de dias contestados congelada ao finalizar a manutenção (NULL enquanto em aberto → usa cálculo ao vivo).
+    await client.query("ALTER TABLE modulo_manutencoes ADD COLUMN IF NOT EXISTS dias_contestados INTEGER").catch(() => {});
     // Manutenção oficial (TRUE) x não oficial (FALSE). Persiste independente do status.
     await client.query("ALTER TABLE modulo_manutencoes ADD COLUMN IF NOT EXISTS oficial BOOLEAN NOT NULL DEFAULT TRUE").catch(() => {});
     // Correção idempotente: se a coluna foi criada antes com DEFAULT FALSE (o ADD IF NOT EXISTS acima

@@ -93,17 +93,23 @@ function statusBateriaFromSnapshot(
   return "CRÍTICA";
 }
 
+/** Bateria após a troca abaixo deste percentual ⇒ troca sem sucesso (mesmo com sinal). */
+const SUCESSO_MIN_PCT_DEPOIS = 60;
+
 /**
  * Sucesso automático da troca a partir do snapshot logo APÓS a data da troca:
- * - false quando a bateria continua desatualizada (não recuperou o status);
- * - true quando recuperou;
+ * - false quando a bateria continua desatualizada OU ficou abaixo de 60%;
+ * - true quando recuperou e a bateria ficou >= 60%;
  * - undefined quando ainda não há leitura posterior à troca ("Aguardando avaliação").
  */
 function sucessoFromDepois(r: TrocaEventoRow): boolean | undefined {
   const hasDepois = r.snap_depois_raw != null || r.snap_depois_pct != null;
   if (!hasDepois) return undefined;
   const desat = Boolean(r.snap_depois_desat) || /desatualizada/i.test(String(r.snap_depois_raw ?? ""));
-  return !desat;
+  if (desat) return false;
+  const pct = r.snap_depois_pct != null ? Number(r.snap_depois_pct) : null;
+  if (pct != null && Number.isFinite(pct) && pct < SUCESSO_MIN_PCT_DEPOIS) return false;
+  return true;
 }
 
 /** Tem sinal = comunicação ON e bateria não desatualizada. */
@@ -751,6 +757,8 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
     data_manutencao: string | null;
     sinal_recuperado: boolean;
     oficial: boolean;
+    contestado: boolean;
+    dias_contestados: number | null;
     status: string | null;
     created_at: string;
   }
@@ -790,6 +798,10 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
       dataManutencao: r.data_manutencao ?? undefined,
       sinalRecuperado: r.sinal_recuperado,
       oficial: r.oficial,
+      contestado: r.contestado,
+      diasContestados: r.dias_contestados ?? undefined,
+      // diasFrequencia (dias de despacho perdidos na janela) é injetado pelo GET via batch.
+      diasFrequencia: 0,
       status: deriveStatus(r),
       createdAt: r.created_at,
     };
@@ -801,19 +813,45 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
            data_reinstalacao::text AS data_reinstalacao,
            data_ordenado::text     AS data_ordenado,
            data_manutencao::text   AS data_manutencao,
-           sinal_recuperado, oficial, status,
+           sinal_recuperado, oficial, contestado, dias_contestados, status,
            created_at::text AS created_at
       FROM modulo_manutencoes`;
 
+  // Dias de frequência do setor na janela [data_ordenado, reinstalação|hoje]:
+  // setores fixos usam dias_semana (token dom..sab); escalonados usam datas explícitas (cronograma_datas).
+  const WEEKDAY_TOKENS = `(ARRAY['dom','seg','ter','qua','qui','sex','sab'])`;
+  const FREQ_DAY_COND = `(
+    (cs.dias_semana IS NOT NULL AND ${WEEKDAY_TOKENS}[EXTRACT(DOW FROM gd.d)::int + 1] = ANY(cs.dias_semana))
+    OR EXISTS (SELECT 1 FROM cronograma_datas cd WHERE cd.setor = sm.setor AND cd.data = gd.d::date)
+  )`;
+  const SELECT_DIAS_FREQUENCIA = `
+    SELECT mm.id, COUNT(DISTINCT gd.d::date)::int AS dias
+      FROM modulo_manutencoes mm
+      JOIN setores_modulos sm ON sm.selimp_codigo = mm.modulo_selimp
+      LEFT JOIN cronograma_setores cs ON cs.setor = sm.setor
+      CROSS JOIN LATERAL generate_series(
+        mm.data_ordenado::timestamp,
+        COALESCE(mm.data_reinstalacao, CURRENT_DATE)::timestamp,
+        interval '1 day'
+      ) AS gd(d)
+     WHERE mm.data_ordenado IS NOT NULL AND ${FREQ_DAY_COND}
+     GROUP BY mm.id`;
+
   fastify.get("/modulo/manutencoes", async () => {
-    const res = await pool.query<ModuloManutencaoRow>(
-      `${SELECT_MANUT_MODULO} ORDER BY modulo_selimp,
-        COALESCE(data_manutencao, data_ordenado, created_at::date) DESC, created_at DESC, id DESC`
-    );
+    const [res, freqRes] = await Promise.all([
+      pool.query<ModuloManutencaoRow>(
+        `${SELECT_MANUT_MODULO} ORDER BY modulo_selimp,
+          COALESCE(data_manutencao, data_ordenado, created_at::date) DESC, created_at DESC, id DESC`
+      ),
+      pool.query<{ id: number; dias: number }>(SELECT_DIAS_FREQUENCIA),
+    ]);
+    const freqById = new Map<number, number>();
+    for (const f of freqRes.rows) freqById.set(f.id, f.dias);
     const history: Record<string, ReturnType<typeof mapManutencaoEvento>[]> = {};
     const records: Record<string, ReturnType<typeof mapManutencaoEvento>> = {};
     for (const r of res.rows) {
       const ev = mapManutencaoEvento(r);
+      ev.diasFrequencia = freqById.get(r.id) ?? 0;
       if (!history[ev.selimp]) history[ev.selimp] = [];
       history[ev.selimp].push(ev);
       // primeiro da lista (mais recente) define o estado corrente do módulo
@@ -870,7 +908,7 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
            RETURNING id, modulo_selimp, setor, execucao, motivo,
              data_retirada::text AS data_retirada, data_reinstalacao::text AS data_reinstalacao,
              data_ordenado::text AS data_ordenado, data_manutencao::text AS data_manutencao,
-             sinal_recuperado, oficial, status, created_at::text AS created_at`,
+             sinal_recuperado, oficial, contestado, dias_contestados, status, created_at::text AS created_at`,
           [it.selimp, it.setor, it.execucao, it.motivo, it.dataRetirada, it.dataReinstalacao, it.dataOrdenado, it.dataManutencao, it.sinalRecuperado, it.oficial, it.status]
         );
         if (res.rows[0]) inserted.push(mapManutencaoEvento(res.rows[0]));
@@ -897,6 +935,7 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
       dataManutencao?: string | null;
       sinalRecuperado?: boolean;
       oficial?: boolean;
+      contestado?: boolean;
       status?: string;
     };
   }>("/modulo/manutencoes/:id", async (request, reply) => {
@@ -914,13 +953,14 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
          data_manutencao = CASE WHEN $8 = 'KEEP' THEN data_manutencao ELSE NULLIF($8,'')::date END,
          sinal_recuperado = COALESCE($9, sinal_recuperado),
          oficial = COALESCE($10, oficial),
+         contestado = COALESCE($12, contestado),
          status = COALESCE($11, status),
          updated_at = NOW()
        WHERE id = $1
        RETURNING id, modulo_selimp, setor, execucao, motivo,
          data_retirada::text AS data_retirada, data_reinstalacao::text AS data_reinstalacao,
          data_ordenado::text AS data_ordenado, data_manutencao::text AS data_manutencao,
-         sinal_recuperado, oficial, status, created_at::text AS created_at`,
+         sinal_recuperado, oficial, contestado, dias_contestados, status, created_at::text AS created_at`,
       [
         id,
         b.setor != null ? String(b.setor).trim() : null,
@@ -933,10 +973,39 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
         typeof b.sinalRecuperado === "boolean" ? b.sinalRecuperado : null,
         typeof b.oficial === "boolean" ? b.oficial : null,
         cleanStatus(b.status),
+        typeof b.contestado === "boolean" ? b.contestado : null,
       ]
     );
-    if (!res.rows[0]) return reply.code(404).send({ detail: "registro não encontrado" });
-    return { ok: true, evento: mapManutencaoEvento(res.rows[0]) };
+    const row = res.rows[0];
+    if (!row) return reply.code(404).send({ detail: "registro não encontrado" });
+
+    // Dias de frequência (cronograma) na janela [data_ordenado, reinstalação|hoje].
+    let diasFrequencia = 0;
+    if (row.data_ordenado) {
+      const fr = await pool.query<{ dias: number }>(
+        `SELECT COUNT(DISTINCT gd.d::date)::int AS dias
+           FROM setores_modulos sm
+           LEFT JOIN cronograma_setores cs ON cs.setor = sm.setor
+           CROSS JOIN LATERAL generate_series($2::timestamp, COALESCE($3::date, CURRENT_DATE)::timestamp, interval '1 day') AS gd(d)
+          WHERE sm.selimp_codigo = $1 AND ${FREQ_DAY_COND}`,
+        [row.modulo_selimp, row.data_ordenado, row.data_reinstalacao],
+      );
+      diasFrequencia = fr.rows[0]?.dias ?? 0;
+    }
+    // Congela a qtd. de dias contestados ao finalizar; limpa quando descontestado.
+    const eff = deriveStatus(row);
+    const finalizado = eff === "REALIZADA" || eff === "SINAL_RECUPERADO" || !!row.data_reinstalacao;
+    let diasContestados = row.dias_contestados;
+    if (!row.contestado) diasContestados = null;
+    else if (finalizado) diasContestados = diasFrequencia;
+    if (diasContestados !== row.dias_contestados) {
+      await pool.query(`UPDATE modulo_manutencoes SET dias_contestados = $2 WHERE id = $1`, [id, diasContestados]);
+      row.dias_contestados = diasContestados;
+    }
+
+    const evento = mapManutencaoEvento(row);
+    evento.diasFrequencia = diasFrequencia;
+    return { ok: true, evento };
   });
 
   fastify.delete<{ Params: { id: string } }>("/modulo/manutencoes/:id", async (request, reply) => {

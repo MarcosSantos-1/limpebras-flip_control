@@ -288,6 +288,8 @@ export interface IptPreviewBateriaSetorDia {
   troca?: { sucesso: boolean } | null;
   /** Houve manutenção REALIZADA no dia do despacho (badge cinza "Manutenção"). */
   manutencao_realizada?: boolean;
+  /** Dia do despacho dentro da janela de manutenção do módulo (retirada → reinstalação). */
+  em_manutencao?: boolean;
 }
 
 export interface IptPreviewBateriaDdmxDispatch {
@@ -588,6 +590,12 @@ export interface ModuloManutencaoEvento {
   sinalRecuperado: boolean;
   /** Manutenção oficial (true) ou não oficial (false). */
   oficial: boolean;
+  /** Contestação dos despachos perdidos na manutenção (toggle). */
+  contestado: boolean;
+  /** Qtd. de dias contestados congelada ao finalizar a manutenção. */
+  diasContestados?: number;
+  /** Dias de despacho (frequência) perdidos na janela [ordenado, reinstalação|hoje] — cálculo ao vivo. */
+  diasFrequencia: number;
   status: ManutencaoModuloStatus;
   createdAt?: string;
 }
@@ -603,6 +611,7 @@ export interface ModuloManutencaoInput {
   dataManutencao?: string;
   sinalRecuperado?: boolean;
   oficial?: boolean;
+  contestado?: boolean;
   status?: ManutencaoModuloStatus;
 }
 

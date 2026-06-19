@@ -214,6 +214,8 @@ const BateriaSelimpBadge = ({ bateriaDia }: { bateriaDia?: IptPreviewBateriaSeto
   // manutenção realizada no dia → "Manutenção" (cinza); senão, % / "Desatual.".
   const troca = bateriaDia?.troca ?? null;
   const manutencaoRealizada = Boolean(bateriaDia?.manutencao_realizada);
+  // "Manutenção" cobre o dia da realização e qualquer dia dentro da janela retirada→reinstalação.
+  const emManutencao = Boolean(bateriaDia?.em_manutencao) || manutencaoRealizada;
   const baseTitle = bateriaDia
     ? bateriaDia.modulos
         .map((modulo) =>
@@ -235,10 +237,10 @@ const BateriaSelimpBadge = ({ bateriaDia }: { bateriaDia?: IptPreviewBateriaSeto
     title = `Troca de bateria no dia do despacho — ${troca.sucesso ? "com sucesso" : "sem sucesso"}${
       baseTitle ? ` · ${baseTitle}` : ""
     }`;
-  } else if (manutencaoRealizada) {
+  } else if (emManutencao) {
     label = "Manutenção";
     colorClass = "bg-slate-500/20 text-slate-700 dark:text-slate-300";
-    title = `Manutenção realizada no dia do despacho${baseTitle ? ` · ${baseTitle}` : ""}`;
+    title = `${manutencaoRealizada ? "Manutenção realizada" : "Módulo em manutenção (retirado)"} no dia do despacho${baseTitle ? ` · ${baseTitle}` : ""}`;
   } else {
     label = hasDesatualizada
       ? "Desatual."
@@ -262,7 +264,7 @@ const BateriaSelimpBadge = ({ bateriaDia }: { bateriaDia?: IptPreviewBateriaSeto
     >
       {troca ? (
         <Repeat className="h-3.5 w-3.5 shrink-0" />
-      ) : manutencaoRealizada ? (
+      ) : emManutencao ? (
         <Wrench className="h-3.5 w-3.5 shrink-0" />
       ) : (
         <Battery className="h-3.5 w-3.5 shrink-0" />

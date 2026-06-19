@@ -372,6 +372,8 @@ export async function buildIptPreviewFromConsolidado(
     troca: { sucesso: boolean } | null;
     /** Houve manutenção REALIZADA no dia do despacho (badge cinza "Manutenção"). */
     manutencao_realizada: boolean;
+    /** Dia do despacho dentro da janela de manutenção do módulo (retirada → reinstalação). */
+    em_manutencao: boolean;
   };
 
   const modulosBySetor = new Map<string, ModuloBateriaPreview[]>();
@@ -472,6 +474,30 @@ export async function buildIptPreviewFromConsolidado(
     if (selimp && dia) manutRealizadaByModuloDate.add(`${selimp}|${dia}`);
   }
 
+  // Janelas de manutenção por módulo: [data_retirada, data_reinstalacao) — módulo fora de campo.
+  // Reinstalação nula = ainda em manutenção (janela aberta). Despachos dentro da janela ⇒ "Manutenção".
+  const manutWindowsByModulo = new Map<string, Array<{ start: string; end: string | null }>>();
+  {
+    const wres = await client.query<{ modulo_selimp: string | null; data_retirada: string | null; data_reinstalacao: string | null }>(
+      `SELECT TRIM(modulo_selimp) AS modulo_selimp,
+              data_retirada::text     AS data_retirada,
+              data_reinstalacao::text AS data_reinstalacao
+         FROM modulo_manutencoes
+        WHERE data_retirada IS NOT NULL`,
+    );
+    for (const row of wres.rows ?? []) {
+      const selimp = String(row.modulo_selimp ?? "").trim();
+      const start = String(row.data_retirada ?? "").slice(0, 10);
+      if (!selimp || !start) continue;
+      const end = row.data_reinstalacao ? String(row.data_reinstalacao).slice(0, 10) : null;
+      const arr = manutWindowsByModulo.get(selimp) ?? [];
+      arr.push({ start, end });
+      manutWindowsByModulo.set(selimp, arr);
+    }
+  }
+  const isEmManutencao = (selimp: string, day: string): boolean =>
+    (manutWindowsByModulo.get(selimp) ?? []).some((w) => day >= w.start && (w.end == null || day < w.end));
+
   const summarizeModulosBateria = (modulos: ModuloBateriaPreview[]): BateriaResumoSetor => {
     const total = modulos.length;
     const produtividadeVals = modulos
@@ -504,6 +530,7 @@ export async function buildIptPreviewFromConsolidado(
     let anyTroca = false;
     let anyTrocaFalha = false;
     let manutencaoRealizada = false;
+    let emManutencao = false;
     for (const modulo of modulos) {
       const k = `${modulo.numero_selimp}|${dateKey}`;
       const troca = trocaByModuloDate.get(k);
@@ -512,10 +539,11 @@ export async function buildIptPreviewFromConsolidado(
         if (!troca.sucesso) anyTrocaFalha = true;
       }
       if (manutRealizadaByModuloDate.has(k)) manutencaoRealizada = true;
+      if (isEmManutencao(modulo.numero_selimp, dateKey)) emManutencao = true;
     }
     const troca = anyTroca ? { sucesso: !anyTrocaFalha } : null;
 
-    if (historico.length === 0 && !troca && !manutencaoRealizada) return null;
+    if (historico.length === 0 && !troca && !manutencaoRealizada && !emManutencao) return null;
 
     const percentuais = historico
       .map((item) => item.bateria_percentual)
@@ -532,6 +560,7 @@ export async function buildIptPreviewFromConsolidado(
       modulos: historico,
       troca,
       manutencao_realizada: manutencaoRealizada,
+      em_manutencao: emManutencao,
     };
   };
 
