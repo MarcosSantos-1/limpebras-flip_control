@@ -784,6 +784,19 @@ export async function runMigrations() {
     await client.query("ALTER TABLE modulo_manutencoes ADD COLUMN IF NOT EXISTS contestado BOOLEAN NOT NULL DEFAULT FALSE").catch(() => {});
     // Qtd. de dias contestados congelada ao finalizar a manutenção (NULL enquanto em aberto → usa cálculo ao vivo).
     await client.query("ALTER TABLE modulo_manutencoes ADD COLUMN IF NOT EXISTS dias_contestados INTEGER").catch(() => {});
+    // Documento (PDF no Firebase Storage) que atesta o módulo em manutenção — global por módulo.
+    await client.query("ALTER TABLE modulo_manutencoes ADD COLUMN IF NOT EXISTS documento_url TEXT").catch(() => {});
+    // Contestação POR DIA: 1 linha por dia de despacho contestado (ausência = pendente).
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS manutencao_contestacoes (
+        id            SERIAL PRIMARY KEY,
+        modulo_selimp TEXT NOT NULL,
+        data          DATE NOT NULL,
+        created_at    TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (modulo_selimp, data)
+      );
+    `);
+    await client.query("CREATE INDEX IF NOT EXISTS idx_manut_contest_modulo ON manutencao_contestacoes(modulo_selimp)").catch(() => {});
     // Manutenção oficial (TRUE) x não oficial (FALSE). Persiste independente do status.
     await client.query("ALTER TABLE modulo_manutencoes ADD COLUMN IF NOT EXISTS oficial BOOLEAN NOT NULL DEFAULT TRUE").catch(() => {});
     // Correção idempotente: se a coluna foi criada antes com DEFAULT FALSE (o ADD IF NOT EXISTS acima

@@ -53,6 +53,9 @@ import {
   Pencil,
   PackageX,
   PackageCheck,
+  Copy,
+  Upload,
+  FileText,
 } from "lucide-react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faTree, faBroom } from "@fortawesome/free-solid-svg-icons";
@@ -110,6 +113,8 @@ import { toast } from "react-toastify";
 import { apiService } from "@/lib/api";
 import { formatIptDataInstalacaoBr, servicoLabel, mesCorrenteLabel } from "@/lib/ipt-utils";
 import { SetoresTab } from "./setores-tab";
+import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
+import { uploadManutencaoDoc } from "@/lib/firebase-manutencao-docs";
 import { cn } from "@/lib/utils";
 import {
   useTrocaState,
@@ -1036,6 +1041,8 @@ interface ManutEntry {
   contestado: boolean;
   diasFrequencia: number;
   diasContestados?: number;
+  contestacaoDias: { data: string; contestado: boolean }[];
+  documentoUrl?: string;
   motivo?: string;
   createdAt?: string;
   quantidadeTrocas: number;
@@ -1155,6 +1162,9 @@ export default function BateriaDashboardPage() {
   const [manutStatusFilter, setManutStatusFilter] = useState("all"); // all | EM_ANALISE | PENDENTE | RETIRANDO | ATIVA | REINSTALANDO | REALIZADA (+ SINAL_RECUPERADO)
   const [manutOficialFilter, setManutOficialFilter] = useState("all"); // all | oficial | nao
   const [histModule, setHistModule] = useState<ModuleData | null>(null);
+  // Modal de contestação por dia (despachos perdidos na manutenção) + estado de upload do documento.
+  const [contestModule, setContestModule] = useState<ManutEntry | null>(null);
+  const [contestUploading, setContestUploading] = useState(false);
 
   // Paginação das listagens de Trocas e Manutenções
   const [trocasPage, setTrocasPage] = useState(1);
@@ -1225,6 +1235,8 @@ export default function BateriaDashboardPage() {
   const [bulkConcluirOpen, setBulkConcluirOpen] = useState(false);
   const [bulkConcluirDate, setBulkConcluirDate] = useState("");
   const [bulkConcluirDesnecessaria, setBulkConcluirDesnecessaria] = useState(false);
+  // Exclusão de um evento do histórico de trocas (com confirmação).
+  const [trocaEventoDelete, setTrocaEventoDelete] = useState<{ selimp: string; id: number; setor: string; data: string } | null>(null);
   const [bulkManutOpen, setBulkManutOpen] = useState(false);
   const [bulkManutMotivo, setBulkManutMotivo] = useState("");
   const { resolvedTheme } = useTheme();
@@ -1936,6 +1948,8 @@ export default function BateriaDashboardPage() {
           contestado: ev.contestado,
           diasFrequencia: ev.diasFrequencia,
           diasContestados: ev.diasContestados,
+          contestacaoDias: ev.contestacaoDias ?? [],
+          documentoUrl: ev.documentoUrl,
           motivo: ev.motivo,
           createdAt: ev.createdAt,
           quantidadeTrocas: mod?.quantidadeTrocas ?? 0,
@@ -1961,6 +1975,7 @@ export default function BateriaDashboardPage() {
         oficial: true,
         contestado: false,
         diasFrequencia: 0,
+        contestacaoDias: [],
         quantidadeTrocas: m.quantidadeTrocas,
         ultimaComunicacao: m.ultimaComunicacao,
       });
@@ -1986,7 +2001,7 @@ export default function BateriaDashboardPage() {
       );
     // Ordena por status; dentro do status, pendentes de contestação primeiro; depois por data desc.
     const pendenteContestacao = (e: ManutEntry) =>
-      isOpenManutStatus(e.status) && e.diasFrequencia > 0 && !e.contestado;
+      isOpenManutStatus(e.status) && e.contestacaoDias.some((d) => !d.contestado);
     return [...result].sort((a, b) => {
       const oa = MANUT_STATUS_ORDER[a.status];
       const ob = MANUT_STATUS_ORDER[b.status];
@@ -2128,14 +2143,44 @@ export default function BateriaDashboardPage() {
     setManutModal({ open: false, module: null, editEventId: null });
   }, [manutForm, manutModal.module, manutModal.editEventId, modulesBySelimp, moduloManut]);
 
-  /** Alterna a contestação dos despachos perdidos na manutenção (clique único, com toast). */
-  const toggleContestacao = useCallback(
-    (e: ManutEntry) => {
+  /** Contesta/descontesta um dia de despacho específico (com toast). */
+  const contestarDia = useCallback(
+    (selimp: string, dia: string, contestado: boolean) => {
+      void moduloManut.contestarDia(selimp, dia, contestado);
+      if (contestado) toast.success(`Dia ${fmtIsoBr(dia)} contestado.`);
+      else toast.info(`Contestação de ${fmtIsoBr(dia)} cancelada.`);
+    },
+    [moduloManut],
+  );
+
+  /** Mensagem padrão de contestação (copiável) a partir dos dados da manutenção. */
+  const mensagemContestacao = useCallback((e: ManutEntry | null, dia?: string): string => {
+    if (!e) return "";
+    const ordenado = e.dataOrdenado ? fmtIsoBr(e.dataOrdenado) : "—";
+    const diaTxt = dia ? ` referente ao despacho de ${fmtIsoBr(dia)}` : "";
+    return `Setor ${e.setor} (SELIMP ${e.selimp}) em processo de manutenção${diaTxt}, conforme comunicado à SELIMP via e-mail no dia ${ordenado}. Solicitamos a desconsideração do percentual zerado, pois o serviço não pôde ser executado.`;
+  }, []);
+
+  /** Upload do documento (PDF) que atesta a manutenção → Firebase Storage + salva a URL. */
+  const handleUploadDocumento = useCallback(
+    async (e: ManutEntry, file: File) => {
       if (e.eventId == null) return;
-      const novo = !e.contestado;
-      void moduloManut.atualizar(e.eventId, e.selimp, { contestado: novo });
-      if (novo) toast.success(`Contestação registrada — ${e.diasFrequencia} dia(s) de frequência.`);
-      else toast.info("Contestação cancelada.");
+      if (file.type && file.type !== "application/pdf") {
+        toast.error("Envie um arquivo PDF.");
+        return;
+      }
+      setContestUploading(true);
+      try {
+        const url = await uploadManutencaoDoc(e.selimp, file);
+        await moduloManut.atualizar(e.eventId, e.selimp, { documentoUrl: url });
+        setContestModule((prev) => (prev && prev.eventId === e.eventId ? { ...prev, documentoUrl: url } : prev));
+        toast.success("Documento anexado.");
+      } catch (err) {
+        console.error("Erro ao anexar documento", err);
+        toast.error("Falha ao anexar o documento.");
+      } finally {
+        setContestUploading(false);
+      }
     },
     [moduloManut],
   );
@@ -3154,9 +3199,28 @@ export default function BateriaDashboardPage() {
                                                   <Badge className={trocaStatusBadgeClass(h)}>{trocaStatusLabel(h)}</Badge>
                                                   <span className="text-xs font-medium text-muted-foreground">{h.tipoTroca || motivoFromModule(m)}</span>
                                                 </div>
-                                                <span className="text-xs font-semibold tabular-nums text-foreground">
-                                                  {h.status === "agendada" ? fmtDisplayDate(h.dataAgendada) : fmtDisplayDate(h.dataTroca)}
-                                                </span>
+                                                <div className="flex items-center gap-2">
+                                                  <span className="text-xs font-semibold tabular-nums text-foreground">
+                                                    {h.status === "agendada" ? fmtDisplayDate(h.dataAgendada) : fmtDisplayDate(h.dataTroca)}
+                                                  </span>
+                                                  {/^\d+$/.test(h.id) && (
+                                                    <button
+                                                      type="button"
+                                                      title="Excluir troca do histórico"
+                                                      onClick={() =>
+                                                        setTrocaEventoDelete({
+                                                          selimp: m.numeroSelimp,
+                                                          id: Number(h.id),
+                                                          setor: m.setor,
+                                                          data: h.status === "agendada" ? (h.dataAgendada ?? "") : (h.dataTroca ?? ""),
+                                                        })
+                                                      }
+                                                      className="text-muted-foreground transition-colors hover:text-red-500"
+                                                    >
+                                                      <Trash2 className="h-3.5 w-3.5" />
+                                                    </button>
+                                                  )}
+                                                </div>
                                               </div>
                                               <div className="mt-3 grid grid-cols-2 gap-2 text-xs lg:grid-cols-6">
                                                 <div className="rounded-md bg-background/70 p-2">
@@ -3494,6 +3558,8 @@ export default function BateriaDashboardPage() {
                                                   contestado: e.contestado,
                                                   diasContestados: e.diasContestados,
                                                   diasFrequencia: e.diasFrequencia,
+                                                  contestacaoDias: e.contestacaoDias,
+                                                  documentoUrl: e.documentoUrl,
                                                   createdAt: e.createdAt,
                                                 },
                                               })
@@ -3514,27 +3580,32 @@ export default function BateriaDashboardPage() {
                                       </Button>
                                     )}
                                   </div>
-                                  {/* Contestação: só nos dias de frequência em manutenção (ordenado → reinstalação) */}
-                                  {isOpenManutStatus(e.status) && e.diasFrequencia > 0 && e.eventId != null ? (
-                                    <button
-                                      type="button"
-                                      onClick={() => toggleContestacao(e)}
-                                      title={e.contestado ? "Clique para cancelar a contestação" : "Clique para contestar os despachos perdidos"}
-                                      className={cn(
-                                        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold transition-colors",
-                                        e.contestado
-                                          ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/25 dark:text-emerald-300"
-                                          : "border-amber-500/50 bg-amber-400/20 text-amber-800 hover:bg-amber-400/30 dark:text-amber-200",
-                                      )}
-                                    >
-                                      <ShieldAlert className="h-3 w-3 shrink-0" />
-                                      {e.contestado ? "Contestado" : "Pendente Contestação"} · {e.diasFrequencia}d
-                                    </button>
-                                  ) : e.contestado && (e.diasContestados ?? e.diasFrequencia) > 0 ? (
-                                    <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
-                                      <ShieldCheck className="h-3 w-3 shrink-0" /> {e.diasContestados ?? e.diasFrequencia} dia(s) contestado(s)
-                                    </span>
-                                  ) : null}
+                                  {/* Contestação por dia (despachos perdidos na manutenção: ordenado → reinstalação) */}
+                                  {(() => {
+                                    const pendentes = e.contestacaoDias.filter((d) => !d.contestado).length;
+                                    const contestados = e.contestacaoDias.filter((d) => d.contestado).length;
+                                    if (isOpenManutStatus(e.status) && e.diasFrequencia > 0 && e.eventId != null) {
+                                      return (
+                                        <Button
+                                          size="sm"
+                                          className={cn(
+                                            "h-7 gap-1 text-white",
+                                            pendentes > 0 ? "bg-amber-500 hover:bg-amber-600" : "bg-emerald-600 hover:bg-emerald-700",
+                                          )}
+                                          onClick={() => setContestModule(e)}
+                                        >
+                                          <ShieldAlert className="h-3.5 w-3.5" />
+                                          {pendentes > 0 ? `Contestar (${pendentes})` : `Contestado (${contestados})`}
+                                        </Button>
+                                      );
+                                    }
+                                    const total = e.diasContestados ?? contestados;
+                                    return total > 0 ? (
+                                      <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+                                        <ShieldCheck className="h-3 w-3 shrink-0" /> {total} dia(s) contestado(s)
+                                      </span>
+                                    ) : null;
+                                  })()}
                                 </div>
                               </TableCell>
                             </TableRow>
@@ -4496,6 +4567,141 @@ export default function BateriaDashboardPage() {
           </DialogContent>
         </Dialog>
 
+        {/* ===== Confirmação: excluir evento do histórico de trocas ===== */}
+        <Dialog open={!!trocaEventoDelete} onOpenChange={(o) => !o && setTrocaEventoDelete(null)}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-base">
+                <Trash2 className="h-5 w-5 text-red-500" /> Excluir troca do histórico
+              </DialogTitle>
+              <DialogDescription>
+                Esta ação remove permanentemente a troca de {fmtIsoBr(trocaEventoDelete?.data)} do setor {trocaEventoDelete?.setor}. Não pode ser desfeita.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="gap-2">
+              <Button variant="ghost" onClick={() => setTrocaEventoDelete(null)}>Cancelar</Button>
+              <Button
+                className="gap-1.5 bg-red-600 text-white hover:bg-red-700"
+                onClick={() => {
+                  if (trocaEventoDelete) {
+                    troca.removerEvento(trocaEventoDelete.selimp, trocaEventoDelete.id);
+                    toast.success("Troca removida do histórico.");
+                  }
+                  setTrocaEventoDelete(null);
+                }}
+              >
+                <Trash2 className="h-4 w-4" /> Excluir
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ===== Modal de Contestação por dia ===== */}
+        <Dialog open={!!contestModule} onOpenChange={(o) => !o && setContestModule(null)}>
+          <DialogContent className="max-w-2xl max-h-[88vh] overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            {contestModule && (() => {
+              const e = manutEntries.find((x) => x.eventId === contestModule.eventId) ?? contestModule;
+              const msg = mensagemContestacao(e);
+              return (
+                <>
+                  <DialogHeader>
+                    <DialogTitle className="flex items-center gap-2 text-base">
+                      <ShieldAlert className="h-5 w-5 text-amber-500" /> Contestação de despachos — {e.selimp}
+                    </DialogTitle>
+                    <DialogDescription>{e.setor} · em manutenção desde {fmtIsoBr(e.dataOrdenado)}</DialogDescription>
+                  </DialogHeader>
+
+                  <div className="space-y-4">
+                    {/* Mensagem copiável */}
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-muted-foreground">Mensagem de contestação</label>
+                      <div className="rounded-lg border border-border/60 bg-muted/20 p-3 text-xs leading-relaxed text-foreground">{msg}</div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="gap-1.5"
+                        onClick={() => { void navigator.clipboard.writeText(msg); toast.success("Mensagem copiada."); }}
+                      >
+                        <Copy className="h-3.5 w-3.5" /> Copiar mensagem
+                      </Button>
+                    </div>
+
+                    {/* Documento (PDF, global por módulo) */}
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-muted-foreground">Documento de manutenção (PDF)</label>
+                      {e.documentoUrl && (
+                        <div className="flex items-center justify-between gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3">
+                          <span className="flex items-center gap-2 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                            <FileText className="h-4 w-4" /> Documento anexado
+                          </span>
+                          <a
+                            href={e.documentoUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 hover:underline dark:text-emerald-300"
+                          >
+                            <Download className="h-3.5 w-3.5" /> Baixar
+                          </a>
+                        </div>
+                      )}
+                      <label
+                        onDragOver={(ev) => ev.preventDefault()}
+                        onDrop={(ev) => { ev.preventDefault(); const f = ev.dataTransfer.files?.[0]; if (f) void handleUploadDocumento(e, f); }}
+                        className="flex cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-border/70 bg-muted/15 px-4 py-5 text-center text-xs text-muted-foreground transition-colors hover:bg-muted/30"
+                      >
+                        <Upload className="h-5 w-5" />
+                        {contestUploading ? "Enviando..." : e.documentoUrl ? "Solte um novo PDF para substituir, ou clique" : "Solte o PDF aqui ou clique para anexar"}
+                        <input
+                          type="file"
+                          accept="application/pdf"
+                          className="hidden"
+                          disabled={contestUploading}
+                          onChange={(ev) => { const f = ev.target.files?.[0]; if (f) void handleUploadDocumento(e, f); ev.target.value = ""; }}
+                        />
+                      </label>
+                    </div>
+
+                    {/* Timeline por dia de despacho */}
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-muted-foreground">Dias de despacho na janela ({e.contestacaoDias.length})</label>
+                      <div className="max-h-[34vh] space-y-1.5 overflow-y-auto pr-1">
+                        {e.contestacaoDias.length === 0 && (
+                          <p className="py-3 text-center text-xs text-muted-foreground">Sem dias de despacho na janela.</p>
+                        )}
+                        {e.contestacaoDias.map((d) => (
+                          <div key={d.data} className="flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-muted/15 px-3 py-2">
+                            <span className="flex items-center gap-2 text-xs">
+                              <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
+                              <span className="font-medium tabular-nums text-foreground">{fmtIsoBr(d.data)}</span>
+                              {d.contestado ? (
+                                <Badge className="border-emerald-500/30 bg-emerald-500/15 text-[10px] text-emerald-600 dark:text-emerald-400">Contestado</Badge>
+                              ) : (
+                                <Badge className="border-amber-500/30 bg-amber-500/15 text-[10px] text-amber-700 dark:text-amber-300">Pendente</Badge>
+                              )}
+                            </span>
+                            <Button
+                              size="sm"
+                              variant={d.contestado ? "outline" : "default"}
+                              className={cn("h-7 gap-1", d.contestado ? "" : "bg-amber-500 text-white hover:bg-amber-600")}
+                              onClick={() => contestarDia(e.selimp, d.data, !d.contestado)}
+                            >
+                              {d.contestado ? "Cancelar" : <><ShieldAlert className="h-3.5 w-3.5" /> Contestar</>}
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <DialogFooter>
+                    <Button variant="ghost" onClick={() => setContestModule(null)}>Fechar</Button>
+                  </DialogFooter>
+                </>
+              );
+            })()}
+          </DialogContent>
+        </Dialog>
+
         {/* ===== Modal de Histórico consolidado do módulo ===== */}
         <Dialog open={!!histModule} onOpenChange={(o) => !o && setHistModule(null)}>
           <DialogContent className="max-w-lg max-h-[88vh] overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
@@ -4570,6 +4776,45 @@ export default function BateriaDashboardPage() {
                     </div>
                   )}
                 </>
+              );
+            })()}
+
+            {/* Timeline de contestação por dia (accordion) */}
+            {histModule && (() => {
+              const rec = moduloManut.records[histModule.numeroSelimp];
+              const dias = rec?.contestacaoDias ?? [];
+              if (dias.length === 0) return null;
+              const contestados = dias.filter((d) => d.contestado).length;
+              return (
+                <Accordion type="single" collapsible className="mt-3">
+                  <AccordionItem value="contest" className="rounded-lg border border-border/60 bg-muted/15 px-3">
+                    <AccordionTrigger className="text-xs font-semibold hover:no-underline">
+                      <span className="flex items-center gap-2">
+                        <ShieldAlert className="h-4 w-4 text-amber-500" /> Contestações ({contestados}/{dias.length} dias)
+                      </span>
+                    </AccordionTrigger>
+                    <AccordionContent>
+                      <ol className="relative ml-1 space-y-2 border-l border-border/60 pl-4 pt-1">
+                        {dias.map((d) => (
+                          <li key={d.data} className="relative">
+                            <span
+                              className={cn(
+                                "absolute -left-[21px] top-1 h-2.5 w-2.5 rounded-full ring-2 ring-background",
+                                d.contestado ? "bg-emerald-500" : "bg-amber-500",
+                              )}
+                            />
+                            <div className="flex items-center justify-between gap-2 text-xs">
+                              <span className="font-medium tabular-nums text-foreground">{fmtIsoBr(d.data)}</span>
+                              <span className={cn("font-semibold", d.contestado ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-300")}>
+                                {d.contestado ? "Contestado" : "Pendente"}
+                              </span>
+                            </div>
+                          </li>
+                        ))}
+                      </ol>
+                    </AccordionContent>
+                  </AccordionItem>
+                </Accordion>
               );
             })()}
 

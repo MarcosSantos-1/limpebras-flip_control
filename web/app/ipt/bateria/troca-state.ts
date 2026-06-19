@@ -235,7 +235,21 @@ export function useTrocaState() {
     });
   }, []);
 
-  return { records: snapshot.records, history: snapshot.history, agendar, concluir, remover };
+  /** Remove um evento específico do histórico (por id) e reconcilia com o servidor. */
+  const removerEvento = useCallback((selimp: string, id: number) => {
+    const list = (cache.history[selimp] ?? []).filter((h) => h.id !== String(id));
+    const nextHistory: TrocaHistoryMap = { ...cache.history, [selimp]: list };
+    commitLocal({ ...cache, history: nextHistory });
+    apiService
+      .removerBateriaTrocaEvento(id)
+      .then(() => reloadFromApi())
+      .catch((err) => {
+        console.error("Erro ao remover evento de troca", err);
+        reloadFromApi();
+      });
+  }, []);
+
+  return { records: snapshot.records, history: snapshot.history, agendar, concluir, remover, removerEvento };
 }
 
 // ===== Alertas (derivados de dados reais) =====

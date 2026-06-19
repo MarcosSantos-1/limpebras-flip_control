@@ -152,7 +152,28 @@ export function useModuloManutencaoState() {
     }
   }, []);
 
-  return { records: snapshot.records, history: snapshot.history, registrar, atualizar, remover };
+  /** Contesta/descontesta um dia de despacho (atualiza a lista por-dia do evento corrente). */
+  const contestarDia = useCallback(async (selimp: string, dia: string, contestado: boolean) => {
+    // Atualização otimística na lista contestacaoDias do evento corrente.
+    const rec = cache.records[selimp];
+    if (rec) {
+      const nextDias = (rec.contestacaoDias ?? []).map((d) => (d.data === dia ? { ...d, contestado } : d));
+      const nextRec = { ...rec, contestacaoDias: nextDias };
+      const nextHistory: ManutencaoHistoryMap = {
+        ...cache.history,
+        [selimp]: (cache.history[selimp] ?? []).map((e) => (e.id === rec.id ? nextRec : e)),
+      };
+      commitLocal({ records: { ...cache.records, [selimp]: nextRec }, history: nextHistory });
+    }
+    try {
+      await apiService.contestarDiaManutencao(selimp, dia, contestado);
+    } catch (err) {
+      console.error("Erro ao contestar dia de manutenção", err);
+      reloadFromApi();
+    }
+  }, []);
+
+  return { records: snapshot.records, history: snapshot.history, registrar, atualizar, remover, contestarDia };
 }
 
 // ===== Helpers de exibição =====

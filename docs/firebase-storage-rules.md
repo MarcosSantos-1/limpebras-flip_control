@@ -15,6 +15,10 @@ service firebase.storage {
     match /defesa/{allPaths=**} {
       allow read, write: if true;
     }
+    // Documentos (PDF) que atestam módulos em manutenção - aba Bateria/Manutenção
+    match /manutencao-docs/{allPaths=**} {
+      allow read, write: if true;
+    }
     // Bloqueia o restante
     match /{allPaths=**} {
       allow read, write: if false;

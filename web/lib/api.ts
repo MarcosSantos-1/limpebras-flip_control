@@ -590,12 +590,16 @@ export interface ModuloManutencaoEvento {
   sinalRecuperado: boolean;
   /** Manutenção oficial (true) ou não oficial (false). */
   oficial: boolean;
-  /** Contestação dos despachos perdidos na manutenção (toggle). */
+  /** Contestação dos despachos perdidos na manutenção (toggle — legado, nível evento). */
   contestado: boolean;
   /** Qtd. de dias contestados congelada ao finalizar a manutenção. */
   diasContestados?: number;
   /** Dias de despacho (frequência) perdidos na janela [ordenado, reinstalação|hoje] — cálculo ao vivo. */
   diasFrequencia: number;
+  /** Status de contestação por dia de despacho na janela. */
+  contestacaoDias: { data: string; contestado: boolean }[];
+  /** URL (Firebase Storage) do documento que atesta a manutenção — global por módulo. */
+  documentoUrl?: string;
   status: ManutencaoModuloStatus;
   createdAt?: string;
 }
@@ -612,6 +616,7 @@ export interface ModuloManutencaoInput {
   sinalRecuperado?: boolean;
   oficial?: boolean;
   contestado?: boolean;
+  documentoUrl?: string | null;
   status?: ManutencaoModuloStatus;
 }
 
@@ -1188,6 +1193,11 @@ export const apiService = {
     const { data } = await api.delete(`/bateria/trocas/${encodeURIComponent(selimp)}`);
     return data;
   },
+  /** Remove um evento específico do histórico de trocas (por id). */
+  removerBateriaTrocaEvento: async (id: number) => {
+    const { data } = await api.delete(`/bateria/trocas/eventos/${id}`);
+    return data;
+  },
   // ===== Manutenções de bateria =====
   getBateriaManutencoes: async (): Promise<{ records: Record<string, BateriaManutencaoRecord> }> => {
     const { data } = await api.get('/bateria/manutencoes');
@@ -1228,6 +1238,11 @@ export const apiService = {
   },
   removerModuloManutencao: async (id: number) => {
     const { data } = await api.delete(`/modulo/manutencoes/${id}`);
+    return data;
+  },
+  /** Contesta (ou cancela) um dia específico de despacho de um módulo em manutenção. */
+  contestarDiaManutencao: async (selimp: string, dia: string, contestado: boolean) => {
+    const { data } = await api.post(`/modulo/contestacao`, { selimp, data: dia, contestado });
     return data;
   },
   /** Remove registros manuais de IPT. */
