@@ -874,6 +874,14 @@ function trocaInPeriod(h: TrocaHistoryRecord, period: string): boolean {
   return isDateInPeriod(trocaDate(h), period);
 }
 
+function manutEventDate(ev: ModuloManutencaoEvento): string | undefined {
+  return ev.dataManutencao ?? ev.dataReinstalacao ?? ev.dataRetirada ?? ev.dataOrdenado ?? ev.createdAt?.slice(0, 10);
+}
+
+function manutInPeriod(date: string | undefined, period: string): boolean {
+  return isDateInPeriod(date, period);
+}
+
 function bateriaAtualizada(m: ModuleData): boolean {
   return m.statusSinalGeral === "COM SINAL" && m.statusBateria !== "DESATUALIZADA";
 }
@@ -985,8 +993,28 @@ const MANUT_OPEN_STATUSES = new Set<ManutencaoModuloStatus>([
   "EM_ANALISE", "PENDENTE", "RETIRANDO", "ATIVA", "REINSTALANDO",
 ]);
 
+const MANUT_OVERVIEW_STATUSES = new Set<ManutencaoModuloStatus>([
+  "PENDENTE", "RETIRANDO", "ATIVA", "REINSTALANDO",
+]);
+
 function isOpenManutStatus(status: ManutencaoModuloStatus | null): status is ManutencaoModuloStatus {
   return status != null && MANUT_OPEN_STATUSES.has(status);
+}
+
+function isInMaintenanceOverview(status: ManutencaoModuloStatus | null): boolean {
+  return status != null && MANUT_OVERVIEW_STATUSES.has(status);
+}
+
+/** Contestação só quando há datas coerentes com a etapa ou pipeline completo (ordenado → retirada → reinstalação). */
+function isContestationEligible(
+  e: Pick<ManutEntry, "status" | "dataOrdenado" | "dataRetirada" | "dataReinstalacao">,
+): boolean {
+  const { status, dataOrdenado, dataRetirada, dataReinstalacao } = e;
+  if (dataOrdenado && dataRetirada && dataReinstalacao) return true;
+  if (status === "PENDENTE" || status === "EM_ANALISE") return false;
+  if (status === "RETIRANDO") return Boolean(dataOrdenado);
+  if (status === "ATIVA" || status === "REINSTALANDO") return Boolean(dataOrdenado && dataRetirada);
+  return false;
 }
 
 function trocaBlockedStatusLabel(status: ManutencaoModuloStatus): string {
@@ -1043,10 +1071,17 @@ interface ManutEntry {
   diasContestados?: number;
   contestacaoDias: { data: string; contestado: boolean }[];
   documentoUrl?: string;
+  documentoTitulo?: string;
   motivo?: string;
   createdAt?: string;
   quantidadeTrocas: number;
   ultimaComunicacao: string;
+}
+
+function manutEntryDate(
+  e: Pick<ManutEntry, "dataManutencao" | "dataReinstalacao" | "dataRetirada" | "dataOrdenado" | "createdAt">,
+): string | undefined {
+  return e.dataManutencao ?? e.dataReinstalacao ?? e.dataRetirada ?? e.dataOrdenado ?? e.createdAt?.slice(0, 10);
 }
 
 const SETOR_RE = /^(?:CV|JT|MG|ST)(\d)(\d{4})([A-Z]{2})/;
@@ -1165,6 +1200,9 @@ export default function BateriaDashboardPage() {
   // Modal de contestação por dia (despachos perdidos na manutenção) + estado de upload do documento.
   const [contestModule, setContestModule] = useState<ManutEntry | null>(null);
   const [contestUploading, setContestUploading] = useState(false);
+  const [contestDocDelete, setContestDocDelete] = useState<{ eventId: number; selimp: string; titulo: string } | null>(null);
+  const [contestRemovingDoc, setContestRemovingDoc] = useState(false);
+  const [manutEventDelete, setManutEventDelete] = useState<{ selimp: string; id: number; setor: string; status: string } | null>(null);
 
   // Paginação das listagens de Trocas e Manutenções
   const [trocasPage, setTrocasPage] = useState(1);
@@ -1370,9 +1408,20 @@ export default function BateriaDashboardPage() {
 
   const commMaintenanceStats = useMemo(() => {
     const total = modules.length;
-    const online = modules.filter((m) => m.comunicacao === "ON").length;
-    const offline = modules.filter((m) => m.comunicacao === "OFF").length;
-    const maintenance = modules.filter((m) => manutStatusForModule(m) === "ATIVA").length;
+    let maintenance = 0;
+    let online = 0;
+    let offline = 0;
+
+    for (const m of modules) {
+      const inMaint = isInMaintenanceOverview(manutStatusForModule(m));
+      if (inMaint) {
+        maintenance += 1;
+        continue;
+      }
+      if (m.comunicacao === "ON") online += 1;
+      else if (m.comunicacao === "OFF") offline += 1;
+    }
+
     const pct = (n: number) => (total > 0 ? Math.round((n / total) * 100) : 0);
     return {
       total,
@@ -1931,6 +1980,12 @@ export default function BateriaDashboardPage() {
     for (const [selimp, events] of Object.entries(moduloManut.history)) {
       const mod = modulesBySelimp.get(selimp) ?? null;
       for (const ev of events) {
+        const eligible = isContestationEligible({
+          status: ev.status,
+          dataOrdenado: ev.dataOrdenado,
+          dataRetirada: ev.dataRetirada,
+          dataReinstalacao: ev.dataReinstalacao,
+        });
         entries.push({
           key: `ev-${ev.id}`,
           eventId: ev.id,
@@ -1946,10 +2001,11 @@ export default function BateriaDashboardPage() {
           sinalRecuperado: ev.sinalRecuperado,
           oficial: ev.oficial,
           contestado: ev.contestado,
-          diasFrequencia: ev.diasFrequencia,
+          diasFrequencia: eligible ? ev.diasFrequencia : 0,
           diasContestados: ev.diasContestados,
-          contestacaoDias: ev.contestacaoDias ?? [],
+          contestacaoDias: eligible ? (ev.contestacaoDias ?? []) : [],
           documentoUrl: ev.documentoUrl,
+          documentoTitulo: ev.documentoTitulo,
           motivo: ev.motivo,
           createdAt: ev.createdAt,
           quantidadeTrocas: mod?.quantidadeTrocas ?? 0,
@@ -1982,7 +2038,7 @@ export default function BateriaDashboardPage() {
     }
     // Filtros
     const term = manutSearch.trim().toLowerCase();
-    let result = entries;
+    let result = entries.filter((e) => manutInPeriod(manutEntryDate(e), manutPeriod));
     if (manutSubFilter.length > 0) result = result.filter((e) => manutSubFilter.includes(e.sub));
     if (manutOficialFilter === "oficial") result = result.filter((e) => e.oficial);
     else if (manutOficialFilter === "nao") result = result.filter((e) => !e.oficial);
@@ -2001,7 +2057,7 @@ export default function BateriaDashboardPage() {
       );
     // Ordena por status; dentro do status, pendentes de contestação primeiro; depois por data desc.
     const pendenteContestacao = (e: ManutEntry) =>
-      isOpenManutStatus(e.status) && e.contestacaoDias.some((d) => !d.contestado);
+      isContestationEligible(e) && isOpenManutStatus(e.status) && e.contestacaoDias.some((d) => !d.contestado);
     return [...result].sort((a, b) => {
       const oa = MANUT_STATUS_ORDER[a.status];
       const ob = MANUT_STATUS_ORDER[b.status];
@@ -2013,7 +2069,7 @@ export default function BateriaDashboardPage() {
       const db = b.createdAt ?? b.dataManutencao ?? b.dataOrdenado ?? "";
       return db.localeCompare(da);
     });
-  }, [modules, modulesBySelimp, moduloManut.history, manut.overrides, isEnviadoManutencao, manutSubFilter, manutSearch, manutStatusFilter, manutOficialFilter]);
+  }, [modules, modulesBySelimp, moduloManut.history, manut.overrides, isEnviadoManutencao, manutSubFilter, manutSearch, manutStatusFilter, manutOficialFilter, manutPeriod]);
 
   const totalManutPages = Math.max(1, Math.ceil(manutEntries.length / ITEMS_PER_PAGE));
   const paginatedManut = useMemo(
@@ -2023,6 +2079,9 @@ export default function BateriaDashboardPage() {
   useEffect(() => {
     if (manutPage > totalManutPages) setManutPage(1);
   }, [totalManutPages, manutPage]);
+  useEffect(() => {
+    setManutPage(1);
+  }, [manutPeriod]);
 
   /** Alertas do módulo (troca registrada + histórico de manutenção reais). */
   const alertaOf = useCallback(
@@ -2045,26 +2104,37 @@ export default function BateriaDashboardPage() {
     const counts: Record<ManutencaoModuloStatus, number> = { EM_ANALISE: 0, PENDENTE: 0, RETIRANDO: 0, ATIVA: 0, REINSTALANDO: 0, REALIZADA: 0, SINAL_RECUPERADO: 0 };
     let total = 0;
     for (const events of Object.values(moduloManut.history)) {
-      for (const ev of events) { counts[ev.status] += 1; total += 1; }
+      for (const ev of events) {
+        if (!manutInPeriod(manutEventDate(ev), manutPeriod)) continue;
+        counts[ev.status] += 1;
+        total += 1;
+      }
     }
     const comEvento = new Set(Object.keys(moduloManut.history));
     for (const m of modules) {
-      if (!comEvento.has(m.numeroSelimp) && isEnviadoManutencao(m)) { counts.PENDENTE += 1; total += 1; }
+      if (!comEvento.has(m.numeroSelimp) && isEnviadoManutencao(m)) {
+        const date = manut.overrides[m.numeroSelimp]?.dataSolicitacao;
+        if (!manutInPeriod(date, manutPeriod)) continue;
+        counts.PENDENTE += 1;
+        total += 1;
+      }
     }
     return { total, ...counts, realizadasTotal: counts.REALIZADA + counts.SINAL_RECUPERADO };
-  }, [moduloManut.history, modules, isEnviadoManutencao]);
+  }, [moduloManut.history, modules, isEnviadoManutencao, manutPeriod, manut.overrides]);
 
   const manutChartData = useMemo(() => {
     const map = new Map<string, number>();
     for (const [selimp, events] of Object.entries(moduloManut.history)) {
       const sub = modulesBySelimp.get(selimp)?.subprefeitura;
       if (!sub) continue;
-      map.set(sub, (map.get(sub) ?? 0) + events.length);
+      const inPeriod = events.filter((ev) => manutInPeriod(manutEventDate(ev), manutPeriod)).length;
+      if (inPeriod === 0) continue;
+      map.set(sub, (map.get(sub) ?? 0) + inPeriod);
     }
     return Array.from(map.entries())
       .map(([subprefeitura, manutencoes]) => ({ subprefeitura, manutencoes }))
       .sort((a, b) => b.manutencoes - a.manutencoes);
-  }, [moduloManut.history, modulesBySelimp]);
+  }, [moduloManut.history, modulesBySelimp, manutPeriod]);
 
   /** Abre o modal de registrar manutenção (module=null → seletor no topo). */
   /** Abre o modal. opts.event → edição (persiste update); opts.status → status inicial. */
@@ -2172,14 +2242,41 @@ export default function BateriaDashboardPage() {
       setContestUploading(true);
       try {
         const url = await uploadManutencaoDoc(e.selimp, file);
-        await moduloManut.atualizar(e.eventId, e.selimp, { documentoUrl: url });
-        setContestModule((prev) => (prev && prev.eventId === e.eventId ? { ...prev, documentoUrl: url } : prev));
+        const titulo = file.name.trim() || "documento.pdf";
+        await moduloManut.atualizar(e.eventId, e.selimp, { documentoUrl: url, documentoTitulo: titulo });
+        setContestModule((prev) =>
+          prev && prev.eventId === e.eventId ? { ...prev, documentoUrl: url, documentoTitulo: titulo } : prev,
+        );
         toast.success("Documento anexado.");
       } catch (err) {
         console.error("Erro ao anexar documento", err);
         toast.error("Falha ao anexar o documento.");
       } finally {
         setContestUploading(false);
+      }
+    },
+    [moduloManut],
+  );
+
+  /** Remove o PDF anexado à contestação (URL + título no servidor). */
+  const handleRemoveDocumento = useCallback(
+    async (e: ManutEntry) => {
+      if (e.eventId == null) return;
+      setContestRemovingDoc(true);
+      try {
+        await moduloManut.atualizar(e.eventId, e.selimp, { documentoUrl: null, documentoTitulo: null });
+        setContestModule((prev) =>
+          prev && prev.eventId === e.eventId
+            ? { ...prev, documentoUrl: undefined, documentoTitulo: undefined }
+            : prev,
+        );
+        toast.success("Documento removido.");
+      } catch (err) {
+        console.error("Erro ao remover documento", err);
+        toast.error("Falha ao remover o documento.");
+      } finally {
+        setContestRemovingDoc(false);
+        setContestDocDelete(null);
       }
     },
     [moduloManut],
@@ -2348,7 +2445,7 @@ export default function BateriaDashboardPage() {
                       <span className="font-mono text-4xl font-bold tracking-tight text-zinc-900 tabular-nums dark:text-white">{commMaintenanceStats.maintenance}</span>
                       <span className="font-mono text-2xl font-bold tabular-nums text-zinc-700 dark:text-zinc-300">({commMaintenanceStats.pctMaint}%)</span>
                     </div>
-                    <p className="mt-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">Manutenção ativa</p>
+                    <p className="mt-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">Em manutenção</p>
                   </CardContent>
                 </Card>
               </div>
@@ -3310,7 +3407,7 @@ export default function BateriaDashboardPage() {
                       {manutStats.total}
                     </p>
                     <p className="mt-3 text-xs text-zinc-200/85">
-                      Registros de manutenção do módulo
+                      {trocasPeriodLabel(manutPeriod)} — registros de manutenção do módulo
                     </p>
                   </div>
                   <div className="grid flex-1 min-w-[220px] grid-cols-2 gap-4 sm:grid-cols-3 xl:max-w-3xl">
@@ -3528,6 +3625,18 @@ export default function BateriaDashboardPage() {
                                   {e.createdAt && (
                                     <div className="text-[10px] text-muted-foreground/80">registrado {isoBrDateTime(e.createdAt)}</div>
                                   )}
+                                  {e.documentoUrl && (
+                                    <a
+                                      href={e.documentoUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="mt-1 inline-flex max-w-full items-center gap-1 truncate text-[11px] font-medium text-sky-600 hover:underline dark:text-sky-400"
+                                      title={e.documentoTitulo || "Documento de manutenção"}
+                                    >
+                                      <FileText className="h-3 w-3 shrink-0" />
+                                      <span className="truncate">{e.documentoTitulo || "Documento anexado"}</span>
+                                    </a>
+                                  )}
                                 </div>
                               </TableCell>
                               <TableCell className="align-top max-w-[180px] text-xs text-foreground">
@@ -3560,6 +3669,7 @@ export default function BateriaDashboardPage() {
                                                   diasFrequencia: e.diasFrequencia,
                                                   contestacaoDias: e.contestacaoDias,
                                                   documentoUrl: e.documentoUrl,
+                                                  documentoTitulo: e.documentoTitulo,
                                                   createdAt: e.createdAt,
                                                 },
                                               })
@@ -3582,6 +3692,7 @@ export default function BateriaDashboardPage() {
                                   </div>
                                   {/* Contestação por dia (despachos perdidos na manutenção: ordenado → reinstalação) */}
                                   {(() => {
+                                    if (!isContestationEligible(e)) return null;
                                     const pendentes = e.contestacaoDias.filter((d) => !d.contestado).length;
                                     const contestados = e.contestacaoDias.filter((d) => d.contestado).length;
                                     if (isOpenManutStatus(e.status) && e.diasFrequencia > 0 && e.eventId != null) {
@@ -4567,6 +4678,35 @@ export default function BateriaDashboardPage() {
           </DialogContent>
         </Dialog>
 
+        {/* ===== Confirmação: excluir registro de manutenção ===== */}
+        <Dialog open={!!manutEventDelete} onOpenChange={(o) => !o && setManutEventDelete(null)}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-base">
+                <Trash2 className="h-5 w-5 text-red-500" /> Excluir manutenção
+              </DialogTitle>
+              <DialogDescription>
+                Esta ação remove permanentemente o registro {manutEventDelete?.status} do setor {manutEventDelete?.setor} (SELIMP {manutEventDelete?.selimp}). Não pode ser desfeita.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="gap-2">
+              <Button variant="ghost" onClick={() => setManutEventDelete(null)}>Cancelar</Button>
+              <Button
+                className="gap-1.5 bg-red-600 text-white hover:bg-red-700"
+                onClick={() => {
+                  if (manutEventDelete) {
+                    void moduloManut.remover(manutEventDelete.id, manutEventDelete.selimp);
+                    toast.success("Manutenção removida.");
+                  }
+                  setManutEventDelete(null);
+                }}
+              >
+                <Trash2 className="h-4 w-4" /> Excluir
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         {/* ===== Confirmação: excluir evento do histórico de trocas ===== */}
         <Dialog open={!!trocaEventoDelete} onOpenChange={(o) => !o && setTrocaEventoDelete(null)}>
           <DialogContent className="max-w-md">
@@ -4630,18 +4770,42 @@ export default function BateriaDashboardPage() {
                     <div className="space-y-1.5">
                       <label className="text-xs font-medium text-muted-foreground">Documento de manutenção (PDF)</label>
                       {e.documentoUrl && (
-                        <div className="flex items-center justify-between gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3">
-                          <span className="flex items-center gap-2 text-xs font-medium text-emerald-700 dark:text-emerald-300">
-                            <FileText className="h-4 w-4" /> Documento anexado
+                        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3">
+                          <span className="flex min-w-0 flex-1 items-center gap-2 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                            <FileText className="h-4 w-4 shrink-0" />
+                            <span className="truncate" title={e.documentoTitulo || "Documento anexado"}>
+                              {e.documentoTitulo || "Documento anexado"}
+                            </span>
                           </span>
-                          <a
-                            href={e.documentoUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 hover:underline dark:text-emerald-300"
-                          >
-                            <Download className="h-3.5 w-3.5" /> Baixar
-                          </a>
+                          <div className="flex shrink-0 items-center gap-1.5">
+                            <a
+                              href={e.documentoUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              download={e.documentoTitulo || undefined}
+                              className="inline-flex items-center gap-1 rounded-md border border-emerald-500/40 bg-background/60 px-2.5 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-300"
+                              title={e.documentoTitulo ? `Baixar ${e.documentoTitulo}` : "Baixar documento"}
+                            >
+                              <Download className="h-3.5 w-3.5" />
+                              {e.documentoTitulo ? `Baixar · ${e.documentoTitulo}` : "Baixar"}
+                            </a>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-7 gap-1 border-red-400/50 text-red-600 hover:bg-red-500/10 dark:text-red-400"
+                              disabled={contestUploading || contestRemovingDoc}
+                              onClick={() =>
+                                setContestDocDelete({
+                                  eventId: e.eventId!,
+                                  selimp: e.selimp,
+                                  titulo: e.documentoTitulo || "Documento anexado",
+                                })
+                              }
+                            >
+                              <Trash2 className="h-3.5 w-3.5" /> Excluir
+                            </Button>
+                          </div>
                         </div>
                       )}
                       <label
@@ -4699,6 +4863,37 @@ export default function BateriaDashboardPage() {
                 </>
               );
             })()}
+          </DialogContent>
+        </Dialog>
+
+        {/* ===== Confirmação: excluir documento da contestação ===== */}
+        <Dialog open={!!contestDocDelete} onOpenChange={(o) => !o && !contestRemovingDoc && setContestDocDelete(null)}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-base">
+                <Trash2 className="h-5 w-5 text-red-500" /> Excluir documento
+              </DialogTitle>
+              <DialogDescription>
+                Remover o anexo <span className="font-medium text-foreground">{contestDocDelete?.titulo}</span> desta manutenção? O arquivo deixará de aparecer na contestação.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="gap-2">
+              <Button variant="ghost" disabled={contestRemovingDoc} onClick={() => setContestDocDelete(null)}>
+                Cancelar
+              </Button>
+              <Button
+                className="gap-1.5 bg-red-600 text-white hover:bg-red-700"
+                disabled={contestRemovingDoc}
+                onClick={() => {
+                  if (!contestDocDelete || !contestModule) return;
+                  const entry =
+                    manutEntries.find((x) => x.eventId === contestDocDelete.eventId) ?? contestModule;
+                  void handleRemoveDocumento(entry);
+                }}
+              >
+                <Trash2 className="h-4 w-4" /> {contestRemovingDoc ? "Excluindo..." : "Excluir documento"}
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
 
@@ -4782,7 +4977,15 @@ export default function BateriaDashboardPage() {
             {/* Timeline de contestação por dia (accordion) */}
             {histModule && (() => {
               const rec = moduloManut.records[histModule.numeroSelimp];
-              const dias = rec?.contestacaoDias ?? [];
+              const eligible = rec
+                ? isContestationEligible({
+                    status: rec.status,
+                    dataOrdenado: rec.dataOrdenado,
+                    dataRetirada: rec.dataRetirada,
+                    dataReinstalacao: rec.dataReinstalacao,
+                  })
+                : false;
+              const dias = eligible ? (rec?.contestacaoDias ?? []) : [];
               if (dias.length === 0) return null;
               const contestados = dias.filter((d) => d.contestado).length;
               return (
@@ -4850,7 +5053,14 @@ export default function BateriaDashboardPage() {
                               </button>
                               <button
                                 type="button"
-                                onClick={() => moduloManut.remover(ev.id, ev.selimp)}
+                                onClick={() =>
+                                  setManutEventDelete({
+                                    selimp: ev.selimp,
+                                    id: ev.id,
+                                    setor: histModule.setor,
+                                    status: MANUT_STATUS_LABEL[ev.status],
+                                  })
+                                }
                                 className="text-muted-foreground transition-colors hover:text-red-500"
                                 title="Excluir"
                               >
@@ -4871,6 +5081,17 @@ export default function BateriaDashboardPage() {
                             </div>
                           </div>
                           {ev.motivo && <p className="mt-1 text-xs text-foreground"><span className="text-muted-foreground">Motivo:</span> {ev.motivo}</p>}
+                          {ev.documentoUrl && (
+                            <a
+                              href={ev.documentoUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="mt-1 inline-flex max-w-full items-center gap-1 truncate text-xs font-medium text-sky-600 hover:underline dark:text-sky-400"
+                            >
+                              <FileText className="h-3 w-3 shrink-0" />
+                              <span className="truncate">{ev.documentoTitulo || "Documento anexado"}</span>
+                            </a>
+                          )}
                           {ev.createdAt && <p className="mt-1 text-[10px] text-muted-foreground/80">registrado {isoBrDateTime(ev.createdAt)}</p>}
                         </div>
                       ))}

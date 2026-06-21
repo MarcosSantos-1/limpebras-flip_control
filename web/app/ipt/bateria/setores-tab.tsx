@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { MapPin, Search, Pencil, RefreshCw, Hash, Radio, Loader2, AlertTriangle } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "react";
+import { MapPin, Search, Pencil, RefreshCw, Hash, Radio, Loader2, AlertTriangle, CheckSquare, X, Check, Link2 } from "lucide-react";
+import { toast } from "react-toastify";
 import { apiService, type SetorModulo } from "@/lib/api";
 import { servicoLabel } from "@/lib/ipt-utils";
 import { cn } from "@/lib/utils";
@@ -42,6 +43,42 @@ interface EditForm {
   ddmxInstalacao: string;
 }
 
+interface BulkForm {
+  selimpCodigo: string;
+  selimpInstalacao: string;
+  ddmxCodigo: string;
+  ddmxInstalacao: string;
+}
+
+type BulkChangeKind = "novo" | "alteracao" | "atualizacao" | "igual";
+
+function bulkChangeKind(s: SetorModulo, form: BulkForm): BulkChangeKind {
+  const cur = (s.selimp_codigo ?? "").trim();
+  const next = form.selimpCodigo.trim();
+  const curDate = s.selimp_instalacao?.slice(0, 10) ?? "";
+  const nextDate = form.selimpInstalacao.trim();
+  if (!next && !nextDate) return "igual";
+  if (!cur && next) return "novo";
+  if (cur && next && cur !== next) return "alteracao";
+  if (nextDate && nextDate !== curDate) return "atualizacao";
+  if (next && cur === next && nextDate) return "atualizacao";
+  return next || nextDate ? "atualizacao" : "igual";
+}
+
+const BULK_CHANGE_BADGE: Record<BulkChangeKind, string> = {
+  novo: "bg-emerald-500/15 text-emerald-700 border-emerald-500/30 dark:text-emerald-300",
+  alteracao: "bg-amber-500/15 text-amber-700 border-amber-500/30 dark:text-amber-300",
+  atualizacao: "bg-sky-500/15 text-sky-700 border-sky-500/30 dark:text-sky-300",
+  igual: "bg-zinc-500/15 text-zinc-600 border-zinc-500/30 dark:text-zinc-300",
+};
+
+const BULK_CHANGE_LABEL: Record<BulkChangeKind, string> = {
+  novo: "Novo vínculo",
+  alteracao: "Troca de módulo",
+  atualizacao: "Atualização",
+  igual: "Sem alteração",
+};
+
 export function SetoresTab() {
   const [setores, setSetores] = useState<SetorModulo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -54,6 +91,13 @@ export function SetoresTab() {
   const [editing, setEditing] = useState<SetorModulo | null>(null);
   const [form, setForm] = useState<EditForm>({ selimpCodigo: "", selimpInstalacao: "", ddmxCodigo: "", ddmxInstalacao: "" });
   const [saving, setSaving] = useState(false);
+
+  const [selMode, setSelMode] = useState(false);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [lastIdx, setLastIdx] = useState<number | null>(null);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkForm, setBulkForm] = useState<BulkForm>({ selimpCodigo: "", selimpInstalacao: "", ddmxCodigo: "", ddmxInstalacao: "" });
+  const [bulkSaving, setBulkSaving] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -103,6 +147,82 @@ export function SetoresTab() {
     () => setores.filter((s) => !s.selimp_codigo || !s.selimp_codigo.trim()).length,
     [setores],
   );
+
+  const selectedSetores = useMemo(
+    () => filtered.filter((s) => selected.has(s.id)),
+    [filtered, selected],
+  );
+
+  function sairSelecao() {
+    setSelMode(false);
+    setSelected(new Set());
+    setLastIdx(null);
+  }
+
+  function toggleSelMode() {
+    if (selMode) sairSelecao();
+    else setSelMode(true);
+  }
+
+  function handleRowSelect(id: number, index: number, e: MouseEvent) {
+    const isShift = e.shiftKey;
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (isShift && lastIdx != null) {
+        const [a, b] = [Math.min(lastIdx, index), Math.max(lastIdx, index)];
+        for (let i = a; i <= b; i++) next.add(filtered[i].id);
+      } else if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+    if (!isShift) setLastIdx(index);
+  }
+
+  function openBulkModal() {
+    const items = selectedSetores;
+    const first = items[0];
+    const allSameSelimp = items.length > 0 && items.every((s) => (s.selimp_codigo ?? "").trim() === (first?.selimp_codigo ?? "").trim());
+    const firstDate = first?.selimp_instalacao?.slice(0, 10) ?? "";
+    const allSameDate = items.length > 0 && items.every((s) => (s.selimp_instalacao?.slice(0, 10) ?? "") === firstDate);
+    setBulkForm({
+      selimpCodigo: allSameSelimp ? (first?.selimp_codigo ?? "").trim() : "",
+      selimpInstalacao: allSameDate ? firstDate : "",
+      ddmxCodigo: "",
+      ddmxInstalacao: "",
+    });
+    setBulkOpen(true);
+  }
+
+  async function confirmBulk() {
+    if (selectedSetores.length === 0) return;
+    const codigo = bulkForm.selimpCodigo.trim();
+    if (!codigo) {
+      toast.error("Informe o código SELIMP para vincular os setores.");
+      return;
+    }
+    setBulkSaving(true);
+    try {
+      for (const s of selectedSetores) {
+        await apiService.updateSetorModulo(s.id, {
+          selimpCodigo: codigo,
+          selimpInstalacao: bulkForm.selimpInstalacao || "",
+          ...(bulkForm.ddmxCodigo.trim() ? { ddmxCodigo: bulkForm.ddmxCodigo.trim() } : {}),
+          ...(bulkForm.ddmxInstalacao ? { ddmxInstalacao: bulkForm.ddmxInstalacao } : {}),
+        });
+      }
+      toast.success(`${selectedSetores.length} setor(es) vinculado(s) ao módulo ${codigo}.`);
+      setBulkOpen(false);
+      sairSelecao();
+      await load();
+    } catch (err) {
+      toast.error(apiService.extractErrorMessage(err, "Erro ao vincular setores ao módulo"));
+    } finally {
+      setBulkSaving(false);
+    }
+  }
 
   function openEdit(s: SetorModulo) {
     setEditing(s);
@@ -178,6 +298,28 @@ export function SetoresTab() {
           >
             Sem SELIMP ({semSelimpCount})
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className={cn(
+              "h-9 gap-1.5",
+              selMode && "border-emerald-500/50 text-emerald-600 hover:bg-emerald-500/10 dark:text-emerald-400",
+            )}
+            onClick={toggleSelMode}
+          >
+            {selMode ? <X className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />}
+            {selMode ? "Cancelar" : "Selecionar"}
+          </Button>
+          {selMode && selected.size > 0 && (
+            <Button
+              size="sm"
+              className="h-9 gap-1.5 bg-emerald-600 font-semibold text-white hover:bg-emerald-700"
+              onClick={openBulkModal}
+            >
+              <Link2 className="h-4 w-4" />
+              Atribuir módulo ({selected.size})
+            </Button>
+          )}
         </div>
       </CardHeader>
       <CardContent>
@@ -200,6 +342,7 @@ export function SetoresTab() {
           <Table className="[&_tbody_tr]:border-b [&_tbody_tr]:border-border/30 [&_thead_tr]:border-b [&_thead_tr]:border-border/30">
             <TableHeader>
               <TableRow className="bg-muted/25 hover:bg-muted/25">
+                {selMode && <TableHead className="w-9" />}
                 <TableHead className="text-center">Sub</TableHead>
                 <TableHead>Setor</TableHead>
                 <TableHead>Serviço</TableHead>
@@ -210,8 +353,27 @@ export function SetoresTab() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.map((s) => (
-                <TableRow key={s.id} className="border-border/30 hover:bg-muted/20">
+              {filtered.map((s, idx) => {
+                const sel = selected.has(s.id);
+                return (
+                <TableRow
+                  key={s.id}
+                  className={cn("border-border/30 hover:bg-muted/20", selMode && sel && "bg-emerald-500/10")}
+                  onClick={selMode ? (e) => handleRowSelect(s.id, idx, e) : undefined}
+                  style={selMode ? { cursor: "pointer", userSelect: "none" } : undefined}
+                >
+                  {selMode && (
+                    <TableCell className="text-center align-middle">
+                      <span
+                        className={cn(
+                          "inline-flex h-4 w-4 items-center justify-center rounded border transition-colors",
+                          sel ? "border-emerald-500 bg-emerald-500 text-white" : "border-zinc-400 dark:border-zinc-600",
+                        )}
+                      >
+                        {sel && <Check className="h-3 w-3" />}
+                      </span>
+                    </TableCell>
+                  )}
                   <TableCell className="text-center font-medium align-top">{s.subprefeitura || "—"}</TableCell>
                   <TableCell className="align-top font-mono text-xs sm:text-sm">{s.setor}</TableCell>
                   <TableCell className="align-top">
@@ -241,21 +403,29 @@ export function SetoresTab() {
                     )}
                   </TableCell>
                   <TableCell className="text-center align-top">
-                    <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Editar atribuição" onClick={() => openEdit(s)}>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      aria-label="Editar atribuição"
+                      disabled={selMode}
+                      onClick={(e) => { e.stopPropagation(); openEdit(s); }}
+                    >
                       <Pencil className="h-4 w-4" />
                     </Button>
                   </TableCell>
                 </TableRow>
-              ))}
+              );
+              })}
               {filtered.length === 0 && (
-                <TableRow><TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">Nenhum setor encontrado.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={selMode ? 8 : 7} className="py-10 text-center text-sm text-muted-foreground">Nenhum setor encontrado.</TableCell></TableRow>
               )}
             </TableBody>
           </Table>
         </div>
         )}
         <p className="mt-3 text-xs text-muted-foreground">
-          Edição apenas de atribuição de módulos. Ao salvar, o snapshot por módulo é reconstruído automaticamente.
+          Edição individual pelo ícone de lápis. Use &quot;Selecionar&quot; para vincular vários setores ao mesmo módulo SELIMP e data de instalação.
         </p>
       </CardContent>
 
@@ -291,6 +461,127 @@ export function SetoresTab() {
             <Button variant="ghost" onClick={() => setEditing(null)} disabled={saving}>Cancelar</Button>
             <Button className="bg-emerald-600 text-white hover:bg-emerald-700" onClick={() => void save()} disabled={saving}>
               {saving ? "Salvando…" : "Salvar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={bulkOpen} onOpenChange={(o) => !o && !bulkSaving && setBulkOpen(false)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <Link2 className="h-5 w-5 text-emerald-500" />
+              Atribuir módulo — {selectedSetores.length} setor(es)
+            </DialogTitle>
+            <DialogDescription>
+              Vincule os setores selecionados ao mesmo código SELIMP e data de instalação. Revise a lista antes de confirmar.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="max-h-52 space-y-1.5 overflow-y-auto rounded-lg border border-border/60 bg-muted/20 p-2">
+              {selectedSetores.map((s) => {
+                const kind = bulkChangeKind(s, bulkForm);
+                const cur = (s.selimp_codigo ?? "").trim() || "Sem SELIMP";
+                const next = bulkForm.selimpCodigo.trim();
+                return (
+                  <div
+                    key={s.id}
+                    className={cn(
+                      "rounded-md border px-2.5 py-2 text-xs",
+                      kind === "novo" && "border-emerald-500/30 bg-emerald-500/5",
+                      kind === "alteracao" && "border-amber-500/30 bg-amber-500/5",
+                      kind === "atualizacao" && "border-sky-500/30 bg-sky-500/5",
+                      kind === "igual" && "border-border/40 bg-background/40",
+                    )}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-mono text-xs font-semibold text-foreground">{s.setor}</span>
+                      <div className="flex items-center gap-1.5">
+                        <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
+                          {s.subprefeitura || "—"}
+                        </Badge>
+                        <Badge variant="outline" className={cn("h-5 px-1.5 text-[10px]", BULK_CHANGE_BADGE[kind])}>
+                          {BULK_CHANGE_LABEL[kind]}
+                        </Badge>
+                      </div>
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
+                      <span className="text-muted-foreground">{cur}</span>
+                      {next && (
+                        <>
+                          <span className="text-muted-foreground">→</span>
+                          <span className="inline-flex items-center gap-0.5 font-medium text-emerald-700 dark:text-emerald-300">
+                            <Hash className="h-3 w-3" />
+                            {next}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                    {bulkForm.selimpInstalacao && (
+                      <p className="mt-0.5 text-[10px] tabular-nums text-muted-foreground">
+                        Instalação: {isoBr(bulkForm.selimpInstalacao)}
+                        {s.selimp_instalacao?.slice(0, 10) && s.selimp_instalacao.slice(0, 10) !== bulkForm.selimpInstalacao && (
+                          <span className="ml-1 text-amber-600 dark:text-amber-400">(era {isoBr(s.selimp_instalacao)})</span>
+                        )}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5 sm:col-span-2">
+                <label className="text-xs font-medium text-muted-foreground">SELIMP (código) *</label>
+                <Input
+                  value={bulkForm.selimpCodigo}
+                  placeholder="ex.: 03-0055"
+                  onChange={(e) => setBulkForm((f) => ({ ...f, selimpCodigo: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Instalação SELIMP</label>
+                <DatePicker
+                  value={bulkForm.selimpInstalacao}
+                  onChange={(v) => setBulkForm((f) => ({ ...f, selimpInstalacao: v }))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">DDMX (opcional)</label>
+                <Input
+                  value={bulkForm.ddmxCodigo}
+                  placeholder="ex.: LT-0123"
+                  onChange={(e) => setBulkForm((f) => ({ ...f, ddmxCodigo: e.target.value }))}
+                />
+              </div>
+              {bulkForm.ddmxCodigo.trim() && (
+                <div className="space-y-1.5 sm:col-span-2">
+                  <label className="text-xs font-medium text-muted-foreground">Instalação DDMX</label>
+                  <DatePicker
+                    value={bulkForm.ddmxInstalacao}
+                    onChange={(v) => setBulkForm((f) => ({ ...f, ddmxInstalacao: v }))}
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="ghost" onClick={() => setBulkOpen(false)} disabled={bulkSaving}>
+              Cancelar
+            </Button>
+            <Button
+              className="gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
+              disabled={bulkSaving || !bulkForm.selimpCodigo.trim()}
+              onClick={() => void confirmBulk()}
+            >
+              {bulkSaving ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" /> Salvando…
+                </>
+              ) : (
+                <>
+                  <Link2 className="h-4 w-4" /> Vincular {selectedSetores.length}
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

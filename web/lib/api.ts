@@ -600,6 +600,8 @@ export interface ModuloManutencaoEvento {
   contestacaoDias: { data: string; contestado: boolean }[];
   /** URL (Firebase Storage) do documento que atesta a manutenção — global por módulo. */
   documentoUrl?: string;
+  /** Nome/título do documento anexado (ex.: nome do arquivo PDF). */
+  documentoTitulo?: string;
   status: ManutencaoModuloStatus;
   createdAt?: string;
 }
@@ -617,6 +619,7 @@ export interface ModuloManutencaoInput {
   oficial?: boolean;
   contestado?: boolean;
   documentoUrl?: string | null;
+  documentoTitulo?: string | null;
   status?: ManutencaoModuloStatus;
 }
 

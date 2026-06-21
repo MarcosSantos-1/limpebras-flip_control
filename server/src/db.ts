@@ -786,6 +786,7 @@ export async function runMigrations() {
     await client.query("ALTER TABLE modulo_manutencoes ADD COLUMN IF NOT EXISTS dias_contestados INTEGER").catch(() => {});
     // Documento (PDF no Firebase Storage) que atesta o módulo em manutenção — global por módulo.
     await client.query("ALTER TABLE modulo_manutencoes ADD COLUMN IF NOT EXISTS documento_url TEXT").catch(() => {});
+    await client.query("ALTER TABLE modulo_manutencoes ADD COLUMN IF NOT EXISTS documento_titulo TEXT").catch(() => {});
     // Contestação POR DIA: 1 linha por dia de despacho contestado (ausência = pendente).
     await client.query(`
       CREATE TABLE IF NOT EXISTS manutencao_contestacoes (

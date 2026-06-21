@@ -807,6 +807,7 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
     contestado: boolean;
     dias_contestados: number | null;
     documento_url: string | null;
+    documento_titulo: string | null;
     status: string | null;
     created_at: string;
   }
@@ -833,6 +834,16 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
     return "PENDENTE";
   }
 
+  /** Contestação só quando há datas coerentes com a etapa ou pipeline completo (ordenado → retirada → reinstalação). */
+  function isContestationEligibleRow(r: ModuloManutencaoRow): boolean {
+    const status = deriveStatus(r);
+    if (r.data_ordenado && r.data_retirada && r.data_reinstalacao) return true;
+    if (status === "PENDENTE" || status === "EM_ANALISE") return false;
+    if (status === "RETIRANDO") return Boolean(r.data_ordenado);
+    if (status === "ATIVA" || status === "REINSTALANDO") return Boolean(r.data_ordenado && r.data_retirada);
+    return false;
+  }
+
   function mapManutencaoEvento(r: ModuloManutencaoRow) {
     return {
       id: r.id,
@@ -849,6 +860,7 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
       contestado: r.contestado,
       diasContestados: r.dias_contestados ?? undefined,
       documentoUrl: r.documento_url ?? undefined,
+      documentoTitulo: r.documento_titulo ?? undefined,
       // diasFrequencia e contestacaoDias (lista de dias de despacho na janela) são injetados pelo GET via batch.
       diasFrequencia: 0,
       contestacaoDias: [] as { data: string; contestado: boolean }[],
@@ -863,7 +875,7 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
            data_reinstalacao::text AS data_reinstalacao,
            data_ordenado::text     AS data_ordenado,
            data_manutencao::text   AS data_manutencao,
-           sinal_recuperado, oficial, contestado, dias_contestados, documento_url, status,
+           sinal_recuperado, oficial, contestado, dias_contestados, documento_url, documento_titulo, status,
            created_at::text AS created_at
       FROM modulo_manutencoes`;
 
@@ -911,6 +923,9 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
     for (const r of res.rows) {
       const ev = mapManutencaoEvento(r);
       ev.contestacaoDias = diasById.get(r.id) ?? [];
+      if (!isContestationEligibleRow(r)) {
+        ev.contestacaoDias = [];
+      }
       ev.diasFrequencia = ev.contestacaoDias.length;
       if (!history[ev.selimp]) history[ev.selimp] = [];
       history[ev.selimp].push(ev);
@@ -968,7 +983,7 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
            RETURNING id, modulo_selimp, setor, execucao, motivo,
              data_retirada::text AS data_retirada, data_reinstalacao::text AS data_reinstalacao,
              data_ordenado::text AS data_ordenado, data_manutencao::text AS data_manutencao,
-             sinal_recuperado, oficial, contestado, dias_contestados, documento_url, status, created_at::text AS created_at`,
+             sinal_recuperado, oficial, contestado, dias_contestados, documento_url, documento_titulo, status, created_at::text AS created_at`,
           [it.selimp, it.setor, it.execucao, it.motivo, it.dataRetirada, it.dataReinstalacao, it.dataOrdenado, it.dataManutencao, it.sinalRecuperado, it.oficial, it.status]
         );
         if (res.rows[0]) inserted.push(mapManutencaoEvento(res.rows[0]));
@@ -997,6 +1012,7 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
       oficial?: boolean;
       contestado?: boolean;
       documentoUrl?: string | null;
+      documentoTitulo?: string | null;
       status?: string;
     };
   }>("/modulo/manutencoes/:id", async (request, reply) => {
@@ -1016,13 +1032,14 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
          oficial = COALESCE($10, oficial),
          contestado = COALESCE($12, contestado),
          documento_url = CASE WHEN $13 = 'KEEP' THEN documento_url ELSE NULLIF($13,'') END,
+         documento_titulo = CASE WHEN $14 = 'KEEP' THEN documento_titulo ELSE NULLIF($14,'') END,
          status = COALESCE($11, status),
          updated_at = NOW()
        WHERE id = $1
        RETURNING id, modulo_selimp, setor, execucao, motivo,
          data_retirada::text AS data_retirada, data_reinstalacao::text AS data_reinstalacao,
          data_ordenado::text AS data_ordenado, data_manutencao::text AS data_manutencao,
-         sinal_recuperado, oficial, contestado, dias_contestados, documento_url, status, created_at::text AS created_at`,
+         sinal_recuperado, oficial, contestado, dias_contestados, documento_url, documento_titulo, status, created_at::text AS created_at`,
       [
         id,
         b.setor != null ? String(b.setor).trim() : null,
@@ -1037,6 +1054,7 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
         cleanStatus(b.status),
         typeof b.contestado === "boolean" ? b.contestado : null,
         b.documentoUrl === undefined ? "KEEP" : (b.documentoUrl ?? ""),
+        b.documentoTitulo === undefined ? "KEEP" : (b.documentoTitulo ?? ""),
       ]
     );
     const row = res.rows[0];
@@ -1044,7 +1062,7 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
 
     // Dias de frequência na janela [data_ordenado, reinstalação|hoje] + status de contestação por dia.
     let contestacaoDias: { data: string; contestado: boolean }[] = [];
-    if (row.data_ordenado) {
+    if (row.data_ordenado && isContestationEligibleRow(row)) {
       const fr = await pool.query<{ dia: string; contestado: boolean }>(
         `SELECT DISTINCT gd.d::date::text AS dia,
                 EXISTS (SELECT 1 FROM manutencao_contestacoes mc WHERE mc.modulo_selimp = $1 AND mc.data = gd.d::date) AS contestado
