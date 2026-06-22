@@ -808,8 +808,41 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
     dias_contestados: number | null;
     documento_url: string | null;
     documento_titulo: string | null;
+    documentos: unknown;
     status: string | null;
     created_at: string;
+  }
+
+  interface ManutencaoArquivoDto {
+    url: string;
+    titulo: string;
+    path?: string;
+    contentType?: string;
+  }
+
+  function cleanArquivo(value: unknown): ManutencaoArquivoDto | null {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const obj = value as Record<string, unknown>;
+    const url = String(obj.url ?? "").trim();
+    if (!url) return null;
+    return {
+      url,
+      titulo: String(obj.titulo ?? obj.nome ?? "Documento anexado").trim() || "Documento anexado",
+      path: String(obj.path ?? "").trim() || undefined,
+      contentType: String(obj.contentType ?? "").trim() || undefined,
+    };
+  }
+
+  function cleanArquivos(value: unknown): ManutencaoArquivoDto[] {
+    if (!Array.isArray(value)) return [];
+    return value.map(cleanArquivo).filter((x): x is ManutencaoArquivoDto => Boolean(x));
+  }
+
+  function documentosFromRow(r: Pick<ModuloManutencaoRow, "documentos" | "documento_url" | "documento_titulo">): ManutencaoArquivoDto[] {
+    const docs = cleanArquivos(r.documentos);
+    if (docs.length > 0) return docs;
+    if (r.documento_url) return [{ url: r.documento_url, titulo: r.documento_titulo || "Documento anexado" }];
+    return [];
   }
 
   type ManutencaoStatus =
@@ -861,9 +894,10 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
       diasContestados: r.dias_contestados ?? undefined,
       documentoUrl: r.documento_url ?? undefined,
       documentoTitulo: r.documento_titulo ?? undefined,
+      documentos: documentosFromRow(r),
       // diasFrequencia e contestacaoDias (lista de dias de despacho na janela) são injetados pelo GET via batch.
       diasFrequencia: 0,
-      contestacaoDias: [] as { data: string; contestado: boolean }[],
+      contestacaoDias: [] as { data: string; contestado: boolean; printUrl?: string; printTitulo?: string; printPath?: string }[],
       status: deriveStatus(r),
       createdAt: r.created_at,
     };
@@ -875,7 +909,7 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
            data_reinstalacao::text AS data_reinstalacao,
            data_ordenado::text     AS data_ordenado,
            data_manutencao::text   AS data_manutencao,
-           sinal_recuperado, oficial, contestado, dias_contestados, documento_url, documento_titulo, status,
+           sinal_recuperado, oficial, contestado, dias_contestados, documento_url, documento_titulo, documentos, status,
            created_at::text AS created_at
       FROM modulo_manutencoes`;
 
@@ -889,10 +923,10 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
   // Lista os dias de frequência na janela, marcando se cada dia foi contestado.
   const SELECT_CONTESTACAO_DIAS = `
     SELECT DISTINCT mm.id, gd.d::date::text AS dia,
-           EXISTS (
-             SELECT 1 FROM manutencao_contestacoes mc
-              WHERE mc.modulo_selimp = mm.modulo_selimp AND mc.data = gd.d::date
-           ) AS contestado
+           mc.print_url IS NOT NULL AS contestado,
+           mc.print_url,
+           mc.print_titulo,
+           mc.print_path
       FROM modulo_manutencoes mm
       JOIN setores_modulos sm ON sm.selimp_codigo = mm.modulo_selimp
       LEFT JOIN cronograma_setores cs ON cs.setor = sm.setor
@@ -901,6 +935,7 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
         COALESCE(mm.data_reinstalacao, CURRENT_DATE)::timestamp,
         interval '1 day'
       ) AS gd(d)
+      LEFT JOIN manutencao_contestacoes mc ON mc.modulo_selimp = mm.modulo_selimp AND mc.data = gd.d::date
      WHERE mm.data_ordenado IS NOT NULL AND ${FREQ_DAY_COND}
      ORDER BY mm.id, dia`;
 
@@ -910,12 +945,18 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
         `${SELECT_MANUT_MODULO} ORDER BY modulo_selimp,
           COALESCE(data_manutencao, data_ordenado, created_at::date) DESC, created_at DESC, id DESC`
       ),
-      pool.query<{ id: number; dia: string; contestado: boolean }>(SELECT_CONTESTACAO_DIAS),
+      pool.query<{ id: number; dia: string; contestado: boolean; print_url: string | null; print_titulo: string | null; print_path: string | null }>(SELECT_CONTESTACAO_DIAS),
     ]);
-    const diasById = new Map<number, { data: string; contestado: boolean }[]>();
+    const diasById = new Map<number, { data: string; contestado: boolean; printUrl?: string; printTitulo?: string; printPath?: string }[]>();
     for (const d of diasRes.rows) {
       const arr = diasById.get(d.id) ?? [];
-      arr.push({ data: d.dia, contestado: d.contestado });
+      arr.push({
+        data: d.dia,
+        contestado: d.contestado,
+        printUrl: d.print_url ?? undefined,
+        printTitulo: d.print_titulo ?? undefined,
+        printPath: d.print_path ?? undefined,
+      });
       diasById.set(d.id, arr);
     }
     const history: Record<string, ReturnType<typeof mapManutencaoEvento>[]> = {};
@@ -983,7 +1024,7 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
            RETURNING id, modulo_selimp, setor, execucao, motivo,
              data_retirada::text AS data_retirada, data_reinstalacao::text AS data_reinstalacao,
              data_ordenado::text AS data_ordenado, data_manutencao::text AS data_manutencao,
-             sinal_recuperado, oficial, contestado, dias_contestados, documento_url, documento_titulo, status, created_at::text AS created_at`,
+             sinal_recuperado, oficial, contestado, dias_contestados, documento_url, documento_titulo, documentos, status, created_at::text AS created_at`,
           [it.selimp, it.setor, it.execucao, it.motivo, it.dataRetirada, it.dataReinstalacao, it.dataOrdenado, it.dataManutencao, it.sinalRecuperado, it.oficial, it.status]
         );
         if (res.rows[0]) inserted.push(mapManutencaoEvento(res.rows[0]));
@@ -1013,6 +1054,7 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
       contestado?: boolean;
       documentoUrl?: string | null;
       documentoTitulo?: string | null;
+      documentos?: ManutencaoArquivoDto[];
       status?: string;
     };
   }>("/modulo/manutencoes/:id", async (request, reply) => {
@@ -1033,13 +1075,14 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
          contestado = COALESCE($12, contestado),
          documento_url = CASE WHEN $13 = 'KEEP' THEN documento_url ELSE NULLIF($13,'') END,
          documento_titulo = CASE WHEN $14 = 'KEEP' THEN documento_titulo ELSE NULLIF($14,'') END,
+         documentos = CASE WHEN $15 = 'KEEP' THEN documentos ELSE $15::jsonb END,
          status = COALESCE($11, status),
          updated_at = NOW()
        WHERE id = $1
        RETURNING id, modulo_selimp, setor, execucao, motivo,
          data_retirada::text AS data_retirada, data_reinstalacao::text AS data_reinstalacao,
          data_ordenado::text AS data_ordenado, data_manutencao::text AS data_manutencao,
-         sinal_recuperado, oficial, contestado, dias_contestados, documento_url, documento_titulo, status, created_at::text AS created_at`,
+         sinal_recuperado, oficial, contestado, dias_contestados, documento_url, documento_titulo, documentos, status, created_at::text AS created_at`,
       [
         id,
         b.setor != null ? String(b.setor).trim() : null,
@@ -1055,25 +1098,36 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
         typeof b.contestado === "boolean" ? b.contestado : null,
         b.documentoUrl === undefined ? "KEEP" : (b.documentoUrl ?? ""),
         b.documentoTitulo === undefined ? "KEEP" : (b.documentoTitulo ?? ""),
+        b.documentos === undefined ? "KEEP" : JSON.stringify(cleanArquivos(b.documentos)),
       ]
     );
     const row = res.rows[0];
     if (!row) return reply.code(404).send({ detail: "registro não encontrado" });
 
     // Dias de frequência na janela [data_ordenado, reinstalação|hoje] + status de contestação por dia.
-    let contestacaoDias: { data: string; contestado: boolean }[] = [];
+    let contestacaoDias: { data: string; contestado: boolean; printUrl?: string; printTitulo?: string; printPath?: string }[] = [];
     if (row.data_ordenado && isContestationEligibleRow(row)) {
-      const fr = await pool.query<{ dia: string; contestado: boolean }>(
+      const fr = await pool.query<{ dia: string; contestado: boolean; print_url: string | null; print_titulo: string | null; print_path: string | null }>(
         `SELECT DISTINCT gd.d::date::text AS dia,
-                EXISTS (SELECT 1 FROM manutencao_contestacoes mc WHERE mc.modulo_selimp = $1 AND mc.data = gd.d::date) AS contestado
+                mc.print_url IS NOT NULL AS contestado,
+                mc.print_url,
+                mc.print_titulo,
+                mc.print_path
            FROM setores_modulos sm
            LEFT JOIN cronograma_setores cs ON cs.setor = sm.setor
            CROSS JOIN LATERAL generate_series($2::timestamp, COALESCE($3::date, CURRENT_DATE)::timestamp, interval '1 day') AS gd(d)
+           LEFT JOIN manutencao_contestacoes mc ON mc.modulo_selimp = $1 AND mc.data = gd.d::date
           WHERE sm.selimp_codigo = $1 AND ${FREQ_DAY_COND}
           ORDER BY dia`,
         [row.modulo_selimp, row.data_ordenado, row.data_reinstalacao],
       );
-      contestacaoDias = fr.rows.map((r) => ({ data: r.dia, contestado: r.contestado }));
+      contestacaoDias = fr.rows.map((r) => ({
+        data: r.dia,
+        contestado: r.contestado,
+        printUrl: r.print_url ?? undefined,
+        printTitulo: r.print_titulo ?? undefined,
+        printPath: r.print_path ?? undefined,
+      }));
     }
     // Congela a qtd. de dias contestados ao finalizar a manutenção.
     const eff = deriveStatus(row);
@@ -1091,7 +1145,7 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   // Contesta/descontesta um dia específico de despacho de um módulo em manutenção.
-  fastify.post<{ Body: { selimp?: string; data?: string; contestado?: boolean } }>(
+  fastify.post<{ Body: { selimp?: string; data?: string; contestado?: boolean; printUrl?: string | null; printTitulo?: string | null; printPath?: string | null } }>(
     "/modulo/contestacao",
     async (request, reply) => {
       const selimp = cleanSelimp(request.body?.selimp);
@@ -1099,10 +1153,18 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
       if (!selimp || !data) return reply.code(400).send({ detail: "selimp e data (yyyy-MM-dd) são obrigatórios" });
       const contestado = request.body?.contestado !== false; // default true
       if (contestado) {
+        const printUrl = String(request.body?.printUrl ?? "").trim();
+        const printTitulo = String(request.body?.printTitulo ?? "").trim() || "Print da contestação";
+        const printPath = String(request.body?.printPath ?? "").trim() || null;
+        if (!printUrl) return reply.code(400).send({ detail: "O print da contestação é obrigatório." });
         await pool.query(
-          `INSERT INTO manutencao_contestacoes (modulo_selimp, data) VALUES ($1, $2::date)
-           ON CONFLICT (modulo_selimp, data) DO NOTHING`,
-          [selimp, data],
+          `INSERT INTO manutencao_contestacoes (modulo_selimp, data, print_url, print_titulo, print_path)
+           VALUES ($1, $2::date, $3, $4, $5)
+           ON CONFLICT (modulo_selimp, data) DO UPDATE SET
+             print_url = EXCLUDED.print_url,
+             print_titulo = EXCLUDED.print_titulo,
+             print_path = EXCLUDED.print_path`,
+          [selimp, data, printUrl, printTitulo, printPath],
         );
       } else {
         await pool.query(`DELETE FROM manutencao_contestacoes WHERE modulo_selimp = $1 AND data = $2::date`, [selimp, data]);

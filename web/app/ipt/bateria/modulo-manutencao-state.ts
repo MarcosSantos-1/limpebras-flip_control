@@ -153,11 +153,26 @@ export function useModuloManutencaoState() {
   }, []);
 
   /** Contesta/descontesta um dia de despacho (atualiza a lista por-dia do evento corrente). */
-  const contestarDia = useCallback(async (selimp: string, dia: string, contestado: boolean) => {
+  const contestarDia = useCallback(async (
+    selimp: string,
+    dia: string,
+    contestado: boolean,
+    print?: { url: string; titulo: string; path?: string },
+  ) => {
     // Atualização otimística na lista contestacaoDias do evento corrente.
     const rec = cache.records[selimp];
     if (rec) {
-      const nextDias = (rec.contestacaoDias ?? []).map((d) => (d.data === dia ? { ...d, contestado } : d));
+      const nextDias = (rec.contestacaoDias ?? []).map((d) =>
+        d.data === dia
+          ? {
+              ...d,
+              contestado,
+              printUrl: contestado ? print?.url ?? d.printUrl : undefined,
+              printTitulo: contestado ? print?.titulo ?? d.printTitulo : undefined,
+              printPath: contestado ? print?.path ?? d.printPath : undefined,
+            }
+          : d,
+      );
       const nextRec = { ...rec, contestacaoDias: nextDias };
       const nextHistory: ManutencaoHistoryMap = {
         ...cache.history,
@@ -166,7 +181,7 @@ export function useModuloManutencaoState() {
       commitLocal({ records: { ...cache.records, [selimp]: nextRec }, history: nextHistory });
     }
     try {
-      await apiService.contestarDiaManutencao(selimp, dia, contestado);
+      await apiService.contestarDiaManutencao(selimp, dia, contestado, print);
     } catch (err) {
       console.error("Erro ao contestar dia de manutenção", err);
       reloadFromApi();

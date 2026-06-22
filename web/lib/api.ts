@@ -572,6 +572,21 @@ export interface BateriaManutencaoRecord {
 export type ManutencaoModuloStatus =
   | "EM_ANALISE" | "PENDENTE" | "RETIRANDO" | "ATIVA" | "REINSTALANDO" | "REALIZADA" | "SINAL_RECUPERADO";
 
+export interface ManutencaoArquivo {
+  url: string;
+  titulo: string;
+  path?: string;
+  contentType?: string;
+}
+
+export interface ManutencaoContestacaoDia {
+  data: string;
+  contestado: boolean;
+  printUrl?: string;
+  printTitulo?: string;
+  printPath?: string;
+}
+
 /** Registro de manutenção do MÓDULO (histórico append-only). */
 export interface ModuloManutencaoEvento {
   id: number;
@@ -597,11 +612,12 @@ export interface ModuloManutencaoEvento {
   /** Dias de despacho (frequência) perdidos na janela [ordenado, reinstalação|hoje] — cálculo ao vivo. */
   diasFrequencia: number;
   /** Status de contestação por dia de despacho na janela. */
-  contestacaoDias: { data: string; contestado: boolean }[];
+  contestacaoDias: ManutencaoContestacaoDia[];
   /** URL (Firebase Storage) do documento que atesta a manutenção — global por módulo. */
   documentoUrl?: string;
   /** Nome/título do documento anexado (ex.: nome do arquivo PDF). */
   documentoTitulo?: string;
+  documentos?: ManutencaoArquivo[];
   status: ManutencaoModuloStatus;
   createdAt?: string;
 }
@@ -620,6 +636,7 @@ export interface ModuloManutencaoInput {
   contestado?: boolean;
   documentoUrl?: string | null;
   documentoTitulo?: string | null;
+  documentos?: ManutencaoArquivo[];
   status?: ManutencaoModuloStatus;
 }
 
@@ -1244,8 +1261,20 @@ export const apiService = {
     return data;
   },
   /** Contesta (ou cancela) um dia específico de despacho de um módulo em manutenção. */
-  contestarDiaManutencao: async (selimp: string, dia: string, contestado: boolean) => {
-    const { data } = await api.post(`/modulo/contestacao`, { selimp, data: dia, contestado });
+  contestarDiaManutencao: async (
+    selimp: string,
+    dia: string,
+    contestado: boolean,
+    print?: { url: string; titulo: string; path?: string },
+  ) => {
+    const { data } = await api.post(`/modulo/contestacao`, {
+      selimp,
+      data: dia,
+      contestado,
+      printUrl: print?.url,
+      printTitulo: print?.titulo,
+      printPath: print?.path,
+    });
     return data;
   },
   /** Remove registros manuais de IPT. */

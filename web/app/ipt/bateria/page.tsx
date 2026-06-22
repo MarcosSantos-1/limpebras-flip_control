@@ -1,6 +1,6 @@
 "use client";
 
-import type { CSSProperties, ReactNode } from "react";
+import type { ClipboardEvent, CSSProperties, ReactNode } from "react";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import * as XLSX from "xlsx";
@@ -56,6 +56,7 @@ import {
   Copy,
   Upload,
   FileText,
+  ClipboardPaste,
 } from "lucide-react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faTree, faBroom } from "@fortawesome/free-solid-svg-icons";
@@ -114,7 +115,12 @@ import { apiService } from "@/lib/api";
 import { formatIptDataInstalacaoBr, servicoLabel, mesCorrenteLabel } from "@/lib/ipt-utils";
 import { SetoresTab } from "./setores-tab";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
-import { uploadManutencaoDoc } from "@/lib/firebase-manutencao-docs";
+import {
+  deleteManutencaoArquivo,
+  uploadManutencaoDocArquivo,
+  uploadManutencaoPrint,
+  type ManutencaoArquivo,
+} from "@/lib/firebase-manutencao-docs";
 import { cn } from "@/lib/utils";
 import {
   useTrocaState,
@@ -775,6 +781,41 @@ function fmtIsoBr(iso?: string): string {
   return `${d}/${m}/${y}`;
 }
 
+const CLIPBOARD_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
+
+function blobToPrintFile(blob: Blob, dia: string): File {
+  const type = blob.type && blob.type.startsWith("image/") ? blob.type : "image/png";
+  const ext = type.split("/")[1] ?? "png";
+  return new File([blob], `print-${dia}.${ext}`, { type });
+}
+
+function clipboardEventToImageFile(ev: ClipboardEvent, dia: string): File | null {
+  const items = ev.clipboardData?.items;
+  if (!items) return null;
+  for (const item of Array.from(items)) {
+    if (item.type.startsWith("image/")) {
+      const blob = item.getAsFile();
+      if (blob) return blobToPrintFile(blob, dia);
+    }
+  }
+  return null;
+}
+
+async function readClipboardImageFile(dia: string): Promise<File | null> {
+  const items = await navigator.clipboard.read();
+  for (const item of items) {
+    for (const type of CLIPBOARD_IMAGE_TYPES) {
+      try {
+        const blob = await item.getType(type);
+        if (blob) return blobToPrintFile(blob, dia);
+      } catch {
+        /* tenta o próximo tipo */
+      }
+    }
+  }
+  return null;
+}
+
 function fmtDisplayDate(value?: string): string {
   if (!value) return "—";
   const normalized = value.slice(0, 10);
@@ -1130,9 +1171,10 @@ interface ManutEntry {
   contestado: boolean;
   diasFrequencia: number;
   diasContestados?: number;
-  contestacaoDias: { data: string; contestado: boolean }[];
+  contestacaoDias: { data: string; contestado: boolean; printUrl?: string; printTitulo?: string; printPath?: string }[];
   documentoUrl?: string;
   documentoTitulo?: string;
+  documentos?: ManutencaoArquivo[];
   motivo?: string;
   createdAt?: string;
   quantidadeTrocas: number;
@@ -1261,7 +1303,9 @@ export default function BateriaDashboardPage() {
   // Modal de contestação por dia (despachos perdidos na manutenção) + estado de upload do documento.
   const [contestModule, setContestModule] = useState<ManutEntry | null>(null);
   const [contestUploading, setContestUploading] = useState(false);
-  const [contestDocDelete, setContestDocDelete] = useState<{ eventId: number; selimp: string; titulo: string } | null>(null);
+  const [contestDayUploading, setContestDayUploading] = useState<string | null>(null);
+  const [contestPrintViewer, setContestPrintViewer] = useState<{ url: string; titulo: string } | null>(null);
+  const [contestDocDelete, setContestDocDelete] = useState<{ eventId: number; selimp: string; titulo: string; url: string; path?: string } | null>(null);
   const [contestRemovingDoc, setContestRemovingDoc] = useState(false);
   const [manutEventDelete, setManutEventDelete] = useState<{ selimp: string; id: number; setor: string; status: string } | null>(null);
 
@@ -2067,6 +2111,7 @@ export default function BateriaDashboardPage() {
           contestacaoDias: eligible ? (ev.contestacaoDias ?? []) : [],
           documentoUrl: ev.documentoUrl,
           documentoTitulo: ev.documentoTitulo,
+          documentos: ev.documentos,
           motivo: ev.motivo,
           createdAt: ev.createdAt,
           quantidadeTrocas: mod?.quantidadeTrocas ?? 0,
@@ -2275,9 +2320,15 @@ export default function BateriaDashboardPage() {
   }, [manutForm, manutModal.module, manutModal.editEventId, modulesBySelimp, moduloManut]);
 
   /** Contesta/descontesta um dia de despacho específico (com toast). */
+  const documentosOfEntry = useCallback((e: ManutEntry): ManutencaoArquivo[] => {
+    if (e.documentos && e.documentos.length > 0) return e.documentos;
+    if (e.documentoUrl) return [{ url: e.documentoUrl, titulo: e.documentoTitulo || "Documento anexado" }];
+    return [];
+  }, []);
+
   const contestarDia = useCallback(
-    (selimp: string, dia: string, contestado: boolean) => {
-      void moduloManut.contestarDia(selimp, dia, contestado);
+    (selimp: string, dia: string, contestado: boolean, print?: ManutencaoArquivo) => {
+      void moduloManut.contestarDia(selimp, dia, contestado, print ? { url: print.url, titulo: print.titulo, path: print.path } : undefined);
       if (contestado) toast.success(`Dia ${fmtIsoBr(dia)} contestado.`);
       else toast.info(`Contestação de ${fmtIsoBr(dia)} cancelada.`);
     },
@@ -2285,6 +2336,57 @@ export default function BateriaDashboardPage() {
   );
 
   /** Mensagem padrão de contestação (copiável) a partir dos dados da manutenção. */
+  const handleUploadPrintDia = useCallback(
+    async (e: ManutEntry, dia: string, file: File) => {
+      if (!file.type.startsWith("image/")) {
+        toast.error("Envie uma imagem do print.");
+        return;
+      }
+      const key = `${e.selimp}-${dia}`;
+      setContestDayUploading(key);
+      try {
+        const uploaded = await uploadManutencaoPrint(e.selimp, dia, file);
+        await moduloManut.contestarDia(e.selimp, dia, true, { url: uploaded.url, titulo: uploaded.titulo, path: uploaded.path });
+        setContestModule((prev) =>
+          prev && prev.eventId === e.eventId
+            ? {
+                ...prev,
+                contestacaoDias: prev.contestacaoDias.map((d) =>
+                  d.data === dia
+                    ? { ...d, contestado: true, printUrl: uploaded.url, printTitulo: uploaded.titulo, printPath: uploaded.path }
+                    : d,
+                ),
+              }
+            : prev,
+        );
+        toast.success(`Dia ${fmtIsoBr(dia)} contestado com print.`);
+      } catch (err) {
+        console.error("Erro ao anexar print da contestação", err);
+        toast.error("Falha ao anexar o print.");
+      } finally {
+        setContestDayUploading(null);
+      }
+    },
+    [moduloManut],
+  );
+
+  const handlePastePrintDia = useCallback(
+    async (e: ManutEntry, dia: string) => {
+      try {
+        const file = await readClipboardImageFile(dia);
+        if (!file) {
+          toast.error("Nenhuma imagem encontrada na área de transferência.");
+          return;
+        }
+        await handleUploadPrintDia(e, dia, file);
+      } catch (err) {
+        console.error("Erro ao colar print da contestação", err);
+        toast.error("Não foi possível colar. Copie uma imagem ou permita o acesso ao clipboard.");
+      }
+    },
+    [handleUploadPrintDia],
+  );
+
   const mensagemContestacao = useCallback((e: ManutEntry | null, dia?: string): string => {
     if (!e) return "";
     const ordenado = e.dataOrdenado ? fmtIsoBr(e.dataOrdenado) : "—";
@@ -2294,21 +2396,30 @@ export default function BateriaDashboardPage() {
 
   /** Upload do documento (PDF) que atesta a manutenção → Firebase Storage + salva a URL. */
   const handleUploadDocumento = useCallback(
-    async (e: ManutEntry, file: File) => {
+    async (e: ManutEntry, files: FileList | File[] | File) => {
       if (e.eventId == null) return;
-      if (file.type && file.type !== "application/pdf") {
+      const list = files instanceof File ? [files] : Array.from(files);
+      if (list.length === 0) return;
+      if (list.some((file) => file.type && file.type !== "application/pdf")) {
         toast.error("Envie um arquivo PDF.");
         return;
       }
       setContestUploading(true);
       try {
-        const url = await uploadManutencaoDoc(e.selimp, file);
-        const titulo = file.name.trim() || "documento.pdf";
-        await moduloManut.atualizar(e.eventId, e.selimp, { documentoUrl: url, documentoTitulo: titulo });
+        const novos = await Promise.all(list.map((file) => uploadManutencaoDocArquivo(e.selimp, file)));
+        const documentos = [...documentosOfEntry(e), ...novos];
+        const first = documentos[0];
+        await moduloManut.atualizar(e.eventId, e.selimp, {
+          documentoUrl: first?.url ?? null,
+          documentoTitulo: first?.titulo ?? null,
+          documentos,
+        });
         setContestModule((prev) =>
-          prev && prev.eventId === e.eventId ? { ...prev, documentoUrl: url, documentoTitulo: titulo } : prev,
+          prev && prev.eventId === e.eventId
+            ? { ...prev, documentoUrl: first?.url, documentoTitulo: first?.titulo, documentos }
+            : prev,
         );
-        toast.success("Documento anexado.");
+        toast.success(list.length > 1 ? "Documentos anexados." : "Documento anexado.");
       } catch (err) {
         console.error("Erro ao anexar documento", err);
         toast.error("Falha ao anexar o documento.");
@@ -2316,19 +2427,28 @@ export default function BateriaDashboardPage() {
         setContestUploading(false);
       }
     },
-    [moduloManut],
+    [documentosOfEntry, moduloManut],
   );
 
   /** Remove o PDF anexado à contestação (URL + título no servidor). */
   const handleRemoveDocumento = useCallback(
-    async (e: ManutEntry) => {
+    async (e: ManutEntry, doc: { url: string; titulo: string; path?: string }) => {
       if (e.eventId == null) return;
       setContestRemovingDoc(true);
       try {
-        await moduloManut.atualizar(e.eventId, e.selimp, { documentoUrl: null, documentoTitulo: null });
+        const documentos = documentosOfEntry(e).filter((item) => item.url !== doc.url);
+        const first = documentos[0];
+        if (doc.path) {
+          await deleteManutencaoArquivo(doc.path).catch((err) => console.warn("Falha ao excluir arquivo do Storage", err));
+        }
+        await moduloManut.atualizar(e.eventId, e.selimp, {
+          documentoUrl: first?.url ?? null,
+          documentoTitulo: first?.titulo ?? null,
+          documentos,
+        });
         setContestModule((prev) =>
           prev && prev.eventId === e.eventId
-            ? { ...prev, documentoUrl: undefined, documentoTitulo: undefined }
+            ? { ...prev, documentoUrl: first?.url, documentoTitulo: first?.titulo, documentos }
             : prev,
         );
         toast.success("Documento removido.");
@@ -2340,7 +2460,7 @@ export default function BateriaDashboardPage() {
         setContestDocDelete(null);
       }
     },
-    [moduloManut],
+    [documentosOfEntry, moduloManut],
   );
 
   if (loading) {
@@ -3723,6 +3843,7 @@ export default function BateriaDashboardPage() {
                                                   contestacaoDias: e.contestacaoDias,
                                                   documentoUrl: e.documentoUrl,
                                                   documentoTitulo: e.documentoTitulo,
+                                                  documentos: e.documentos,
                                                   createdAt: e.createdAt,
                                                 },
                                               })
@@ -4791,6 +4912,7 @@ export default function BateriaDashboardPage() {
             {contestModule && (() => {
               const e = manutEntries.find((x) => x.eventId === contestModule.eventId) ?? contestModule;
               const msg = mensagemContestacao(e);
+              const docs = documentosOfEntry(e);
               return (
                 <>
                   <DialogHeader>
@@ -4849,6 +4971,8 @@ export default function BateriaDashboardPage() {
                                   eventId: e.eventId!,
                                   selimp: e.selimp,
                                   titulo: e.documentoTitulo || "Documento anexado",
+                                  url: e.documentoUrl!,
+                                  path: docs[0]?.path,
                                 })
                               }
                             >
@@ -4857,9 +4981,47 @@ export default function BateriaDashboardPage() {
                           </div>
                         </div>
                       )}
+                      {docs.slice(e.documentoUrl ? 1 : 0).map((doc) => (
+                        <div key={doc.url} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3">
+                          <span className="flex min-w-0 flex-1 items-center gap-2 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                            <FileText className="h-4 w-4 shrink-0" />
+                            <span className="truncate" title={doc.titulo}>{doc.titulo}</span>
+                          </span>
+                          <div className="flex shrink-0 items-center gap-1.5">
+                            <a
+                              href={doc.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              download={doc.titulo}
+                              className="inline-flex items-center gap-1 rounded-md border border-emerald-500/40 bg-background/60 px-2.5 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-300"
+                              title={`Baixar ${doc.titulo}`}
+                            >
+                              <Download className="h-3.5 w-3.5" /> Baixar
+                            </a>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-7 gap-1 border-red-400/50 text-red-600 hover:bg-red-500/10 dark:text-red-400"
+                              disabled={contestUploading || contestRemovingDoc}
+                              onClick={() =>
+                                setContestDocDelete({
+                                  eventId: e.eventId!,
+                                  selimp: e.selimp,
+                                  titulo: doc.titulo,
+                                  url: doc.url,
+                                  path: doc.path,
+                                })
+                              }
+                            >
+                              <Trash2 className="h-3.5 w-3.5" /> Excluir
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
                       <label
                         onDragOver={(ev) => ev.preventDefault()}
-                        onDrop={(ev) => { ev.preventDefault(); const f = ev.dataTransfer.files?.[0]; if (f) void handleUploadDocumento(e, f); }}
+                        onDrop={(ev) => { ev.preventDefault(); if (ev.dataTransfer.files?.length) void handleUploadDocumento(e, ev.dataTransfer.files); }}
                         className="flex cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-border/70 bg-muted/15 px-4 py-5 text-center text-xs text-muted-foreground transition-colors hover:bg-muted/30"
                       >
                         <Upload className="h-5 w-5" />
@@ -4867,22 +5029,43 @@ export default function BateriaDashboardPage() {
                         <input
                           type="file"
                           accept="application/pdf"
+                          multiple
                           className="hidden"
                           disabled={contestUploading}
-                          onChange={(ev) => { const f = ev.target.files?.[0]; if (f) void handleUploadDocumento(e, f); ev.target.value = ""; }}
+                          onChange={(ev) => { if (ev.target.files?.length) void handleUploadDocumento(e, ev.target.files); ev.target.value = ""; }}
                         />
                       </label>
                     </div>
 
                     {/* Timeline por dia de despacho */}
                     <div className="space-y-1.5">
-                      <label className="text-xs font-medium text-muted-foreground">Dias de despacho na janela ({e.contestacaoDias.length})</label>
+                      <label className="text-xs font-medium text-muted-foreground">
+                        Dias de despacho na janela ({e.contestacaoDias.length})
+                        <span className="ml-1 font-normal text-muted-foreground/80">· anexe ou cole o print (Ctrl+V)</span>
+                      </label>
                       <div className="max-h-[34vh] space-y-1.5 overflow-y-auto pr-1">
                         {e.contestacaoDias.length === 0 && (
                           <p className="py-3 text-center text-xs text-muted-foreground">Sem dias de despacho na janela.</p>
                         )}
                         {[...e.contestacaoDias].sort((a, b) => b.data.localeCompare(a.data)).map((d) => (
-                          <div key={d.data} className="flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-muted/15 px-3 py-2">
+                          <div
+                            key={d.data}
+                            tabIndex={d.contestado ? undefined : 0}
+                            className={cn(
+                              "flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-muted/15 px-3 py-2",
+                              !d.contestado && "outline-none focus-visible:ring-2 focus-visible:ring-amber-500/40",
+                            )}
+                            onPaste={
+                              d.contestado
+                                ? undefined
+                                : (ev) => {
+                                    const file = clipboardEventToImageFile(ev, d.data);
+                                    if (!file) return;
+                                    ev.preventDefault();
+                                    void handleUploadPrintDia(e, d.data, file);
+                                  }
+                            }
+                          >
                             <span className="flex items-center gap-2 text-xs">
                               <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
                               <span className="font-medium tabular-nums text-foreground">{fmtIsoBr(d.data)}</span>
@@ -4892,13 +5075,81 @@ export default function BateriaDashboardPage() {
                                 <Badge className="border-amber-500/30 bg-amber-500/15 text-[10px] text-amber-700 dark:text-amber-300">Pendente</Badge>
                               )}
                             </span>
-                            <Button
-                              size="sm"
-                              className={cn("h-7 gap-1", d.contestado ? BTN_RED : BTN_AMBER)}
-                              onClick={() => contestarDia(e.selimp, d.data, !d.contestado)}
-                            >
-                              {d.contestado ? "Cancelar" : <><ShieldAlert className="h-3.5 w-3.5" /> Contestar</>}
-                            </Button>
+                            <div className="flex shrink-0 items-center gap-1.5">
+                              {d.contestado && d.printUrl && (
+                                <>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 gap-1"
+                                    onClick={() => setContestPrintViewer({ url: d.printUrl!, titulo: d.printTitulo || `Print ${fmtIsoBr(d.data)}` })}
+                                  >
+                                    <Eye className="h-3.5 w-3.5" /> Ver
+                                  </Button>
+                                  <a
+                                    href={d.printUrl}
+                                    download={d.printTitulo || `print-${d.data}`}
+                                    className="inline-flex h-7 items-center gap-1 rounded-md border border-border bg-background px-2 text-xs font-semibold text-foreground hover:bg-muted"
+                                  >
+                                    <Download className="h-3.5 w-3.5" /> Baixar
+                                  </a>
+                                </>
+                              )}
+                              {d.contestado ? (
+                                <Button
+                                  size="sm"
+                                  className={cn("h-7 gap-1", BTN_RED)}
+                                  onClick={() => {
+                                    if (d.printPath) void deleteManutencaoArquivo(d.printPath).catch((err) => console.warn("Falha ao excluir print do Storage", err));
+                                    contestarDia(e.selimp, d.data, false);
+                                    setContestModule((prev) =>
+                                      prev && prev.eventId === e.eventId
+                                        ? {
+                                            ...prev,
+                                            contestacaoDias: prev.contestacaoDias.map((item) =>
+                                              item.data === d.data
+                                                ? { ...item, contestado: false, printUrl: undefined, printTitulo: undefined, printPath: undefined }
+                                                : item,
+                                            ),
+                                          }
+                                        : prev,
+                                    );
+                                  }}
+                                >
+                                  Cancelar
+                                </Button>
+                              ) : (
+                                <div className="flex items-center gap-1">
+                                  <label className={cn("inline-flex h-7 cursor-pointer items-center gap-1 rounded-md px-2.5 text-xs font-semibold text-white", BTN_AMBER)}>
+                                    <Upload className="h-3.5 w-3.5" />
+                                    {contestDayUploading === `${e.selimp}-${d.data}` ? "Enviando..." : "Anexar"}
+                                    <input
+                                      type="file"
+                                      accept="image/*"
+                                      className="hidden"
+                                      disabled={contestDayUploading === `${e.selimp}-${d.data}`}
+                                      onChange={(ev) => {
+                                        const file = ev.target.files?.[0];
+                                        if (file) void handleUploadPrintDia(e, d.data, file);
+                                        ev.target.value = "";
+                                      }}
+                                    />
+                                  </label>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    className={cn("h-7 gap-1 px-2.5 text-xs font-semibold text-white", BTN_AMBER)}
+                                    disabled={contestDayUploading === `${e.selimp}-${d.data}`}
+                                    title="Colar print da área de transferência"
+                                    onClick={() => void handlePastePrintDia(e, d.data)}
+                                  >
+                                    <ClipboardPaste className="h-3.5 w-3.5" />
+                                    Colar
+                                  </Button>
+                                </div>
+                              )}
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -4915,6 +5166,32 @@ export default function BateriaDashboardPage() {
         </Dialog>
 
         {/* ===== Confirmação: excluir documento da contestação ===== */}
+        <Dialog open={!!contestPrintViewer} onOpenChange={(open) => !open && setContestPrintViewer(null)}>
+          <DialogContent className="max-w-5xl border-0 bg-background/95 p-0">
+            {contestPrintViewer && (
+              <div className="relative">
+                <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+                  <DialogTitle className="truncate text-sm font-semibold">{contestPrintViewer.titulo}</DialogTitle>
+                  <div className="flex items-center gap-2">
+                    <a
+                      href={contestPrintViewer.url}
+                      download={contestPrintViewer.titulo}
+                      className="inline-flex h-8 items-center gap-1 rounded-md border border-border px-2.5 text-xs font-semibold hover:bg-muted"
+                    >
+                      <Download className="h-3.5 w-3.5" /> Baixar
+                    </a>
+                    <Button size="sm" variant="outline" className="h-8 w-8 p-0" onClick={() => setContestPrintViewer(null)}>
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={contestPrintViewer.url} alt={contestPrintViewer.titulo} className="max-h-[78vh] w-full object-contain" />
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
         <Dialog open={!!contestDocDelete} onOpenChange={(o) => !o && !contestRemovingDoc && setContestDocDelete(null)}>
           <DialogContent className="max-w-md">
             <DialogHeader>
@@ -4936,7 +5213,11 @@ export default function BateriaDashboardPage() {
                   if (!contestDocDelete || !contestModule) return;
                   const entry =
                     manutEntries.find((x) => x.eventId === contestDocDelete.eventId) ?? contestModule;
-                  void handleRemoveDocumento(entry);
+                  void handleRemoveDocumento(entry, {
+                    url: contestDocDelete.url,
+                    titulo: contestDocDelete.titulo,
+                    path: contestDocDelete.path,
+                  });
                 }}
               >
                 <Trash2 className="h-4 w-4" /> {contestRemovingDoc ? "Excluindo..." : "Excluir documento"}

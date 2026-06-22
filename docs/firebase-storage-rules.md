@@ -19,6 +19,10 @@ service firebase.storage {
     match /manutencao-docs/{allPaths=**} {
       allow read, write: if true;
     }
+    // Prints de contestação por dia de despacho - aba Bateria/Manutenção
+    match /manutencao-prints/{allPaths=**} {
+      allow read, write: if true;
+    }
     // Bloqueia o restante
     match /{allPaths=**} {
       allow read, write: if false;
@@ -35,8 +39,14 @@ service firebase.storage {
 defesa/
   {bfsId}/
     agente_sub_0.jpg
-    agente_sub_1.jpg
-    rastreamento_0.jpg
-    nosso_agente_0.jpg
-    nosso_agente_1.jpg
+    ...
+
+manutencao-docs/
+  {selimp}/
+    {timestamp}-documento.pdf
+
+manutencao-prints/
+  {yyyy-MM-dd}/
+    {selimp}/
+      {timestamp}-print.png
 ```
