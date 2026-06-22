@@ -36,6 +36,28 @@ import { SUBPREFEITURAS, subprefBadgeClass } from "@/lib/mock/ipt-shared";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
+// --- Design Constants ---
+const GLASS_CARD =
+  "border border-border bg-card shadow-lg shadow-zinc-900/[0.06] dark:border-white/10 dark:bg-muted/60 dark:shadow-black/40";
+
+const GLASS_BAR =
+  "border border-border bg-card shadow-md shadow-zinc-900/[0.05] dark:border-white/10 dark:bg-muted/50";
+
+const BTN_EMERALD =
+  "bg-linear-to-r from-emerald-600 to-teal-600 text-white hover:from-emerald-500 hover:to-teal-500 shadow-md shadow-emerald-950/10 border-0 font-semibold transition-all hover:scale-[1.01] active:scale-[0.99]";
+
+const BTN_SKY =
+  "bg-linear-to-r from-sky-600 to-blue-600 text-white hover:from-sky-500 hover:to-blue-500 shadow-md shadow-blue-950/10 border-0 font-semibold transition-all hover:scale-[1.01] active:scale-[0.99]";
+
+const BTN_AMBER =
+  "bg-linear-to-r from-amber-500 to-orange-600 text-white hover:from-amber-400 hover:to-orange-500 shadow-md shadow-orange-950/10 border-0 font-semibold transition-all hover:scale-[1.01] active:scale-[0.99]";
+
+const BTN_RED =
+  "bg-linear-to-r from-red-600 to-rose-600 text-white hover:from-red-500 hover:to-rose-500 shadow-md shadow-rose-950/10 border-0 font-semibold transition-all hover:scale-[1.01] active:scale-[0.99]";
+
+const BTN_SECONDARY =
+  "bg-linear-to-r from-zinc-200 to-slate-300 dark:from-zinc-800 dark:to-slate-700 text-zinc-800 dark:text-zinc-200 hover:from-zinc-300 hover:to-slate-400 dark:hover:from-zinc-700/80 dark:hover:to-slate-600/80 shadow-sm border-0 font-semibold transition-all hover:scale-[1.01] active:scale-[0.99]";
+
 /** Turnos canônicos. */
 const TURNOS = [
   { value: "Diurno", label: "1 - Diurno" },
@@ -114,7 +136,7 @@ function KpiCard({
   emphasis?: boolean;
 }) {
   return (
-    <Card className={cn("relative overflow-hidden border-border/70", emphasis && "border-rose-500/40")}>
+    <Card className={cn("relative overflow-hidden", GLASS_CARD, emphasis && "border-rose-500/40")}>
       <div className={cn("absolute inset-y-0 left-0 w-1", tint)} aria-hidden />
       <CardContent className="flex items-center justify-between gap-3 p-3 pl-4">
         <div className="min-w-0">
@@ -400,24 +422,20 @@ export default function ViewCcoPage() {
                     ))}
                   </SelectContent>
                 </Select>
-                <button
-                  type="button"
+                <Button
                   onClick={() => setHideVarricao((v) => !v)}
                   className={cn(
-                    "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md border px-3 text-xs font-semibold transition-colors",
-                    hideVarricao
-                      ? "border-white/70 bg-white/25 text-white"
-                      : "border-white/30 bg-white/10 text-white/90 hover:bg-white/20",
+                    "h-9 shrink-0 gap-1.5 font-semibold text-xs",
+                    hideVarricao ? BTN_SKY : BTN_SECONDARY,
                   )}
                   title={hideVarricao ? "Varrição oculta (clique para mostrar)" : "Varrição visível (clique para ocultar)"}
                 >
                   <Brush className="h-4 w-4" />
                   {hideVarricao ? "Varrição oculta" : "Varrição visível"}
-                </button>
+                </Button>
                 <Button
-                  variant="outline"
                   size="sm"
-                  className="h-9 w-9 shrink-0 border-white/30 bg-white/10 p-0 text-white hover:bg-white/20 hover:text-white"
+                  className={cn("h-9 w-9 shrink-0", BTN_SECONDARY)}
                   onClick={() => setNonce((n) => n + 1)}
                   disabled={loading}
                   title="Atualizar"
@@ -474,7 +492,7 @@ export default function ViewCcoPage() {
           {/* Listas (painel compacto): pendentes + serviços no dia + serviços no mês */}
           <div className="grid gap-3 lg:grid-cols-3">
             {/* Despachos pendentes no turno (não despachados) — com % histórico */}
-            <Card className="border-border/70">
+            <Card className={GLASS_CARD}>
               <CardHeader className="p-3 pb-2">
                 <div className="flex items-center justify-between gap-2">
                   <div className="min-w-0">
@@ -531,7 +549,7 @@ export default function ViewCcoPage() {
             </Card>
 
             {/* Serviços no dia */}
-            <Card className="border-border/70">
+            <Card className={GLASS_CARD}>
               <CardHeader className="p-3 pb-2">
                 <div className="flex items-center justify-between gap-2">
                   <div className="min-w-0">
@@ -576,7 +594,7 @@ export default function ViewCcoPage() {
             </Card>
 
             {/* Serviços (ativos) no mês */}
-            <Card className="border-border/70">
+            <Card className={GLASS_CARD}>
               <CardHeader className="p-3 pb-2">
                 <div className="flex items-center justify-between gap-2">
                   <div className="min-w-0">

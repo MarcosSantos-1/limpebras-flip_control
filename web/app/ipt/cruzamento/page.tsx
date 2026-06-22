@@ -16,13 +16,15 @@ import {
   Layers,
   MapPin,
   Loader2,
-  Battery,
   Users,
-  FileWarning,
-  HelpCircle,
   CheckCircle2,
   RefreshCw,
   Construction,
+  Moon,
+  Cpu,
+  EyeOff,
+  GitCompare,
+  Wrench,
 } from "lucide-react";
 import {
   BarChart,
@@ -68,6 +70,7 @@ import {
   buildCruzamento,
   ROOT_CAUSE_META,
   STATUS_META,
+  type ModuloContextMap,
   type ObservacoesMap,
   type RootCause,
   type SectorAnalysis,
@@ -82,26 +85,84 @@ function maioInicio(ref: Date): Date {
   return startOfDay(candidato);
 }
 
-const CAUSA_ORDER: RootCause[] = ["operacao", "bateria", "cadastro", "nunca"];
+const CAUSA_ORDER: RootCause[] = ["pontos_cegos", "hardware", "hibernando", "divergencia", "operacao"];
 
 const CAUSA_ICON: Record<RootCause, typeof Users> = {
+  pontos_cegos: EyeOff,
+  hardware: Cpu,
+  hibernando: Moon,
+  divergencia: GitCompare,
   operacao: Users,
-  bateria: Battery,
-  cadastro: FileWarning,
-  nunca: HelpCircle,
   ok: CheckCircle2,
 };
 
 const CAUSA_TINT: Record<RootCause, { card: string; chip: string; bar: string }> = {
-  operacao: { card: "bg-rose-500", chip: "border-rose-500/40 bg-rose-500/12 text-rose-700 dark:text-rose-300", bar: "#f43f5e" },
-  bateria: { card: "bg-violet-500", chip: "border-violet-500/40 bg-violet-500/12 text-violet-700 dark:text-violet-300", bar: "#8b5cf6" },
-  cadastro: { card: "bg-cyan-500", chip: "border-cyan-500/40 bg-cyan-500/12 text-cyan-700 dark:text-cyan-300", bar: "#06b6d4" },
-  nunca: { card: "bg-amber-500", chip: "border-amber-500/40 bg-amber-500/12 text-amber-700 dark:text-amber-300", bar: "#f59e0b" },
+  pontos_cegos: { card: "bg-slate-500", chip: "border-slate-500/40 bg-slate-500/12 text-slate-700 dark:text-slate-300", bar: "#64748b" },
+  hardware: { card: "bg-rose-500", chip: "border-rose-500/40 bg-rose-500/12 text-rose-700 dark:text-rose-300", bar: "#f43f5e" },
+  hibernando: { card: "bg-violet-500", chip: "border-violet-500/40 bg-violet-500/12 text-violet-700 dark:text-violet-300", bar: "#8b5cf6" },
+  divergencia: { card: "bg-cyan-500", chip: "border-cyan-500/40 bg-cyan-500/12 text-cyan-700 dark:text-cyan-300", bar: "#06b6d4" },
+  operacao: { card: "bg-amber-500", chip: "border-amber-500/40 bg-amber-500/12 text-amber-700 dark:text-amber-300", bar: "#f59e0b" },
   ok: { card: "bg-emerald-500", chip: "border-emerald-500/40 bg-emerald-500/12 text-emerald-700 dark:text-emerald-300", bar: "#10b981" },
 };
 
 const fmtInt = (v: number) => Math.round(v).toLocaleString("pt-BR");
 const fmtPct = (v: number | null) => (v == null ? "—" : `${v.toFixed(0)}%`);
+
+const semSinal = (s?: string) => !!s && !/com\s*sinal|^on$/i.test(s.trim());
+
+/**
+ * Monta o contexto de intervenção por módulo (chaveado por numero_selimp em
+ * maiúsculas), cruzando getIptModulosBateria (nº de trocas) + getBateriaTrocas
+ * (resultado da última troca) + getModuloManutencoes (manutenção realizada).
+ */
+function buildModuloContext(
+  modulos: Awaited<ReturnType<typeof apiService.getIptModulosBateria>>,
+  trocas: Awaited<ReturnType<typeof apiService.getBateriaTrocas>>,
+  manut: Awaited<ReturnType<typeof apiService.getModuloManutencoes>>
+): ModuloContextMap {
+  const map: ModuloContextMap = {};
+  const ensure = (sel?: string) => {
+    const key = (sel ?? "").toUpperCase();
+    if (!key) return null;
+    return (map[key] ??= {
+      qtdTrocas: 0,
+      temTroca: false,
+      ultimaTrocaSemSinal: false,
+      manutencaoRealizada: false,
+      manutencaoRealizadaSemSinal: false,
+    });
+  };
+
+  for (const m of modulos.modules ?? []) {
+    const c = ensure(m.numeroSelimp);
+    if (c) c.qtdTrocas = m.quantidadeTrocas ?? 0;
+  }
+
+  for (const [sel, eventos] of Object.entries(trocas.history ?? {})) {
+    const c = ensure(sel);
+    if (!c || !eventos.length) continue;
+    c.temTroca = true;
+    if (!c.qtdTrocas) c.qtdTrocas = eventos.length;
+    // Evento mais recente (por dataTroca, com fallback em createdAt).
+    const ultima = [...eventos].sort((a, b) =>
+      (a.dataTroca ?? a.createdAt ?? "").localeCompare(b.dataTroca ?? b.createdAt ?? "")
+    ).at(-1);
+    if (ultima) c.ultimaTrocaSemSinal = semSinal(ultima.statusSinalDepois);
+  }
+
+  for (const [sel, eventos] of Object.entries(manut.history ?? {})) {
+    const c = ensure(sel);
+    if (!c) continue;
+    for (const ev of eventos) {
+      if (ev.status === "REALIZADA") {
+        c.manutencaoRealizada = true;
+        if (!ev.sinalRecuperado) c.manutencaoRealizadaSemSinal = true;
+      }
+    }
+  }
+
+  return map;
+}
 
 /** Cores da célula do heatmap diário (a partir do detalhe cru). */
 function celulaEstado(d: SectorAnalysis["detalhes"][number]): { className: string; label: string; pct: number | null } {
@@ -162,6 +223,7 @@ export default function CruzamentoPage() {
 
   const [preview, setPreview] = useState<IptPreviewResponse | null>(null);
   const [obs, setObs] = useState<ObservacoesMap | null>(null);
+  const [modulos, setModulos] = useState<ModuloContextMap | null>(null);
   const [loading, setLoading] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
@@ -176,16 +238,21 @@ export default function CruzamentoPage() {
     try {
       const inicio = format(from, "yyyy-MM-dd");
       const fim = format(to, "yyyy-MM-dd");
-      const [previewRes, obsRes] = await Promise.all([
+      const [previewRes, obsRes, modulosRes, trocasRes, manutRes] = await Promise.all([
         apiService.getIptPreview(inicio, fim, false, "all"),
         apiService.getIptObservacoes(inicio, fim),
+        apiService.getIptModulosBateria(),
+        apiService.getBateriaTrocas(),
+        apiService.getModuloManutencoes(),
       ]);
       setPreview(previewRes);
       setObs(obsRes as ObservacoesMap);
+      setModulos(buildModuloContext(modulosRes, trocasRes, manutRes));
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Falha ao carregar o cruzamento.");
       setPreview(null);
       setObs(null);
+      setModulos(null);
     } finally {
       setLoading(false);
     }
@@ -217,8 +284,8 @@ export default function CruzamentoPage() {
   }, [preview, sub, serv]);
 
   const result = useMemo(
-    () => buildCruzamento(itensScoped, { obs: obs ?? undefined, apenasComPrevisao }),
-    [itensScoped, obs, apenasComPrevisao]
+    () => buildCruzamento(itensScoped, { obs: obs ?? undefined, modulos: modulos ?? undefined, apenasComPrevisao }),
+    [itensScoped, obs, modulos, apenasComPrevisao]
   );
 
   /** Lista visível: aplica busca + filtro de causa sobre o ranking. */
@@ -429,7 +496,7 @@ export default function CruzamentoPage() {
               </div>
 
               {/* Cards por causa-raiz (clicáveis = filtram o ranking) */}
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
                 {CAUSA_ORDER.map((causa) => {
                   const Icon = CAUSA_ICON[causa];
                   const meta = ROOT_CAUSE_META[causa];
@@ -461,6 +528,52 @@ export default function CruzamentoPage() {
                   );
                 })}
               </div>
+
+              {/* IV-b: trocas/manutenções sem efeito (desperdício de manutenção) */}
+              {result.trocasSemEfeito.length > 0 && (
+                <Card className="relative overflow-hidden border-rose-500/30 bg-rose-500/[0.03]">
+                  <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
+                    <div className="flex items-center gap-2">
+                      <Wrench className="h-5 w-5 text-rose-500" />
+                      <div>
+                        <CardTitle className="text-base">Trocas/manutenções sem efeito</CardTitle>
+                        <p className="text-xs text-muted-foreground">
+                          ≥ {2} intervenções e o módulo segue ruim — desperdício e forte indício de hardware
+                        </p>
+                      </div>
+                    </div>
+                    <span className="text-xs font-semibold text-rose-600 dark:text-rose-400">
+                      {result.trocasSemEfeito.length} setores
+                    </span>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex flex-wrap gap-2">
+                      {result.trocasSemEfeito.slice(0, 24).map((s) => (
+                        <button
+                          key={s.plano}
+                          type="button"
+                          onClick={() => setSelecionado(s)}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/30 bg-card px-2.5 py-1.5 text-xs transition-colors hover:bg-rose-500/10"
+                          title={`${s.qtdTrocas} trocas · ${ROOT_CAUSE_META[s.causaRaiz].label}`}
+                        >
+                          <Badge variant="outline" className={cn("h-4 px-1 text-[9px]", subprefBadgeClass(s.sub))}>
+                            {s.sub}
+                          </Badge>
+                          <span className="font-medium">{s.plano}</span>
+                          <span className="rounded bg-rose-500/15 px-1 py-0.5 text-[9px] font-bold text-rose-700 dark:text-rose-300">
+                            {s.qtdTrocas}× troca
+                          </span>
+                        </button>
+                      ))}
+                      {result.trocasSemEfeito.length > 24 && (
+                        <span className="self-center text-xs text-muted-foreground">
+                          +{result.trocasSemEfeito.length - 24} setores
+                        </span>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
 
               {/* Ranking por impacto */}
               <Card className="relative overflow-hidden border-border/70">
@@ -708,6 +821,52 @@ export default function CruzamentoPage() {
                   </div>
                 </div>
 
+                {/* Evidência do diagnóstico (saúde do módulo) */}
+                <div className="rounded-xl border border-border/70 bg-muted/15 p-3">
+                  <p className="mb-2 text-xs font-medium text-muted-foreground">Evidência do diagnóstico</p>
+                  <div className="flex flex-wrap gap-2 text-[11px]">
+                    <span className="inline-flex items-center gap-1 rounded-md border border-border/60 px-2 py-1">
+                      Módulo:{" "}
+                      <strong>
+                        {!selecionado.temBateria ? "sem SELIMP" : selecionado.comSinal ? "com sinal" : "sem sinal"}
+                      </strong>
+                    </span>
+                    <span className="inline-flex items-center gap-1 rounded-md border border-border/60 px-2 py-1">
+                      DDMX: <strong>{selecionado.temDdmx ? "sim" : "não"}</strong>
+                    </span>
+                    <span className="inline-flex items-center gap-1 rounded-md border border-border/60 px-2 py-1">
+                      Trocas: <strong>{selecionado.qtdTrocas}</strong>
+                    </span>
+                    {selecionado.intervencaoSemSucesso && (
+                      <span className="inline-flex items-center gap-1 rounded-md border border-rose-500/40 bg-rose-500/10 px-2 py-1 text-rose-700 dark:text-rose-300">
+                        intervenção sem sucesso
+                      </span>
+                    )}
+                    {selecionado.nuncaTeveSinal && (
+                      <span className="inline-flex items-center gap-1 rounded-md border border-rose-500/40 bg-rose-500/10 px-2 py-1 text-rose-700 dark:text-rose-300">
+                        nunca teve sinal
+                      </span>
+                    )}
+                    {selecionado.trocaSemEfeito && (
+                      <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-amber-700 dark:text-amber-300">
+                        troca sem efeito
+                      </span>
+                    )}
+                    {selecionado.contestavel && (
+                      <span className="inline-flex items-center gap-1 rounded-md border border-cyan-500/40 bg-cyan-500/10 px-2 py-1 text-cyan-700 dark:text-cyan-300">
+                        contestável (DDMX &gt; SELIMP)
+                      </span>
+                    )}
+                  </div>
+                  {selecionado.causaRaiz === "divergencia" && (
+                    <p className="mt-2 text-[11px] text-muted-foreground">
+                      SELIMP <strong>{fmtPct(selecionado.percentualSelimp)}</strong> × DDMX/interno{" "}
+                      <strong>{fmtPct(selecionado.percentualInterno)}</strong> · diferença{" "}
+                      <strong>{selecionado.divergencia != null ? `${selecionado.divergencia.toFixed(0)}pp` : "—"}</strong>
+                    </p>
+                  )}
+                </div>
+
                 {/* Registro de causa → alimenta o relatório */}
                 <div className="rounded-xl border border-border/70 bg-muted/15 p-3">
                   <p className="mb-2 text-xs font-medium text-muted-foreground">
@@ -719,9 +878,10 @@ export default function CruzamentoPage() {
                   <div className="flex flex-wrap gap-2">
                     {[
                       { titulo: "Operação não cumpriu", causa: "operacao" as const },
-                      { titulo: "Bateria recorrente", causa: "bateria" as const },
-                      { titulo: "Setor incorreto SELIMP", causa: "cadastro" as const },
-                      { titulo: "Nunca Pontuou", causa: "nunca" as const },
+                      { titulo: "Hiberna / bateria", causa: "hibernando" as const },
+                      { titulo: "Hardware / fornecedor", causa: "hardware" as const },
+                      { titulo: "Ponto cego / cadastro", causa: "pontos_cegos" as const },
+                      { titulo: "Divergência SELIMP×DDMX", causa: "divergencia" as const },
                     ].map((opt) => (
                       <Button
                         key={opt.titulo}

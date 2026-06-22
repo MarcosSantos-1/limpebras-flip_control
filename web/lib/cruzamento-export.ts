@@ -2,8 +2,8 @@
  * Exporta o "Plano de Ação" do Cruzamento Inteligente em XLSX.
  *
  * Uma aba consolidada (todos os setores, ordenados por impacto) + uma aba por
- * responsável (Operação / Manutenção / Cadastro / Investigação), para mandar a
- * cada área só o que é dela resolver.
+ * causa-raiz (Pontos cegos / Hardware / Hiberna / Divergência / Operação), para
+ * mandar a cada área só o que é dela resolver.
  */
 
 import * as XLSX from "xlsx";
@@ -25,8 +25,10 @@ const HEADERS = [
   "Impacto IPT",
   "Bateria média %",
   "Divergência (pp)",
+  "Nº trocas",
   "Causa provável",
   "Responsável",
+  "Flags",
   "Observação registrada",
 ] as const;
 
@@ -49,14 +51,16 @@ function buildRow(s: SectorAnalysis, index: number): (string | number)[] {
     fmtNum(s.impactoIpt, 1),
     fmtNum(s.bateriaMedia, 0),
     fmtNum(s.divergencia, 0),
+    s.qtdTrocas,
     ROOT_CAUSE_META[s.causaRaiz].label,
     ROOT_CAUSE_META[s.causaRaiz].responsavel,
+    [s.trocaSemEfeito ? "Troca sem efeito" : "", s.contestavel ? "Contestável" : ""].filter(Boolean).join(" · "),
     s.obsGlobalTitulo ?? "",
   ];
 }
 
 const COL_WIDTHS = [
-  9, 18, 6, 26, 22, 9, 11, 14, 8, 9, 11, 11, 13, 14, 18, 16, 30,
+  9, 18, 6, 26, 22, 9, 11, 14, 8, 9, 11, 11, 13, 14, 9, 22, 16, 18, 30,
 ].map((w) => ({ wch: w }));
 
 export interface CruzamentoExportMeta {
@@ -72,7 +76,7 @@ function sheetFrom(rows: SectorAnalysis[]): XLSX.WorkSheet {
   return sheet;
 }
 
-const RESPONSAVEL_ORDER: RootCause[] = ["operacao", "bateria", "cadastro", "nunca"];
+const RESPONSAVEL_ORDER: RootCause[] = ["pontos_cegos", "hardware", "hibernando", "divergencia", "operacao"];
 
 export function exportCruzamentoPlanoAcao(setores: SectorAnalysis[], meta: CruzamentoExportMeta): void {
   const workbook = XLSX.utils.book_new();
@@ -85,7 +89,8 @@ export function exportCruzamentoPlanoAcao(setores: SectorAnalysis[], meta: Cruza
   for (const causa of RESPONSAVEL_ORDER) {
     const grupo = pauta.filter((s) => s.causaRaiz === causa);
     if (grupo.length === 0) continue;
-    const nome = ROOT_CAUSE_META[causa].label.slice(0, 28);
+    // Nomes de aba não podem conter \ / ? * [ ] : (limite de 31 chars).
+    const nome = ROOT_CAUSE_META[causa].label.replace(/[\\/?*[\]:]/g, "-").slice(0, 28);
     XLSX.utils.book_append_sheet(workbook, sheetFrom(grupo), nome);
   }
 

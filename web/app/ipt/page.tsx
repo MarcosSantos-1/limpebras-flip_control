@@ -77,6 +77,7 @@ import {
 import { useIptData } from "@/lib/use-ipt-data";
 import { ManualIndicatorBadge } from "@/components/manual-indicator-badge";
 import { getSortKey, getSubFromPlano } from "@/lib/ipt-utils";
+import { cn } from "@/lib/utils";
 import { countIptBaseDadosExportRows, exportIptBaseDadosXlsx } from "@/lib/ipt-export-base-dados";
 import {
   Chart as ChartJS,
@@ -95,6 +96,33 @@ ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend)
 
 const pct = (value?: number | null) => (value == null ? "--" : `${value.toFixed(1)}%`);
 const clamp = (value: number, min = 0, max = 100) => Math.min(max, Math.max(min, value));
+
+/** Card principal da IPT Geral.
+ *  Light: branco SÓLIDO com sombra + borda definidas (destaca nos monitores do
+ *  escritório, onde o contraste com o fundo some). Dark: acinzentado tipo os cards
+ *  de Contestação (`bg-muted`, ~#27272a) — nada de near-black zinc-900.
+ *  O tailwind-merge resolve o `bg-card` base do componente Card. */
+const GLASS_CARD =
+  "border border-border bg-card shadow-lg shadow-zinc-900/[0.06] dark:border-white/10 dark:bg-muted/60 dark:shadow-black/40";
+/** Barra/superfície secundária (filtros): mesma lógica, sombra um pouco menor. */
+const GLASS_BAR =
+  "border border-border bg-card shadow-md shadow-zinc-900/[0.05] dark:border-white/10 dark:bg-muted/50";
+
+/** Card de DESTAQUE (IPT Realidade / Algoritmo SELIMP): mais "vida" que o card neutro.
+ *  Light: glow emerald sutil + sombra. Dark: acinzentado com leve banho emerald. */
+const FEATURE_CARD =
+  "border border-emerald-500/25 bg-linear-to-br from-emerald-50 via-card to-card shadow-lg shadow-emerald-900/[0.06] dark:border-emerald-500/20 dark:from-emerald-950/40 dark:via-muted/55 dark:to-muted/55 dark:shadow-black/40";
+
+/** Linha do acordeão quando EXPANDIDA: barra verde forte (gradiente) tipo o card
+ *  principal, com texto interno claro/uniforme (zinc-100) para não divergir. */
+const EXPANDED_ROW =
+  "bg-linear-to-r from-emerald-600 via-emerald-600 to-teal-700 text-zinc-100 shadow-[0_8px_24px_-12px_rgba(16,185,129,0.85)] [&_*]:!text-zinc-100";
+
+/** Subcard NEUTRO (acinzentado tipo cards de Contestação): superfície sólida e
+ *  discreta, sem o padrão "tint fraco + borda colorida escura". A cor da categoria
+ *  fica só no ícone/título. Resolve o baixo contraste do light e o escuro demais do dark. */
+const NEUTRAL_CARD =
+  "rounded-xl border border-border/70 bg-muted/50 p-3 shadow-sm dark:bg-muted/40";
 const normalizeText = (value?: string) =>
   (value ?? "")
     .normalize("NFD")
@@ -1141,7 +1169,7 @@ export default function IPTPage() {
 
   return (
     <MainLayout>
-      <div className="space-y-6">
+      <div className="aurora-page -m-6 space-y-6 p-6">
         {loading && (
           <div className="fixed inset-0 z-90 flex items-center justify-center bg-background/90 backdrop-blur-sm">
             <div className="flex flex-col items-center gap-3 rounded-2xl bg-card/95 px-8 py-6 shadow-2xl shadow-zinc-900/20">
@@ -1170,7 +1198,7 @@ export default function IPTPage() {
           </div>
         </div>
 
-        <div className="rounded-2xl bg-card/70 backdrop-blur p-4 shadow-lg">
+        <div className={cn("rounded-2xl p-4", GLASS_BAR)}>
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 items-end">
             <div className="space-y-1.5 min-w-0">
               <Label
@@ -1247,7 +1275,7 @@ export default function IPTPage() {
         </div>
 
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-          <Card className="xl:col-span-1 border-0 shadow-[0_20px_50px_-30px_rgba(16,185,129,0.7)] bg-linear-to-br from-emerald-500/15 via-card to-card">
+          <Card className={cn("xl:col-span-1", FEATURE_CARD)}>
             <CardHeader className="pb-3">
               <div className="flex items-center gap-2">
                 <CardTitle className="text-base">IPT (Algoritmo SELIMP)</CardTitle>
@@ -1278,12 +1306,12 @@ export default function IPTPage() {
             <CardContent className="space-y-3">
               <>
               {adcManual && (
-                <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3.5 shadow-sm">
+                <div className="rounded-xl border border-border/70 bg-muted/50 p-3.5 shadow-sm dark:bg-muted/40">
                   <div className="flex items-start gap-3">
-                    <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
+                    <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center justify-between gap-2">
-                        <p className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-foreground">
                           Registro manual ativo
                         </p>
                         {adcManualIptPontuacao != null && (
@@ -1302,7 +1330,7 @@ export default function IPTPage() {
                 </div>
               )}
 
-              <div className="rounded-xl bg-background/70 p-3.5 shadow-sm transition-all hover:shadow-md">
+              <div className="rounded-xl bg-emerald-500/[0.07] p-3.5 shadow-sm transition-all hover:shadow-md dark:bg-emerald-500/10">
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-xs text-muted-foreground">
                     {iptCard.cenarios?.diagnostico.cobertura_fonte === "oficial_selimp"
@@ -1341,7 +1369,7 @@ export default function IPTPage() {
                 </div>
               </div>
 
-              <div className="rounded-xl bg-background/70 p-3.5 shadow-sm transition-all hover:shadow-md flex items-center justify-between">
+              <div className="rounded-xl bg-teal-500/[0.07] p-3.5 shadow-sm transition-all hover:shadow-md flex items-center justify-between dark:bg-teal-500/10">
                 <div>
                   <p className="text-xs text-muted-foreground">Pontuação IPT no cenário principal</p>
                   <p className="text-3xl font-bold text-teal-600 mt-0.5">{iptCard.pontuacao ?? 0}</p>
@@ -1350,7 +1378,7 @@ export default function IPTPage() {
               </div>
 
               {iptCard.cenarios && (
-                <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-muted-foreground">
+                <div className="rounded-xl border border-border/70 bg-muted/50 p-3 text-xs text-muted-foreground dark:bg-muted/40">
                   <div className="grid grid-cols-3 gap-2 text-center">
                     <div>
                       <p className="font-bold text-foreground">{iptCard.cenarios.diagnostico.qualidade_ajustada.toFixed(1)}%</p>
@@ -1373,7 +1401,7 @@ export default function IPTPage() {
             </CardContent>
           </Card>
 
-          <Card className="xl:col-span-2 border-0 shadow-[0_20px_50px_-30px_rgba(16,185,129,0.6)]">
+          <Card className={cn("xl:col-span-2", FEATURE_CARD)}>
             <CardHeader>
               <CardTitle className="text-base">IPT - Realidade</CardTitle>
               <CardDescription>Indicadores operacionais gerados automaticamente da base consolidada.</CardDescription>
@@ -1414,11 +1442,11 @@ export default function IPTPage() {
                       : "--"}
                   </p>
                 </div>
-                <div className="rounded-xl bg-amber-500/10 dark:bg-amber-500/15 p-4 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg border border-amber-500/20 hover:border-amber-500/40">
-                  <p className="text-xs font-medium text-amber-700 dark:text-amber-400 mb-2 uppercase tracking-wider">
+                <div className="rounded-xl bg-rose-500/10 dark:bg-rose-500/15 p-4 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg border border-rose-500/20 hover:border-rose-500/40">
+                  <p className="text-xs font-medium text-rose-700 dark:text-rose-400 mb-2 uppercase tracking-wider">
                     Despachos zerados
                   </p>
-                  <p className="text-2xl font-bold text-amber-700 dark:text-amber-300 tabular-nums">
+                  <p className="text-2xl font-bold text-rose-700 dark:text-rose-300 tabular-nums">
                     {globalInsights.zerados}
                   </p>
                 </div>
@@ -1702,7 +1730,7 @@ export default function IPTPage() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Card className="border-0 shadow-lg">
+          <Card className={cn(GLASS_CARD)}>
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div>
@@ -1891,7 +1919,7 @@ export default function IPTPage() {
             </CardContent>
           </Card>
 
-          <Card className="border-0 shadow-lg">
+          <Card className={cn(GLASS_CARD)}>
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div>
@@ -2110,7 +2138,7 @@ export default function IPTPage() {
                   </p>
                 )}
                 <DialogFooter>
-                  <UiButton type="button" variant="outline" onClick={() => setModalDownloadOpen(false)}>
+                  <UiButton type="button" variant="glass" onClick={() => setModalDownloadOpen(false)}>
                     Cancelar
                   </UiButton>
                   <UiButton
@@ -2523,12 +2551,10 @@ export default function IPTPage() {
                               setExpandedPlano((p) => (p === row.plano ? null : row.plano));
                             }
                           }}
-                          className={`cursor-pointer border-y border-border/40 transition-colors hover:bg-emerald-500/10 ${
+                          className={`cursor-pointer border-y border-border/40 transition-colors ${
                             isExpanded
-                              ? "bg-emerald-500/20 ring-1 ring-inset ring-emerald-500/40"
-                              : index % 2 === 0
-                              ? "bg-background/35"
-                              : "bg-background/10"
+                              ? EXPANDED_ROW
+                              : `hover:bg-emerald-500/10 ${index % 2 === 0 ? "bg-muted/40 dark:bg-muted/25" : "bg-transparent"}`
                           } ${!hasDetails ? "cursor-default" : ""}`}
                         >
                           <td className="px-3 py-2 w-8 align-middle">
@@ -2632,16 +2658,16 @@ export default function IPTPage() {
                         </tr>
                         {isExpanded && hasDetails && (
                           <tr key={`${rowKey}-detail`}>
-                            <td colSpan={7} className="bg-emerald-500/5 px-4 py-4 align-top border-b border-emerald-500/20">
+                            <td colSpan={7} className="bg-muted/30 px-4 py-4 align-top border-b border-border dark:bg-muted/20">
                               <div className="space-y-4 text-sm">
                                 {!hasAnyDetails && (
-                                  <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 p-4 text-amber-800 dark:text-amber-200">
+                                  <div className="rounded-xl border border-border/70 bg-muted/50 p-4 text-muted-foreground dark:bg-muted/40">
                                     Nenhum despacho registrado no período.
                                   </div>
                                 )}
                                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                                 {row.equipamentos && row.equipamentos.length > 0 && (
-                                  <div className="rounded-xl bg-cyan-500/10 border border-cyan-500/30 p-3 shadow-sm">
+                                  <div className="rounded-xl border border-border/70 bg-muted/50 p-3 shadow-sm dark:bg-muted/40">
                                     <p className="text-xs font-semibold text-cyan-700 dark:text-cyan-300 mb-2 flex items-center gap-1.5">
                                       <Cpu className="h-4 w-4" />
                                       Equipamentos (Placa/Lutocar)
@@ -2687,7 +2713,7 @@ export default function IPTPage() {
                                   </div>
                                 )}
                                 {row.frequencia && (
-                                  <div className="rounded-xl bg-blue-500/10 border border-blue-500/30 p-3 shadow-sm relative group">
+                                  <div className="rounded-xl border border-border/70 bg-muted/50 p-3 shadow-sm relative group dark:bg-muted/40">
                                     <p className="text-xs font-semibold text-blue-700 dark:text-blue-300 mb-1 flex items-center gap-1.5">
                                       <Calendar className="h-4 w-4" />
                                       Frequência
@@ -2713,7 +2739,7 @@ export default function IPTPage() {
                                   </div>
                                 )}
                                 {(row.bateria_por_equipamento && Object.keys(row.bateria_por_equipamento).length > 0) && (
-                                  <div className="rounded-xl bg-violet-500/10 border border-violet-500/30 p-3 shadow-sm">
+                                  <div className="rounded-xl border border-border/70 bg-muted/50 p-3 shadow-sm dark:bg-muted/40">
                                     <p className="text-xs font-semibold text-violet-700 dark:text-violet-300 mb-2 flex items-center gap-1.5">
                                       <Battery className="h-4 w-4" />
                                       Status da bateria
@@ -2745,7 +2771,7 @@ export default function IPTPage() {
                                   </div>
                                 )}
                                 {row.modulos_bateria && row.modulos_bateria.length > 0 && (
-                                  <div className="rounded-xl bg-fuchsia-500/10 border border-fuchsia-500/30 p-3 shadow-sm">
+                                  <div className="rounded-xl border border-border/70 bg-muted/50 p-3 shadow-sm dark:bg-muted/40">
                                     <div className="mb-2 flex items-center justify-between gap-2">
                                       <p className="text-xs font-semibold text-fuchsia-700 dark:text-fuchsia-300 flex items-center gap-1.5">
                                         <BatteryWarning className="h-4 w-4" />
@@ -2761,7 +2787,7 @@ export default function IPTPage() {
                                       {row.modulos_bateria.map((modulo) => (
                                         <div
                                           key={`${row.plano}-${modulo.numero_selimp}`}
-                                          className="rounded-lg bg-background/70 px-2.5 py-2 text-xs ring-1 ring-fuchsia-500/15"
+                                          className="rounded-lg bg-muted/60 px-2.5 py-2 text-xs ring-1 ring-border dark:bg-muted/40"
                                           title={[
                                             `Bateria: ${modulo.bateria || modulo.status_bateria || "--"}`,
                                             `Sinal: ${modulo.status_sinal || "--"}`,
@@ -2792,7 +2818,7 @@ export default function IPTPage() {
                                   </div>
                                 )}
                                 {row.proxima_programacao && (
-                                  <div className="rounded-xl bg-emerald-500/15 border border-emerald-500/40 p-3 shadow-sm relative group">
+                                  <div className="rounded-xl border border-border/70 bg-muted/50 p-3 shadow-sm relative group dark:bg-muted/40">
                                     <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-300 mb-1 flex items-center gap-1.5">
                                       <Activity className="h-4 w-4" />
                                       Próxima programação
@@ -2822,7 +2848,7 @@ export default function IPTPage() {
                                 </div>
                                 <div className="flex flex-wrap items-center gap-2">
                                   {observacoes.globais[row.plano] ? (
-                                    <div className="rounded-xl bg-red-500/10 border border-red-500/30 p-3 shadow-sm flex-1 min-w-0">
+                                    <div className="rounded-xl border border-border/70 bg-muted/50 p-3 shadow-sm flex-1 min-w-0 dark:bg-muted/40">
                                       <p className="text-xs font-semibold text-red-700 dark:text-red-300 mb-1 flex items-center gap-1.5">
                                         <AlertTriangle className="h-4 w-4" />
                                         Observação global: {observacoes.globais[row.plano].titulo}
@@ -2853,7 +2879,7 @@ export default function IPTPage() {
                                         setModalObsGlobalDescricao("");
                                         setModalObsGlobalOpen(true);
                                       }}
-                                      className="inline-flex items-center gap-1.5 rounded-xl bg-amber-500/15 border border-amber-500/40 px-3 py-2 text-xs font-medium text-amber-700 dark:text-amber-300 hover:bg-amber-500/25 transition-colors"
+                                      className="inline-flex items-center gap-1.5 rounded-xl border border-border/70 bg-muted/60 px-3 py-2 text-xs font-medium text-foreground hover:bg-muted transition-colors dark:bg-muted/40"
                                     >
                                       <Plus className="h-3.5 w-3.5" />
                                       Adicionar observação global
@@ -2862,7 +2888,7 @@ export default function IPTPage() {
                                 </div>
                                 {row.detalhes_diarios && row.detalhes_diarios.length > 0 && (
                                   <>
-                                    <div className="rounded-xl bg-slate-500/10 border border-slate-500/30 p-3 shadow-sm">
+                                    <div className="rounded-xl border border-border/70 bg-muted/50 p-3 shadow-sm dark:bg-muted/40">
                                       <p className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2 flex items-center gap-1.5">
                                         <BarChart2 className="h-4 w-4" />
                                         Despachos e percentuais
@@ -2870,7 +2896,7 @@ export default function IPTPage() {
                                       <div className="overflow-x-auto">
                                         <table className="w-full text-xs">
                                           <thead>
-                                            <tr className="border-b border-slate-500/30">
+                                            <tr className="border-b border-border">
                                               <th className="text-left py-2 px-2">
                                                 <span className="flex items-center gap-1"><Calendar className="h-3.5 w-3.5" /> Data</span>
                                               </th>
@@ -2900,13 +2926,11 @@ export default function IPTPage() {
                                               const rowBg =
                                                 pctSel != null && pctSel >= 90
                                                   ? "bg-emerald-500/5"
-                                                  : pctSel != null && pctSel >= 60
-                                                  ? "bg-amber-500/5"
-                                                  : pctSel != null && pctSel > 0
+                                                  : pctSel != null && pctSel > 0 && pctSel < 60
                                                   ? "bg-red-500/5"
                                                   : "bg-transparent";
                                               return (
-                                                <tr key={d.data} className={`border-b border-slate-500/20 ${rowBg}`}>
+                                                <tr key={d.data} className={`border-b border-border/60 ${rowBg}`}>
                                                   <td className="py-2 px-2 font-mono font-medium">
                                                     <span className="flex items-center gap-1.5">
                                                       <Calendar className="h-3.5 w-3.5 text-slate-500" />

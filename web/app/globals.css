@@ -110,6 +110,25 @@ html {
   min-height: auto;
 }
 
+/* ===== Glass design — piloto IPT Geral (Apple vibrante) =====
+   Fundo "aurora" sutil atrás do conteúdo para o vidro fosco ter o que desfocar.
+   Fixo ao viewport (parallax) e clipado à caixa do wrapper. */
+.aurora-page {
+  background-image:
+    radial-gradient(48rem 38rem at 6% -8%, rgba(16, 185, 129, 0.16), transparent 60%),
+    radial-gradient(42rem 34rem at 100% 0%, rgba(13, 148, 136, 0.14), transparent 58%),
+    radial-gradient(40rem 40rem at 62% 118%, rgba(99, 102, 241, 0.12), transparent 60%);
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+}
+
+.dark .aurora-page {
+  background-image:
+    radial-gradient(48rem 38rem at 6% -8%, rgba(16, 185, 129, 0.22), transparent 60%),
+    radial-gradient(42rem 34rem at 100% 0%, rgba(13, 148, 136, 0.18), transparent 58%),
+    radial-gradient(40rem 40rem at 62% 118%, rgba(129, 140, 248, 0.16), transparent 60%);
+}
+
 .grid-pattern {
   background-size: 40px 40px;
   background-image: linear-gradient(to right, rgba(128, 128, 128, 0.05) 1px, transparent 1px),

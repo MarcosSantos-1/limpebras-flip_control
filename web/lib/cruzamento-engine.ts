@@ -1,15 +1,28 @@
 /**
  * Motor de criticidade do Cruzamento Inteligente.
  *
- * Transforma os `itens` do /dashboard/ipt-preview em uma análise por setor
- * orientada à TOMADA DE DECISÃO: ordena pelo impacto real no IPT (não pelo gap
- * cru) e classifica a causa-raiz provável (operação / bateria / cadastro / nunca),
- * que é o que a operação precisa para "dar um jeito".
+ * Transforma os `itens` do /dashboard/ipt-preview (enriquecidos com o histórico
+ * de trocas/manutenções por módulo) em uma triagem por setor orientada à TOMADA
+ * DE DECISÃO: ordena pelo impacto real no IPT (não pelo gap cru) e classifica a
+ * causa-raiz pela ÓTICA DE SAÚDE DO MÓDULO (I-IV):
+ *
+ *   I   hibernando    — módulo oscila: aparece "com sinal"/carga mas não computa
+ *                       execução, dorme, ou volta desatualizado após a troca.
+ *   II  hardware      — já passou por troca/manutenção e segue morto, ou nunca
+ *                       teve sinal — problema do equipamento, não da operação.
+ *   III operacao      — equipamento saudável, mas execução baixa/ausente.
+ *   IV  pontos_cegos  — sem SELIMP nem DDMX: não dá nem pra medir.
+ *       divergencia   — SELIMP × DDMX divergem: o número que pesa no IPT pode
+ *                       estar errado (contestável).
  *
  * Princípio central: quanto MAIS despachos previstos um setor tem, mais ele pesa
  * no IPT. Por isso varrição diária (≈26 previstos/mês) precisa flutuar para o topo
  * naturalmente — o que acontece quando ordenamos por "despachos-equivalentes
  * perdidos" em vez de por percentual.
+ *
+ * O diferenciador I vs II é o HISTÓRICO DE INTERVENÇÃO: se já trocamos a bateria
+ * e/ou fizemos manutenção e o sinal não voltou (ou nunca houve sinal), é hardware;
+ * se oscila/dorme mas às vezes responde, é hibernação.
  */
 
 import type { IptPreviewResponse } from "@/lib/api";
@@ -24,8 +37,29 @@ export type ObservacoesMap = {
   diarias: Record<string, Record<string, { id: number; titulo: string; descricao: string | null }>>;
 };
 
-/** Causa-raiz provável → define o responsável por resolver. */
-export type RootCause = "operacao" | "bateria" | "cadastro" | "nunca" | "ok";
+/**
+ * Contexto enriquecido por módulo (numero_selimp), montado pela página a partir
+ * de getIptModulosBateria + getBateriaTrocas + getModuloManutencoes. Decoplado
+ * dos tipos crus de API: a página é quem traduz.
+ */
+export interface ModuloContext {
+  /** Total de trocas de bateria já realizadas no módulo. */
+  qtdTrocas: number;
+  /** Houve ao menos uma troca registrada. */
+  temTroca: boolean;
+  /** A troca mais recente deixou o módulo SEM SINAL (não resolveu). */
+  ultimaTrocaSemSinal: boolean;
+  /** Houve ao menos uma manutenção REALIZADA. */
+  manutencaoRealizada: boolean;
+  /** Manutenção REALIZADA mas o sinal não foi recuperado (não resolveu). */
+  manutencaoRealizadaSemSinal: boolean;
+}
+
+/** Mapa de contexto por módulo, chaveado por numero_selimp em MAIÚSCULAS. */
+export type ModuloContextMap = Record<string, ModuloContext>;
+
+/** Causa-raiz provável (saúde do módulo) → define o responsável por resolver. */
+export type RootCause = "pontos_cegos" | "hardware" | "hibernando" | "divergencia" | "operacao" | "ok";
 
 /** Status de severidade (badge). */
 export type SectorStatus = "nunca" | "critico" | "irregular" | "ok";
@@ -49,29 +83,38 @@ export interface RootCauseMeta {
 }
 
 export const ROOT_CAUSE_META: Record<RootCause, RootCauseMeta> = {
+  pontos_cegos: {
+    id: "pontos_cegos",
+    label: "Pontos cegos",
+    responsavel: "Base / Cadastro",
+    descricao: "Setor previsto sem módulo SELIMP e sem DDMX — não dá nem para medir a execução. Corrigir a base.",
+  },
+  hardware: {
+    id: "hardware",
+    label: "Hardware / Fornecedor",
+    responsavel: "Suporte",
+    descricao:
+      "Já passou por troca/manutenção e segue sem sinal, ou nunca comunicou — problema do equipamento, não da operação.",
+  },
+  hibernando: {
+    id: "hibernando",
+    label: "Hiberna / Bateria",
+    responsavel: "Manutenção",
+    descricao:
+      "Módulo oscila: aparece com sinal/carga mas não computa execução, dorme, ou voltou desatualizado após a troca.",
+  },
+  divergencia: {
+    id: "divergencia",
+    label: "Divergência SELIMP×DDMX",
+    responsavel: "Contestação",
+    descricao:
+      "Diferença relevante entre SELIMP e DDMX — o percentual que pesa no IPT pode estar errado; priorizar contestação.",
+  },
   operacao: {
     id: "operacao",
     label: "Operação",
     responsavel: "Operação",
-    descricao: "Equipamento OK e setor previsto, mas execução baixa/ausente — provável não cumprimento da operação.",
-  },
-  bateria: {
-    id: "bateria",
-    label: "Bateria / Equipamento",
-    responsavel: "Manutenção",
-    descricao: "Módulo com bateria baixa, crítica ou desatualizada — não é responsabilidade da operação.",
-  },
-  cadastro: {
-    id: "cadastro",
-    label: "Cadastro / SELIMP",
-    responsavel: "Cadastro / Base",
-    descricao: "Divergência relevante SELIMP × interno ou setor sem módulo atrelado — corrigir a base.",
-  },
-  nunca: {
-    id: "nunca",
-    label: "Nunca executado",
-    responsavel: "Investigação",
-    descricao: "Zero execução em todo o período com equipamento funcionando — investigação prioritária.",
+    descricao: "Equipamento saudável e setor previsto, mas execução baixa/ausente — provável não cumprimento da operação.",
   },
   ok: {
     id: "ok",
@@ -96,8 +139,10 @@ export const THRESHOLDS = {
   IRREGULAR_PCT: 75,
   /** Produtividade média de bateria (≤) que caracteriza problema de equipamento. */
   BATERIA_PROBLEMA_PCT: 30,
-  /** Divergência |SELIMP − interno| (em pontos) que sinaliza problema de cadastro. */
+  /** Divergência |SELIMP − interno| (em pontos) que sinaliza problema de cadastro/contestação. */
   DIVERGENCIA_PP: 12,
+  /** Nº de trocas a partir do qual o módulo conta como "troca sem efeito". */
+  TROCAS_SEM_EFEITO: 2,
 } as const;
 
 export interface SectorAnalysis {
@@ -119,11 +164,19 @@ export interface SectorAnalysis {
   // Impacto no IPT — "despachos-equivalentes perdidos"
   impactoIpt: number;
 
-  // Bateria
+  // Equipamento / medição
   temBateria: boolean;
+  temDdmx: boolean;
   bateriaMedia: number | null;
   bateriaCriticos: number;
   bateriaProblema: boolean;
+  comSinal: boolean;
+  nuncaTeveSinal: boolean;
+
+  // Histórico de intervenção (vem do contexto enriquecido)
+  qtdTrocas: number;
+  intervencaoSemSucesso: boolean;
+  manutencaoRealizadaSemSinal: boolean;
 
   // Cadastro / divergência
   percentualSelimp: number | null;
@@ -135,6 +188,12 @@ export interface SectorAnalysis {
   /** true quando a causa veio de observação manual salva (não do automático). */
   causaManual: boolean;
   status: SectorStatus;
+
+  // Flags transversais (não exclusivas da causa primária)
+  /** Várias trocas e ainda ruim → desperdício de manutenção / hardware reincidente. */
+  trocaSemEfeito: boolean;
+  /** Divergência onde DDMX/interno > SELIMP → IPT possivelmente injusto. */
+  contestavel: boolean;
 
   // Registro / relatório
   temObsGlobal: boolean;
@@ -176,20 +235,68 @@ function isVarricaoServico(tipoServico: string): boolean {
   return t.includes("varri") || t.includes("sarjeta");
 }
 
-/** Mapeia o título de uma observação global para uma causa-raiz. */
+/** Mapeia o título de uma observação global para uma causa-raiz (override manual). */
 function causaFromObsGlobal(titulo: string): RootCause | null {
   const t = (titulo ?? "").toLowerCase();
   if (!t) return null;
-  if (t.includes("setor incorreto") || t.includes("selimp") || t.includes("endere") || t.includes("sem bateria") || t.includes("sem módulo") || t.includes("sem modulo") || t.includes("alteração") || t.includes("alteracao") || t.includes("pendente")) {
-    return "cadastro";
+  if (t.includes("hardware") || t.includes("suporte") || t.includes("fornecedor") || t.includes("morto") || t.includes("defeito")) {
+    return "hardware";
   }
-  if (t.includes("bateria")) return "bateria";
-  if (t.includes("nunca")) return "nunca";
+  if (t.includes("hiberna") || t.includes("dorme") || t.includes("oscila") || t.includes("bateria") || t.includes("desatualiz")) {
+    return "hibernando";
+  }
+  if (t.includes("diverg") || t.includes("contesta")) {
+    return "divergencia";
+  }
+  if (
+    t.includes("cego") ||
+    t.includes("sem módulo") ||
+    t.includes("sem modulo") ||
+    t.includes("sem bateria") ||
+    t.includes("selimp") ||
+    t.includes("setor incorreto") ||
+    t.includes("endere") ||
+    t.includes("cadastro") ||
+    t.includes("pendente")
+  ) {
+    return "pontos_cegos";
+  }
+  if (t.includes("operação") || t.includes("operacao") || t.includes("não cumpriu") || t.includes("nao cumpriu") || t.includes("nunca")) {
+    return "operacao";
+  }
   return null;
 }
 
-/** Constrói a análise de um setor a partir do item do preview. */
-export function analyzeSector(item: PreviewItem, obs?: ObservacoesMap): SectorAnalysis {
+/** Agrega o contexto de intervenção dos módulos SELIMP de um setor. */
+function aggregateModuloCtx(selimps: string[], ctxMap?: ModuloContextMap) {
+  let qtdTrocas = 0;
+  let temTroca = false;
+  let ultimaTrocaSemSinal = false;
+  let manutencaoRealizada = false;
+  let manutencaoRealizadaSemSinal = false;
+  if (ctxMap) {
+    for (const sel of selimps) {
+      const c = ctxMap[(sel ?? "").toUpperCase()];
+      if (!c) continue;
+      qtdTrocas += c.qtdTrocas;
+      temTroca = temTroca || c.temTroca;
+      ultimaTrocaSemSinal = ultimaTrocaSemSinal || c.ultimaTrocaSemSinal;
+      manutencaoRealizada = manutencaoRealizada || c.manutencaoRealizada;
+      manutencaoRealizadaSemSinal = manutencaoRealizadaSemSinal || c.manutencaoRealizadaSemSinal;
+    }
+  }
+  return { qtdTrocas, temTroca, ultimaTrocaSemSinal, manutencaoRealizada, manutencaoRealizadaSemSinal };
+}
+
+export interface AnalyzeOpts {
+  obs?: ObservacoesMap;
+  /** Contexto de intervenção por módulo (numero_selimp em maiúsculas). */
+  modulos?: ModuloContextMap;
+}
+
+/** Constrói a análise de um setor a partir do item do preview + contexto. */
+export function analyzeSector(item: PreviewItem, opts?: AnalyzeOpts): SectorAnalysis {
+  const obs = opts?.obs;
   const plano = item.plano;
   const sub = getSubFromPlano(plano) || item.subprefeitura || "—";
   const dias = item.detalhes_diarios ?? [];
@@ -212,26 +319,53 @@ export function analyzeSector(item: PreviewItem, obs?: ObservacoesMap): SectorAn
   const pctParaImpacto = percentualMedio ?? 0;
   const impactoIpt = previstos > 0 ? previstos * (1 - clampPct(pctParaImpacto) / 100) : 0;
 
-  // Bateria
+  // ── Equipamento / medição ──
   const resumo = item.bateria_resumo_setor;
-  const totalModulos = resumo?.total ?? item.modulos_bateria?.length ?? 0;
-  const temBateria = totalModulos > 0;
+  const modulosBateria = item.modulos_bateria ?? [];
+  const totalModulos = resumo?.total ?? modulosBateria.length ?? 0;
+  const temBateria = totalModulos > 0; // tem módulo SELIMP
+  const equipamentos = item.equipamentos ?? [];
+  const temDdmx =
+    equipamentos.length > 0 || dias.some((d) => (d.bateria_ddmx_dia?.total ?? 0) > 0);
+
   const bateriaMedia =
     item.produtividade_bateria_media ??
     resumo?.produtividade_media ??
-    (item.modulos_bateria && item.modulos_bateria.length
-      ? item.modulos_bateria.reduce((a, m) => a + (m.bateria_percentual ?? m.produtividade_bateria ?? 0), 0) /
-        item.modulos_bateria.length
+    (modulosBateria.length
+      ? modulosBateria.reduce((a, m) => a + (m.bateria_percentual ?? m.produtividade_bateria ?? 0), 0) /
+        modulosBateria.length
       : null);
   const bateriaCriticos = resumo?.criticos ?? 0;
-  const semSinal = resumo?.sem_sinal ?? 0;
+  const comSinalQtd = resumo?.com_sinal ?? 0;
+  const semSinalQtd = resumo?.sem_sinal ?? 0;
+  const comSinal = comSinalQtd > 0;
+  const semSinalTotal = temBateria && comSinalQtd === 0;
   const bateriaProblema =
     temBateria &&
     ((bateriaMedia != null && bateriaMedia <= THRESHOLDS.BATERIA_PROBLEMA_PCT) ||
       bateriaCriticos > 0 ||
-      (totalModulos > 0 && semSinal >= totalModulos));
+      (totalModulos > 0 && semSinalQtd >= totalModulos));
 
-  // Divergência
+  // Nunca teve sinal: sem sinal no snapshot e em nenhum dia do detalhe.
+  const algumDiaComSinal = dias.some((d) =>
+    (d.bateria_setor_dia?.modulos ?? []).some((m) => /on|com/i.test(m.status_comunicacao ?? ""))
+  );
+  const nuncaTeveSinal = temBateria && !comSinal && !algumDiaComSinal;
+
+  // ── Histórico de intervenção (contexto enriquecido) ──
+  const selimps = modulosBateria.map((m) => m.numero_selimp).filter(Boolean);
+  const ctx = aggregateModuloCtx(selimps, opts?.modulos);
+  const qtdTrocas = ctx.qtdTrocas;
+  const temIntervencao = ctx.temTroca || ctx.manutencaoRealizada;
+  const intervencaoSemSucesso = ctx.ultimaTrocaSemSinal || ctx.manutencaoRealizadaSemSinal;
+
+  // ── Execução ──
+  const execucaoBaixa = percentualMedio == null || percentualMedio < THRESHOLDS.IRREGULAR_PCT;
+  const execucaoZero = (percentualMedio != null && percentualMedio <= 0) || (previstos > 0 && despachados === 0);
+  // Produtividade do módulo ~0 apesar de carga (sintoma de hibernação).
+  const produtZero = bateriaMedia != null && bateriaMedia <= THRESHOLDS.BATERIA_PROBLEMA_PCT;
+
+  // ── Divergência ──
   const percentualSelimp = item.percentual_selimp;
   const percentualInterno = item.percentual_nosso;
   const divergencia =
@@ -239,14 +373,14 @@ export function analyzeSector(item: PreviewItem, obs?: ObservacoesMap): SectorAn
       ? Math.abs(percentualSelimp - percentualInterno)
       : null;
 
-  // Status de severidade
+  // ── Status de severidade ──
   let status: SectorStatus;
   if (previstos > 0 && despachados === 0) status = "nunca";
   else if (percentualMedio != null && percentualMedio < THRESHOLDS.CRITICO_PCT) status = "critico";
   else if (percentualMedio != null && percentualMedio < THRESHOLDS.IRREGULAR_PCT) status = "irregular";
   else status = "ok";
 
-  // Causa-raiz: observação manual tem prioridade; senão regras automáticas.
+  // ── Causa-raiz: observação manual tem prioridade; senão a cascata I-IV. ──
   const obsGlobal = obs?.globais?.[plano] ?? null;
   const causaManualCandidate = obsGlobal ? causaFromObsGlobal(obsGlobal.titulo) : null;
 
@@ -255,20 +389,37 @@ export function analyzeSector(item: PreviewItem, obs?: ObservacoesMap): SectorAn
   if (causaManualCandidate) {
     causaRaiz = causaManualCandidate;
     causaManual = true;
-  } else if (!temBateria && previstos > 0 && despachados === 0) {
-    // Setor sem módulo atrelado e sem execução = problema de cadastro/base.
-    causaRaiz = "cadastro";
-  } else if (bateriaProblema && (percentualMedio == null || percentualMedio < THRESHOLDS.IRREGULAR_PCT)) {
-    causaRaiz = "bateria";
-  } else if (previstos > 0 && despachados === 0) {
-    causaRaiz = "nunca";
+  } else if (!temBateria && !temDdmx && previstos > 0) {
+    // IV-a — sem SELIMP e sem DDMX: não dá nem pra medir.
+    causaRaiz = "pontos_cegos";
+  } else if (
+    temBateria &&
+    execucaoBaixa &&
+    ((temIntervencao && (intervencaoSemSucesso || semSinalTotal || bateriaProblema)) || nuncaTeveSinal)
+  ) {
+    // II — já intervimos e segue morto, ou nunca teve sinal.
+    causaRaiz = "hardware";
+  } else if (temBateria && execucaoBaixa && (bateriaProblema || (comSinal && produtZero))) {
+    // I — oscila/dorme: tem sinal/carga mas não computa.
+    causaRaiz = "hibernando";
   } else if (divergencia != null && divergencia > THRESHOLDS.DIVERGENCIA_PP) {
-    causaRaiz = "cadastro";
-  } else if (percentualMedio != null && percentualMedio < THRESHOLDS.IRREGULAR_PCT) {
+    // IV-c — antes de operação: se DDMX executou e SELIMP zerou, não é a operação.
+    causaRaiz = "divergencia";
+  } else if (execucaoBaixa) {
+    // III — equipamento saudável e execução baixa.
     causaRaiz = "operacao";
   } else {
     causaRaiz = "ok";
   }
+
+  // ── Flags transversais ──
+  const trocaSemEfeito =
+    qtdTrocas >= THRESHOLDS.TROCAS_SEM_EFEITO &&
+    (semSinalTotal || bateriaProblema || intervencaoSemSucesso || execucaoZero);
+  const contestavel =
+    divergencia != null &&
+    divergencia > THRESHOLDS.DIVERGENCIA_PP &&
+    (percentualInterno ?? 0) > (percentualSelimp ?? 0);
 
   const code = freqCodeFromPlano(plano);
   const frequenciaLabel = item.frequencia
@@ -294,15 +445,23 @@ export function analyzeSector(item: PreviewItem, obs?: ObservacoesMap): SectorAn
     cobertura,
     impactoIpt,
     temBateria,
+    temDdmx,
     bateriaMedia,
     bateriaCriticos,
     bateriaProblema,
+    comSinal,
+    nuncaTeveSinal,
+    qtdTrocas,
+    intervencaoSemSucesso,
+    manutencaoRealizadaSemSinal: ctx.manutencaoRealizadaSemSinal,
     percentualSelimp,
     percentualInterno,
     divergencia,
     causaRaiz,
     causaManual,
     status,
+    trocaSemEfeito,
+    contestavel,
     temObsGlobal: Boolean(obsGlobal),
     obsGlobalTitulo: obsGlobal?.titulo ?? null,
     detalhes: dias,
@@ -339,13 +498,16 @@ export interface CruzamentoResult {
   resumo: CruzamentoResumo;
   porSub: CruzamentoPorGrupo[];
   porServico: CruzamentoPorGrupo[];
+  /** Lista derivada para o card "trocas/manutenções sem efeito" (IV-b). */
+  trocasSemEfeito: SectorAnalysis[];
 }
 
 const EMPTY_POR_CAUSA = (): Record<RootCause, { setores: number; impacto: number }> => ({
+  pontos_cegos: { setores: 0, impacto: 0 },
+  hardware: { setores: 0, impacto: 0 },
+  hibernando: { setores: 0, impacto: 0 },
+  divergencia: { setores: 0, impacto: 0 },
   operacao: { setores: 0, impacto: 0 },
-  bateria: { setores: 0, impacto: 0 },
-  cadastro: { setores: 0, impacto: 0 },
-  nunca: { setores: 0, impacto: 0 },
   ok: { setores: 0, impacto: 0 },
 });
 
@@ -355,10 +517,10 @@ const EMPTY_POR_CAUSA = (): Record<RootCause, { setores: number; impacto: number
  */
 export function buildCruzamento(
   itens: PreviewItem[],
-  opts?: { obs?: ObservacoesMap; apenasComPrevisao?: boolean }
+  opts?: { obs?: ObservacoesMap; modulos?: ModuloContextMap; apenasComPrevisao?: boolean }
 ): CruzamentoResult {
   const apenasComPrevisao = opts?.apenasComPrevisao ?? true;
-  let setores = itens.map((it) => analyzeSector(it, opts?.obs));
+  let setores = itens.map((it) => analyzeSector(it, { obs: opts?.obs, modulos: opts?.modulos }));
   if (apenasComPrevisao) setores = setores.filter((s) => s.previstos > 0);
 
   // Ranking principal: por impacto no IPT (desc), desempate por previstos.
@@ -424,5 +586,6 @@ export function buildCruzamento(
     resumo,
     porSub: Array.from(subMap.values()).map(finalizeGroup).sort((a, b) => b.impacto - a.impacto),
     porServico: Array.from(servMap.values()).map(finalizeGroup).sort((a, b) => b.impacto - a.impacto),
+    trocasSemEfeito: setores.filter((s) => s.trocaSemEfeito),
   };
 }

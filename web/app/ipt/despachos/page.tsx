@@ -69,6 +69,28 @@ import { apiService, type DespachoLinha, type DespachosResponse, type StatusDiaD
 import { SUBPREFEITURAS, subprefBadgeClass } from "@/lib/mock/ipt-shared";
 import { cn } from "@/lib/utils";
 
+// --- Design Constants ---
+const GLASS_CARD =
+  "border border-border bg-card shadow-lg shadow-zinc-900/[0.06] dark:border-white/10 dark:bg-muted/60 dark:shadow-black/40";
+
+const GLASS_BAR =
+  "border border-border bg-card shadow-md shadow-zinc-900/[0.05] dark:border-white/10 dark:bg-muted/50";
+
+const BTN_EMERALD =
+  "bg-linear-to-r from-emerald-600 to-teal-600 text-white hover:from-emerald-500 hover:to-teal-500 shadow-md shadow-emerald-950/10 border-0 font-semibold transition-all hover:scale-[1.01] active:scale-[0.99]";
+
+const BTN_SKY =
+  "bg-linear-to-r from-sky-600 to-blue-600 text-white hover:from-sky-500 hover:to-blue-500 shadow-md shadow-blue-950/10 border-0 font-semibold transition-all hover:scale-[1.01] active:scale-[0.99]";
+
+const BTN_AMBER =
+  "bg-linear-to-r from-amber-500 to-orange-600 text-white hover:from-amber-400 hover:to-orange-500 shadow-md shadow-orange-950/10 border-0 font-semibold transition-all hover:scale-[1.01] active:scale-[0.99]";
+
+const BTN_RED =
+  "bg-linear-to-r from-red-600 to-rose-600 text-white hover:from-red-500 hover:to-rose-500 shadow-md shadow-rose-950/10 border-0 font-semibold transition-all hover:scale-[1.01] active:scale-[0.99]";
+
+const BTN_SECONDARY =
+  "bg-linear-to-r from-zinc-200 to-slate-300 dark:from-zinc-800 dark:to-slate-700 text-zinc-800 dark:text-zinc-200 hover:from-zinc-300 hover:to-slate-400 dark:hover:from-zinc-700/80 dark:hover:to-slate-600/80 shadow-sm border-0 font-semibold transition-all hover:scale-[1.01] active:scale-[0.99]";
+
 const STATUS_META: Record<StatusDiaDespacho, { label: string; className: string; dot: string }> = {
   conforme: { label: "Conforme", className: "border-emerald-500/40 bg-emerald-500/12 text-emerald-700 dark:text-emerald-300", dot: "bg-emerald-500" },
   nao_despachado: { label: "Não despachado", className: "border-rose-500/40 bg-rose-500/12 text-rose-700 dark:text-rose-300", dot: "bg-rose-500" },
@@ -240,7 +262,8 @@ function KpiCard({
           : undefined
       }
       className={cn(
-        "relative overflow-hidden border-border/70",
+        "relative overflow-hidden",
+        GLASS_CARD,
         emphasis && "border-rose-500/40",
         clickable && "cursor-pointer transition-all hover:shadow-md hover:-translate-y-0.5",
         active && cn("ring-2 ring-offset-1 ring-offset-background", activeRing ?? "ring-amber-500/60"),
@@ -567,9 +590,8 @@ export default function DespachosPage() {
             <div className="flex items-center gap-2">
               <DatePicker value={dia} onChange={(v) => setDia(v || hoje)} compact />
               <Button
-                variant="outline"
                 size="sm"
-                className="h-8 gap-1.5"
+                className={cn("h-8 gap-1.5", BTN_SECONDARY)}
                 onClick={() => setNonce((n) => n + 1)}
                 disabled={loading}
                 title="Atualizar"
@@ -667,17 +689,16 @@ export default function DespachosPage() {
           </div>
 
           {/* Tabela operacional */}
-          <Card className="border-border/70">
+          <Card className={GLASS_CARD}>
             <CardHeader className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <CardTitle className="text-base">Operação do dia</CardTitle>
                 <div className="flex flex-1 items-center justify-end gap-2">
                   <Button
                     size="sm"
-                    variant="outline"
                     className={cn(
                       "h-9 shrink-0 gap-1.5",
-                      selMode && "border-rose-500/50 text-rose-600 hover:bg-rose-500/10 dark:text-rose-400",
+                      selMode ? BTN_RED : BTN_SECONDARY,
                     )}
                     onClick={toggleSelMode}
                   >
@@ -687,7 +708,7 @@ export default function DespachosPage() {
                   {selMode ? (
                     <Button
                       size="sm"
-                      className="h-9 shrink-0 gap-1.5 bg-amber-600 font-semibold text-white shadow-sm shadow-amber-900/20 hover:bg-amber-700 disabled:opacity-50"
+                      className={cn("h-9 shrink-0 gap-1.5", BTN_AMBER)}
                       disabled={selected.size === 0}
                       onClick={() => setManualOpen(true)}
                     >
@@ -697,7 +718,7 @@ export default function DespachosPage() {
                   ) : (
                     <Button
                       size="sm"
-                      className="h-9 shrink-0 gap-1.5 bg-amber-600 font-semibold text-white shadow-sm shadow-amber-900/20 hover:bg-amber-700"
+                      className={cn("h-9 shrink-0 gap-1.5", BTN_AMBER)}
                       onClick={() => {
                         setColarPreview(null);
                         setColarTexto("");
@@ -727,10 +748,10 @@ export default function DespachosPage() {
                       type="button"
                       onClick={() => setChip(c.key)}
                       className={cn(
-                        "rounded-full border px-3 py-1 text-xs font-semibold transition-colors",
+                        "rounded-full px-3.5 py-1 text-xs font-semibold transition-all hover:scale-[1.02] active:scale-[0.98]",
                         chip === c.key
-                          ? "border-amber-500/50 bg-amber-500/15 text-amber-700 dark:text-amber-300"
-                          : "border-border/70 text-muted-foreground hover:bg-accent"
+                          ? "border-0 bg-linear-to-r from-amber-500 to-orange-600 text-white shadow-md shadow-orange-950/10"
+                          : "border border-border/80 bg-card text-muted-foreground hover:bg-zinc-100 hover:text-foreground dark:hover:bg-zinc-800/80"
                       )}
                     >
                       {c.label}
@@ -917,7 +938,7 @@ export default function DespachosPage() {
                                   }}
                                   title="Despachar este setor"
                                   aria-label="Despachar este setor"
-                                  className="inline-flex items-center justify-center rounded-lg border border-emerald-500/50 bg-emerald-500/10 p-1.5 text-emerald-600 transition-all hover:bg-emerald-500/20 dark:text-emerald-400"
+                                  className={cn("inline-flex items-center justify-center rounded-lg p-1.5", BTN_EMERALD)}
                                 >
                                   <Send className="h-4 w-4" />
                                 </button>
@@ -935,10 +956,8 @@ export default function DespachosPage() {
                                     }}
                                     title={salva ? `Observação: ${salva.titulo}` : "Registrar observação diária"}
                                     className={cn(
-                                      "inline-flex items-center justify-center rounded-lg border p-1.5 transition-all",
-                                      salva
-                                        ? "border-amber-500/60 bg-amber-500/20 text-amber-600 hover:bg-amber-500/30 dark:text-amber-400"
-                                        : "border-zinc-300/70 bg-muted/40 text-muted-foreground hover:bg-muted dark:border-zinc-700",
+                                      "inline-flex items-center justify-center rounded-lg p-1.5 transition-all",
+                                      salva ? BTN_AMBER : BTN_SECONDARY,
                                       animar && "animate-pulse ring-2 ring-amber-500/50",
                                     )}
                                   >
@@ -1121,11 +1140,11 @@ export default function DespachosPage() {
             )}
           </div>
           <DialogFooter className="gap-2">
-            <Button variant="ghost" onClick={() => setColarOpen(false)} disabled={colarBusy}>
+            <Button className={BTN_SECONDARY} onClick={() => setColarOpen(false)} disabled={colarBusy}>
               Cancelar
             </Button>
             {!colarPreview ? (
-              <Button onClick={previewColagem} disabled={colarBusy || !colarTexto.trim()} className="gap-2">
+              <Button onClick={previewColagem} disabled={colarBusy || !colarTexto.trim()} className={cn("gap-2", BTN_AMBER)}>
                 {colarBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
                 Pré-visualizar
               </Button>
@@ -1133,7 +1152,7 @@ export default function DespachosPage() {
               <Button
                 onClick={confirmarColagem}
                 disabled={colarBusy || colarPreview.despachaveis === 0}
-                className="gap-2 bg-amber-600 text-white hover:bg-amber-700"
+                className={cn("gap-2", BTN_EMERALD)}
               >
                 {colarBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
                 Gravar {colarPreview.despachaveis} despachos
@@ -1177,13 +1196,13 @@ export default function DespachosPage() {
             ))}
           </div>
           <DialogFooter className="gap-2">
-            <Button variant="ghost" onClick={() => setManualOpen(false)} disabled={manualBusy}>
+            <Button className={BTN_SECONDARY} onClick={() => setManualOpen(false)} disabled={manualBusy}>
               Cancelar
             </Button>
             <Button
               onClick={confirmarManual}
               disabled={manualBusy || selectedLinhas.length === 0}
-              className="gap-2 bg-amber-600 text-white hover:bg-amber-700"
+              className={cn("gap-2", BTN_AMBER)}
             >
               {manualBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
               Despachar {selectedLinhas.length}
@@ -1219,13 +1238,13 @@ export default function DespachosPage() {
             </div>
           )}
           <DialogFooter className="gap-2">
-            <Button variant="ghost" onClick={() => setSingleAlvo(null)} disabled={singleBusy}>
+            <Button className={BTN_SECONDARY} onClick={() => setSingleAlvo(null)} disabled={singleBusy}>
               Cancelar
             </Button>
             <Button
               onClick={confirmarDespachoUnico}
               disabled={singleBusy}
-              className="gap-2 bg-amber-600 text-white hover:bg-amber-700"
+              className={cn("gap-2", BTN_AMBER)}
             >
               {singleBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
               Despachar
@@ -1303,22 +1322,22 @@ export default function DespachosPage() {
 
                   {/* Ações */}
                   <div className="flex items-center justify-between gap-3 pt-1">
-                    <button
+                    <Button
                       onClick={() => setObs(null)}
                       disabled={obsBusy}
-                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-zinc-300 dark:border-zinc-700 shadow-xl shadow-zinc-300/10 dark:shadow-zinc-700/10 bg-background/80 text-sm font-medium hover:bg-muted/60 transition-colors disabled:opacity-50"
+                      className={cn("h-9 gap-1.5", BTN_SECONDARY)}
                     >
                       <X className="h-3.5 w-3.5" />
                       Fechar
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       onClick={desfazerObs}
                       disabled={obsBusy}
-                      className="inline-flex items-center gap-2 px-5 py-2 rounded-xl border border-rose-500/50 bg-rose-500/10 text-rose-700 dark:text-rose-300 text-sm font-semibold disabled:opacity-50 hover:bg-rose-500/20 transition-all"
+                      className={cn("h-9 gap-2", BTN_RED)}
                     >
                       {obsBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                       Desfazer observação
-                    </button>
+                    </Button>
                   </div>
                 </div>
               ) : (
@@ -1366,22 +1385,22 @@ export default function DespachosPage() {
 
                   {/* Ações */}
                   <div className="flex items-center justify-between gap-3 pt-1">
-                    <button
+                    <Button
                       onClick={() => setObs(null)}
                       disabled={obsBusy}
-                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-zinc-300 dark:border-zinc-700 shadow-xl shadow-zinc-300/10 dark:shadow-zinc-700/10 bg-background/80 text-sm font-medium hover:bg-muted/60 transition-colors disabled:opacity-50"
+                      className={cn("h-9 gap-1.5", BTN_SECONDARY)}
                     >
                       <X className="h-3.5 w-3.5" />
                       Cancelar
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       onClick={salvarObs}
                       disabled={!obsTitulo.trim() || obsBusy}
-                      className="inline-flex items-center gap-2 px-5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-white text-sm font-semibold disabled:opacity-50 hover:opacity-90 transition-all shadow-lg shadow-amber-500/30"
+                      className={cn("h-9 gap-2", BTN_EMERALD)}
                     >
                       {obsBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
                       Salvar observação
-                    </button>
+                    </Button>
                   </div>
                 </div>
               )}

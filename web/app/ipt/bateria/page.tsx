@@ -135,6 +135,31 @@ import {
   type ModuloManutencaoEvento,
 } from "./modulo-manutencao-state";
 
+// --- Design Constants ---
+const GLASS_CARD =
+  "border border-border bg-card shadow-lg shadow-zinc-900/[0.06] dark:border-white/10 dark:bg-muted/60 dark:shadow-black/40";
+
+const GLASS_BAR =
+  "border border-border bg-card shadow-md shadow-zinc-900/[0.05] dark:border-white/10 dark:bg-muted/50";
+
+const BTN_EMERALD =
+  "bg-linear-to-r from-emerald-600 to-teal-600 text-white hover:from-emerald-500 hover:to-teal-500 shadow-md shadow-emerald-950/10 border-0 font-semibold transition-all hover:scale-[1.01] active:scale-[0.99]";
+
+const BTN_SKY =
+  "bg-linear-to-r from-sky-600 to-blue-600 text-white hover:from-sky-500 hover:to-blue-500 shadow-md shadow-blue-950/10 border-0 font-semibold transition-all hover:scale-[1.01] active:scale-[0.99]";
+
+const BTN_AMBER =
+  "bg-linear-to-r from-amber-500 to-orange-600 text-white hover:from-amber-400 hover:to-orange-500 shadow-md shadow-orange-950/10 border-0 font-semibold transition-all hover:scale-[1.01] active:scale-[0.99]";
+
+const BTN_RED =
+  "bg-linear-to-r from-red-600 to-rose-600 text-white hover:from-red-500 hover:to-rose-500 shadow-md shadow-rose-950/10 border-0 font-semibold transition-all hover:scale-[1.01] active:scale-[0.99]";
+
+const BTN_SECONDARY =
+  "bg-linear-to-r from-zinc-200 to-slate-300 dark:from-zinc-800 dark:to-slate-700 text-zinc-800 dark:text-zinc-200 hover:from-zinc-300 hover:to-slate-400 dark:hover:from-zinc-700/80 dark:hover:to-slate-600/80 shadow-sm border-0 font-semibold transition-all hover:scale-[1.01] active:scale-[0.99]";
+
+const EXPANDED_ROW =
+  "bg-linear-to-r from-emerald-600 via-emerald-600 to-teal-700 text-zinc-100 shadow-[0_8px_24px_-12px_rgba(16,185,129,0.85)] [&_*]:!text-zinc-100";
+
 // --- Types ---
 
 interface ModuleData {
@@ -837,10 +862,10 @@ function statusBateriaFromPct(percent?: number | null): string | null {
 }
 
 function trocaStatusLabel(item: Pick<TrocaRecord, "status" | "sucesso">): string {
-  if (item.status === "agendada") return "Agendada";
+  if (item.status === "agendada") return "📅 Agendada";
   // sucesso é automático e tem 3 estados: indefinido = ainda sem leitura pós-troca.
-  if (item.sucesso == null) return "Aguardando avaliação";
-  return item.sucesso ? "Concluída com sucesso" : "Concluída sem sucesso";
+  if (item.sucesso == null) return "⏳ Aguardando avaliação";
+  return item.sucesso ? "✅ Concluída com sucesso" : "❌ Concluída sem sucesso";
 }
 
 function trocaStatusBadgeClass(item: Pick<TrocaRecord, "status" | "sucesso">): string {
@@ -956,9 +981,44 @@ const STATUS_BAT_BADGE: Record<string, string> = {
   REGULAR: "bg-orange-500/15 text-orange-600 border-orange-500/30 dark:text-orange-400",
   BAIXA: "bg-blue-500/15 text-blue-600 border-blue-500/30 dark:text-blue-400",
   CRÍTICA: "bg-red-500/15 text-red-600 border-red-500/30 dark:text-red-400",
+  DESATUALIZADA: "bg-purple-500/15 text-purple-600 border-purple-500/30 dark:text-purple-400",
 };
 function statusBatBadge(status: string): string {
   return STATUS_BAT_BADGE[status] ?? "bg-zinc-500/15 text-zinc-600 border-zinc-500/30 dark:text-zinc-300";
+}
+
+function getStatusColorClass(status: string | null | undefined): string {
+  if (!status) return "text-foreground font-bold";
+  const s = status.toUpperCase();
+  if (s.includes("ALTA")) return "text-emerald-600 dark:text-emerald-400 font-bold";
+  if (s.includes("REGULAR")) return "text-orange-600 dark:text-orange-400 font-bold";
+  if (s.includes("BAIXA")) return "text-blue-600 dark:text-blue-400 font-bold";
+  if (s.includes("CRÍTICA") || s.includes("CRITICA")) return "text-red-600 dark:text-red-400 font-bold";
+  if (s.includes("DESATUALIZADA")) return "text-orange-500 dark:text-orange-400 font-bold";
+  return "text-foreground font-bold";
+}
+
+function renderBatteryStatus(status: string | null | undefined, showEmoji = true) {
+  if (!status) return <span className="text-muted-foreground">—</span>;
+  const cls = statusBatBadge(status);
+  if (!showEmoji) {
+    return (
+      <Badge className={cn("font-semibold", cls)}>
+        {status}
+      </Badge>
+    );
+  }
+  let emoji = "🔋";
+  if (status === "REGULAR") emoji = "⚡";
+  else if (status === "BAIXA") emoji = "⚠️";
+  else if (status === "CRÍTICA") emoji = "🚨";
+  else if (status === "DESATUALIZADA") emoji = "📴";
+  return (
+    <Badge className={cn("gap-1.5 font-semibold", cls)}>
+      <span>{emoji}</span>
+      <span>{status}</span>
+    </Badge>
+  );
 }
 
 /** Prévia do resultado da troca a partir do status atual (desatualizada → tende a sem sucesso).
@@ -967,13 +1027,14 @@ function sucessoPreviewChip(m: ModuleData) {
   const semSucesso = m.statusBateria === "DESATUALIZADA";
   return (
     <Badge
-      className={
+      className={cn(
+        "gap-1 font-semibold",
         semSucesso
           ? "bg-red-500/15 text-red-600 border-red-500/30 dark:text-red-400"
           : "bg-emerald-500/15 text-emerald-600 border-emerald-500/30 dark:text-emerald-400"
-      }
+      )}
     >
-      {semSucesso ? "Prévia: sem sucesso" : "Prévia: com sucesso"}
+      {semSucesso ? "❌ Prévia: sem sucesso" : "✅ Prévia: com sucesso"}
     </Badge>
   );
 }
@@ -2454,7 +2515,7 @@ export default function BateriaDashboardPage() {
               {chartsReady && (
                 <div className="grid grid-cols-1 items-stretch gap-4 md:grid-cols-2 lg:grid-cols-4">
                   {/* Status de Sinal (Donut) — primeiro */}
-                  <Card className="col-span-2 flex h-full min-h-[28rem] flex-col overflow-visible border-border/50 bg-card/80 backdrop-blur-sm shadow-sm lg:min-h-[28rem]">
+                  <Card className={cn("col-span-2 flex h-full min-h-[28rem] flex-col overflow-visible lg:min-h-[28rem]", GLASS_CARD)}>
                     <CardHeader className="shrink-0 space-y-1 pb-2 pt-6">
                       <CardTitle className="text-foreground">Status de Sinal</CardTitle>
                       <CardDescription className="pb-10">Distribuição de comunicação</CardDescription>
@@ -2491,7 +2552,7 @@ export default function BateriaDashboardPage() {
                   </Card>
 
                   {/* Status por Subprefeitura — segundo */}
-                  <Card className="col-span-2 flex h-full min-h-[32rem] flex-col border-border/50 bg-card/80 backdrop-blur-sm shadow-sm lg:min-h-[34rem]">
+                  <Card className={cn("col-span-2 flex h-full min-h-[32rem] flex-col lg:min-h-[34rem]", GLASS_CARD)}>
                     <CardHeader className="shrink-0 space-y-1 pb-2 pt-6">
                       <CardTitle className="text-foreground">Status por Subprefeitura</CardTitle>
                       <CardDescription>Online e offline por comunicação; manutenção por status de sinal</CardDescription>
@@ -2528,7 +2589,7 @@ export default function BateriaDashboardPage() {
                   </Card>
 
                   {/* Distribuição de Produtividade */}
-                  <Card className="col-span-2 flex h-full min-h-[32rem] flex-col border-border/50 bg-card/80 backdrop-blur-sm shadow-sm lg:min-h-[34rem]">
+                  <Card className={cn("col-span-2 flex h-full min-h-[32rem] flex-col lg:min-h-[34rem]", GLASS_CARD)}>
                     <CardHeader className="shrink-0 space-y-1 pb-2 pt-6">
                       <CardTitle className="text-foreground">Distribuição de Produtividade das Baterias</CardTitle>
                       <CardDescription>Faixas de produtividade dos módulos</CardDescription>
@@ -2566,7 +2627,7 @@ export default function BateriaDashboardPage() {
                   </Card>
 
                   {/* Status de Bateria (Donut) */}
-                  <Card className="col-span-2 flex h-full min-h-[32rem] flex-col overflow-visible border-border/50 bg-card/80 backdrop-blur-sm shadow-sm lg:min-h-[34rem]">
+                  <Card className={cn("col-span-2 flex h-full min-h-[32rem] flex-col overflow-visible lg:min-h-[34rem]", GLASS_CARD)}>
                     <CardHeader className="shrink-0 space-y-1 pb-2 pt-6">
                       <CardTitle className="text-foreground">Status de Bateria</CardTitle>
                       <CardDescription>Distribuição do status atual</CardDescription>
@@ -2673,20 +2734,20 @@ export default function BateriaDashboardPage() {
                   </CardContent>
                 </Card>
 
-                <Card className="relative overflow-hidden border border-red-900/55 bg-linear-to-br from-red-700/92 via-red-800 to-rose-950 text-white shadow-xl shadow-red-950/45">
+                <Card className="relative overflow-hidden border-0 bg-linear-to-br from-rose-600 to-red-900 text-white shadow-xl shadow-red-900/25">
                   <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                    <CardTitle className="text-sm font-semibold text-white">Trocas sem Sucesso</CardTitle>
+                    <CardTitle className="text-sm font-semibold text-white/95">Trocas sem Sucesso</CardTitle>
                     <InfoTooltip text={"Que mesmo após a troca o sinal e bateria\npermaneceram desatualizados"}>
-                      <XCircle className="size-5 shrink-0 cursor-help text-white/90" />
+                      <XCircle className="size-5 shrink-0 cursor-help text-white/85" />
                     </InfoTooltip>
                   </CardHeader>
                   <CardContent>
                     <div className="font-mono text-4xl font-bold tabular-nums text-white">{trocasStats.semSucesso}</div>
-                    <p className="mt-2 text-sm font-medium text-red-50/95">Permaneceram desatualizados</p>
+                    <p className="mt-2 text-sm font-medium text-white/90">Permaneceram desatualizados</p>
                   </CardContent>
                 </Card>
 
-                <Card className="border-border/50 bg-card/80 shadow-sm backdrop-blur-sm">
+                <Card className={cn("border-border/50 shadow-sm backdrop-blur-sm", GLASS_CARD)}>
                   <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                     <CardTitle className="text-sm font-medium text-muted-foreground">Acertividade</CardTitle>
                     <InfoTooltip text={"Proporção de trocas com sucesso sobre o\ntotal de trocas com resultado conhecido"}>
@@ -2701,7 +2762,7 @@ export default function BateriaDashboardPage() {
                   </CardContent>
                 </Card>
 
-                <Card className="border-border/50 bg-card/80 shadow-sm backdrop-blur-sm">
+                <Card className={cn("border-border/50 shadow-sm backdrop-blur-sm", GLASS_CARD)}>
                   <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                     <CardTitle className="text-sm font-medium text-muted-foreground">Média Bateria</CardTitle>
                     <InfoTooltip text={"Nível médio de carga das baterias\nem operação no período"}>
@@ -2720,7 +2781,7 @@ export default function BateriaDashboardPage() {
               {/* Dois cards lado a lado: Ranking (esq) | Diagnóstico (dir) */}
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 {/* Ranking de Trocas */}
-                <Card className="border-border/50 bg-card/80 shadow-sm backdrop-blur-sm">
+                <Card className={cn("border-border/50 shadow-sm backdrop-blur-sm", GLASS_CARD)}>
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2 text-foreground">
                       <Trophy className="h-5 w-5 text-amber-500" /> Ranking de Trocas
@@ -2761,7 +2822,7 @@ export default function BateriaDashboardPage() {
                 </Card>
 
                 {/* Diagnóstico de Baterias em operação */}
-                <Card className="border-border/50 bg-card/80 shadow-sm backdrop-blur-sm">
+                <Card className={cn("border-border/50 shadow-sm backdrop-blur-sm", GLASS_CARD)}>
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2 text-foreground">
                       <Battery className="h-5 w-5 text-emerald-500" /> Diagnóstico de Baterias em operação
@@ -2809,7 +2870,7 @@ export default function BateriaDashboardPage() {
               </div>
 
               {/* Listagem Geral de setores */}
-              <Card className="border-border/50 bg-card/80 shadow-sm backdrop-blur-sm">
+              <Card className={cn("border-border/50 shadow-sm backdrop-blur-sm", GLASS_CARD)}>
                 <CardHeader className="space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
@@ -2824,8 +2885,7 @@ export default function BateriaDashboardPage() {
                           {selectedAgendadas.length > 0 && (
                             <Button
                               size="sm"
-                              variant="outline"
-                              className="h-9 gap-1.5 border-red-500/50 text-red-600 hover:bg-red-500/10 dark:text-red-400"
+                              className={cn("h-9 gap-1.5", BTN_RED)}
                               onClick={() => setBulkCancelarTrocaOpen(true)}
                             >
                               <XCircle className="h-4 w-4" /> Cancelar Troca ({selectedAgendadas.length})
@@ -2836,8 +2896,7 @@ export default function BateriaDashboardPage() {
                             <>
                               <Button
                                 size="sm"
-                                variant="outline"
-                                className="h-9 gap-1.5 border-sky-500/50 text-sky-600 hover:bg-sky-500/10 dark:text-sky-400"
+                                className={cn("h-9 gap-1.5", BTN_SKY)}
                                 disabled={selectedOpenManutModules.length > 0}
                                 onClick={openBulkConcluir}
                               >
@@ -2845,8 +2904,7 @@ export default function BateriaDashboardPage() {
                               </Button>
                               <Button
                                 size="sm"
-                                variant="outline"
-                                className="h-9 gap-1.5 border-amber-500/50 text-amber-600 hover:bg-amber-500/10 dark:text-amber-400"
+                                className={cn("h-9 gap-1.5", BTN_AMBER)}
                                 disabled={selectedOpenManutModules.length > 0}
                                 onClick={() => { setBulkAgendarMode("reagendar"); setBulkAgendarDate(isoToday()); setBulkAgendarOpen(true); }}
                               >
@@ -2856,7 +2914,7 @@ export default function BateriaDashboardPage() {
                           ) : (
                             <Button
                               size="sm"
-                              className="h-9 gap-1.5 bg-emerald-600 font-semibold text-white hover:bg-emerald-700"
+                              className={cn("h-9 gap-1.5", BTN_EMERALD)}
                               disabled={selectedOpenManutModules.length > 0}
                               onClick={() => { setBulkAgendarMode("agendar"); setBulkAgendarDate(isoToday()); setBulkAgendarOpen(true); }}
                             >
@@ -2867,8 +2925,7 @@ export default function BateriaDashboardPage() {
                           {selectedOnlyOpenManut ? (
                             <Button
                               size="sm"
-                              variant="outline"
-                              className="h-9 gap-1.5 border-red-500/50 text-red-600 hover:bg-red-500/10 dark:text-red-400"
+                              className={cn("h-9 gap-1.5", BTN_RED)}
                               onClick={confirmBulkRemoveManut}
                             >
                               <Trash2 className="h-4 w-4" /> Remover Manutenção ({selected.size})
@@ -2876,8 +2933,7 @@ export default function BateriaDashboardPage() {
                           ) : (
                             <Button
                               size="sm"
-                              variant="outline"
-                              className="h-9 gap-1.5 border-zinc-500/50 text-zinc-600 hover:bg-zinc-500/10 dark:text-zinc-300"
+                              className={cn("h-9 gap-1.5", BTN_SECONDARY)}
                               onClick={() => { setBulkManutMotivo(""); setBulkManutOpen(true); }}
                             >
                               <Wrench className="h-4 w-4" /> Análise ({selected.size})
@@ -2888,8 +2944,7 @@ export default function BateriaDashboardPage() {
                       {!selMode && (
                         <Button
                           size="sm"
-                          variant="outline"
-                          className="h-9 gap-1.5"
+                          className={cn("h-9 gap-1.5", BTN_SECONDARY)}
                           disabled={trocasModules.length === 0}
                           onClick={() =>
                             exportTrocasBateriaXlsx(trocasModules, {
@@ -2905,10 +2960,9 @@ export default function BateriaDashboardPage() {
                       )}
                       <Button
                         size="sm"
-                        variant="outline"
                         className={cn(
                           "h-9 gap-1.5",
-                          selMode && "border-emerald-500/50 text-emerald-600 hover:bg-emerald-500/10 dark:text-emerald-400",
+                          selMode ? BTN_RED : BTN_SECONDARY,
                         )}
                         onClick={toggleSelMode}
                       >
@@ -3038,7 +3092,7 @@ export default function BateriaDashboardPage() {
                               className={cn(
                                 "border-border/30 hover:bg-muted/20",
                                 selMode && sel && "bg-emerald-500/10",
-                                !selMode && isExpanded && "bg-emerald-500/10 ring-1 ring-inset ring-emerald-500/30",
+                                !selMode && isExpanded && EXPANDED_ROW,
                               )}
                               onClick={selMode ? (e) => handleRowSelect(m.numeroSelimp, idx, e) : () => setExpandedTrocaSelimp((v) => (v === m.numeroSelimp ? null : m.numeroSelimp))}
                               onKeyDown={(e) => {
@@ -3111,7 +3165,7 @@ export default function BateriaDashboardPage() {
                                       <WifiOff className="h-3.5 w-3.5 shrink-0 text-red-500" />
                                     )}
                                   </InfoTooltip>
-                                  <Badge className={statusBatBadge(m.statusBateria)}>{m.statusBateria}</Badge>
+                                  {renderBatteryStatus(m.statusBateria, false)}
                                 </div>
                               </TableCell>
                               <TableCell className="text-center font-medium tabular-nums align-middle">{history.length}</TableCell>
@@ -3124,7 +3178,7 @@ export default function BateriaDashboardPage() {
                                   <Button
                                     size="sm"
                                     disabled={selMode}
-                                    className="h-7 gap-1 bg-amber-500 text-white hover:bg-amber-600"
+                                    className={cn("h-7 gap-1", BTN_AMBER)}
                                     onClick={() => openAgendado(m)}
                                   >
                                     <Clock className="h-3.5 w-3.5" /> Agendado · {fmtIsoBr(rec.dataAgendada)}
@@ -3133,9 +3187,8 @@ export default function BateriaDashboardPage() {
                                   // Default (sem troca em aberto, incluindo concluídas/sem sucesso): permite agendar.
                                   <Button
                                     size="sm"
-                                    variant="outline"
                                     disabled={selMode}
-                                    className="h-7 gap-1 border-emerald-500/40 text-emerald-600 hover:bg-emerald-500/10 dark:text-emerald-400"
+                                    className={cn("h-7 gap-1", BTN_EMERALD)}
                                     onClick={() => { setAgendarModule(m); setAgendarDate(isoToday()); }}
                                   >
                                     <CalendarPlus className="h-3.5 w-3.5" /> Agendar
@@ -3162,12 +3215,12 @@ export default function BateriaDashboardPage() {
                                         : "Sem alerta"
                                   }
                                   className={cn(
-                                    "inline-flex h-7 w-7 items-center justify-center rounded-md border transition-colors",
+                                    "inline-flex h-7 w-7 items-center justify-center rounded-md border-0 transition-all hover:scale-[1.03] active:scale-[0.97]",
                                     alerta.level === "problema"
-                                      ? "border-red-500/50 bg-red-500/15 text-red-600 hover:bg-red-500/25 dark:text-red-400"
+                                      ? BTN_RED
                                       : alerta.level === "observacao"
-                                        ? "border-amber-500/50 bg-amber-500/15 text-amber-600 hover:bg-amber-500/25 dark:text-amber-400"
-                                        : "cursor-default border-border/50 bg-muted/40 text-muted-foreground/40",
+                                        ? BTN_AMBER
+                                        : "cursor-default opacity-40 bg-zinc-200 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-500 shadow-none hover:scale-100 active:scale-100",
                                   )}
                                 >
                                   {alerta.level === "problema" ? (
@@ -3191,7 +3244,7 @@ export default function BateriaDashboardPage() {
                                       </div>
                                       <div className="rounded-lg border border-border/60 bg-background/70 p-3">
                                         <span className="block text-xs text-muted-foreground">Status da bateria</span>
-                                        <span className="mt-1 block"><Badge className={statusBatBadge(m.statusBateria)}>{m.statusBateria || "—"}</Badge></span>
+                                        <span className="mt-1 block">{renderBatteryStatus(m.statusBateria)}</span>
                                       </div>
                                       <div className="rounded-lg border border-border/60 bg-background/70 p-3">
                                         <span className="block text-xs text-muted-foreground">Bateria atual</span>
@@ -3321,28 +3374,28 @@ export default function BateriaDashboardPage() {
                                               </div>
                                               <div className="mt-3 grid grid-cols-2 gap-2 text-xs lg:grid-cols-6">
                                                 <div className="rounded-md bg-background/70 p-2">
-                                                  <span className="block text-muted-foreground">Bateria antes</span>
-                                                  <span className="font-medium text-foreground">{pctBatteryLabel(h.bateriaAntesPercentual, h.bateriaAntes)}</span>
+                                                  <span className="block text-[10px] text-muted-foreground uppercase tracking-wide">Bateria antes</span>
+                                                  <span className="font-bold text-foreground">{pctBatteryLabel(h.bateriaAntesPercentual, h.bateriaAntes)}</span>
                                                 </div>
                                                 <div className="rounded-md bg-background/70 p-2">
-                                                  <span className="block text-muted-foreground">Bateria depois</span>
-                                                  <span className="font-medium text-foreground">{bateriaDepoisLabel}</span>
+                                                  <span className="block text-[10px] text-muted-foreground uppercase tracking-wide">Bateria depois</span>
+                                                  <span className="font-bold text-foreground">{bateriaDepoisLabel}</span>
                                                 </div>
                                                 <div className="rounded-md bg-background/70 p-2">
-                                                  <span className="block text-muted-foreground">Status antes</span>
-                                                  <span className="font-medium text-foreground">{statusAntesLabel}</span>
+                                                  <span className="block text-[10px] text-muted-foreground uppercase tracking-wide">Status antes</span>
+                                                  <span className={getStatusColorClass(statusAntesLabel)}>{statusAntesLabel}</span>
                                                 </div>
                                                 <div className="rounded-md bg-background/70 p-2">
-                                                  <span className="block text-muted-foreground">Status depois</span>
-                                                  <span className="font-medium text-foreground">{statusDepoisLabel}</span>
+                                                  <span className="block text-[10px] text-muted-foreground uppercase tracking-wide">Status depois</span>
+                                                  <span className={getStatusColorClass(statusDepoisLabel)}>{statusDepoisLabel}</span>
                                                 </div>
                                                 <div className="rounded-md bg-background/70 p-2">
-                                                  <span className="block text-muted-foreground">Últ. com. antes</span>
-                                                  <span className="font-medium tabular-nums text-foreground">{ultimaAntesLabel}</span>
+                                                  <span className="block text-[10px] text-muted-foreground uppercase tracking-wide">Últ. com. antes</span>
+                                                  <span className="font-bold tabular-nums text-foreground">{ultimaAntesLabel}</span>
                                                 </div>
                                                 <div className="rounded-md bg-background/70 p-2">
-                                                  <span className="block text-muted-foreground">Últ. com. depois</span>
-                                                  <span className="font-medium tabular-nums text-foreground">{ultimaDepoisLabel}</span>
+                                                  <span className="block text-[10px] text-muted-foreground uppercase tracking-wide">Últ. com. depois</span>
+                                                  <span className="font-bold tabular-nums text-foreground">{ultimaDepoisLabel}</span>
                                                 </div>
                                               </div>
                                             </div>
@@ -3377,10 +3430,10 @@ export default function BateriaDashboardPage() {
                       Página {trocasPage} de {totalTrocasPages} ({trocasModules.length} setores) — agende pela coluna “Troca”; “Selecionar” para ações em lote.
                     </span>
                     <div className="flex gap-2">
-                      <Button variant="outline" size="sm" onClick={() => setTrocasPage((p) => Math.max(1, p - 1))} disabled={trocasPage === 1}>
+                      <Button className={cn("size-8 p-0", BTN_SECONDARY)} onClick={() => setTrocasPage((p) => Math.max(1, p - 1))} disabled={trocasPage === 1}>
                         <ChevronLeft className="h-4 w-4" />
                       </Button>
-                      <Button variant="outline" size="sm" onClick={() => setTrocasPage((p) => Math.min(totalTrocasPages, p + 1))} disabled={trocasPage === totalTrocasPages}>
+                      <Button className={cn("size-8 p-0", BTN_SECONDARY)} onClick={() => setTrocasPage((p) => Math.min(totalTrocasPages, p + 1))} disabled={trocasPage === totalTrocasPages}>
                         <ChevronRight className="h-4 w-4" />
                       </Button>
                     </div>
@@ -3458,7 +3511,7 @@ export default function BateriaDashboardPage() {
               </div>
 
               {/* Resumo compacto: manutenções por subprefeitura */}
-              <Card className="border-border/50 bg-card/80 shadow-sm backdrop-blur-sm">
+              <Card className={GLASS_CARD}>
                 <CardHeader className="pb-2">
                   <CardTitle className="flex items-center gap-2 text-sm text-foreground">
                     <Wrench className="h-4 w-4 text-zinc-500" /> Manutenções por Subprefeitura
@@ -3493,7 +3546,7 @@ export default function BateriaDashboardPage() {
               </Card>
 
               {/* Listagem de manutenções */}
-              <Card className="border-border/50 bg-card/80 shadow-sm backdrop-blur-sm">
+              <Card className={GLASS_CARD}>
                 <CardHeader className="space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
@@ -3504,7 +3557,7 @@ export default function BateriaDashboardPage() {
                     </div>
                     <Button
                       size="sm"
-                      className="h-9 gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
+                      className={cn("h-9 gap-1.5", BTN_EMERALD)}
                       onClick={() => openManutModal(null)}
                     >
                       <Plus className="h-4 w-4" /> Registrar manutenção
@@ -3739,10 +3792,10 @@ export default function BateriaDashboardPage() {
                       Página {manutPage} de {totalManutPages} ({manutEntries.length} registros) — histórico persistido no servidor.
                     </span>
                     <div className="flex gap-2">
-                      <Button variant="outline" size="sm" onClick={() => setManutPage((p) => Math.max(1, p - 1))} disabled={manutPage === 1}>
+                      <Button className={cn("size-8 p-0", BTN_SECONDARY)} onClick={() => setManutPage((p) => Math.max(1, p - 1))} disabled={manutPage === 1}>
                         <ChevronLeft className="h-4 w-4" />
                       </Button>
-                      <Button variant="outline" size="sm" onClick={() => setManutPage((p) => Math.min(totalManutPages, p + 1))} disabled={manutPage === totalManutPages}>
+                      <Button className={cn("size-8 p-0", BTN_SECONDARY)} onClick={() => setManutPage((p) => Math.min(totalManutPages, p + 1))} disabled={manutPage === totalManutPages}>
                         <ChevronRight className="h-4 w-4" />
                       </Button>
                     </div>
@@ -3756,7 +3809,7 @@ export default function BateriaDashboardPage() {
               {/* ===== KPIs + gráficos de performance (dados reais) ===== */}
               <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
                 {/* Produtividade das Baterias: média + ON/OFF + evolução temporal */}
-                <Card className="border-border/50 bg-card/80 shadow-sm backdrop-blur-sm xl:col-span-2">
+                <Card className={cn("xl:col-span-2", GLASS_CARD)}>
                   <CardHeader className="pb-2">
                     <CardTitle className="flex items-center gap-2 text-foreground">
                       <BatteryCharging className="h-5 w-5 text-emerald-500" /> Produtividade das Baterias
@@ -3807,7 +3860,7 @@ export default function BateriaDashboardPage() {
                 </Card>
 
                 {/* Produtividade dos Setores: execução SELIMP por tipo de serviço × sub (mês corrente) */}
-                <Card className="border-border/50 bg-card/80 shadow-sm backdrop-blur-sm">
+                <Card className={GLASS_CARD}>
                   <CardHeader className="pb-2">
                     <CardTitle className="flex items-center gap-2 text-foreground">
                       <Percent className="h-5 w-5 text-sky-500" /> Produtividade dos Setores
@@ -3847,7 +3900,7 @@ export default function BateriaDashboardPage() {
 
               {/* ===== Rankings: piores baterias | piores setores ===== */}
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                <Card className="border-border/50 bg-card/80 shadow-sm backdrop-blur-sm">
+                <Card className={GLASS_CARD}>
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2 text-foreground">
                       <Battery className="h-5 w-5 text-red-500" /> Piores Baterias
@@ -3885,7 +3938,7 @@ export default function BateriaDashboardPage() {
                   </CardContent>
                 </Card>
 
-                <Card className="border-border/50 bg-card/80 shadow-sm backdrop-blur-sm">
+                <Card className={GLASS_CARD}>
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2 text-foreground">
                       <TrendingUp className="h-5 w-5 text-amber-500" /> Piores Setores
@@ -3922,14 +3975,14 @@ export default function BateriaDashboardPage() {
                 </Card>
               </div>
 
-              <Card className="border-border/50 bg-card/80 backdrop-blur-sm shadow-sm">
+              <Card className={GLASS_CARD}>
                 <CardHeader>
                   <div className="flex justify-between">
                     <div>
                       <CardTitle className="text-foreground">Módulos e baterias</CardTitle>
                       <CardDescription>Lista completa de dispositivos monitorados — produtividade, alertas e baterias</CardDescription>
                     </div>
-                    <Button variant="outline" onClick={() => exportCSV(filteredModules)}>
+                    <Button className={cn(BTN_SECONDARY)} onClick={() => exportCSV(filteredModules)}>
                       <Download className="mr-2 h-4 w-4" /> Exportar CSV
                     </Button>
                   </div>
@@ -4115,7 +4168,7 @@ export default function BateriaDashboardPage() {
                                     <WifiOff className="h-3.5 w-3.5 shrink-0 text-red-500" />
                                   )}
                                 </InfoTooltip>
-                                <Badge className={statusBatBadge(m.statusBateria)}>{m.statusBateria}</Badge>
+                                {renderBatteryStatus(m.statusBateria)}
                               </div>
                             </TableCell>
                             <TableCell className="text-center font-medium align-top tabular-nums">
@@ -4148,10 +4201,10 @@ export default function BateriaDashboardPage() {
                       Página {currentPage} de {totalPages} ({filteredModules.length} módulos)
                     </span>
                     <div className="flex gap-2">
-                      <Button variant="outline" size="sm" onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} disabled={currentPage === 1}>
+                      <Button className={cn("size-8 p-0", BTN_SECONDARY)} onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} disabled={currentPage === 1}>
                         <ChevronLeft className="h-4 w-4" />
                       </Button>
-                      <Button variant="outline" size="sm" onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages}>
+                      <Button className={cn("size-8 p-0", BTN_SECONDARY)} onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages}>
                         <ChevronRight className="h-4 w-4" />
                       </Button>
                     </div>
@@ -4308,14 +4361,13 @@ export default function BateriaDashboardPage() {
               );
             })()}
             <DialogFooter className="gap-2">
-              <Button variant="ghost" onClick={() => setAlertModule(null)}>Fechar</Button>
+              <Button className={cn(BTN_SECONDARY)} onClick={() => setAlertModule(null)}>Fechar</Button>
               {alertModule && (() => {
                 const st = manutStatusForModule(alertModule);
                 if (manut.overrides[alertModule.numeroSelimp]?.solicitada) {
                   return (
                     <Button
-                      variant="outline"
-                      className="gap-1.5 border-amber-500/50 text-amber-600 hover:bg-amber-500/10 dark:text-amber-400"
+                      className={cn("gap-1.5", BTN_AMBER)}
                       onClick={() => { manut.cancelarSolicitacao(alertModule.numeroSelimp); }}
                     >
                       <Wrench className="h-4 w-4" /> Manutenção pendente — desfazer
@@ -4325,8 +4377,7 @@ export default function BateriaDashboardPage() {
                 if (isOpenManutStatus(st)) {
                   return (
                     <Button
-                      variant="outline"
-                      className="gap-1.5 border-sky-500/50 text-sky-600 hover:bg-sky-500/10 dark:text-sky-400"
+                      className={cn("gap-1.5", BTN_SKY)}
                       onClick={() => { const m = alertModule; setAlertModule(null); setHistModule(m); }}
                     >
                       <Wrench className="h-4 w-4" /> Em manutenção ({MANUT_STATUS_LABEL[st]})
@@ -4335,7 +4386,7 @@ export default function BateriaDashboardPage() {
                 }
                 return (
                   <Button
-                    className="gap-1.5 bg-zinc-700 text-white hover:bg-zinc-800 dark:bg-zinc-600 dark:hover:bg-zinc-700"
+                    className={cn("gap-1.5", BTN_SECONDARY)}
                     onClick={() => { const m = alertModule; setAlertModule(null); openManutModal(m, { status: "EM_ANALISE" }); }}
                   >
                     <Wrench className="h-4 w-4" /> Adicionar à análise
@@ -4375,8 +4426,8 @@ export default function BateriaDashboardPage() {
               </div>
             )}
             <DialogFooter className="gap-2">
-              <Button variant="ghost" onClick={() => setAgendarModule(null)}>Cancelar</Button>
-              <Button className="bg-emerald-600 text-white hover:bg-emerald-700" disabled={!agendarDate} onClick={confirmAgendar}>
+              <Button className={cn(BTN_SECONDARY)} onClick={() => setAgendarModule(null)}>Cancelar</Button>
+              <Button className={cn(BTN_EMERALD)} disabled={!agendarDate} onClick={confirmAgendar}>
                 Agendar
               </Button>
             </DialogFooter>
@@ -4417,15 +4468,13 @@ export default function BateriaDashboardPage() {
             )}
             <DialogFooter className="grid grid-cols-1 gap-2 sm:grid-cols-3 sm:space-x-0">
               <Button
-                variant="outline"
-                className="w-full min-w-0 justify-center whitespace-nowrap border-red-500/50 px-3 text-red-600 hover:bg-red-500/10 dark:text-red-400"
+                className={cn("w-full min-w-0 justify-center whitespace-nowrap", BTN_RED)}
                 onClick={confirmCancelarTroca}
               >
                 <XCircle className="mr-1.5 h-4 w-4 shrink-0" /> <span className="truncate">Cancelar troca</span>
               </Button>
               <Button
-                variant="outline"
-                className="w-full min-w-0 justify-center whitespace-nowrap border-amber-500/50 px-3 text-amber-600 hover:bg-amber-500/10 dark:text-amber-400"
+                className={cn("w-full min-w-0 justify-center whitespace-nowrap", BTN_AMBER)}
                 disabled={agendadoReagendarOpen && !agendadoDate}
                 onClick={() => {
                   if (!agendadoReagendarOpen) {
@@ -4438,7 +4487,7 @@ export default function BateriaDashboardPage() {
                 <RefreshCw className="mr-1.5 h-4 w-4 shrink-0" /> <span className="truncate">{agendadoReagendarOpen ? "Salvar reagendamento" : "Reagendar"}</span>
               </Button>
               <Button
-                className="w-full min-w-0 justify-center whitespace-nowrap bg-sky-600 px-3 text-white hover:bg-sky-700"
+                className={cn("w-full min-w-0 justify-center whitespace-nowrap", BTN_SKY)}
                 onClick={() => { const m = agendadoModule; setAgendadoReagendarOpen(false); setAgendadoModule(null); if (m) openConcluir(m); }}
               >
                 <CalendarCheck2 className="mr-1.5 h-4 w-4 shrink-0" /> <span className="truncate">Concluir troca</span>
@@ -4468,7 +4517,7 @@ export default function BateriaDashboardPage() {
                 <div className="flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5">
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-muted-foreground">Status atual</span>
-                    <Badge className={statusBatBadge(concluirModule.statusBateria)}>{concluirModule.statusBateria || "—"}</Badge>
+                    {renderBatteryStatus(concluirModule.statusBateria)}
                     <span className="text-xs font-medium tabular-nums text-foreground">{batteryLabel(concluirModule.bateria, concluirModule.bateriaPercentual)}</span>
                   </div>
                   {sucessoPreviewChip(concluirModule)}
@@ -4481,15 +4530,15 @@ export default function BateriaDashboardPage() {
                   <Switch checked={concluirDesnecessaria} onCheckedChange={setConcluirDesnecessaria} />
                 </label>
                 <p className="rounded-lg bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                  Bateria, status, última comunicação e o resultado (com/sem sucesso) são determinados
-                  automaticamente pelas planilhas de bateria. Trocas que continuarem desatualizadas após a
-                  troca são classificadas como <strong>sem sucesso</strong>.
+                  Bateria, status, última comunicação e o resultado (com/sem sucesso) are determined
+                  automatically by battery sheets. Trocas that remain out of date after the
+                  change are classified as <strong>unsuccessful</strong>.
                 </p>
               </div>
             )}
             <DialogFooter className="gap-2">
-              <Button variant="ghost" onClick={() => setConcluirModule(null)}>Cancelar</Button>
-              <Button className="bg-sky-600 text-white hover:bg-sky-700" disabled={!concluirDate} onClick={confirmConcluir}>
+              <Button className={cn(BTN_SECONDARY)} onClick={() => setConcluirModule(null)}>Cancelar</Button>
+              <Button className={cn(BTN_SKY)} disabled={!concluirDate} onClick={confirmConcluir}>
                 Registrar conclusão
               </Button>
             </DialogFooter>
@@ -4524,9 +4573,9 @@ export default function BateriaDashboardPage() {
               </div>
             </div>
             <DialogFooter className="gap-2">
-              <Button variant="ghost" onClick={() => setBulkCancelarTrocaOpen(false)}>Voltar</Button>
+              <Button className={cn(BTN_SECONDARY)} onClick={() => setBulkCancelarTrocaOpen(false)}>Voltar</Button>
               <Button
-                className="bg-red-600 text-white hover:bg-red-700"
+                className={cn(BTN_RED)}
                 disabled={selectedAgendadas.length === 0}
                 onClick={confirmBulkCancelarTroca}
               >
@@ -4569,9 +4618,9 @@ export default function BateriaDashboardPage() {
               </div>
             </div>
             <DialogFooter className="gap-2">
-              <Button variant="ghost" onClick={() => setBulkAgendarOpen(false)}>Cancelar</Button>
+              <Button className={cn(BTN_SECONDARY)} onClick={() => setBulkAgendarOpen(false)}>Cancelar</Button>
               <Button
-                className={bulkAgendarMode === "reagendar" ? "bg-amber-600 text-white hover:bg-amber-700" : "bg-emerald-600 text-white hover:bg-emerald-700"}
+                className={cn(bulkAgendarMode === "reagendar" ? BTN_AMBER : BTN_EMERALD)}
                 disabled={!bulkAgendarDate}
                 onClick={confirmBulkAgendar}
               >
@@ -4615,9 +4664,9 @@ export default function BateriaDashboardPage() {
               </div>
             </div>
             <DialogFooter className="gap-2">
-              <Button variant="ghost" onClick={() => setBulkManutOpen(false)}>Cancelar</Button>
+              <Button className={cn(BTN_SECONDARY)} onClick={() => setBulkManutOpen(false)}>Cancelar</Button>
               <Button
-                className="bg-zinc-700 text-white hover:bg-zinc-800 dark:bg-zinc-600 dark:hover:bg-zinc-700"
+                className={cn(BTN_SECONDARY)}
                 onClick={confirmBulkManut}
               >
                 <Wrench className="mr-1.5 h-4 w-4" /> Adicionar {selectedModules.length}
@@ -4658,7 +4707,7 @@ export default function BateriaDashboardPage() {
                       <p className="text-xs text-muted-foreground">{m.numeroSelimp}</p>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
-                      <Badge className={statusBatBadge(m.statusBateria)}>{m.statusBateria || "—"}</Badge>
+                      {renderBatteryStatus(m.statusBateria)}
                       {sucessoPreviewChip(m)}
                     </div>
                   </div>
@@ -4670,8 +4719,8 @@ export default function BateriaDashboardPage() {
               </p>
             </div>
             <DialogFooter className="gap-2">
-              <Button variant="ghost" onClick={() => setBulkConcluirOpen(false)}>Cancelar</Button>
-              <Button className="bg-sky-600 text-white hover:bg-sky-700" disabled={!bulkConcluirDate} onClick={confirmBulkConcluir}>
+              <Button className={cn(BTN_SECONDARY)} onClick={() => setBulkConcluirOpen(false)}>Cancelar</Button>
+              <Button className={cn(BTN_SKY)} disabled={!bulkConcluirDate} onClick={confirmBulkConcluir}>
                 Concluir {selectedModules.length}
               </Button>
             </DialogFooter>
@@ -4690,9 +4739,9 @@ export default function BateriaDashboardPage() {
               </DialogDescription>
             </DialogHeader>
             <DialogFooter className="gap-2">
-              <Button variant="ghost" onClick={() => setManutEventDelete(null)}>Cancelar</Button>
+              <Button className={cn(BTN_SECONDARY)} onClick={() => setManutEventDelete(null)}>Cancelar</Button>
               <Button
-                className="gap-1.5 bg-red-600 text-white hover:bg-red-700"
+                className={cn("gap-1.5", BTN_RED)}
                 onClick={() => {
                   if (manutEventDelete) {
                     void moduloManut.remover(manutEventDelete.id, manutEventDelete.selimp);
@@ -4719,9 +4768,9 @@ export default function BateriaDashboardPage() {
               </DialogDescription>
             </DialogHeader>
             <DialogFooter className="gap-2">
-              <Button variant="ghost" onClick={() => setTrocaEventoDelete(null)}>Cancelar</Button>
+              <Button className={cn(BTN_SECONDARY)} onClick={() => setTrocaEventoDelete(null)}>Cancelar</Button>
               <Button
-                className="gap-1.5 bg-red-600 text-white hover:bg-red-700"
+                className={cn("gap-1.5", BTN_RED)}
                 onClick={() => {
                   if (trocaEventoDelete) {
                     troca.removerEvento(trocaEventoDelete.selimp, trocaEventoDelete.id);
@@ -4832,7 +4881,7 @@ export default function BateriaDashboardPage() {
                         {e.contestacaoDias.length === 0 && (
                           <p className="py-3 text-center text-xs text-muted-foreground">Sem dias de despacho na janela.</p>
                         )}
-                        {e.contestacaoDias.map((d) => (
+                        {[...e.contestacaoDias].sort((a, b) => b.data.localeCompare(a.data)).map((d) => (
                           <div key={d.data} className="flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-muted/15 px-3 py-2">
                             <span className="flex items-center gap-2 text-xs">
                               <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
@@ -4845,8 +4894,7 @@ export default function BateriaDashboardPage() {
                             </span>
                             <Button
                               size="sm"
-                              variant={d.contestado ? "outline" : "default"}
-                              className={cn("h-7 gap-1", d.contestado ? "" : "bg-amber-500 text-white hover:bg-amber-600")}
+                              className={cn("h-7 gap-1", d.contestado ? BTN_RED : BTN_AMBER)}
                               onClick={() => contestarDia(e.selimp, d.data, !d.contestado)}
                             >
                               {d.contestado ? "Cancelar" : <><ShieldAlert className="h-3.5 w-3.5" /> Contestar</>}
@@ -4858,7 +4906,7 @@ export default function BateriaDashboardPage() {
                   </div>
 
                   <DialogFooter>
-                    <Button variant="ghost" onClick={() => setContestModule(null)}>Fechar</Button>
+                    <Button className={cn(BTN_SECONDARY)} onClick={() => setContestModule(null)}>Fechar</Button>
                   </DialogFooter>
                 </>
               );
@@ -4878,11 +4926,11 @@ export default function BateriaDashboardPage() {
               </DialogDescription>
             </DialogHeader>
             <DialogFooter className="gap-2">
-              <Button variant="ghost" disabled={contestRemovingDoc} onClick={() => setContestDocDelete(null)}>
+              <Button className={cn(BTN_SECONDARY)} disabled={contestRemovingDoc} onClick={() => setContestDocDelete(null)}>
                 Cancelar
               </Button>
               <Button
-                className="gap-1.5 bg-red-600 text-white hover:bg-red-700"
+                className={cn("gap-1.5", BTN_RED)}
                 disabled={contestRemovingDoc}
                 onClick={() => {
                   if (!contestDocDelete || !contestModule) return;
@@ -4998,7 +5046,7 @@ export default function BateriaDashboardPage() {
                     </AccordionTrigger>
                     <AccordionContent>
                       <ol className="relative ml-1 space-y-2 border-l border-border/60 pl-4 pt-1">
-                        {dias.map((d) => (
+                        {[...dias].sort((a, b) => b.data.localeCompare(a.data)).map((d) => (
                           <li key={d.data} className="relative">
                             <span
                               className={cn(
@@ -5103,13 +5151,13 @@ export default function BateriaDashboardPage() {
             <DialogFooter className="gap-2">
               {histModule && (
                 <Button
-                  className="gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
+                  className={cn("gap-1.5", BTN_EMERALD)}
                   onClick={() => { const m = histModule; setHistModule(null); openManutModal(m); }}
                 >
                   <Plus className="h-4 w-4" /> Registrar manutenção
                 </Button>
               )}
-              <Button variant="ghost" onClick={() => setHistModule(null)}>Fechar</Button>
+              <Button className={cn(BTN_SECONDARY)} onClick={() => setHistModule(null)}>Fechar</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -5283,9 +5331,9 @@ export default function BateriaDashboardPage() {
               );
             })()}
             <DialogFooter className="gap-2">
-              <Button variant="ghost" onClick={() => setManutModal({ open: false, module: null, editEventId: null })}>Cancelar</Button>
+              <Button className={cn(BTN_SECONDARY)} onClick={() => setManutModal({ open: false, module: null, editEventId: null })}>Cancelar</Button>
               <Button
-                className="gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
+                className={cn("gap-1.5", BTN_EMERALD)}
                 disabled={!manutForm.selimp.trim()}
                 onClick={submitManut}
               >
@@ -5332,7 +5380,10 @@ export default function BateriaDashboardPage() {
                     <div className="rounded-lg bg-muted p-3"><span className="block text-xs text-muted-foreground">KM do setor</span><span className="font-medium tabular-nums">{kmTotal > 0 ? `${kmTotal.toFixed(2)} km` : "—"}</span></div>
                     <div className="rounded-lg bg-muted p-3"><span className="block text-xs text-muted-foreground">Comunicação</span><Badge className={detailModule.comunicacao === "ON" ? "bg-emerald-500/15 text-emerald-600 border-emerald-500/30 dark:text-emerald-400" : "bg-red-500/15 text-red-600 border-red-500/30 dark:text-red-400"}>{detailModule.comunicacao}</Badge></div>
                     <div className="rounded-lg bg-muted p-3"><span className="block text-xs text-muted-foreground">Bateria</span><span className="font-medium">{detailModule.bateria || `${detailModule.bateriaPercentual}%`}</span></div>
-                    <div className="rounded-lg bg-muted p-3"><span className="block text-xs text-muted-foreground">Status da Bateria</span><Badge className={statusBatBadge(detailModule.statusBateria)}>{detailModule.statusBateria}</Badge></div>
+                    <div className="rounded-lg bg-muted p-3">
+                      <span className="block text-xs text-muted-foreground">Status da Bateria</span>
+                      <div className="mt-1">{renderBatteryStatus(detailModule.statusBateria)}</div>
+                    </div>
                     <div className="rounded-lg bg-muted p-3"><span className="block text-xs text-muted-foreground">Sinal</span><span className="font-medium">{detailModule.statusSinalGeral}</span></div>
                     <div className="rounded-lg bg-muted p-3"><span className="block text-xs text-muted-foreground">Última Comunicação</span><span className="font-medium text-xs">{detailModule.ultimaComunicacao || "—"}</span></div>
                     <div className="rounded-lg bg-muted p-3"><span className="block text-xs text-muted-foreground">Qtd. Trocas</span><span className="font-medium tabular-nums">{detailModule.quantidadeTrocas}</span></div>
@@ -5450,10 +5501,10 @@ export default function BateriaDashboardPage() {
               />
             </div>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setDispatchDialogOpen(false)}>Cancelar</Button>
+              <Button className={cn(BTN_SECONDARY)} onClick={() => setDispatchDialogOpen(false)}>Cancelar</Button>
               <Button
                 type="button"
-                className="bg-emerald-500 text-white hover:bg-emerald-600"
+                className={cn(BTN_EMERALD)}
                 disabled
                 title="Disponível em breve"
               >
