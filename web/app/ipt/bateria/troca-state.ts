@@ -301,6 +301,14 @@ export function computeAlerta(
   const concluidas = trocaHistory.filter((h) => h.status === "concluida");
   const trocasComSucesso = concluidas.filter((h) => h.sucesso === true).length;
   const trocasSemSucesso = concluidas.filter((h) => h.sucesso === false).length;
+  // Sequência (streak) de trocas RECENTES sem sucesso, das mais novas para as mais antigas.
+  // "Aguardando" (sucesso indefinido) é ignorado; o primeiro sucesso confirmado interrompe a sequência.
+  const concluidasRecentes = [...concluidas].sort((a, b) => (b.dataTroca ?? "").localeCompare(a.dataTroca ?? ""));
+  let streakSemSucesso = 0;
+  for (const h of concluidasRecentes) {
+    if (h.sucesso === false) streakSemSucesso += 1;
+    else if (h.sucesso === true) break;
+  }
   const diasOfflineConsecutivos = m.diasOffConsecutivos ?? 0;
   const execucao = m.produtividadeExecucao ?? null;
   const teveTroca = concluidas.length > 0;
@@ -308,9 +316,11 @@ export function computeAlerta(
   const reasons: AlertaReason[] = [];
   const add = (severity: AlertaReason["severity"], text: string) => reasons.push({ severity, text });
 
-  // Troca sem sucesso (sinal/bateria não recuperaram após a troca) → problemático.
-  if (trocasSemSucesso > 0) {
-    add("problema", `${trocasSemSucesso} troca(s) sem sucesso — sinal/bateria não recuperaram após a troca`);
+  // Alerta pela SEQUÊNCIA recente sem sucesso (não pela quantidade total): 2 → observação, 3+ → problema.
+  if (streakSemSucesso >= 3) {
+    add("problema", `${streakSemSucesso} trocas seguidas sem sucesso — sinal/bateria não recuperaram`);
+  } else if (streakSemSucesso >= 2) {
+    add("observacao", `${streakSemSucesso} trocas seguidas sem sucesso — em observação`);
   }
   // Status da bateria.
   if (m.statusBateria === "DESATUALIZADA") add("problema", "Bateria desatualizada — módulo sem comunicar");

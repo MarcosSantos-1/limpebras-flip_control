@@ -56,6 +56,7 @@ import {
   Copy,
   Upload,
   FileText,
+  HelpCircle,
   ClipboardPaste,
 } from "lucide-react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
@@ -363,7 +364,7 @@ function SortToggle({ label, dir, onClick }: { label: string; dir: "asc" | "desc
       type="button"
       onClick={onClick}
       className={cn(
-        "inline-flex items-center gap-1 transition-colors hover:text-foreground",
+        "inline-flex items-center gap-1 whitespace-pre-line text-left leading-tight transition-colors hover:text-foreground",
         dir ? "font-semibold text-emerald-600 dark:text-emerald-400" : "text-muted-foreground",
       )}
       title="Ordenar"
@@ -907,6 +908,13 @@ function trocaStatusLabel(item: Pick<TrocaRecord, "status" | "sucesso">): string
   // sucesso é automático e tem 3 estados: indefinido = ainda sem leitura pós-troca.
   if (item.sucesso == null) return "⏳ Aguardando avaliação";
   return item.sucesso ? "✅ Concluída com sucesso" : "❌ Concluída sem sucesso";
+}
+
+/** Emoji correspondente ao estado da troca (para destacar na linha do histórico). */
+function trocaStatusEmoji(item: Pick<TrocaRecord, "status" | "sucesso">): string {
+  if (item.status === "agendada") return "📅";
+  if (item.sucesso == null) return "⏳";
+  return item.sucesso ? "✅" : "❌";
 }
 
 function trocaStatusBadgeClass(item: Pick<TrocaRecord, "status" | "sucesso">): string {
@@ -3162,7 +3170,7 @@ export default function BateriaDashboardPage() {
                   <div className="overflow-hidden rounded-xl bg-muted/15 shadow-sm ring-1 ring-zinc-200/80 dark:ring-zinc-700/60">
                     <Table className="[&_tbody_tr]:border-b [&_tbody_tr]:border-border/30 [&_thead_tr]:border-b [&_thead_tr]:border-border/30">
                       <TableHeader>
-                        <TableRow className="bg-muted/25 hover:bg-muted/25">
+                        <TableRow className="bg-muted/25 hover:bg-muted/25 [&>th]:h-16">
                           <TableHead className="w-8 text-center" />
                           <TableHead className="text-center">Sub</TableHead>
                           <TableHead>Setor</TableHead>
@@ -3172,13 +3180,12 @@ export default function BateriaDashboardPage() {
                           <TableHead>
                             <SortToggle label="Bateria" dir={colSortDir("bateria")} onClick={() => cycleColSort("bateria")} />
                           </TableHead>
+                          <TableHead>Status da Bateria</TableHead>
                           <TableHead className="text-center">
                             <SortToggle label="Execução" dir={colSortDir("exec")} onClick={() => cycleColSort("exec")} />
                           </TableHead>
-                          <TableHead>Sinal</TableHead>
-                          <TableHead>Status da Bateria</TableHead>
                           <TableHead className="text-center">
-                            <SortToggle label="Qtd. Cargas" dir={colSortDir("cargas")} onClick={() => cycleColSort("cargas")} />
+                            <SortToggle label={"Qtd.\nCargas"} dir={colSortDir("cargas")} onClick={() => cycleColSort("cargas")} />
                           </TableHead>
                           <TableHead className="text-center">Troca</TableHead>
                           <TableHead className="text-center">Alertas</TableHead>
@@ -3261,20 +3268,16 @@ export default function BateriaDashboardPage() {
                               <TableCell className="align-middle text-xs text-muted-foreground tabular-nums">
                                 {m.ultimaComunicacao || "—"}
                               </TableCell>
-                              <TableCell className="align-middle">{m.bateriaPercentual}%</TableCell>
-                              <TableCell className="text-center font-medium tabular-nums align-middle">
-                                {execucaoMedia != null ? `${execucaoMedia}%` : "—"}
-                              </TableCell>
                               <TableCell className="align-middle">
-                                <Badge className={
-                                  m.statusSinalGeral === "COM SINAL"
-                                    ? "bg-emerald-500/15 text-emerald-600 border-emerald-500/30 dark:text-emerald-400"
-                                    : m.statusSinalGeral === "SEM SINAL"
-                                    ? "bg-red-500/15 text-red-600 border-red-500/30 dark:text-red-400"
-                                    : "bg-yellow-500/15 text-yellow-600 border-yellow-500/30 dark:text-yellow-400"
-                                }>
-                                  {m.statusSinalGeral}
-                                </Badge>
+                                {m.statusBateria === "DESATUALIZADA" ? (
+                                  <InfoTooltip text="Bateria desatualizada — sem leitura atual">
+                                    <span className="inline-flex cursor-help items-center gap-1 font-medium text-orange-600 dark:text-orange-400">
+                                      {m.bateriaPercentual}% <HelpCircle className="h-3.5 w-3.5 shrink-0" />
+                                    </span>
+                                  </InfoTooltip>
+                                ) : (
+                                  <span>{m.bateriaPercentual}%</span>
+                                )}
                               </TableCell>
                               <TableCell className="align-middle">
                                 <div className="flex items-center gap-1.5">
@@ -3287,6 +3290,9 @@ export default function BateriaDashboardPage() {
                                   </InfoTooltip>
                                   {renderBatteryStatus(m.statusBateria, false)}
                                 </div>
+                              </TableCell>
+                              <TableCell className="text-center font-medium tabular-nums align-middle">
+                                {execucaoMedia != null ? `${execucaoMedia}%` : "—"}
                               </TableCell>
                               <TableCell className="text-center font-medium tabular-nums align-middle">{history.length}</TableCell>
                               <TableCell className="text-center align-middle" onClick={(e) => e.stopPropagation()}>
@@ -3355,7 +3361,7 @@ export default function BateriaDashboardPage() {
                             </TableRow>
                             {!selMode && isExpanded && (
                               <TableRow className="border-emerald-500/20 bg-emerald-500/5 hover:bg-emerald-500/5">
-                                <TableCell colSpan={13} className="p-0 align-middle">
+                                <TableCell colSpan={12} className="p-0 align-middle">
                                   <div className="space-y-4 px-4 py-4">
                                     <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
                                       <div className="rounded-lg border border-border/60 bg-background/70 p-3">
@@ -3433,6 +3439,31 @@ export default function BateriaDashboardPage() {
                                         )}
                                       </div>
 
+                                      {/* Período(s) em manutenção do módulo */}
+                                      {(() => {
+                                        const manutEventos = (moduloManut.history[m.numeroSelimp] ?? []).filter(
+                                          (ev) => ev.dataOrdenado || ev.dataRetirada,
+                                        );
+                                        if (manutEventos.length === 0) return null;
+                                        return (
+                                          <div className="mb-3 space-y-1.5">
+                                            {manutEventos.map((ev) => {
+                                              const inicio = ev.dataRetirada || ev.dataOrdenado;
+                                              return (
+                                                <div key={ev.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-zinc-400/30 bg-zinc-500/10 px-3 py-2 text-xs">
+                                                  <Wrench className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
+                                                  <span className="font-semibold text-foreground">Período em manutenção</span>
+                                                  <Badge className={STATUS_MODULO_MANUT_BADGE[ev.status]}>{MANUT_STATUS_LABEL[ev.status]}</Badge>
+                                                  <span className="tabular-nums text-muted-foreground">
+                                                    {isoBr(inicio)} → {ev.dataReinstalacao ? isoBr(ev.dataReinstalacao) : "em andamento"}
+                                                  </span>
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
+                                        );
+                                      })()}
+
                                       {history.length === 0 ? (
                                         <p className="rounded-lg bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
                                           Nenhuma troca registrada no painel. O contador SELIMP indica {m.quantidadeTrocas} carga(s), mas a importação atual não traz as datas individuais.
@@ -3466,6 +3497,7 @@ export default function BateriaDashboardPage() {
                                             <div key={h.id} className="rounded-lg border border-border/50 bg-muted/20 p-3">
                                               <div className="flex flex-wrap items-center justify-between gap-2">
                                                 <div className="flex flex-wrap items-center gap-2">
+                                                  <span className="text-lg leading-none" title={trocaStatusLabel(h)}>{trocaStatusEmoji(h)}</span>
                                                   <Badge className={trocaStatusBadgeClass(h)}>{trocaStatusLabel(h)}</Badge>
                                                   <span className="text-xs font-medium text-muted-foreground">{h.tipoTroca || motivoFromModule(m)}</span>
                                                 </div>
@@ -3539,7 +3571,7 @@ export default function BateriaDashboardPage() {
                         })}
                         {trocasModules.length === 0 && (
                           <TableRow>
-                            <TableCell colSpan={13} className="py-10 text-center text-sm text-muted-foreground">Nenhum setor encontrado.</TableCell>
+                            <TableCell colSpan={12} className="py-10 text-center text-sm text-muted-foreground">Nenhum setor encontrado.</TableCell>
                           </TableRow>
                         )}
                       </TableBody>
