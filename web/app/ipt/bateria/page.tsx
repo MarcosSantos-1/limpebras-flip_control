@@ -1205,6 +1205,10 @@ function isOpenManutStatus(status: ManutencaoModuloStatus | null): status is Man
   return status != null && MANUT_OPEN_STATUSES.has(status);
 }
 
+function isTrocaBlockedManutStatus(status: ManutencaoModuloStatus | null): status is ManutencaoModuloStatus {
+  return isOpenManutStatus(status) && status !== "EM_ANALISE";
+}
+
 function isInMaintenanceOverview(status: ManutencaoModuloStatus | null): boolean {
   return status != null && MANUT_OVERVIEW_STATUSES.has(status);
 }
@@ -1900,7 +1904,7 @@ export default function BateriaDashboardPage() {
       const wantManut = trocasMotivoFilter.includes("Manutenção");
       const outros = trocasMotivoFilter.filter((x) => x !== "Manutenção");
       result = result.filter((m) => {
-        // "Manutenção" → módulos com manutenção Em análise, Pendente ou Ativa.
+        // "Manutenção" → módulos com qualquer manutenção aberta.
         if (wantManut) {
           const st = manutStatusForModule(m);
           if (isOpenManutStatus(st)) return true;
@@ -2020,6 +2024,10 @@ export default function BateriaDashboardPage() {
     () => selectedModules.filter((m) => isOpenManutStatus(manutStatusForModule(m))),
     [selectedModules, manutStatusForModule],
   );
+  const selectedTrocaBlockedManutModules = useMemo(
+    () => selectedModules.filter((m) => isTrocaBlockedManutStatus(manutStatusForModule(m))),
+    [selectedModules, manutStatusForModule],
+  );
   const selectedAgendadas = useMemo(
     () => selectedModules.filter((m) => troca.records[m.numeroSelimp]?.status === "agendada"),
     [selectedModules, troca.records],
@@ -2055,6 +2063,15 @@ export default function BateriaDashboardPage() {
     setAgendadoModule(m);
   }
 
+  function removerAnaliseAposAgendamento(modulesToClear: ModuleData[]) {
+    for (const m of modulesToClear) {
+      const ev = moduloManut.records[m.numeroSelimp];
+      if (ev?.status === "EM_ANALISE") {
+        void moduloManut.remover(ev.id, ev.selimp);
+      }
+    }
+  }
+
   function confirmAgendar() {
     if (!agendarModule || !agendarDate) return;
     troca.agendar({
@@ -2063,6 +2080,7 @@ export default function BateriaDashboardPage() {
       dataAgendada: agendarDate,
       tipoTroca: motivoFromModule(agendarModule),
     });
+    removerAnaliseAposAgendamento([agendarModule]);
     setAgendarModule(null);
   }
 
@@ -2120,6 +2138,7 @@ export default function BateriaDashboardPage() {
         tipoTroca: motivoFromModule(m),
       })),
     );
+    removerAnaliseAposAgendamento(selectedModules);
     setBulkAgendarOpen(false);
     toggleSelMode();
   }
@@ -3130,7 +3149,7 @@ export default function BateriaDashboardPage() {
                               <Button
                                 size="sm"
                                 className={cn("h-9 gap-1.5", BTN_SKY)}
-                                disabled={selectedOpenManutModules.length > 0}
+                                disabled={selectedTrocaBlockedManutModules.length > 0}
                                 onClick={openBulkConcluir}
                               >
                                 <CalendarCheck2 className="h-4 w-4" /> Concluir ({selected.size})
@@ -3138,7 +3157,7 @@ export default function BateriaDashboardPage() {
                               <Button
                                 size="sm"
                                 className={cn("h-9 gap-1.5", BTN_AMBER)}
-                                disabled={selectedOpenManutModules.length > 0}
+                                disabled={selectedTrocaBlockedManutModules.length > 0}
                                 onClick={() => { setBulkAgendarMode("reagendar"); setBulkAgendarDate(isoToday()); setBulkAgendarOpen(true); }}
                               >
                                 <RefreshCw className="h-4 w-4" /> Reagendar ({selected.size})
@@ -3148,7 +3167,7 @@ export default function BateriaDashboardPage() {
                             <Button
                               size="sm"
                               className={cn("h-9 gap-1.5", BTN_EMERALD)}
-                              disabled={selectedOpenManutModules.length > 0}
+                              disabled={selectedTrocaBlockedManutModules.length > 0}
                               onClick={() => { setBulkAgendarMode("agendar"); setBulkAgendarDate(isoToday()); setBulkAgendarOpen(true); }}
                             >
                               <CalendarPlus className="h-4 w-4" /> Agendar ({selected.size})
@@ -3302,7 +3321,7 @@ export default function BateriaDashboardPage() {
                           const idx = (trocasPage - 1) * ITEMS_PER_PAGE + i;
                           const rec = troca.records[m.numeroSelimp];
                           const manutStatus = manutStatusForModule(m);
-                          const manutStatusOpen = isOpenManutStatus(manutStatus) ? manutStatus : null;
+                          const manutStatusBlocking = isTrocaBlockedManutStatus(manutStatus) ? manutStatus : null;
                           const history = trocaHistoryOf(m, rec, troca.history[m.numeroSelimp]);
                           const historyConcluidas = history.filter((h) => h.status === "concluida").length;
                           const historySemData = Math.max(0, (m.quantidadeTrocas || 0) - historyConcluidas);
@@ -3405,9 +3424,9 @@ export default function BateriaDashboardPage() {
                               <TableCell className="text-center font-medium tabular-nums align-middle">{history.length}</TableCell>
                               <TableCell className="text-center text-xs tabular-nums text-muted-foreground align-middle">{fmtDisplayDate(ultimaTroca)}</TableCell>
                               <TableCell className="text-center align-middle" onClick={(e) => e.stopPropagation()}>
-                                {manutStatusOpen ? (
-                                  <Badge className={cn("border", STATUS_MODULO_MANUT_BADGE[manutStatusOpen])}>
-                                    {trocaBlockedStatusLabel(manutStatusOpen)}
+                                {manutStatusBlocking ? (
+                                  <Badge className={cn("border", STATUS_MODULO_MANUT_BADGE[manutStatusBlocking])}>
+                                    {trocaBlockedStatusLabel(manutStatusBlocking)}
                                   </Badge>
                                 ) : rec?.status === "agendada" ? (
                                   <Button
