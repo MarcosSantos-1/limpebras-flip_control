@@ -316,31 +316,31 @@ export function computeAlerta(
   const reasons: AlertaReason[] = [];
   const add = (severity: AlertaReason["severity"], text: string) => reasons.push({ severity, text });
 
-  // Alerta pela SEQUÊNCIA recente sem sucesso (não pela quantidade total): 2 → observação, 3+ → problema.
-  if (streakSemSucesso >= 3) {
+  // Vermelho só quando há reincidência real de troca sem sucesso.
+  if (streakSemSucesso >= 2) {
     add("problema", `${streakSemSucesso} trocas seguidas sem sucesso — sinal/bateria não recuperaram`);
-  } else if (streakSemSucesso >= 2) {
-    add("observacao", `${streakSemSucesso} trocas seguidas sem sucesso — em observação`);
+  } else if (streakSemSucesso === 1) {
+    add("observacao", "1 troca sem sucesso — em observação");
   }
   // Status da bateria.
-  if (m.statusBateria === "DESATUALIZADA") add("problema", "Bateria desatualizada — módulo sem comunicar");
+  if (m.statusBateria === "DESATUALIZADA") add("observacao", "Bateria desatualizada — módulo sem comunicar");
   else if (m.statusBateria === "CRÍTICA") add("observacao", "Bateria em nível crítico");
 
   // Produtividade de bateria (a partir da troca, quando houve troca).
   const ctxBateria = teveTroca ? " desde a última troca" : "";
-  if (m.produtividade < 20) add("problema", `Produtividade de bateria muito baixa (${m.produtividade}%)${ctxBateria}`);
+  if (m.produtividade < 20) add("observacao", `Produtividade de bateria muito baixa (${m.produtividade}%)${ctxBateria}`);
   else if (m.produtividade < 40) add("observacao", `Produtividade de bateria baixa (${m.produtividade}%)${ctxBateria}`);
 
   // Produtividade de execução do serviço (30 dias).
   if (execucao != null) {
-    if (execucao < 30) add("problema", `Execução do serviço muito baixa (${execucao}% em 30 dias)`);
+    if (execucao < 30) add("observacao", `Execução do serviço muito baixa (${execucao}% em 30 dias)`);
     else if (execucao < 60) add("observacao", `Execução do serviço abaixo do ideal (${execucao}% em 30 dias)`);
   }
   // Offline consecutivos.
-  if (diasOfflineConsecutivos >= 7) add("problema", `${diasOfflineConsecutivos} dias offline consecutivos`);
+  if (diasOfflineConsecutivos >= 7) add("observacao", `${diasOfflineConsecutivos} dias offline consecutivos`);
   else if (diasOfflineConsecutivos >= 3) add("observacao", `${diasOfflineConsecutivos} dias offline consecutivos`);
   // Offline acumulado no período.
-  if (m.diasOff >= 21) add("problema", `${m.diasOff} dias offline no período`);
+  if (m.diasOff >= 21) add("observacao", `${m.diasOff} dias offline no período`);
   else if (m.diasOff >= 10) add("observacao", `${m.diasOff} dias offline no período`);
 
   const level: AlertaLevel = reasons.some((r) => r.severity === "problema")

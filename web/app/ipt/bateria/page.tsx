@@ -167,6 +167,8 @@ const BTN_SECONDARY =
 const EXPANDED_ROW =
   "bg-linear-to-r from-emerald-600 via-emerald-600 to-teal-700 text-zinc-100 shadow-[0_8px_24px_-12px_rgba(16,185,129,0.85)] [&_*]:!text-zinc-100";
 
+const SUCESSO_MIN_PCT_DEPOIS = 60;
+
 // --- Types ---
 
 interface ModuleData {
@@ -944,12 +946,101 @@ function trocaDate(h: TrocaHistoryRecord): string | undefined {
   return h.status === "agendada" ? h.dataAgendada : h.dataTroca;
 }
 
+function ultimaTrocaDate(history: TrocaHistoryRecord[]): string {
+  const concluidas = history.filter((h) => h.status === "concluida" && h.dataTroca);
+  return concluidas.sort((a, b) => String(b.dataTroca).localeCompare(String(a.dataTroca)))[0]?.dataTroca ?? "";
+}
+
 function trocaInPeriod(h: TrocaHistoryRecord, period: string): boolean {
   return isDateInPeriod(trocaDate(h), period);
 }
 
 function manutEventDate(ev: ModuloManutencaoEvento): string | undefined {
   return ev.dataManutencao ?? ev.dataReinstalacao ?? ev.dataRetirada ?? ev.dataOrdenado ?? ev.createdAt?.slice(0, 10);
+}
+
+function manutResetDate(ev: ModuloManutencaoEvento): string | undefined {
+  if (ev.dataReinstalacao) return ev.dataReinstalacao;
+  if (ev.status === "REALIZADA" || ev.status === "SINAL_RECUPERADO" || ev.sinalRecuperado) {
+    return ev.dataManutencao ?? ev.dataReinstalacao ?? ev.dataRetirada ?? ev.dataOrdenado ?? ev.createdAt?.slice(0, 10);
+  }
+  return undefined;
+}
+
+function latestAlertResetDate(events: ModuloManutencaoEvento[]): string | null {
+  return events
+    .map(manutResetDate)
+    .filter((d): d is string => Boolean(d))
+    .sort((a, b) => b.localeCompare(a))[0] ?? null;
+}
+
+function bateriaReadingBefore(m: ModuleData, date: string): BateriaDia | null {
+  return [...(m.bateriaPorDia ?? [])]
+    .filter((b) => b.data.slice(0, 10) < date)
+    .sort((a, b) => b.data.localeCompare(a.data))[0] ?? null;
+}
+
+function bateriaReadingAfter(m: ModuleData, date: string): BateriaDia | null {
+  return [...(m.bateriaPorDia ?? [])]
+    .filter((b) => b.data.slice(0, 10) >= date)
+    .sort((a, b) => a.data.localeCompare(b.data))[0] ?? null;
+}
+
+function statusBateriaFromDia(b?: BateriaDia | null): string | null {
+  if (!b) return null;
+  if (b.desatualizada) return "DESATUALIZADA";
+  return statusBateriaFromPct(b.percentual);
+}
+
+function moduleAfterAlertReset(m: ModuleData, resetDate: string | null): ModuleData {
+  if (!resetDate) return m;
+  const postReadings = (m.bateriaPorDia ?? []).filter((b) => b.data.slice(0, 10) > resetDate);
+  const hasPostCommunication = Boolean(m.ultimaComunicacao && m.ultimaComunicacao > resetDate);
+  if (postReadings.length === 0 && !hasPostCommunication) {
+    return {
+      ...m,
+      statusBateria: "ALTA",
+      diasOff: 0,
+      diasOffConsecutivos: 0,
+      produtividade: 100,
+      produtividadeExecucao: null,
+    };
+  }
+
+  if (postReadings.length === 0) {
+    return { ...m, diasOff: 0, diasOffConsecutivos: 0, produtividadeExecucao: null };
+  }
+
+  const ordered = [...postReadings].sort((a, b) => a.data.localeCompare(b.data));
+  const diasOff = ordered.filter((b) => b.desatualizada).length;
+  const diasOn = ordered.length - diasOff;
+  let diasOffConsecutivos = 0;
+  for (const b of [...ordered].reverse()) {
+    if (!b.desatualizada) break;
+    diasOffConsecutivos += 1;
+  }
+  return {
+    ...m,
+    diasOff,
+    diasOffConsecutivos,
+    produtividade: Math.round((diasOn / ordered.length) * 100),
+    produtividadeExecucao: null,
+  };
+}
+
+type TrocaTimelineItem =
+  | { kind: "troca"; key: string; date: string; troca: TrocaHistoryRecord }
+  | { kind: "manutencao"; key: string; date: string; manutencao: ModuloManutencaoEvento };
+
+function trocaTimelineItems(history: TrocaHistoryRecord[], manutencoes: ModuloManutencaoEvento[]): TrocaTimelineItem[] {
+  return [
+    ...history
+      .map((h) => ({ kind: "troca" as const, key: `troca-${h.id}`, date: trocaDate(h) ?? "", troca: h }))
+      .filter((item) => item.date),
+    ...manutencoes
+      .map((ev) => ({ kind: "manutencao" as const, key: `manut-${ev.id}`, date: manutEventDate(ev) ?? "", manutencao: ev }))
+      .filter((item) => item.date),
+  ].sort((a, b) => b.date.localeCompare(a.date));
 }
 
 function manutInPeriod(date: string | undefined, period: string): boolean {
@@ -1070,12 +1161,15 @@ function renderBatteryStatus(status: string | null | undefined, showEmoji = true
   );
 }
 
-/** Prévia do resultado da troca a partir do status atual (desatualizada → tende a sem sucesso).
+/** Prévia do resultado da troca a partir do status atual (resultado real usa snapshot pós-troca).
  * A classificação final é automática (snapshot pós-troca); isto é só uma indicação visual. */
 function sucessoPreviewChip(m: ModuleData) {
-  const semSucesso = m.statusBateria === "DESATUALIZADA";
+  const pct = normalizePercentValue(m.bateriaPercentual);
+  const semSucesso = m.statusBateria === "DESATUALIZADA" || (pct != null && pct < SUCESSO_MIN_PCT_DEPOIS);
+  const motivo = m.statusBateria === "DESATUALIZADA" ? "desatualizada" : pct != null ? `abaixo de ${SUCESSO_MIN_PCT_DEPOIS}%` : "";
   return (
     <Badge
+      title={`Sucesso exige leitura atualizada com pelo menos ${SUCESSO_MIN_PCT_DEPOIS}% de bateria`}
       className={cn(
         "gap-1 font-semibold",
         semSucesso
@@ -1083,7 +1177,7 @@ function sucessoPreviewChip(m: ModuleData) {
           : "bg-emerald-500/15 text-emerald-600 border-emerald-500/30 dark:text-emerald-400"
       )}
     >
-      {semSucesso ? "❌ Prévia: sem sucesso" : "✅ Prévia: com sucesso"}
+      {semSucesso ? `❌ Prévia: sem sucesso${motivo ? ` (${motivo})` : ""}` : "✅ Prévia: com sucesso"}
     </Badge>
   );
 }
@@ -1125,6 +1219,16 @@ function isContestationEligible(
   if (status === "RETIRANDO") return Boolean(dataOrdenado);
   if (status === "ATIVA" || status === "REINSTALANDO") return Boolean(dataOrdenado && dataRetirada);
   return false;
+}
+
+function contestacaoDiaHoje(e: Pick<ManutEntry, "contestacaoDias">): ManutEntry["contestacaoDias"][number] | undefined {
+  const today = isoToday();
+  return e.contestacaoDias.find((d) => d.data === today);
+}
+
+function hasContestacaoNaoContestadaHistorica(e: Pick<ManutEntry, "contestacaoDias">): boolean {
+  const today = isoToday();
+  return e.contestacaoDias.some((d) => d.data < today && !d.contestado);
 }
 
 function trocaBlockedStatusLabel(status: ManutencaoModuloStatus): string {
@@ -1818,13 +1922,8 @@ export default function BateriaDashboardPage() {
     // Ordenação (não muta a fonte): cópia antes de sort.
     if (trocasSort !== "default") {
       const rank = (m: ModuleData) => STATUS_BAT_RANK[m.statusBateria] ?? -1;
-      // Data da última troca concluída (estado corrente; senão o evento concluído mais recente).
-      const ultimaTroca = (m: ModuleData): string => {
-        const rec = troca.records[m.numeroSelimp];
-        if (rec?.status === "concluida" && rec.dataTroca) return rec.dataTroca;
-        const concl = (troca.history[m.numeroSelimp] ?? []).find((h) => h.status === "concluida" && h.dataTroca);
-        return concl?.dataTroca ?? "";
-      };
+      const ultimaTroca = (m: ModuleData): string =>
+        ultimaTrocaDate(trocaHistoryOf(m, troca.records[m.numeroSelimp], troca.history[m.numeroSelimp]));
       const exec = (m: ModuleData): number | null => mediaExecucaoSelimp(m);
       // Qtd. de cargas = trocas registradas no painel (inclui manuais) — mesmo valor exibido na coluna.
       const cargas = (m: ModuleData): number =>
@@ -2171,7 +2270,7 @@ export default function BateriaDashboardPage() {
       );
     // Ordena por status; dentro do status, pendentes de contestação primeiro; depois por data desc.
     const pendenteContestacao = (e: ManutEntry) =>
-      isContestationEligible(e) && isOpenManutStatus(e.status) && e.contestacaoDias.some((d) => !d.contestado);
+      isContestationEligible(e) && isOpenManutStatus(e.status) && contestacaoDiaHoje(e)?.contestado === false;
     return [...result].sort((a, b) => {
       const oa = MANUT_STATUS_ORDER[a.status];
       const ob = MANUT_STATUS_ORDER[b.status];
@@ -2200,15 +2299,21 @@ export default function BateriaDashboardPage() {
   /** Alertas do módulo (troca registrada + histórico de manutenção reais). */
   const alertaOf = useCallback(
     (m: ModuleData) => {
-      const historicoModulo = (moduloManut.history[m.numeroSelimp] ?? []).map((ev) => ({
+      const manutencoesModulo = moduloManut.history[m.numeroSelimp] ?? [];
+      const resetDate = latestAlertResetDate(manutencoesModulo);
+      const historicoModulo = manutencoesModulo.map((ev) => ({
         data: manutEventoAlertDate(ev),
         descricao: manutEventoDescricao(ev),
       }));
+      const historyAposReset = (troca.history[m.numeroSelimp] ?? []).filter((h) => {
+        const d = trocaDate(h);
+        return !resetDate || !d || d > resetDate;
+      });
       return computeAlerta(
-        m,
+        moduleAfterAlertReset(m, resetDate),
         troca.records[m.numeroSelimp],
         [...historicoModulo, ...historicoFromManutencao(manut.overrides[m.numeroSelimp])],
-        troca.history[m.numeroSelimp] ?? [],
+        historyAposReset,
       );
     },
     [manut.overrides, moduloManut.history, troca.records, troca.history],
@@ -3187,6 +3292,7 @@ export default function BateriaDashboardPage() {
                           <TableHead className="text-center">
                             <SortToggle label={"Qtd.\nCargas"} dir={colSortDir("cargas")} onClick={() => cycleColSort("cargas")} />
                           </TableHead>
+                          <TableHead className="text-center">Ult. Troca</TableHead>
                           <TableHead className="text-center">Troca</TableHead>
                           <TableHead className="text-center">Alertas</TableHead>
                         </TableRow>
@@ -3200,6 +3306,8 @@ export default function BateriaDashboardPage() {
                           const history = trocaHistoryOf(m, rec, troca.history[m.numeroSelimp]);
                           const historyConcluidas = history.filter((h) => h.status === "concluida").length;
                           const historySemData = Math.max(0, (m.quantidadeTrocas || 0) - historyConcluidas);
+                          const ultimaTroca = ultimaTrocaDate(history);
+                          const timeline = trocaTimelineItems(history, moduloManut.history[m.numeroSelimp] ?? []);
                           const execucaoHistory = execucaoSelimpHistoryOf(m);
                           const execucaoMedia = mediaExecucaoSelimp(m);
                           // Nº de vezes que o módulo foi efetivamente à manutenção (eventos REALIZADA).
@@ -3295,6 +3403,7 @@ export default function BateriaDashboardPage() {
                                 {execucaoMedia != null ? `${execucaoMedia}%` : "—"}
                               </TableCell>
                               <TableCell className="text-center font-medium tabular-nums align-middle">{history.length}</TableCell>
+                              <TableCell className="text-center text-xs tabular-nums text-muted-foreground align-middle">{fmtDisplayDate(ultimaTroca)}</TableCell>
                               <TableCell className="text-center align-middle" onClick={(e) => e.stopPropagation()}>
                                 {manutStatusOpen ? (
                                   <Badge className={cn("border", STATUS_MODULO_MANUT_BADGE[manutStatusOpen])}>
@@ -3361,7 +3470,7 @@ export default function BateriaDashboardPage() {
                             </TableRow>
                             {!selMode && isExpanded && (
                               <TableRow className="border-emerald-500/20 bg-emerald-500/5 hover:bg-emerald-500/5">
-                                <TableCell colSpan={12} className="p-0 align-middle">
+                                <TableCell colSpan={13} className="p-0 align-middle">
                                   <div className="space-y-4 px-4 py-4">
                                     <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
                                       <div className="rounded-lg border border-border/60 bg-background/70 p-3">
@@ -3439,38 +3548,65 @@ export default function BateriaDashboardPage() {
                                         )}
                                       </div>
 
-                                      {/* Período(s) em manutenção do módulo */}
-                                      {(() => {
-                                        const manutEventos = (moduloManut.history[m.numeroSelimp] ?? []).filter(
-                                          (ev) => ev.dataOrdenado || ev.dataRetirada,
-                                        );
-                                        if (manutEventos.length === 0) return null;
-                                        return (
-                                          <div className="mb-3 space-y-1.5">
-                                            {manutEventos.map((ev) => {
-                                              const inicio = ev.dataRetirada || ev.dataOrdenado;
-                                              return (
-                                                <div key={ev.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-zinc-400/30 bg-zinc-500/10 px-3 py-2 text-xs">
-                                                  <Wrench className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
-                                                  <span className="font-semibold text-foreground">Período em manutenção</span>
-                                                  <Badge className={STATUS_MODULO_MANUT_BADGE[ev.status]}>{MANUT_STATUS_LABEL[ev.status]}</Badge>
-                                                  <span className="tabular-nums text-muted-foreground">
-                                                    {isoBr(inicio)} → {ev.dataReinstalacao ? isoBr(ev.dataReinstalacao) : "em andamento"}
-                                                  </span>
-                                                </div>
-                                              );
-                                            })}
-                                          </div>
-                                        );
-                                      })()}
-
-                                      {history.length === 0 ? (
+                                      {timeline.length === 0 ? (
                                         <p className="rounded-lg bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
                                           Nenhuma troca registrada no painel. O contador SELIMP indica {m.quantidadeTrocas} carga(s), mas a importação atual não traz as datas individuais.
                                         </p>
                                       ) : (
                                         <div className="space-y-2">
-                                          {history.map((h) => {
+                                          {timeline.map((entry) => {
+                                            if (entry.kind === "manutencao") {
+                                              const ev = entry.manutencao;
+                                              const before = bateriaReadingBefore(m, entry.date);
+                                              const after = bateriaReadingAfter(m, entry.date);
+                                              const isLatestManut = entry.key === timeline.find((it) => it.kind === "manutencao")?.key;
+                                              const statusAntesLabel = statusBateriaFromDia(before) || "—";
+                                              const statusDepoisLabel = statusBateriaFromDia(after) || (isLatestManut ? m.statusBateria : "") || "—";
+                                              const bateriaAntesLabel = before ? pctBatteryLabel(before.percentual) : "—";
+                                              const bateriaDepoisLabel = after ? pctBatteryLabel(after.percentual) : isLatestManut ? pctBatteryLabel(m.bateriaPercentual, m.bateria) : "—";
+                                              const ultimaDepoisLabel = isLatestManut ? (m.ultimaComunicacao || "—") : "—";
+                                              return (
+                                              <div key={entry.key} className="rounded-lg border border-zinc-400/30 bg-zinc-500/10 p-3">
+                                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                                  <div className="flex flex-wrap items-center gap-2">
+                                                    <span className="text-lg leading-none" title="Manutenção">🛠️</span>
+                                                    <Badge className={STATUS_MODULO_MANUT_BADGE[ev.status]}>{MANUT_STATUS_LABEL[ev.status]}</Badge>
+                                                    <span className="text-xs font-medium text-muted-foreground">
+                                                      Manutenção{ev.motivo ? ` · ${ev.motivo}` : ""}
+                                                    </span>
+                                                  </div>
+                                                  <span className="text-xs font-semibold tabular-nums text-foreground">{fmtDisplayDate(entry.date)}</span>
+                                                </div>
+                                                <div className="mt-3 grid grid-cols-2 gap-2 text-xs lg:grid-cols-6">
+                                                  <div className="rounded-md bg-background/70 p-2">
+                                                    <span className="block text-[10px] text-muted-foreground uppercase tracking-wide">Bateria antes</span>
+                                                    <span className="font-bold text-foreground">{bateriaAntesLabel}</span>
+                                                  </div>
+                                                  <div className="rounded-md bg-background/70 p-2">
+                                                    <span className="block text-[10px] text-muted-foreground uppercase tracking-wide">Bateria depois</span>
+                                                    <span className="font-bold text-foreground">{bateriaDepoisLabel}</span>
+                                                  </div>
+                                                  <div className="rounded-md bg-background/70 p-2">
+                                                    <span className="block text-[10px] text-muted-foreground uppercase tracking-wide">Status antes</span>
+                                                    <span className={getStatusColorClass(statusAntesLabel)}>{statusAntesLabel}</span>
+                                                  </div>
+                                                  <div className="rounded-md bg-background/70 p-2">
+                                                    <span className="block text-[10px] text-muted-foreground uppercase tracking-wide">Status depois</span>
+                                                    <span className={getStatusColorClass(statusDepoisLabel)}>{statusDepoisLabel}</span>
+                                                  </div>
+                                                  <div className="rounded-md bg-background/70 p-2">
+                                                    <span className="block text-[10px] text-muted-foreground uppercase tracking-wide">Últ. com. antes</span>
+                                                    <span className="font-bold tabular-nums text-foreground">—</span>
+                                                  </div>
+                                                  <div className="rounded-md bg-background/70 p-2">
+                                                    <span className="block text-[10px] text-muted-foreground uppercase tracking-wide">Últ. com. depois</span>
+                                                    <span className="font-bold tabular-nums text-foreground">{ultimaDepoisLabel}</span>
+                                                  </div>
+                                                </div>
+                                              </div>
+                                              );
+                                            }
+                                            const h = entry.troca;
                                             const isLatestConcluida = h.status === "concluida" && h.id === latestConcluidaId;
                                             // "Depois" real = snapshot logo após a troca; sem snapshot ainda, usa o estado
                                             // atual do módulo apenas na troca mais recente.
@@ -3571,7 +3707,7 @@ export default function BateriaDashboardPage() {
                         })}
                         {trocasModules.length === 0 && (
                           <TableRow>
-                            <TableCell colSpan={12} className="py-10 text-center text-sm text-muted-foreground">Nenhum setor encontrado.</TableCell>
+                            <TableCell colSpan={13} className="py-10 text-center text-sm text-muted-foreground">Nenhum setor encontrado.</TableCell>
                           </TableRow>
                         )}
                       </TableBody>
@@ -3781,6 +3917,7 @@ export default function BateriaDashboardPage() {
                           <TableHead>Manutenção</TableHead>
                           <TableHead>Motivo</TableHead>
                           <TableHead className="text-center">Qtd. Trocas</TableHead>
+                          <TableHead className="text-center">Ult. Troca</TableHead>
                           <TableHead className="text-center">Ações</TableHead>
                         </TableRow>
                       </TableHeader>
@@ -3788,6 +3925,9 @@ export default function BateriaDashboardPage() {
                         {paginatedManut.map((e) => {
                           const mod = e.module;
                           const dias = mod ? setoresDiasOf(mod) : [];
+                          const ultimaTroca = mod
+                            ? ultimaTrocaDate(trocaHistoryOf(mod, troca.records[mod.numeroSelimp], troca.history[mod.numeroSelimp]))
+                            : "";
                           return (
                             <TableRow key={e.key} className="border-border/30 hover:bg-muted/20">
                               <TableCell className="text-center font-medium align-top">{e.sub || "—"}</TableCell>
@@ -3848,6 +3988,7 @@ export default function BateriaDashboardPage() {
                                 {e.motivo || <span className="text-muted-foreground">—</span>}
                               </TableCell>
                               <TableCell className="text-center font-medium tabular-nums align-top">{e.quantidadeTrocas}</TableCell>
+                              <TableCell className="text-center text-xs tabular-nums text-muted-foreground align-top">{fmtDisplayDate(ultimaTroca)}</TableCell>
                               <TableCell className="align-top">
                                 <div className="flex flex-col items-center gap-1.5">
                                   <div className="flex items-center justify-center gap-1.5">
@@ -3899,20 +4040,34 @@ export default function BateriaDashboardPage() {
                                   {/* Contestação por dia (despachos perdidos na manutenção: ordenado → reinstalação) */}
                                   {(() => {
                                     if (!isContestationEligible(e)) return null;
-                                    const pendentes = e.contestacaoDias.filter((d) => !d.contestado).length;
+                                    const hoje = contestacaoDiaHoje(e);
+                                    const naoContestadoHistorico = hasContestacaoNaoContestadaHistorica(e);
                                     const contestados = e.contestacaoDias.filter((d) => d.contestado).length;
                                     if (isOpenManutStatus(e.status) && e.diasFrequencia > 0 && e.eventId != null) {
+                                      if (!hoje) {
+                                        return naoContestadoHistorico ? (
+                                          <Button
+                                            size="sm"
+                                            disabled
+                                            className="h-7 gap-1 border border-zinc-400/40 bg-zinc-500/15 text-zinc-600 opacity-100 dark:text-zinc-300"
+                                            title="Dia de frequência anterior não contestado. Contestação só pode ser feita no próprio dia."
+                                          >
+                                            <ShieldAlert className="h-3.5 w-3.5" />
+                                            Não contestado
+                                          </Button>
+                                        ) : null;
+                                      }
                                       return (
                                         <Button
                                           size="sm"
                                           className={cn(
                                             "h-7 gap-1 text-white",
-                                            pendentes > 0 ? "bg-amber-500 hover:bg-amber-600" : "bg-emerald-600 hover:bg-emerald-700",
+                                            hoje.contestado ? "bg-emerald-600 hover:bg-emerald-700" : "bg-amber-500 hover:bg-amber-600",
                                           )}
                                           onClick={() => setContestModule(e)}
                                         >
-                                          <ShieldAlert className="h-3.5 w-3.5" />
-                                          {pendentes > 0 ? `Contestar (${pendentes})` : `Contestado (${contestados})`}
+                                          {hoje.contestado ? <ShieldCheck className="h-3.5 w-3.5" /> : <ShieldAlert className="h-3.5 w-3.5" />}
+                                          {hoje.contestado ? "Contestado" : "Contestar"}
                                         </Button>
                                       );
                                     }
@@ -3930,7 +4085,7 @@ export default function BateriaDashboardPage() {
                         })}
                         {manutEntries.length === 0 && (
                           <TableRow>
-                            <TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">
+                            <TableCell colSpan={11} className="py-10 text-center text-sm text-muted-foreground">
                               {manutSearch.trim()
                                 ? "Nenhum registro encontrado para a busca."
                                 : "Nenhuma manutenção registrada. Use “Registrar manutenção”."}
@@ -4450,9 +4605,9 @@ export default function BateriaDashboardPage() {
                   <div className="grid grid-cols-2 gap-3">
                     <div className={cn(
                       "rounded-lg border p-3",
-                      a.produtividade < 40 ? "border-red-500/30 bg-red-500/10" : "border-border/50 bg-muted/30",
+                      a.produtividade < 40 ? "border-amber-500/30 bg-amber-500/10" : "border-border/50 bg-muted/30",
                     )}>
-                      <div className={cn("flex items-center gap-2", a.produtividade < 40 ? "text-red-600 dark:text-red-400" : "text-muted-foreground")}>
+                      <div className={cn("flex items-center gap-2", a.produtividade < 40 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground")}>
                         <ShieldAlert className="h-4 w-4" />
                         <span className="text-xs font-semibold uppercase tracking-wide">Prod. bateria</span>
                       </div>
@@ -4477,8 +4632,8 @@ export default function BateriaDashboardPage() {
                       </div>
                       <p className="mt-1 text-2xl font-bold tabular-nums text-foreground">{a.diasOffline}</p>
                     </div>
-                    <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3">
-                      <div className="flex items-center gap-2 text-red-600 dark:text-red-400">
+                    <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+                      <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400">
                         <Clock className="h-4 w-4" />
                         <span className="text-xs font-semibold uppercase tracking-wide">Offline consecutivos</span>
                       </div>
@@ -4683,9 +4838,9 @@ export default function BateriaDashboardPage() {
                   <Switch checked={concluirDesnecessaria} onCheckedChange={setConcluirDesnecessaria} />
                 </label>
                 <p className="rounded-lg bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                  Bateria, status, última comunicação e o resultado (com/sem sucesso) are determined
-                  automatically by battery sheets. Trocas that remain out of date after the
-                  change are classified as <strong>unsuccessful</strong>.
+                  Bateria, status, última comunicação e resultado são determinados automaticamente pelas planilhas.
+                  A troca só fica com sucesso quando a leitura posterior estiver atualizada e com pelo menos{" "}
+                  <strong>{SUCESSO_MIN_PCT_DEPOIS}%</strong> de bateria.
                 </p>
               </div>
             )}
@@ -4867,8 +5022,8 @@ export default function BateriaDashboardPage() {
                 ))}
               </div>
               <p className="rounded-lg bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                A prévia usa o status atual; o resultado final fica como <strong>Aguardando</strong> até a próxima
-                leitura de bateria após a troca.
+                A prévia usa o status atual e a métrica mínima de <strong>{SUCESSO_MIN_PCT_DEPOIS}%</strong>. O resultado final
+                fica como <strong>Aguardando</strong> até a próxima leitura de bateria após a troca.
               </p>
             </div>
             <DialogFooter className="gap-2">
@@ -5079,23 +5234,26 @@ export default function BateriaDashboardPage() {
                         {e.contestacaoDias.length === 0 && (
                           <p className="py-3 text-center text-xs text-muted-foreground">Sem dias de despacho na janela.</p>
                         )}
-                        {[...e.contestacaoDias].sort((a, b) => b.data.localeCompare(a.data)).map((d) => (
+                        {[...e.contestacaoDias].sort((a, b) => b.data.localeCompare(a.data)).map((d) => {
+                          const isHoje = d.data === isoToday();
+                          const podeEditarHoje = isHoje;
+                          return (
                           <div
                             key={d.data}
-                            tabIndex={d.contestado ? undefined : 0}
+                            tabIndex={!d.contestado && podeEditarHoje ? 0 : undefined}
                             className={cn(
                               "flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-muted/15 px-3 py-2",
-                              !d.contestado && "outline-none focus-visible:ring-2 focus-visible:ring-amber-500/40",
+                              !d.contestado && podeEditarHoje && "outline-none focus-visible:ring-2 focus-visible:ring-amber-500/40",
                             )}
                             onPaste={
-                              d.contestado
-                                ? undefined
-                                : (ev) => {
+                              !d.contestado && podeEditarHoje
+                                ? (ev) => {
                                     const file = clipboardEventToImageFile(ev, d.data);
                                     if (!file) return;
                                     ev.preventDefault();
                                     void handleUploadPrintDia(e, d.data, file);
                                   }
+                                : undefined
                             }
                           >
                             <span className="flex items-center gap-2 text-xs">
@@ -5103,8 +5261,10 @@ export default function BateriaDashboardPage() {
                               <span className="font-medium tabular-nums text-foreground">{fmtIsoBr(d.data)}</span>
                               {d.contestado ? (
                                 <Badge className="border-emerald-500/30 bg-emerald-500/15 text-[10px] text-emerald-600 dark:text-emerald-400">Contestado</Badge>
+                              ) : isHoje ? (
+                                <Badge className="border-amber-500/30 bg-amber-500/15 text-[10px] text-amber-700 dark:text-amber-300">Contestar hoje</Badge>
                               ) : (
-                                <Badge className="border-amber-500/30 bg-amber-500/15 text-[10px] text-amber-700 dark:text-amber-300">Pendente</Badge>
+                                <Badge className="border-zinc-500/30 bg-zinc-500/15 text-[10px] text-zinc-600 dark:text-zinc-300">Não contestado</Badge>
                               )}
                             </span>
                             <div className="flex shrink-0 items-center gap-1.5">
@@ -5128,7 +5288,7 @@ export default function BateriaDashboardPage() {
                                   </a>
                                 </>
                               )}
-                              {d.contestado ? (
+                              {d.contestado && podeEditarHoje ? (
                                 <Button
                                   size="sm"
                                   className={cn("h-7 gap-1", BTN_RED)}
@@ -5151,7 +5311,7 @@ export default function BateriaDashboardPage() {
                                 >
                                   Cancelar
                                 </Button>
-                              ) : (
+                              ) : !d.contestado && podeEditarHoje ? (
                                 <div className="flex items-center gap-1">
                                   <label className={cn("inline-flex h-7 cursor-pointer items-center gap-1 rounded-md px-2.5 text-xs font-semibold text-white", BTN_AMBER)}>
                                     <Upload className="h-3.5 w-3.5" />
@@ -5180,10 +5340,15 @@ export default function BateriaDashboardPage() {
                                     Colar
                                   </Button>
                                 </div>
+                              ) : (
+                                <span className="text-[11px] font-medium text-muted-foreground">
+                                  Histórico
+                                </span>
                               )}
                             </div>
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   </div>
