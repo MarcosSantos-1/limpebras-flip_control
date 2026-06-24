@@ -458,6 +458,21 @@ function DashboardContent() {
         <div className="relative overflow-hidden rounded-2xl bg-card p-8 shadow-xl shadow-zinc-900/12 dark:bg-linear-to-br dark:from-cyan-950/50 dark:via-zinc-900/60 dark:to-zinc-950 dark:shadow-2xl dark:shadow-black/40">
           <div className="pointer-events-none absolute -right-6 -top-10 h-44 w-44 rounded-full bg-linear-to-br from-primary/25 to-indigo-500/20 blur-3xl dark:from-cyan-500/20 dark:to-indigo-600/10" />
           <div className="pointer-events-none absolute -bottom-12 -left-8 h-36 w-36 rounded-full bg-linear-to-tr from-cyan-400/20 to-transparent blur-2xl dark:from-cyan-600/15 dark:to-transparent" />
+          
+          {/* Decorative shapes */}
+          <div className="pointer-events-none absolute right-20 top-4 opacity-20 dark:opacity-10">
+            <svg width="60" height="60" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg" className="animate-[spin_20s_linear_infinite]">
+              <rect x="10" y="10" width="40" height="40" stroke="currentColor" strokeWidth="2" strokeDasharray="4 4" className="text-primary"/>
+              <circle cx="30" cy="30" r="10" stroke="currentColor" strokeWidth="2" className="text-indigo-500"/>
+            </svg>
+          </div>
+          <div className="pointer-events-none absolute left-1/3 bottom-4 opacity-15 dark:opacity-5">
+            <svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" className="animate-pulse">
+              <polygon points="20,5 35,35 5,35" stroke="currentColor" strokeWidth="2" className="text-cyan-500" strokeLinejoin="round"/>
+            </svg>
+          </div>
+          <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:24px_24px] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_50%,#000_70%,transparent_100%)]" />
+
           <div className="relative flex flex-col gap-6 sm:flex-row sm:items-start sm:justify-between sm:gap-8">
             <div className="min-w-0 flex-1">
               <h1 className="text-4xl font-bold tracking-tight text-slate-900 dark:bg-linear-to-r dark:from-primary dark:to-indigo-400 dark:bg-clip-text dark:text-transparent">
@@ -509,20 +524,25 @@ function DashboardContent() {
             <div className="grid grid-cols-2 gap-3 md:col-span-2">
               <Link href="/sacs" className="block">
               <Card
-                className="rounded-xl border-0 bg-linear-to-br from-blue-600 to-blue-800 p-4 text-white shadow-xl shadow-blue-900/25 transition-all duration-200 hover:scale-[1.02] hover:shadow-2xl hover:border-transparent cursor-pointer dark:bg-none dark:bg-card dark:text-card-foreground dark:shadow-md dark:hover:shadow-md"
+                className="group relative overflow-hidden rounded-xl border border-blue-400/20 bg-linear-to-br from-blue-700 via-indigo-600 to-cyan-600 bg-[length:200%_200%] animate-[gradient_6s_ease_infinite] min-h-[160px] flex flex-col justify-between p-4 text-white shadow-lg shadow-blue-500/25 transition-all duration-300 hover:scale-[1.02] hover:shadow-2xl cursor-pointer dark:from-blue-900 dark:via-blue-800 dark:to-blue-950 dark:border-blue-900/50 dark:text-card-foreground dark:shadow-md dark:hover:shadow-[0_0_20px_rgba(37,99,235,0.3)]"
               >
-                <CardHeader className="p-0 pb-4">
-                  <CardTitle className="text-sm font-medium text-white/95 dark:text-blue-400">IA - ÍNDICADOR DE ATENDIMENTO</CardTitle>
+                {/* Laser sweep constante em loop (deslocado) */}
+                <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(110deg,transparent_35%,rgba(255,255,255,0.18)_50%,transparent_65%)] bg-[length:200%_100%] animate-[shimmer_4s_linear_infinite]" />
+                {/* Textura técnica de fundo */}
+                <div className="pointer-events-none absolute inset-0 opacity-[0.06] bg-[linear-gradient(to_right,#ffffff_1px,transparent_1px),linear-gradient(to_bottom,#ffffff_1px,transparent_1px)] bg-[size:16px_16px] [mask-image:radial-gradient(ellipse_at_center,white,transparent)]" />
+                
+                <CardHeader className="p-0 pb-2 relative z-10">
+                  <CardTitle className="text-sm font-medium text-white/95 dark:text-blue-300">IA - ÍNDICADOR DE ATENDIMENTO</CardTitle>
                 </CardHeader>
-                <CardContent className="p-0">
+                <CardContent className="p-0 relative z-10">
                   {adcManual ? (
                     <ManualIndicatorBadge observacao={adcManualObservacao} iconClassName="text-white/90" />
                   ) : (
                     <>
-                  <div className="mb-1 text-lg font-semibold text-white/85 dark:text-muted-foreground">
+                  <div className="mb-1 text-lg font-semibold text-white/85 dark:text-blue-200/80">
                     {indicators.data?.IA?.pontuacao || 0} Pontos
                   </div>
-                  <div className="text-3xl font-bold text-white dark:bg-linear-to-r dark:from-blue-600 dark:to-blue-400 dark:bg-clip-text dark:text-transparent">
+                  <div className="text-4xl tracking-tight font-bold text-white drop-shadow-md">
                     {indicators.data?.IA?.valor?.toFixed(1) || "0"}%
                   </div>
                     </>
@@ -533,20 +553,25 @@ function DashboardContent() {
 
               <Link href="/sacs" className="block">
               <Card
-                className="rounded-xl border-0 bg-linear-to-br from-emerald-600 to-emerald-900 p-4 text-white shadow-xl shadow-emerald-900/25 transition-all duration-200 hover:scale-[1.02] hover:shadow-2xl hover:border-transparent cursor-pointer dark:bg-none dark:bg-card dark:text-card-foreground dark:shadow-md dark:hover:shadow-md"
+                className="group relative overflow-hidden rounded-xl border border-emerald-400/20 bg-linear-to-br from-emerald-700 via-teal-600 to-emerald-500 bg-[length:200%_200%] animate-[gradient_7s_ease_infinite] min-h-[160px] flex flex-col justify-between p-4 text-white shadow-lg shadow-emerald-500/25 transition-all duration-300 hover:scale-[1.02] hover:shadow-2xl cursor-pointer dark:from-emerald-900 dark:via-emerald-800 dark:to-emerald-950 dark:border-emerald-900/50 dark:text-card-foreground dark:shadow-md dark:hover:shadow-[0_0_20px_rgba(16,185,129,0.3)]"
               >
-                <CardHeader className="p-0 pb-4">
-                  <CardTitle className="text-sm font-medium text-white/95 dark:text-emerald-400">IRD - ÍNDICADOR DE RECLAMAÇÕES POR DOMICÍLIO</CardTitle>
+                {/* Laser sweep constante em loop (deslocado + delay de 1s) */}
+                <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(110deg,transparent_35%,rgba(255,255,255,0.18)_50%,transparent_65%)] bg-[length:200%_100%] animate-[shimmer_4s_linear_1s_infinite]" />
+                {/* Textura técnica de fundo */}
+                <div className="pointer-events-none absolute inset-0 opacity-[0.06] bg-[linear-gradient(to_right,#ffffff_1px,transparent_1px),linear-gradient(to_bottom,#ffffff_1px,transparent_1px)] bg-[size:16px_16px] [mask-image:radial-gradient(ellipse_at_center,white,transparent)]" />
+
+                <CardHeader className="p-0 pb-2 relative z-10">
+                  <CardTitle className="text-sm font-medium text-white/95 dark:text-emerald-300">IRD - ÍNDICADOR DE RECLAMAÇÕES POR DOMICÍLIO</CardTitle>
                 </CardHeader>
-                <CardContent className="p-0">
+                <CardContent className="p-0 relative z-10">
                   {adcManual ? (
                     <ManualIndicatorBadge observacao={adcManualObservacao} iconClassName="text-white/90" />
                   ) : (
                     <>
-                  <div className="mb-1 text-lg font-semibold text-white/85 dark:text-muted-foreground">
+                  <div className="mb-1 text-lg font-semibold text-white/85 dark:text-emerald-200/80">
                     {indicators.data?.IRD?.pontuacao || 0} Pontos
                   </div>
-                  <div className="text-3xl font-bold text-white dark:bg-linear-to-r dark:from-emerald-600 dark:to-emerald-400 dark:bg-clip-text dark:text-transparent">
+                  <div className="text-4xl tracking-tight font-bold text-white drop-shadow-md">
                     {indicators.data?.IRD?.valor?.toFixed(2) || "0"}
                   </div>
                     </>
@@ -557,20 +582,25 @@ function DashboardContent() {
 
               <Link href="/bfs" className="block">
               <Card
-                className="rounded-xl border-0 bg-linear-to-br from-amber-500 to-amber-800 p-4 text-white shadow-xl shadow-amber-900/25 transition-all duration-200 hover:scale-[1.02] hover:shadow-2xl hover:border-transparent cursor-pointer dark:bg-none dark:bg-card dark:text-card-foreground dark:shadow-md dark:hover:shadow-md"
+                className="group relative overflow-hidden rounded-xl border border-amber-400/20 bg-linear-to-br from-amber-600 via-orange-500 to-rose-500 bg-[length:200%_200%] animate-[gradient_8s_ease_infinite] min-h-[160px] flex flex-col justify-between p-4 text-white shadow-lg shadow-amber-500/25 transition-all duration-300 hover:scale-[1.02] hover:shadow-2xl cursor-pointer dark:from-amber-900 dark:via-amber-800 dark:to-amber-950 dark:border-amber-900/50 dark:text-card-foreground dark:shadow-md dark:hover:shadow-[0_0_20px_rgba(245,158,11,0.3)]"
               >
-                <CardHeader className="p-0 pb-4">
-                  <CardTitle className="text-sm font-medium text-white/95 dark:text-amber-400">IF - ÍNDICADOR DE FISCALIZAÇÃO</CardTitle>
+                {/* Laser sweep constante em loop (deslocado + delay de 2s) */}
+                <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(110deg,transparent_35%,rgba(255,255,255,0.18)_50%,transparent_65%)] bg-[length:200%_100%] animate-[shimmer_4s_linear_2s_infinite]" />
+                {/* Textura técnica de fundo */}
+                <div className="pointer-events-none absolute inset-0 opacity-[0.06] bg-[linear-gradient(to_right,#ffffff_1px,transparent_1px),linear-gradient(to_bottom,#ffffff_1px,transparent_1px)] bg-[size:16px_16px] [mask-image:radial-gradient(ellipse_at_center,white,transparent)]" />
+
+                <CardHeader className="p-0 pb-2 relative z-10">
+                  <CardTitle className="text-sm font-medium text-white/95 dark:text-amber-300">IF - ÍNDICADOR DE FISCALIZAÇÃO</CardTitle>
                 </CardHeader>
-                <CardContent className="p-0">
+                <CardContent className="p-0 relative z-10">
                   {adcManual ? (
                     <ManualIndicatorBadge observacao={adcManualObservacao} iconClassName="text-white/90" />
                   ) : (
                     <>
-                  <div className="mb-1 text-lg font-semibold text-white/85 dark:text-muted-foreground">
+                  <div className="mb-1 text-lg font-semibold text-white/85 dark:text-amber-200/80">
                     {indicators.data?.IF?.pontuacao || 0} Pontos
                   </div>
-                  <div className="text-3xl font-bold text-white dark:bg-linear-to-r dark:from-amber-600 dark:to-amber-400 dark:bg-clip-text dark:text-transparent">
+                  <div className="text-4xl tracking-tight font-bold text-white drop-shadow-md">
                     {indicators.data?.IF?.valor?.toFixed(1) || "0"}%
                   </div>
                     </>
@@ -581,26 +611,28 @@ function DashboardContent() {
 
               <Link href="/ipt" className="block">
               <Card 
-                className="rounded-xl border-0 bg-linear-to-br from-violet-600 to-purple-900 p-4 text-white shadow-xl shadow-purple-900/25 transition-all duration-200 hover:scale-[1.02] hover:shadow-2xl hover:border-transparent cursor-pointer dark:bg-none dark:bg-card dark:text-card-foreground dark:shadow-md dark:hover:shadow-md"
+                className="group relative overflow-hidden rounded-xl border border-purple-400/20 bg-linear-to-br from-violet-700 via-purple-600 to-fuchsia-600 bg-[length:200%_200%] animate-[gradient_6.5s_ease_infinite] min-h-[160px] flex flex-col justify-between p-4 text-white shadow-lg shadow-purple-500/25 transition-all duration-300 hover:scale-[1.02] hover:shadow-2xl cursor-pointer dark:from-violet-900 dark:via-purple-800 dark:to-purple-950 dark:border-purple-900/50 dark:text-card-foreground dark:shadow-md dark:hover:shadow-[0_0_20px_rgba(168,85,247,0.3)]"
               >
-                <CardHeader className="p-0 pb-4">
-                  <CardTitle className="text-sm font-medium text-white/95 dark:text-purple-400">IPT - INDICADOR PLANO DE TRABALHO</CardTitle>
+                {/* Laser sweep constante em loop (deslocado + delay de 3s) */}
+                <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(110deg,transparent_35%,rgba(255,255,255,0.18)_50%,transparent_65%)] bg-[length:200%_100%] animate-[shimmer_4s_linear_3s_infinite]" />
+                {/* Textura técnica de fundo */}
+                <div className="pointer-events-none absolute inset-0 opacity-[0.06] bg-[linear-gradient(to_right,#ffffff_1px,transparent_1px),linear-gradient(to_bottom,#ffffff_1px,transparent_1px)] bg-[size:16px_16px] [mask-image:radial-gradient(ellipse_at_center,white,transparent)]" />
+
+                <CardHeader className="p-0 pb-2 relative z-10">
+                  <CardTitle className="text-sm font-medium text-white/95 dark:text-purple-300">IPT - INDICADOR PLANO DE TRABALHO</CardTitle>
                 </CardHeader>
-                <CardContent className="p-0">
+                <CardContent className="p-0 relative z-10">
                   {adcManual ? (
                     <ManualIndicatorBadge observacao={adcManualObservacao} iconClassName="text-white/90" />
                   ) : (
                     <>
-                  <div className="mb-1 text-lg font-semibold text-white/85 dark:text-muted-foreground">
+                  <div className="mb-1 text-lg font-semibold text-white/85 dark:text-purple-200/80">
                     {(iptSemDados ? 0 : indicators.data?.IPT?.pontuacao) ?? 0} Pontos
                     {iptSemDados && (
-                      <span className="text-xs text-white/70 dark:text-muted-foreground/70"> (Clique para importar planilha Reports)</span>
-                    )}
-                    {!iptSemDados && indicators.data?.IPT?.valor != null && (
-                      <span className="text-xs text-white/70 dark:text-muted-foreground/70"> (Clique para ver página IPT)</span>
+                      <span className="text-xs text-white/70 dark:text-purple-300/70 block mt-1 leading-tight"> (Clique para importar planilha Reports)</span>
                     )}
                   </div>
-                  <div className="text-3xl font-bold text-white dark:bg-linear-to-r dark:from-purple-600 dark:to-purple-400 dark:bg-clip-text dark:text-transparent">
+                  <div className="text-4xl tracking-tight font-bold text-white drop-shadow-md">
                     {iptSemDados
                       ? "0%"
                       : indicators.data?.IPT?.valor != null && !Number.isNaN(indicators.data.IPT.valor)
@@ -618,7 +650,7 @@ function DashboardContent() {
             <div className="flex items-center justify-center">
               <Link
                 href="/indicadores/explicacao"
-                className="group relative rounded-2xl bg-card/40 p-2 shadow-lg shadow-slate-900/12 transition-all hover:scale-[1.02] hover:shadow-xl dark:bg-transparent dark:shadow-none dark:hover:shadow-lg focus-visible:outline-none focus-visible:shadow-xl"
+                className="group relative transition-all hover:scale-[1.02] focus-visible:outline-none"
                 title="Clique para ver a explicação detalhada dos indicadores"
               >
                 <ADCRingChart

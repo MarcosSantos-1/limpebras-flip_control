@@ -4,6 +4,7 @@ import { useEffect } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { useState } from "react"
+import { Menu } from "lucide-react"
 import { Sidebar } from "./sidebar"
 import { useAuth } from "@/lib/auth"
 import type { AuthPageKey } from "@/lib/api"
@@ -105,10 +106,10 @@ export function MainLayout({ children }: MainLayoutProps) {
       <button
         type="button"
         onClick={() => setCollapsed((prev) => !prev)}
-        className="sidebar-toggle fixed left-3 top-3 z-50 rounded-md border border-border bg-card/95 px-2 py-1 text-xs font-semibold text-muted-foreground shadow-sm transition hover:bg-accent hover:text-foreground print:hidden"
+        className="sidebar-toggle fixed left-3 top-3 z-50 rounded-md border border-border bg-card/95 p-1.5 text-muted-foreground shadow-sm transition hover:bg-accent hover:text-foreground print:hidden flex items-center justify-center"
         aria-label={collapsed ? "Mostrar barra lateral" : "Ocultar barra lateral"}
       >
-        {collapsed ? "☰ Menu" : "✕ Sidebar"}
+        <Menu className="h-5 w-5" />
       </button>
       <main
         className={

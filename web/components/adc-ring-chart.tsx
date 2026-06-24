@@ -40,6 +40,31 @@ export function ADCRingChart({ total, percentual }: ADCRingChartProps) {
 
   return (
     <div className="relative flex flex-col items-center justify-center p-4">
+      {/* Wave animation behind */}
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none overflow-visible">
+         {/* Soft central radial glow that shifts with active color status */}
+         <div 
+           className="absolute h-48 w-48 rounded-full blur-3xl opacity-20 dark:opacity-25 animate-[pulse_4s_ease-in-out_infinite] transition-all duration-1000"
+           style={{
+             background: `radial-gradient(circle, ${colors.middle} 0%, transparent 70%)`
+           }}
+         />
+         {/* Dynamic neon waves tracking the active ring status */}
+         <div 
+           className="absolute h-[230px] w-[230px] rounded-full border transition-all duration-1000 animate-[ping_4s_cubic-bezier(0,0,0.2,1)_infinite]" 
+           style={{ 
+             borderColor: `${colors.middle}33`,
+             boxShadow: `0 0 15px ${colors.middle}20, inset 0 0 15px ${colors.middle}20`
+           }}
+         />
+         <div 
+           className="absolute h-[230px] w-[230px] rounded-full border transition-all duration-1000 animate-[ping_4s_cubic-bezier(0,0,0.2,1)_infinite_2s]" 
+           style={{ 
+             borderColor: `${colors.start}22`,
+             boxShadow: `0 0 20px ${colors.start}15, inset 0 0 20px ${colors.start}15`
+           }}
+         />
+      </div>
       <div className="relative">
         <svg className="transform -rotate-90 w-64 h-64" viewBox="0 0 200 200">
           <defs>
@@ -71,6 +96,9 @@ export function ADCRingChart({ total, percentual }: ADCRingChartProps) {
             strokeDasharray={circumference}
             strokeDashoffset={strokeDashoffset}
             className="transition-all duration-1000 ease-out"
+            style={{ 
+              filter: `drop-shadow(0 0 6px ${colors.middle}aa) drop-shadow(0 0 2px ${colors.start}88)` 
+            }}
           />
         </svg>
         
