@@ -56,6 +56,7 @@ import {
   Copy,
   Upload,
   FileText,
+  ImageIcon,
   HelpCircle,
   ClipboardPaste,
 } from "lucide-react";
@@ -1242,6 +1243,19 @@ function isContestationEligible(
   return false;
 }
 
+const MANUT_DOC_ACCEPT = "application/pdf,image/*";
+
+function isManutencaoDocFile(file: File): boolean {
+  if (!file.type) return true;
+  return file.type === "application/pdf" || file.type.startsWith("image/");
+}
+
+function isImageManutDoc(doc: Pick<ManutencaoArquivo, "contentType" | "titulo" | "url">): boolean {
+  if (doc.contentType?.startsWith("image/")) return true;
+  const name = (doc.titulo || doc.url || "").toLowerCase();
+  return /\.(jpe?g|png|gif|webp|bmp|heic)$/i.test(name);
+}
+
 function contestacaoDiaHoje(e: Pick<ManutEntry, "contestacaoDias">): ManutEntry["contestacaoDias"][number] | undefined {
   const today = isoToday();
   return e.contestacaoDias.find((d) => d.data === today);
@@ -2004,12 +2018,10 @@ export default function BateriaDashboardPage() {
       const wantManut = trocasMotivoFilter.includes("Manutenção");
       const outros = trocasMotivoFilter.filter((x) => x !== "Manutenção");
       result = result.filter((m) => {
-        // "Manutenção" → módulos com qualquer manutenção aberta.
-        if (wantManut) {
-          const st = manutStatusForModule(m);
-          if (isOpenManutStatus(st)) return true;
-        }
-        return outros.includes(motivoFromModule(m));
+        const inManut = isOpenManutStatus(manutStatusForModule(m));
+        if (inManut) return wantManut;
+        if (outros.length > 0) return outros.includes(motivoFromModule(m));
+        return false;
       });
     }
     if (trocasAgendadaFilter !== "all") {
@@ -2024,8 +2036,8 @@ export default function BateriaDashboardPage() {
     }
     if (trocasAlertaFilter !== "all") {
       result = result.filter((m) => {
-        const a = alertaOf(m);
-        return trocasAlertaFilter === "com_alerta" ? a.hasAlert : !a.hasAlert;
+        const isProblema = alertaOf(m).level === "problema";
+        return trocasAlertaFilter === "com_alerta" ? isProblema : !isProblema;
       });
     }
 
@@ -2078,10 +2090,12 @@ export default function BateriaDashboardPage() {
     trocasMotivoFilter,
     trocasAgendadaFilter,
     trocasBateriaFilter,
+    trocasAlertaFilter,
     trocasSort,
     troca.records,
     troca.history,
     manutStatusForModule,
+    alertaOf,
   ]);
 
   // Paginação da listagem de Trocas (idx global preservado para seleção em lote).
@@ -2470,6 +2484,12 @@ export default function BateriaDashboardPage() {
         : opts?.status === "SINAL_RECUPERADO" ? "REALIZADA" : opts?.status ?? "REALIZADA";
       // Datas: ao editar mantém as do registro; em novas interações já vêm com a data de hoje.
       const today = isoToday();
+      const evDocs =
+        ev?.documentos && ev.documentos.length > 0
+          ? ev.documentos
+          : ev?.documentoUrl
+            ? [{ url: ev.documentoUrl, titulo: ev.documentoTitulo || "Documento anexado" }]
+            : [];
       setManutForm({
         selimp: ev?.selimp ?? module?.numeroSelimp ?? opts?.selimp ?? "",
         status: base as "EM_ANALISE" | "PENDENTE" | "RETIRANDO" | "ATIVA" | "REINSTALANDO" | "REALIZADA",
@@ -2481,6 +2501,9 @@ export default function BateriaDashboardPage() {
         dataManutencao: ev ? ev.dataManutencao ?? "" : today,
         sinalRecuperado: ev ? ev.status === "SINAL_RECUPERADO" : false,
         oficial: ev ? ev.oficial : true,
+        documentoUrl: evDocs[0]?.url,
+        documentoTitulo: evDocs[0]?.titulo,
+        documentos: evDocs,
       });
       setManutPickerSearch("");
       setManutModal({ open: true, module, editEventId: ev?.id ?? null });
@@ -2506,6 +2529,13 @@ export default function BateriaDashboardPage() {
     const oficial = manutForm.oficial;
     const motivo = manutForm.motivo.trim();
     const motivoBadge = manutForm.motivoBadge;
+    const documentos = manutForm.documentos ?? [];
+    const firstDoc = documentos[0];
+    const docPayload = {
+      documentoUrl: firstDoc?.url ?? null,
+      documentoTitulo: firstDoc?.titulo ?? null,
+      documentos,
+    };
 
     if (manutModal.editEventId != null) {
       // Edição: envia valores explícitos (strings vazias limpam as datas); motivo/oficial persistem.
@@ -2518,6 +2548,7 @@ export default function BateriaDashboardPage() {
         sinalRecuperado,
         oficial,
         status: finalStatus,
+        ...docPayload,
       });
     } else {
       const setores = mod ? setoresOf(mod).join(" / ") : undefined;
@@ -2536,6 +2567,7 @@ export default function BateriaDashboardPage() {
         sinalRecuperado,
         oficial,
         status: finalStatus,
+        ...docPayload,
       });
     }
     setManutModal({ open: false, module: null, editEventId: null });
@@ -2616,12 +2648,12 @@ export default function BateriaDashboardPage() {
     return `Setor ${e.setor} (SELIMP ${e.selimp}) em processo de manutenção${diaTxt}, conforme comunicado à SELIMP via e-mail no dia ${ordenado}. Solicitamos a desconsideração do percentual zerado, pois o serviço não pôde ser executado.`;
   }, []);
 
-  /** Upload do documento (PDF) que atesta a manutenção → Firebase Storage + salva a URL. */
+  /** Upload do documento (PDF ou foto) que atesta a manutenção → Firebase Storage + estado local do modal. */
   const handleManutModalUpload = useCallback(async (files: FileList | File[] | File) => {
     const list = files instanceof File ? [files] : Array.from(files);
     if (list.length === 0) return;
-    if (list.some((f) => f.type && f.type !== "application/pdf")) {
-      toast.error("Envie um arquivo PDF.");
+    if (list.some((f) => !isManutencaoDocFile(f))) {
+      toast.error("Envie um PDF ou uma foto.");
       return;
     }
     const selimp = manutForm.selimp.trim() || manutModal.module?.numeroSelimp;
@@ -2652,8 +2684,8 @@ export default function BateriaDashboardPage() {
       if (e.eventId == null) return;
       const list = files instanceof File ? [files] : Array.from(files);
       if (list.length === 0) return;
-      if (list.some((file) => file.type && file.type !== "application/pdf")) {
-        toast.error("Envie um arquivo PDF.");
+      if (list.some((file) => !isManutencaoDocFile(file))) {
+        toast.error("Envie um PDF ou uma foto.");
         return;
       }
       setContestUploading(true);
@@ -3396,7 +3428,7 @@ export default function BateriaDashboardPage() {
                         <SelectItem value="sim">Com troca programada</SelectItem>
                         <SelectItem value="nao">Sem troca programada</SelectItem>
                       </SelectContent>
-                    </Select>
+                    </Select>
                     <Select value={trocasAlertaFilter} onValueChange={setTrocasAlertaFilter}>
                       <SelectTrigger className="h-9 w-[170px]">
                         <AlertTriangle className="mr-1 h-4 w-4 text-muted-foreground" />
@@ -3404,8 +3436,8 @@ export default function BateriaDashboardPage() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="all">Alertas: Todos</SelectItem>
-                        <SelectItem value="com_alerta">Com alerta</SelectItem>
-                        <SelectItem value="sem_alerta">Sem alerta</SelectItem>
+                        <SelectItem value="com_alerta">Com alerta crítico</SelectItem>
+                        <SelectItem value="sem_alerta">Sem alerta crítico</SelectItem>
                       </SelectContent>
                     </Select>
                     <Select value={trocaRecencia} onValueChange={setTrocasSort}>
@@ -5304,13 +5336,17 @@ export default function BateriaDashboardPage() {
                       </Button>
                     </div>
 
-                    {/* Documento (PDF, global por módulo) */}
+                    {/* Documento (PDF ou foto, global por módulo) */}
                     <div className="space-y-1.5">
-                      <label className="text-xs font-medium text-muted-foreground">Documento de manutenção (PDF)</label>
+                      <label className="text-xs font-medium text-muted-foreground">Documento de manutenção (PDF ou foto)</label>
                       {e.documentoUrl && (
                         <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3">
                           <span className="flex min-w-0 flex-1 items-center gap-2 text-xs font-medium text-emerald-700 dark:text-emerald-300">
-                            <FileText className="h-4 w-4 shrink-0" />
+                            {isImageManutDoc(docs[0] ?? { url: e.documentoUrl, titulo: e.documentoTitulo }) ? (
+                              <ImageIcon className="h-4 w-4 shrink-0" />
+                            ) : (
+                              <FileText className="h-4 w-4 shrink-0" />
+                            )}
                             <span className="truncate" title={e.documentoTitulo || "Documento anexado"}>
                               {e.documentoTitulo || "Documento anexado"}
                             </span>
@@ -5351,7 +5387,11 @@ export default function BateriaDashboardPage() {
                       {docs.slice(e.documentoUrl ? 1 : 0).map((doc) => (
                         <div key={doc.url} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3">
                           <span className="flex min-w-0 flex-1 items-center gap-2 text-xs font-medium text-emerald-700 dark:text-emerald-300">
-                            <FileText className="h-4 w-4 shrink-0" />
+                            {isImageManutDoc(doc) ? (
+                              <ImageIcon className="h-4 w-4 shrink-0" />
+                            ) : (
+                              <FileText className="h-4 w-4 shrink-0" />
+                            )}
                             <span className="truncate" title={doc.titulo}>{doc.titulo}</span>
                           </span>
                           <div className="flex shrink-0 items-center gap-1.5">
@@ -5392,10 +5432,10 @@ export default function BateriaDashboardPage() {
                         className="flex cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-border/70 bg-muted/15 px-4 py-5 text-center text-xs text-muted-foreground transition-colors hover:bg-muted/30"
                       >
                         <Upload className="h-5 w-5" />
-                        {contestUploading ? "Enviando..." : e.documentoUrl ? "Solte um novo PDF para substituir, ou clique" : "Solte o PDF aqui ou clique para anexar"}
+                        {contestUploading ? "Enviando..." : e.documentoUrl ? "Solte um novo arquivo para substituir, ou clique" : "Solte o PDF ou foto aqui, ou clique para anexar"}
                         <input
                           type="file"
-                          accept="application/pdf"
+                          accept={MANUT_DOC_ACCEPT}
                           multiple
                           className="hidden"
                           disabled={contestUploading}
@@ -6011,6 +6051,86 @@ export default function BateriaDashboardPage() {
                           />
                         </div>
                       )}
+                    </div>
+                  )}
+
+                  {manutForm.status !== "EM_ANALISE" && manutForm.status !== "PENDENTE" && (
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-muted-foreground">
+                        Documento de contestação
+                        <span className="ml-1 font-normal text-muted-foreground/80">(opcional · PDF ou foto)</span>
+                      </label>
+                      {!manutForm.dataOrdenado.trim() && (
+                        <p className="text-[11px] text-muted-foreground">Informe a data de Ordenado p/ Manutenção para habilitar o upload.</p>
+                      )}
+                      {manutForm.documentos && manutForm.documentos.length > 0 && (
+                        <div className="space-y-1.5">
+                          {manutForm.documentos.map((doc, idx) => (
+                            <div key={doc.url} className="flex items-center justify-between gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs">
+                              <span className="flex min-w-0 flex-1 items-center gap-2 font-medium text-emerald-700 dark:text-emerald-300">
+                                {isImageManutDoc(doc) ? (
+                                  <ImageIcon className="h-4 w-4 shrink-0" />
+                                ) : (
+                                  <FileText className="h-4 w-4 shrink-0" />
+                                )}
+                                <span className="truncate" title={doc.titulo}>{doc.titulo}</span>
+                              </span>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 w-7 shrink-0 p-0 text-red-500 hover:text-red-600"
+                                disabled={manutFormUploading}
+                                onClick={() =>
+                                  setManutForm((prev) => {
+                                    const next = (prev.documentos ?? []).filter((_, i) => i !== idx);
+                                    return {
+                                      ...prev,
+                                      documentos: next,
+                                      documentoUrl: next[0]?.url,
+                                      documentoTitulo: next[0]?.titulo,
+                                    };
+                                  })
+                                }
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <label
+                        onDragOver={(ev) => { if (manutForm.dataOrdenado.trim()) ev.preventDefault(); }}
+                        onDrop={(ev) => {
+                          ev.preventDefault();
+                          if (!manutForm.dataOrdenado.trim()) return;
+                          if (ev.dataTransfer.files?.length) void handleManutModalUpload(ev.dataTransfer.files);
+                        }}
+                        className={cn(
+                          "flex flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-border/70 bg-muted/15 px-4 py-3 text-center text-xs text-muted-foreground transition-colors",
+                          manutForm.dataOrdenado.trim()
+                            ? "cursor-pointer hover:bg-muted/30"
+                            : "cursor-not-allowed opacity-50",
+                        )}
+                      >
+                        <Upload className="h-4 w-4" />
+                        {manutFormUploading
+                          ? "Enviando..."
+                          : manutForm.dataOrdenado.trim()
+                            ? "Solte o PDF ou foto aqui, ou clique para anexar"
+                            : "Aguardando data de Ordenado"}
+                        <input
+                          type="file"
+                          accept={MANUT_DOC_ACCEPT}
+                          multiple
+                          className="hidden"
+                          disabled={manutFormUploading || !manutForm.dataOrdenado.trim()}
+                          onChange={(ev) => {
+                            if (ev.target.files?.length) void handleManutModalUpload(ev.target.files);
+                            ev.target.value = "";
+                          }}
+                        />
+                      </label>
                     </div>
                   )}
 
