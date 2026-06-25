@@ -1480,6 +1480,7 @@ export default function BateriaDashboardPage() {
   const [trocasMotivoFilter, setTrocasMotivoFilter] = useState<string[]>([]);
   const [trocasAgendadaFilter, setTrocasAgendadaFilter] = useState("all"); // all | sim | nao
   const [trocasBateriaFilter, setTrocasBateriaFilter] = useState<string[]>([]); // status da bateria
+  const [trocasAlertaFilter, setTrocasAlertaFilter] = useState("all");
   const [trocasSort, setTrocasSort] = useState("default"); // ordenação da listagem
 
   // Filtros da aba "Manutenções"
@@ -1488,7 +1489,7 @@ export default function BateriaDashboardPage() {
   const [manutSubFilter, setManutSubFilter] = useState<string[]>([]);
   const [manutStatusFilter, setManutStatusFilter] = useState("all"); // all | EM_ANALISE | PENDENTE | RETIRANDO | ATIVA | REINSTALANDO | REALIZADA (+ SINAL_RECUPERADO)
   const [manutOficialFilter, setManutOficialFilter] = useState("all"); // all | oficial | nao
-  const [manutMotivoBadgeFilter, setManutMotivoBadgeFilter] = useState<"all" | ManutencaoMotivoBadge>("all");
+  const [manutMotivoBadgeFilter, setManutMotivoBadgeFilter] = useState<ManutencaoMotivoBadge[]>([]);
   const [histModule, setHistModule] = useState<ModuleData | null>(null);
   // Modal de contestação por dia (despachos perdidos na manutenção) + estado de upload do documento.
   const [contestModule, setContestModule] = useState<ManutEntry | null>(null);
@@ -1507,7 +1508,8 @@ export default function BateriaDashboardPage() {
   const [manutModal, setManutModal] = useState<{ open: boolean; module: ModuleData | null; editEventId: number | null }>(
     { open: false, module: null, editEventId: null },
   );
-  const [manutForm, setManutForm] = useState({
+  const [manutFormUploading, setManutFormUploading] = useState(false);
+  const [manutForm, setManutForm] = useState<{ selimp: string; status: "EM_ANALISE" | "PENDENTE" | "RETIRANDO" | "ATIVA" | "REINSTALANDO" | "REALIZADA"; motivo: string; motivoBadge: ManutencaoMotivoBadge; dataOrdenado: string; dataRetirada: string; dataReinstalacao: string; dataManutencao?: string; sinalRecuperado: boolean; oficial: boolean; documentoUrl?: string; documentoTitulo?: string; documentos?: {url: string; titulo: string}[] }>({
     selimp: "",
     // status base do dropdown; SINAL_RECUPERADO vem do toggle em REALIZADA.
     status: "REALIZADA" as "EM_ANALISE" | "PENDENTE" | "RETIRANDO" | "ATIVA" | "REINSTALANDO" | "REALIZADA",
@@ -1957,6 +1959,29 @@ export default function BateriaDashboardPage() {
     return Array.from(set).sort((a, b) => a.localeCompare(b, "pt-BR"));
   }, [modules]);
 
+  /** Alertas do módulo (troca registrada + histórico de manutenção reais). */
+  const alertaOf = useCallback(
+    (m: ModuleData) => {
+      const manutencoesModulo = moduloManut.history[m.numeroSelimp] ?? [];
+      const resetDate = latestAlertResetDate(manutencoesModulo);
+      const historicoModulo = manutencoesModulo.map((ev) => ({
+        data: manutEventoAlertDate(ev),
+        descricao: manutEventoDescricao(ev),
+      }));
+      const historyAposReset = (troca.history[m.numeroSelimp] ?? []).filter((h) => {
+        const d = trocaDate(h);
+        return !resetDate || !d || d > resetDate;
+      });
+      return computeAlerta(
+        moduleAfterAlertReset(m, resetDate),
+        troca.records[m.numeroSelimp],
+        [...historicoModulo, ...historicoFromManutencao(manut.overrides[m.numeroSelimp])],
+        historyAposReset,
+      );
+    },
+    [manut.overrides, moduloManut.history, troca.records, troca.history],
+  );
+
   /** Listagem geral de setores (filtro + busca próprios da aba Trocas). */
   const trocasModules = useMemo(() => {
     let result = modules;
@@ -1996,6 +2021,12 @@ export default function BateriaDashboardPage() {
     }
     if (trocasBateriaFilter.length > 0) {
       result = result.filter((m) => trocasBateriaFilter.includes(m.statusBateria));
+    }
+    if (trocasAlertaFilter !== "all") {
+      result = result.filter((m) => {
+        const a = alertaOf(m);
+        return trocasAlertaFilter === "com_alerta" ? a.hasAlert : !a.hasAlert;
+      });
     }
 
     // Ordenação (não muta a fonte): cópia antes de sort.
@@ -2351,7 +2382,7 @@ export default function BateriaDashboardPage() {
     if (manutSubFilter.length > 0) result = result.filter((e) => manutSubFilter.includes(e.sub));
     if (manutOficialFilter === "oficial") result = result.filter((e) => e.oficial);
     else if (manutOficialFilter === "nao") result = result.filter((e) => !e.oficial);
-    if (manutMotivoBadgeFilter !== "all") result = result.filter((e) => e.motivoBadge === manutMotivoBadgeFilter);
+    if (manutMotivoBadgeFilter.length > 0) result = result.filter((e) => manutMotivoBadgeFilter.includes(e.motivoBadge));
     if (manutStatusFilter !== "all") {
       result =
         manutStatusFilter === "REALIZADA"
@@ -2392,29 +2423,6 @@ export default function BateriaDashboardPage() {
   useEffect(() => {
     setManutPage(1);
   }, [manutPeriod]);
-
-  /** Alertas do módulo (troca registrada + histórico de manutenção reais). */
-  const alertaOf = useCallback(
-    (m: ModuleData) => {
-      const manutencoesModulo = moduloManut.history[m.numeroSelimp] ?? [];
-      const resetDate = latestAlertResetDate(manutencoesModulo);
-      const historicoModulo = manutencoesModulo.map((ev) => ({
-        data: manutEventoAlertDate(ev),
-        descricao: manutEventoDescricao(ev),
-      }));
-      const historyAposReset = (troca.history[m.numeroSelimp] ?? []).filter((h) => {
-        const d = trocaDate(h);
-        return !resetDate || !d || d > resetDate;
-      });
-      return computeAlerta(
-        moduleAfterAlertReset(m, resetDate),
-        troca.records[m.numeroSelimp],
-        [...historicoModulo, ...historicoFromManutencao(manut.overrides[m.numeroSelimp])],
-        historyAposReset,
-      );
-    },
-    [manut.overrides, moduloManut.history, troca.records, troca.history],
-  );
 
   const manutStats = useMemo(() => {
     const counts: Record<ManutencaoModuloStatus, number> = { EM_ANALISE: 0, PENDENTE: 0, RETIRANDO: 0, ATIVA: 0, REINSTALANDO: 0, REALIZADA: 0, SINAL_RECUPERADO: 0 };
@@ -2609,6 +2617,36 @@ export default function BateriaDashboardPage() {
   }, []);
 
   /** Upload do documento (PDF) que atesta a manutenção → Firebase Storage + salva a URL. */
+  const handleManutModalUpload = useCallback(async (files: FileList | File[] | File) => {
+    const list = files instanceof File ? [files] : Array.from(files);
+    if (list.length === 0) return;
+    if (list.some((f) => f.type && f.type !== "application/pdf")) {
+      toast.error("Envie um arquivo PDF.");
+      return;
+    }
+    const selimp = manutForm.selimp.trim() || manutModal.module?.numeroSelimp;
+    if (!selimp) {
+      toast.error("Selecione um módulo antes de enviar o documento.");
+      return;
+    }
+    setManutFormUploading(true);
+    try {
+      const novos = await Promise.all(list.map((f) => uploadManutencaoDocArquivo(selimp, f)));
+      setManutForm((prev) => ({
+        ...prev,
+        documentoUrl: prev.documentoUrl || novos[0]?.url,
+        documentoTitulo: prev.documentoTitulo || novos[0]?.titulo,
+        documentos: [...(prev.documentos || []), ...novos],
+      }));
+      toast.success(list.length > 1 ? "Documentos anexados." : "Documento anexado.");
+    } catch (err) {
+      console.error("Erro ao fazer upload no modal", err);
+      toast.error("Falha ao anexar documento.");
+    } finally {
+      setManutFormUploading(false);
+    }
+  }, [manutForm.selimp, manutModal.module, uploadManutencaoDocArquivo]);
+
   const handleUploadDocumento = useCallback(
     async (e: ManutEntry, files: FileList | File[] | File) => {
       if (e.eventId == null) return;
@@ -3358,6 +3396,17 @@ export default function BateriaDashboardPage() {
                         <SelectItem value="sim">Com troca programada</SelectItem>
                         <SelectItem value="nao">Sem troca programada</SelectItem>
                       </SelectContent>
+                    </Select>
+                    <Select value={trocasAlertaFilter} onValueChange={setTrocasAlertaFilter}>
+                      <SelectTrigger className="h-9 w-[170px]">
+                        <AlertTriangle className="mr-1 h-4 w-4 text-muted-foreground" />
+                        <SelectValue placeholder="Alertas" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Alertas: Todos</SelectItem>
+                        <SelectItem value="com_alerta">Com alerta</SelectItem>
+                        <SelectItem value="sem_alerta">Sem alerta</SelectItem>
+                      </SelectContent>
                     </Select>
                     <Select value={trocaRecencia} onValueChange={setTrocasSort}>
                       <SelectTrigger className="h-9 w-[200px]">
@@ -3999,20 +4048,15 @@ export default function BateriaDashboardPage() {
                         <SelectItem value="nao">Não oficiais</SelectItem>
                       </SelectContent>
                     </Select>
-                    <Select value={manutMotivoBadgeFilter} onValueChange={(v) => setManutMotivoBadgeFilter(v as "all" | ManutencaoMotivoBadge)}>
-                      <SelectTrigger className="h-9 w-[150px]">
-                        <Badge className={cn("mr-1 px-1 text-[9px]", manutMotivoBadgeFilter === "all" ? "border-zinc-500/30 bg-zinc-500/10 text-zinc-600" : MANUT_MOTIVO_BADGE_CLASS[manutMotivoBadgeFilter])}>
-                          {manutMotivoBadgeFilter === "all" ? "TAG" : MANUT_MOTIVO_BADGE_LABEL[manutMotivoBadgeFilter]}
-                        </Badge>
-                        <SelectValue placeholder="Badge" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">Todos badges</SelectItem>
-                        {MANUT_MOTIVO_BADGE_OPTIONS.map((badge) => (
-                          <SelectItem key={badge} value={badge}>{MANUT_MOTIVO_BADGE_LABEL[badge]}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <MultiSelect
+                      compact
+                      className="w-[130px]"
+                      placeholder="Categoria"
+                      emptyLabel="Todas"
+                      options={MANUT_MOTIVO_BADGE_OPTIONS.map((badge) => ({ value: badge, label: MANUT_MOTIVO_BADGE_LABEL[badge] }))}
+                      value={manutMotivoBadgeFilter}
+                      onChange={(v) => setManutMotivoBadgeFilter(v as ManutencaoMotivoBadge[])}
+                    />
                     <MultiSelect
                       compact
                       className="w-[130px]"
