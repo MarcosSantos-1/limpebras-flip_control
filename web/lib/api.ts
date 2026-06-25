@@ -571,6 +571,7 @@ export interface BateriaManutencaoRecord {
 
 export type ManutencaoModuloStatus =
   | "EM_ANALISE" | "PENDENTE" | "RETIRANDO" | "ATIVA" | "REINSTALANDO" | "REALIZADA" | "SINAL_RECUPERADO";
+export type ManutencaoMotivoBadge = "SINAL" | "BATERIA" | "AVARIA" | "PERCENTUAL";
 
 export interface ManutencaoArquivo {
   url: string;
@@ -594,6 +595,7 @@ export interface ModuloManutencaoEvento {
   setor?: string;
   execucao?: string;
   motivo?: string;
+  motivoBadge?: ManutencaoMotivoBadge;
   /** yyyy-MM-dd — "Ordenado para Manutenção" / e-mail à SELIMP (RETIRANDO). */
   dataOrdenado?: string;
   /** yyyy-MM-dd — "Data de retirada do módulo" (ATIVA). */
@@ -627,6 +629,7 @@ export interface ModuloManutencaoInput {
   setor?: string;
   execucao?: string;
   motivo?: string;
+  motivoBadge?: ManutencaoMotivoBadge;
   dataRetirada?: string;
   dataReinstalacao?: string;
   dataOrdenado?: string;

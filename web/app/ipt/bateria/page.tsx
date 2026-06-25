@@ -139,6 +139,7 @@ import {
   MANUT_STATUS_LABEL,
   MANUT_STATUS_ORDER,
   type ManutencaoModuloStatus,
+  type ManutencaoMotivoBadge,
   type ModuloManutencaoEvento,
 } from "./modulo-manutencao-state";
 
@@ -1193,6 +1194,22 @@ const STATUS_MODULO_MANUT_BADGE: Record<ManutencaoModuloStatus, string> = {
   SINAL_RECUPERADO: "bg-green-800/20 text-green-800 border-green-800/40 dark:bg-green-900/30 dark:text-green-400",
 };
 
+const MANUT_MOTIVO_BADGE_LABEL: Record<ManutencaoMotivoBadge, string> = {
+  SINAL: "SINAL",
+  BATERIA: "BATERIA",
+  AVARIA: "AVARIA",
+  PERCENTUAL: "PERCENTUAL",
+};
+
+const MANUT_MOTIVO_BADGE_CLASS: Record<ManutencaoMotivoBadge, string> = {
+  SINAL: "border-red-500/35 bg-red-500/15 text-red-700 dark:text-red-300",
+  BATERIA: "border-purple-500/35 bg-purple-500/15 text-purple-700 dark:text-purple-300",
+  AVARIA: "border-zinc-500/35 bg-zinc-500/15 text-zinc-700 dark:text-zinc-300",
+  PERCENTUAL: "border-blue-900/35 bg-blue-900/15 text-blue-900 dark:text-blue-300",
+};
+
+const MANUT_MOTIVO_BADGE_OPTIONS: ManutencaoMotivoBadge[] = ["SINAL", "BATERIA", "AVARIA", "PERCENTUAL"];
+
 const MANUT_OPEN_STATUSES = new Set<ManutencaoModuloStatus>([
   "EM_ANALISE", "PENDENTE", "RETIRANDO", "ATIVA", "REINSTALANDO",
 ]);
@@ -1230,9 +1247,8 @@ function contestacaoDiaHoje(e: Pick<ManutEntry, "contestacaoDias">): ManutEntry[
   return e.contestacaoDias.find((d) => d.data === today);
 }
 
-function hasContestacaoNaoContestadaHistorica(e: Pick<ManutEntry, "contestacaoDias">): boolean {
-  const today = isoToday();
-  return e.contestacaoDias.some((d) => d.data < today && !d.contestado);
+function latestContestacaoDia(e: Pick<ManutEntry, "contestacaoDias">): ManutEntry["contestacaoDias"][number] | undefined {
+  return [...e.contestacaoDias].sort((a, b) => b.data.localeCompare(a.data))[0];
 }
 
 function trocaBlockedStatusLabel(status: ManutencaoModuloStatus): string {
@@ -1292,6 +1308,7 @@ interface ManutEntry {
   documentoTitulo?: string;
   documentos?: ManutencaoArquivo[];
   motivo?: string;
+  motivoBadge: ManutencaoMotivoBadge;
   createdAt?: string;
   quantidadeTrocas: number;
   ultimaComunicacao: string;
@@ -1301,6 +1318,62 @@ function manutEntryDate(
   e: Pick<ManutEntry, "dataManutencao" | "dataReinstalacao" | "dataRetirada" | "dataOrdenado" | "createdAt">,
 ): string | undefined {
   return e.dataManutencao ?? e.dataReinstalacao ?? e.dataRetirada ?? e.dataOrdenado ?? e.createdAt?.slice(0, 10);
+}
+
+function exportManutencoesXlsx(entries: ManutEntry[]) {
+  const workbook = XLSX.utils.book_new();
+  const headers = [
+    "Subprefeitura",
+    "Setor",
+    "SELIMP",
+    "Status",
+    "Oficial",
+    "Badge",
+    "Motivo",
+    "Dias frequencia",
+    "Dias contestados",
+    "Ultima frequencia",
+    "Status contestacao",
+    "Ordenado",
+    "Retirada",
+    "Reinstalacao",
+    "Sinal recuperado",
+    "Ultima comunicacao",
+    "Qtd. trocas",
+    "Documentos",
+    "Registrado em",
+  ];
+  const rows = entries.map((e) => {
+    const latest = latestContestacaoDia(e);
+    const docs = e.documentos?.length
+      ? e.documentos.map((d) => d.titulo).join(" | ")
+      : e.documentoTitulo ?? "";
+    return [
+      e.sub,
+      e.setor,
+      e.selimp,
+      MANUT_STATUS_LABEL[e.status],
+      e.oficial ? "Sim" : "Nao",
+      MANUT_MOTIVO_BADGE_LABEL[e.motivoBadge],
+      e.motivo ?? "",
+      e.diasFrequencia,
+      e.contestacaoDias.filter((d) => d.contestado).length,
+      latest ? fmtIsoBr(latest.data) : "",
+      latest ? (latest.contestado ? "Contestado" : "Nao contestado") : "",
+      e.dataOrdenado ? fmtIsoBr(e.dataOrdenado) : "",
+      e.dataRetirada ? fmtIsoBr(e.dataRetirada) : "",
+      e.dataReinstalacao ? fmtIsoBr(e.dataReinstalacao) : "",
+      e.sinalRecuperado ? "Sim" : "Nao",
+      e.ultimaComunicacao,
+      e.quantidadeTrocas,
+      docs,
+      e.createdAt ? isoBrDateTime(e.createdAt) : "",
+    ];
+  });
+  const sheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+  sheet["!cols"] = [16, 30, 16, 18, 10, 14, 32, 16, 16, 16, 18, 14, 14, 14, 16, 22, 12, 38, 20].map((wch) => ({ wch }));
+  XLSX.utils.book_append_sheet(workbook, sheet, "Manutencoes");
+  XLSX.writeFile(workbook, `manutencoes_modulos_${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
 
 const SETOR_RE = /^(?:CV|JT|MG|ST)(\d)(\d{4})([A-Z]{2})/;
@@ -1415,6 +1488,7 @@ export default function BateriaDashboardPage() {
   const [manutSubFilter, setManutSubFilter] = useState<string[]>([]);
   const [manutStatusFilter, setManutStatusFilter] = useState("all"); // all | EM_ANALISE | PENDENTE | RETIRANDO | ATIVA | REINSTALANDO | REALIZADA (+ SINAL_RECUPERADO)
   const [manutOficialFilter, setManutOficialFilter] = useState("all"); // all | oficial | nao
+  const [manutMotivoBadgeFilter, setManutMotivoBadgeFilter] = useState<"all" | ManutencaoMotivoBadge>("all");
   const [histModule, setHistModule] = useState<ModuleData | null>(null);
   // Modal de contestação por dia (despachos perdidos na manutenção) + estado de upload do documento.
   const [contestModule, setContestModule] = useState<ManutEntry | null>(null);
@@ -1438,6 +1512,7 @@ export default function BateriaDashboardPage() {
     // status base do dropdown; SINAL_RECUPERADO vem do toggle em REALIZADA.
     status: "REALIZADA" as "EM_ANALISE" | "PENDENTE" | "RETIRANDO" | "ATIVA" | "REINSTALANDO" | "REALIZADA",
     motivo: "",
+    motivoBadge: "SINAL" as ManutencaoMotivoBadge,
     dataOrdenado: "",
     dataRetirada: "",
     dataReinstalacao: "",
@@ -2239,6 +2314,7 @@ export default function BateriaDashboardPage() {
           documentoTitulo: ev.documentoTitulo,
           documentos: ev.documentos,
           motivo: ev.motivo,
+          motivoBadge: ev.motivoBadge ?? "SINAL",
           createdAt: ev.createdAt,
           quantidadeTrocas: mod?.quantidadeTrocas ?? 0,
           ultimaComunicacao: mod?.ultimaComunicacao ?? "",
@@ -2264,6 +2340,7 @@ export default function BateriaDashboardPage() {
         contestado: false,
         diasFrequencia: 0,
         contestacaoDias: [],
+        motivoBadge: "SINAL",
         quantidadeTrocas: m.quantidadeTrocas,
         ultimaComunicacao: m.ultimaComunicacao,
       });
@@ -2274,6 +2351,7 @@ export default function BateriaDashboardPage() {
     if (manutSubFilter.length > 0) result = result.filter((e) => manutSubFilter.includes(e.sub));
     if (manutOficialFilter === "oficial") result = result.filter((e) => e.oficial);
     else if (manutOficialFilter === "nao") result = result.filter((e) => !e.oficial);
+    if (manutMotivoBadgeFilter !== "all") result = result.filter((e) => e.motivoBadge === manutMotivoBadgeFilter);
     if (manutStatusFilter !== "all") {
       result =
         manutStatusFilter === "REALIZADA"
@@ -2301,7 +2379,7 @@ export default function BateriaDashboardPage() {
       const db = b.createdAt ?? b.dataManutencao ?? b.dataOrdenado ?? "";
       return db.localeCompare(da);
     });
-  }, [modules, modulesBySelimp, moduloManut.history, manut.overrides, isEnviadoManutencao, manutSubFilter, manutSearch, manutStatusFilter, manutOficialFilter, manutPeriod]);
+  }, [modules, modulesBySelimp, moduloManut.history, manut.overrides, isEnviadoManutencao, manutSubFilter, manutSearch, manutStatusFilter, manutOficialFilter, manutMotivoBadgeFilter, manutPeriod]);
 
   const totalManutPages = Math.max(1, Math.ceil(manutEntries.length / ITEMS_PER_PAGE));
   const paginatedManut = useMemo(
@@ -2388,6 +2466,7 @@ export default function BateriaDashboardPage() {
         selimp: ev?.selimp ?? module?.numeroSelimp ?? opts?.selimp ?? "",
         status: base as "EM_ANALISE" | "PENDENTE" | "RETIRANDO" | "ATIVA" | "REINSTALANDO" | "REALIZADA",
         motivo: ev?.motivo ?? "",
+        motivoBadge: ev?.motivoBadge ?? "SINAL",
         dataOrdenado: ev ? ev.dataOrdenado ?? "" : today,
         dataRetirada: ev ? ev.dataRetirada ?? "" : today,
         dataReinstalacao: ev ? ev.dataReinstalacao ?? "" : today,
@@ -2418,11 +2497,13 @@ export default function BateriaDashboardPage() {
     const sinalRecuperado = base === "REALIZADA" ? manutForm.sinalRecuperado : false;
     const oficial = manutForm.oficial;
     const motivo = manutForm.motivo.trim();
+    const motivoBadge = manutForm.motivoBadge;
 
     if (manutModal.editEventId != null) {
       // Edição: envia valores explícitos (strings vazias limpam as datas); motivo/oficial persistem.
       void moduloManut.atualizar(manutModal.editEventId, selimp, {
         motivo,
+        motivoBadge,
         dataOrdenado,
         dataRetirada,
         dataReinstalacao,
@@ -2440,6 +2521,7 @@ export default function BateriaDashboardPage() {
         setor: setores || undefined,
         execucao: execucao || undefined,
         motivo: motivo || undefined,
+        motivoBadge,
         dataOrdenado: dataOrdenado || undefined,
         dataRetirada: dataRetirada || undefined,
         dataReinstalacao: dataReinstalacao || undefined,
@@ -3862,6 +3944,16 @@ export default function BateriaDashboardPage() {
                       </CardTitle>
                       <CardDescription>Manutenção do módulo (retirada → SELIMP → reinstalação)</CardDescription>
                     </div>
+                    <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-9 gap-1.5"
+                      onClick={() => exportManutencoesXlsx(manutEntries)}
+                      disabled={manutEntries.length === 0}
+                    >
+                      <Download className="h-4 w-4" /> Baixar XLSX
+                    </Button>
                     <Button
                       size="sm"
                       className={cn("h-9 gap-1.5", BTN_EMERALD)}
@@ -3869,6 +3961,7 @@ export default function BateriaDashboardPage() {
                     >
                       <Plus className="h-4 w-4" /> Registrar manutenção
                     </Button>
+                    </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="relative w-[220px]">
@@ -3904,6 +3997,20 @@ export default function BateriaDashboardPage() {
                         <SelectItem value="all">Todas</SelectItem>
                         <SelectItem value="oficial">Oficiais</SelectItem>
                         <SelectItem value="nao">Não oficiais</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Select value={manutMotivoBadgeFilter} onValueChange={(v) => setManutMotivoBadgeFilter(v as "all" | ManutencaoMotivoBadge)}>
+                      <SelectTrigger className="h-9 w-[150px]">
+                        <Badge className={cn("mr-1 px-1 text-[9px]", manutMotivoBadgeFilter === "all" ? "border-zinc-500/30 bg-zinc-500/10 text-zinc-600" : MANUT_MOTIVO_BADGE_CLASS[manutMotivoBadgeFilter])}>
+                          {manutMotivoBadgeFilter === "all" ? "TAG" : MANUT_MOTIVO_BADGE_LABEL[manutMotivoBadgeFilter]}
+                        </Badge>
+                        <SelectValue placeholder="Badge" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Todos badges</SelectItem>
+                        {MANUT_MOTIVO_BADGE_OPTIONS.map((badge) => (
+                          <SelectItem key={badge} value={badge}>{MANUT_MOTIVO_BADGE_LABEL[badge]}</SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                     <MultiSelect
@@ -4004,6 +4111,9 @@ export default function BateriaDashboardPage() {
                                 </div>
                               </TableCell>
                               <TableCell className="align-top max-w-[180px] text-xs text-foreground">
+                                <Badge className={cn("mb-1 text-[10px]", MANUT_MOTIVO_BADGE_CLASS[e.motivoBadge])}>
+                                  {MANUT_MOTIVO_BADGE_LABEL[e.motivoBadge]}
+                                </Badge>
                                 {e.motivo || <span className="text-muted-foreground">—</span>}
                               </TableCell>
                               <TableCell className="text-center font-medium tabular-nums align-top">{e.quantidadeTrocas}</TableCell>
@@ -4023,6 +4133,7 @@ export default function BateriaDashboardPage() {
                                                   selimp: e.selimp,
                                                   status: e.status,
                                                   motivo: e.motivo,
+                                                  motivoBadge: e.motivoBadge,
                                                   dataOrdenado: e.dataOrdenado,
                                                   dataRetirada: e.dataRetirada,
                                                   dataReinstalacao: e.dataReinstalacao,
@@ -4060,21 +4171,27 @@ export default function BateriaDashboardPage() {
                                   {(() => {
                                     if (!isContestationEligible(e)) return null;
                                     const hoje = contestacaoDiaHoje(e);
-                                    const naoContestadoHistorico = hasContestacaoNaoContestadaHistorica(e);
+                                    const ultimaFrequencia = latestContestacaoDia(e);
                                     const contestados = e.contestacaoDias.filter((d) => d.contestado).length;
                                     if (isOpenManutStatus(e.status) && e.diasFrequencia > 0 && e.eventId != null) {
                                       if (!hoje) {
-                                        return naoContestadoHistorico ? (
+                                        if (!ultimaFrequencia) return null;
+                                        return (
                                           <Button
                                             size="sm"
                                             disabled
-                                            className="h-7 gap-1 border border-zinc-400/40 bg-zinc-500/15 text-zinc-600 opacity-100 dark:text-zinc-300"
-                                            title="Dia de frequência anterior não contestado. Contestação só pode ser feita no próprio dia."
+                                            className={cn(
+                                              "h-7 gap-1 border opacity-100",
+                                              ultimaFrequencia.contestado
+                                                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                                                : "border-zinc-400/40 bg-zinc-500/15 text-zinc-600 dark:text-zinc-300",
+                                            )}
+                                            title="Status da última data de frequência do módulo."
                                           >
-                                            <ShieldAlert className="h-3.5 w-3.5" />
-                                            Não contestado
+                                            {ultimaFrequencia.contestado ? <ShieldCheck className="h-3.5 w-3.5 text-xs" /> : <ShieldAlert className="h-3.5 w-3.5 text-xs" />}
+                                            <span className="text-xs">{ultimaFrequencia.contestado ? "Contestado" : "Não contestado"}</span>
                                           </Button>
-                                        ) : null;
+                                        );
                                       }
                                       return (
                                         <Button
@@ -5553,8 +5670,26 @@ export default function BateriaDashboardPage() {
                             />
                             <div className="flex items-center justify-between gap-2 text-xs">
                               <span className="font-medium tabular-nums text-foreground">{fmtIsoBr(d.data)}</span>
-                              <span className={cn("font-semibold", d.contestado ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-300")}>
-                                {d.contestado ? "Contestado" : "Pendente"}
+                              <span className="flex items-center gap-2">
+                                <span className={cn("font-semibold", d.contestado ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-300")}>
+                                  {d.contestado ? "Contestado" : "Pendente"}
+                                </span>
+                                {!d.contestado && rec && (
+                                  <button
+                                    type="button"
+                                    className="text-muted-foreground transition-colors hover:text-amber-500"
+                                    title="Editar contestação"
+                                    onClick={() => {
+                                      const entry = manutEntries.find((x) => x.eventId === rec.id);
+                                      if (entry) {
+                                        setHistModule(null);
+                                        setContestModule(entry);
+                                      }
+                                    }}
+                                  >
+                                    <Pencil className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
                               </span>
                             </div>
                           </li>
@@ -5583,6 +5718,9 @@ export default function BateriaDashboardPage() {
                           <div className="flex items-start justify-between gap-2">
                             <div className="flex flex-wrap items-center gap-1.5">
                               <Badge className={STATUS_MODULO_MANUT_BADGE[ev.status]}>{MANUT_STATUS_LABEL[ev.status]}</Badge>
+                              <Badge className={cn("text-[10px]", MANUT_MOTIVO_BADGE_CLASS[ev.motivoBadge ?? "SINAL"])}>
+                                {MANUT_MOTIVO_BADGE_LABEL[ev.motivoBadge ?? "SINAL"]}
+                              </Badge>
                               {!ev.oficial && (
                                 <Badge className="bg-zinc-500/15 text-zinc-600 border-zinc-500/30 text-[10px] dark:text-zinc-300">N/ OFICIAL</Badge>
                               )}
@@ -5765,6 +5903,26 @@ export default function BateriaDashboardPage() {
                       onCheckedChange={(v) => setManutForm((f) => ({ ...f, oficial: v }))}
                     />
                   </label>
+
+                  <div className="grid grid-cols-4 gap-2">
+                    {MANUT_MOTIVO_BADGE_OPTIONS.map((badge) => {
+                      const active = manutForm.motivoBadge === badge;
+                      return (
+                        <button
+                          key={badge}
+                          type="button"
+                          onClick={() => setManutForm((f) => ({ ...f, motivoBadge: badge }))}
+                          className={cn(
+                            "h-8 rounded-md border px-2 text-[11px] font-bold transition-opacity",
+                            MANUT_MOTIVO_BADGE_CLASS[badge],
+                            active ? "opacity-100 ring-2 ring-offset-1 ring-offset-background" : "opacity-35 hover:opacity-70",
+                          )}
+                        >
+                          {MANUT_MOTIVO_BADGE_LABEL[badge]}
+                        </button>
+                      );
+                    })}
+                  </div>
 
                   <div className="space-y-1.5">
                     <label className="text-xs font-medium text-muted-foreground">Motivo da manutenção</label>

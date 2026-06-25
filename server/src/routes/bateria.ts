@@ -798,6 +798,7 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
     setor: string | null;
     execucao: string | null;
     motivo: string | null;
+    motivo_badge: string | null;
     data_retirada: string | null;
     data_reinstalacao: string | null;
     data_ordenado: string | null;
@@ -847,6 +848,8 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
 
   type ManutencaoStatus =
     | "EM_ANALISE" | "PENDENTE" | "RETIRANDO" | "ATIVA" | "REINSTALANDO" | "REALIZADA" | "SINAL_RECUPERADO";
+  type ManutencaoMotivoBadge = "SINAL" | "BATERIA" | "AVARIA" | "PERCENTUAL";
+  const MANUT_MOTIVO_BADGES: ManutencaoMotivoBadge[] = ["SINAL", "BATERIA", "AVARIA", "PERCENTUAL"];
   const MANUT_STATUSES: ManutencaoStatus[] = [
     "EM_ANALISE", "PENDENTE", "RETIRANDO", "ATIVA", "REINSTALANDO", "REALIZADA", "SINAL_RECUPERADO",
   ];
@@ -854,6 +857,10 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
     const s = String(v ?? "").trim().toUpperCase();
     if (s === "RETIRADO") return "RETIRANDO"; // alias do nome antigo
     return MANUT_STATUSES.includes(s as ManutencaoStatus) ? (s as ManutencaoStatus) : null;
+  };
+  const cleanMotivoBadge = (v: unknown): ManutencaoMotivoBadge => {
+    const s = String(v ?? "").trim().toUpperCase();
+    return MANUT_MOTIVO_BADGES.includes(s as ManutencaoMotivoBadge) ? (s as ManutencaoMotivoBadge) : "SINAL";
   };
 
   function deriveStatus(r: ModuloManutencaoRow): ManutencaoStatus {
@@ -884,6 +891,7 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
       setor: r.setor ?? undefined,
       execucao: r.execucao ?? undefined,
       motivo: r.motivo ?? undefined,
+      motivoBadge: cleanMotivoBadge(r.motivo_badge),
       dataOrdenado: r.data_ordenado ?? undefined,
       dataRetirada: r.data_retirada ?? undefined,
       dataReinstalacao: r.data_reinstalacao ?? undefined,
@@ -904,7 +912,7 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
   }
 
   const SELECT_MANUT_MODULO = `
-    SELECT id, modulo_selimp, setor, execucao, motivo,
+    SELECT id, modulo_selimp, setor, execucao, motivo, motivo_badge,
            data_retirada::text     AS data_retirada,
            data_reinstalacao::text AS data_reinstalacao,
            data_ordenado::text     AS data_ordenado,
@@ -983,6 +991,7 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
         setor?: string;
         execucao?: string;
         motivo?: string;
+        motivoBadge?: string;
         dataRetirada?: string;
         dataReinstalacao?: string;
         dataOrdenado?: string;
@@ -999,6 +1008,7 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
         setor: String(it?.setor ?? "").trim() || null,
         execucao: String(it?.execucao ?? "").trim() || null,
         motivo: String(it?.motivo ?? "").trim() || null,
+        motivoBadge: cleanMotivoBadge(it?.motivoBadge),
         dataRetirada: isIsoDate(it?.dataRetirada) ? it.dataRetirada : null,
         dataReinstalacao: isIsoDate(it?.dataReinstalacao) ? it.dataReinstalacao : null,
         dataOrdenado: isIsoDate(it?.dataOrdenado) ? it.dataOrdenado : null,
@@ -1019,13 +1029,13 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
       for (const it of items) {
         const res = await client.query<ModuloManutencaoRow>(
           `INSERT INTO modulo_manutencoes
-             (modulo_selimp, setor, execucao, motivo, data_retirada, data_reinstalacao, data_ordenado, data_manutencao, sinal_recuperado, oficial, status)
-           VALUES ($1, $2, $3, $4, $5::date, $6::date, $7::date, $8::date, $9, $10, $11)
-           RETURNING id, modulo_selimp, setor, execucao, motivo,
+             (modulo_selimp, setor, execucao, motivo, motivo_badge, data_retirada, data_reinstalacao, data_ordenado, data_manutencao, sinal_recuperado, oficial, status)
+           VALUES ($1, $2, $3, $4, $5, $6::date, $7::date, $8::date, $9::date, $10, $11, $12)
+           RETURNING id, modulo_selimp, setor, execucao, motivo, motivo_badge,
              data_retirada::text AS data_retirada, data_reinstalacao::text AS data_reinstalacao,
              data_ordenado::text AS data_ordenado, data_manutencao::text AS data_manutencao,
              sinal_recuperado, oficial, contestado, dias_contestados, documento_url, documento_titulo, documentos, status, created_at::text AS created_at`,
-          [it.selimp, it.setor, it.execucao, it.motivo, it.dataRetirada, it.dataReinstalacao, it.dataOrdenado, it.dataManutencao, it.sinalRecuperado, it.oficial, it.status]
+          [it.selimp, it.setor, it.execucao, it.motivo, it.motivoBadge, it.dataRetirada, it.dataReinstalacao, it.dataOrdenado, it.dataManutencao, it.sinalRecuperado, it.oficial, it.status]
         );
         if (res.rows[0]) inserted.push(mapManutencaoEvento(res.rows[0]));
       }
@@ -1045,6 +1055,7 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
       setor?: string;
       execucao?: string;
       motivo?: string;
+      motivoBadge?: string;
       dataRetirada?: string | null;
       dataReinstalacao?: string | null;
       dataOrdenado?: string | null;
@@ -1066,6 +1077,7 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
          setor = COALESCE($2, setor),
          execucao = COALESCE($3, execucao),
          motivo = COALESCE($4, motivo),
+         motivo_badge = COALESCE($16, motivo_badge),
          data_retirada = CASE WHEN $5 = 'KEEP' THEN data_retirada ELSE NULLIF($5,'')::date END,
          data_reinstalacao = CASE WHEN $6 = 'KEEP' THEN data_reinstalacao ELSE NULLIF($6,'')::date END,
          data_ordenado = CASE WHEN $7 = 'KEEP' THEN data_ordenado ELSE NULLIF($7,'')::date END,
@@ -1079,7 +1091,7 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
          status = COALESCE($11, status),
          updated_at = NOW()
        WHERE id = $1
-       RETURNING id, modulo_selimp, setor, execucao, motivo,
+       RETURNING id, modulo_selimp, setor, execucao, motivo, motivo_badge,
          data_retirada::text AS data_retirada, data_reinstalacao::text AS data_reinstalacao,
          data_ordenado::text AS data_ordenado, data_manutencao::text AS data_manutencao,
          sinal_recuperado, oficial, contestado, dias_contestados, documento_url, documento_titulo, documentos, status, created_at::text AS created_at`,
@@ -1099,6 +1111,7 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
         b.documentoUrl === undefined ? "KEEP" : (b.documentoUrl ?? ""),
         b.documentoTitulo === undefined ? "KEEP" : (b.documentoTitulo ?? ""),
         b.documentos === undefined ? "KEEP" : JSON.stringify(cleanArquivos(b.documentos)),
+        b.motivoBadge === undefined ? null : cleanMotivoBadge(b.motivoBadge),
       ]
     );
     const row = res.rows[0];

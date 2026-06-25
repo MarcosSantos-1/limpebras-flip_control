@@ -6,9 +6,10 @@ import {
   type ModuloManutencaoEvento,
   type ModuloManutencaoInput,
   type ManutencaoModuloStatus,
+  type ManutencaoMotivoBadge,
 } from "@/lib/api";
 
-export type { ModuloManutencaoEvento, ManutencaoModuloStatus };
+export type { ModuloManutencaoEvento, ManutencaoModuloStatus, ManutencaoMotivoBadge };
 
 export type ManutencaoRecordMap = Record<string, ModuloManutencaoEvento>;
 export type ManutencaoHistoryMap = Record<string, ModuloManutencaoEvento[]>;

@@ -804,6 +804,8 @@ export async function runMigrations() {
     await client.query("ALTER TABLE manutencao_contestacoes ADD COLUMN IF NOT EXISTS print_path TEXT").catch(() => {});
     // Manutenção oficial (TRUE) x não oficial (FALSE). Persiste independente do status.
     await client.query("ALTER TABLE modulo_manutencoes ADD COLUMN IF NOT EXISTS oficial BOOLEAN NOT NULL DEFAULT TRUE").catch(() => {});
+    await client.query("ALTER TABLE modulo_manutencoes ADD COLUMN IF NOT EXISTS motivo_badge TEXT NOT NULL DEFAULT 'SINAL'").catch(() => {});
+    await client.query("UPDATE modulo_manutencoes SET motivo_badge = 'SINAL' WHERE motivo_badge IS NULL OR motivo_badge = ''").catch(() => {});
     // Correção idempotente: se a coluna foi criada antes com DEFAULT FALSE (o ADD IF NOT EXISTS acima
     // é no-op nesse caso), conserta o default e faz backfill UMA única vez. Após o default virar TRUE,
     // o bloco é pulado — então marcações "não oficial" feitas depois são preservadas.
