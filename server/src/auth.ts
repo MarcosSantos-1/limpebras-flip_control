@@ -114,6 +114,7 @@ export async function createSession(userId: number, rememberMe: boolean) {
      VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), NOW())`,
     [sessionId, userId, tokenHash, rememberMe, expiresAt]
   );
+  await pool.query("UPDATE users SET last_access_at = NOW(), updated_at = NOW() WHERE id = $1", [userId]).catch(() => {});
 
   return { sessionId, signedSessionId: signSessionId(sessionId), token, expiresAt, rememberMe };
 }
@@ -170,9 +171,20 @@ async function maybeTouchSessionLastSeen(sessionId: string): Promise<void> {
   if (prev !== undefined && now - prev < throttle) return;
 
   lastSeenUpdateAt.set(sessionId, now);
-  await pool.query("UPDATE auth_sessions SET last_seen_at = NOW(), updated_at = NOW() WHERE session_id = $1", [sessionId]).catch(
-    () => {}
-  );
+  await pool
+    .query(
+      `WITH touched AS (
+         UPDATE auth_sessions
+         SET last_seen_at = NOW(), updated_at = NOW()
+         WHERE session_id = $1
+         RETURNING user_id
+       )
+       UPDATE users
+       SET last_access_at = NOW(), updated_at = NOW()
+       WHERE id IN (SELECT user_id FROM touched)`,
+      [sessionId]
+    )
+    .catch(() => {});
 }
 
 /** Em produção (HTTPS), front e API em domínios diferentes precisam SameSite=None + Secure para o cookie ir no axios/fetch. */

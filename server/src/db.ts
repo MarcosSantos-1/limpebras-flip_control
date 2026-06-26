@@ -42,6 +42,7 @@ export async function runMigrations() {
     await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user'").catch(() => {});
     await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'").catch(() => {});
     await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS blocked BOOLEAN NOT NULL DEFAULT FALSE").catch(() => {});
+    await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_access_at TIMESTAMPTZ").catch(() => {});
     await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()").catch(() => {});
     await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()").catch(() => {});
     await client.query("CREATE UNIQUE INDEX IF NOT EXISTS ux_users_username ON users(username)").catch(() => {});

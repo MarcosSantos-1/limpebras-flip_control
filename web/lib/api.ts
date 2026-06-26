@@ -39,6 +39,7 @@ export interface AuthUser {
   is_ipt_restricted?: boolean;
   is_cco?: boolean;
   visible_password: string;
+  last_access_at: string | null;
 }
 
 export interface LoginPayload {

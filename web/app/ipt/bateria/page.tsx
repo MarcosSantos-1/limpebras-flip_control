@@ -604,30 +604,31 @@ function exportTrocasBateriaXlsx(
   const moduleHeaders = [
     "Subprefeitura",
     "Setor",
-    "SELIMP",
-    "Serviços",
+    "SELIMP (id modulo)",
     "Dias de execução",
+    "Bateria atual (raw)",
+    "Status de bateria",
+    "Última comunicação",
+    "Última Troca",
+    "Motivo atual",
+    "Qtd. cargas SELIMP",
+    "Execução média SELIMP 30d (%)",
+    "Serviços",
     "Setores/Dias",
     "Comunicação",
     "Status de sinal",
-    "Status da bateria",
     "Bateria atual (%)",
-    "Bateria atual (raw)",
-    "Última comunicação",
-    "Qtd. cargas SELIMP",
     "Trocas registradas no painel",
     `Trocas concluídas (${periodLabel})`,
     `Trocas com sucesso (${periodLabel})`,
     `Trocas sem sucesso (${periodLabel})`,
     `Agendadas (${periodLabel})`,
     `Duração Bat. (${periodLabel})`,
-    "Execução média SELIMP 60d (%)",
-    "Execução média SELIMP 30d (%)",
     "Produtividade bateria (%)",
     "Dias ON",
     "Dias OFF",
     "Dias OFF consecutivos",
-    "Motivo atual",
+    "Execução média SELIMP 60d (%)",
     "Manutenção atual",
     "Data ordenado manutenção",
     "Data manutenção realizada",
@@ -641,33 +642,36 @@ function exportTrocasBateriaXlsx(
     const agendadasPeriodo = history.filter((h) => h.status === "agendada" && trocaInPeriod(h, options.period));
     const manut = options.manutRecords[m.numeroSelimp];
     const duracao = average(duracoesBateriaAtualizada(m, history, options.period));
+    const ultimaTroca = ultimaTrocaDate(history);
+    const motivoAtual = manut?.status === "EM_ANALISE" ? manut.motivo || "Em análise" : motivoFromModule(m);
     return [
       m.subprefeitura,
       m.setor,
       m.numeroSelimp,
-      siglasOf(m).join(" / "),
       m.diasExecucao,
+      m.bateria,
+      m.statusBateria,
+      m.ultimaComunicacao,
+      ultimaTroca ? fmtIsoBr(ultimaTroca) : "",
+      motivoAtual,
+      m.quantidadeTrocas,
+      xlsxNumber(mediaExecucaoSelimp(m, 30), 1),
+      siglasOf(m).join(" / "),
       setoresDiasOf(m).map((sd) => `${sd.setor}: ${sd.dias || "-"}`).join(" | "),
       m.comunicacao,
       m.statusSinalGeral,
-      m.statusBateria,
       xlsxNumber(normalizePercentValue(m.bateriaPercentual), 0),
-      m.bateria,
-      m.ultimaComunicacao,
-      m.quantidadeTrocas,
       history.length,
       concluidasPeriodo.length,
       concluidasPeriodo.filter((h) => h.sucesso !== false).length,
       concluidasPeriodo.filter((h) => h.sucesso === false).length,
       agendadasPeriodo.length,
       duracao ?? "",
-      xlsxNumber(mediaExecucaoSelimp(m, 60), 1),
-      xlsxNumber(mediaExecucaoSelimp(m, 30), 1),
       xlsxNumber(m.produtividade, 0),
       m.diasOn,
       m.diasOff,
       m.diasOffConsecutivos ?? "",
-      motivoFromModule(m),
+      xlsxNumber(mediaExecucaoSelimp(m, 60), 1),
       manut ? MANUT_STATUS_LABEL[manut.status] : "",
       manut?.dataOrdenado ? fmtIsoBr(manut.dataOrdenado) : "",
       manut?.dataManutencao ? fmtIsoBr(manut.dataManutencao) : "",
@@ -678,8 +682,23 @@ function exportTrocasBateriaXlsx(
 
   const moduleSheet = XLSX.utils.aoa_to_sheet([moduleHeaders, ...moduleRows]);
   moduleSheet["!cols"] = [
-    12, 26, 16, 12, 18, 44, 12, 16, 18, 14, 16, 22, 14, 20, 20, 20, 20, 16, 18, 20, 18, 18, 10, 10, 18, 16, 18, 22, 22, 28, 18,
+    14, 26, 18, 18, 18, 18, 22, 16, 22, 16, 26, 12, 44, 12, 16, 14, 20, 20, 20, 20, 16, 18, 18, 10, 10, 18, 20, 18, 22, 22, 28, 18,
   ].map((wch) => ({ wch }));
+  moduleSheet["!autofilter"] = {
+    ref: XLSX.utils.encode_range({
+      s: { r: 0, c: 0 },
+      e: { r: moduleRows.length, c: moduleHeaders.length - 1 },
+    }),
+  };
+  for (let c = 0; c < 11; c += 1) {
+    const cell = moduleSheet[XLSX.utils.encode_cell({ r: 0, c })];
+    if (cell) {
+      cell.s = {
+        font: { bold: true, color: { rgb: "0F172A" } },
+        fill: { fgColor: { rgb: "DBEAFE" } },
+      };
+    }
+  }
   XLSX.utils.book_append_sheet(workbook, moduleSheet, "Módulos");
 
   const moduleSet = new Set(modules.map((m) => m.numeroSelimp));

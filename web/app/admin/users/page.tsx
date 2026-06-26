@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Eye, EyeOff, Pencil, Plus, ShieldCheck, UserCog } from "lucide-react";
+import { Check, ClipboardCopy, Clock3, Eye, EyeOff, Pencil, Plus, ShieldCheck, UserCog } from "lucide-react";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -50,6 +50,46 @@ const IPT_RESTRICTED_PAGE_KEYS: AuthPageKey[] = ["ipt", "ipt_restrito", "upload"
 /** CCO: acesso somente às páginas do IPT (a chave `cco` marca o perfil; `ipt` libera as subpáginas). */
 const CCO_PAGE_KEYS: AuthPageKey[] = ["ipt", "cco"];
 
+function formatLastAccess(value: string | null | undefined): { label: string; detail: string; recent: boolean; never: boolean } {
+  if (!value) {
+    return {
+      label: "Nunca acessou",
+      detail: "Sem registro de sessão",
+      recent: false,
+      never: true,
+    };
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return {
+      label: "Acesso registrado",
+      detail: value,
+      recent: false,
+      never: false,
+    };
+  }
+
+  const now = Date.now();
+  const diffMinutes = Math.max(0, Math.round((now - date.getTime()) / 60000));
+  const recent = diffMinutes <= 60;
+  const label =
+    diffMinutes < 1
+      ? "Agora há pouco"
+      : diffMinutes < 60
+      ? `${diffMinutes} min atrás`
+      : diffMinutes < 1440
+      ? `${Math.round(diffMinutes / 60)} h atrás`
+      : `${Math.round(diffMinutes / 1440)} d atrás`;
+
+  return {
+    label,
+    detail: date.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }),
+    recent,
+    never: false,
+  };
+}
+
 function buildPagePermissions(allowedPageKeys: readonly AuthPageKey[]): Record<AuthPageKey, boolean> {
   const allowed = new Set(allowedPageKeys);
   return Object.fromEntries(AUTH_PAGE_KEYS.map((pageKey) => [pageKey, allowed.has(pageKey)])) as Record<AuthPageKey, boolean>;
@@ -96,6 +136,7 @@ export default function AdminUsersPage() {
   const [form, setForm] = useState<FormState>(buildInitialForm());
   const [showPasswordInDialog, setShowPasswordInDialog] = useState(false);
   const [passwordVisibleByUserId, setPasswordVisibleByUserId] = useState<Record<number, boolean>>({});
+  const [copiedUserId, setCopiedUserId] = useState<number | null>(null);
 
   async function loadUsers() {
     setLoading(true);
@@ -174,6 +215,13 @@ export default function AdminUsersPage() {
     }
   }
 
+  async function handleCopyAccess(item: AuthUser) {
+    const text = `*ADC Control - Acesso:*\nusuário: ${item.username}\nsenha: ${item.visible_password}`;
+    await navigator.clipboard.writeText(text);
+    setCopiedUserId(item.id);
+    window.setTimeout(() => setCopiedUserId((current) => (current === item.id ? null : current)), 1800);
+  }
+
   return (
     <MainLayout>
       <div className="space-y-6">
@@ -209,7 +257,9 @@ export default function AdminUsersPage() {
               <CardContent className="pt-6 text-sm text-muted-foreground">Carregando usuários...</CardContent>
             </Card>
           ) : (
-            items.map((item) => (
+            items.map((item) => {
+              const lastAccess = formatLastAccess(item.last_access_at);
+              return (
               <Card key={item.id}>
                 <CardContent className="flex flex-col gap-4 pt-6 lg:flex-row lg:items-start lg:justify-between">
                   <div className="space-y-3">
@@ -244,7 +294,28 @@ export default function AdminUsersPage() {
                         </span>
                       ) : null}
                     </div>
-                    <div className="grid gap-2 text-sm text-muted-foreground md:grid-cols-2">
+                    <div className="grid gap-2 text-sm text-muted-foreground md:grid-cols-3">
+                      <div className="rounded-xl border border-border/70 bg-muted/20 px-3 py-2">
+                        <div className="mb-2 flex items-center justify-between gap-2">
+                          <div className="text-xs font-semibold uppercase tracking-wide">Último acesso</div>
+                          <span
+                            className={[
+                              "h-2.5 w-2.5 rounded-full",
+                              lastAccess.never
+                                ? "animate-pulse border border-slate-400 bg-transparent"
+                                : lastAccess.recent
+                                ? "animate-pulse bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.16)]"
+                                : "bg-cyan-500",
+                            ].join(" ")}
+                            aria-hidden="true"
+                          />
+                        </div>
+                        <div className="flex items-center gap-2 text-foreground">
+                          <Clock3 className="h-4 w-4 text-muted-foreground" />
+                          <span className="font-medium">{lastAccess.label}</span>
+                        </div>
+                        <div className="mt-1 text-xs">{lastAccess.detail}</div>
+                      </div>
                       <div className="rounded-xl border border-border/70 bg-muted/20 px-3 py-2">
                         <div className="mb-2 flex items-center justify-between gap-2">
                           <div className="text-xs font-semibold uppercase tracking-wide">Senha atual</div>
@@ -278,7 +349,11 @@ export default function AdminUsersPage() {
                       </div>
                     </div>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="outline" className="gap-2" onClick={() => void handleCopyAccess(item)}>
+                      {copiedUserId === item.id ? <Check className="h-4 w-4" /> : <ClipboardCopy className="h-4 w-4" />}
+                      {copiedUserId === item.id ? "Copiado" : "Copiar acesso"}
+                    </Button>
                     <Button variant="outline" className="gap-2" onClick={() => openEditDialog(item)}>
                       <Pencil className="h-4 w-4" />
                       Editar
@@ -286,7 +361,8 @@ export default function AdminUsersPage() {
                   </div>
                 </CardContent>
               </Card>
-            ))
+              );
+            })
           )}
         </div>
       </div>

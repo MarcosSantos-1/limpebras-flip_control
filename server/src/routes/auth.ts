@@ -14,6 +14,7 @@ type UserRow = {
   status: string;
   blocked: boolean;
   page_permissions: AppPageKey[] | null;
+  last_access_at: Date | string | null;
 };
 
 function safeDecryptVisiblePassword(encrypted: string): string {
@@ -43,6 +44,7 @@ function sanitizeUser(row: UserRow) {
     is_ipt_restricted: row.role !== "host" && allowed.has("ipt_restrito"),
     is_cco: row.role !== "host" && allowed.has("cco"),
     visible_password: safeDecryptVisiblePassword(row.password_encrypted),
+    last_access_at: row.last_access_at ? new Date(row.last_access_at).toISOString() : null,
   };
 }
 
@@ -56,9 +58,11 @@ async function getUserByUsername(username: string) {
         u.role,
         u.status,
         u.blocked,
-        ARRAY_REMOVE(ARRAY_AGG(p.page_key), NULL) AS page_permissions
+        ARRAY_REMOVE(ARRAY_AGG(DISTINCT p.page_key), NULL) AS page_permissions,
+        COALESCE(u.last_access_at, MAX(s.last_seen_at)) AS last_access_at
       FROM users u
       LEFT JOIN user_page_permissions p ON p.user_id = u.id AND p.allowed = TRUE
+      LEFT JOIN auth_sessions s ON s.user_id = u.id
       WHERE LOWER(u.username) = LOWER($1)
       GROUP BY u.id`,
     [username]
@@ -76,9 +80,11 @@ async function getUserById(id: number) {
         u.role,
         u.status,
         u.blocked,
-        ARRAY_REMOVE(ARRAY_AGG(p.page_key), NULL) AS page_permissions
+        ARRAY_REMOVE(ARRAY_AGG(DISTINCT p.page_key), NULL) AS page_permissions,
+        COALESCE(u.last_access_at, MAX(s.last_seen_at)) AS last_access_at
       FROM users u
       LEFT JOIN user_page_permissions p ON p.user_id = u.id AND p.allowed = TRUE
+      LEFT JOIN auth_sessions s ON s.user_id = u.id
       WHERE u.id = $1
       GROUP BY u.id`,
     [id]
@@ -195,9 +201,11 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
           u.role,
           u.status,
           u.blocked,
-          ARRAY_REMOVE(ARRAY_AGG(p.page_key), NULL) AS page_permissions
+          ARRAY_REMOVE(ARRAY_AGG(DISTINCT p.page_key), NULL) AS page_permissions,
+          COALESCE(u.last_access_at, MAX(s.last_seen_at)) AS last_access_at
         FROM users u
         LEFT JOIN user_page_permissions p ON p.user_id = u.id AND p.allowed = TRUE
+        LEFT JOIN auth_sessions s ON s.user_id = u.id
         GROUP BY u.id
         ORDER BY LOWER(u.username) ASC`
     );
