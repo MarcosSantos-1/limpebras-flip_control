@@ -25,7 +25,7 @@ type FormState = {
   display_name: string;
   password: string;
   role: "host" | "user";
-  access_profile: "default" | "ipt_restrito" | "cco";
+  access_profile: "default" | "cco";
   status: "active" | "inactive";
   blocked: boolean;
   page_permissions: Record<AuthPageKey, boolean>;
@@ -34,8 +34,10 @@ type FormState = {
 const PAGE_LABELS: Record<AuthPageKey, string> = {
   dashboard: "Dashboard",
   indicadores: "Indicadores",
-  ipt: "IPT",
+  ipt: "IPT Geral",
   ipt_restrito: "IPT restrito",
+  ipt_despachos: "Despachos SELIMP",
+  plano_trabalho: "Plano de trabalho",
   cco: "CCO",
   sacs: "SACs",
   bfs: "BFSs",
@@ -45,10 +47,32 @@ const PAGE_LABELS: Record<AuthPageKey, string> = {
   admin_users: "Administração de usuários",
 };
 
-const DEFAULT_USER_PAGE_KEYS: AuthPageKey[] = ["dashboard", "indicadores", "ipt", "sacs", "bfs", "acic"];
-const IPT_RESTRICTED_PAGE_KEYS: AuthPageKey[] = ["ipt", "ipt_restrito", "upload"];
+const PERMISSION_PAGE_KEYS: AuthPageKey[] = [
+  "dashboard",
+  "indicadores",
+  "ipt",
+  "ipt_despachos",
+  "plano_trabalho",
+  "sacs",
+  "bfs",
+  "defesa",
+  "acic",
+  "upload",
+  "admin_users",
+];
+
+const DEFAULT_USER_PAGE_KEYS: AuthPageKey[] = [
+  "dashboard",
+  "indicadores",
+  "ipt",
+  "ipt_despachos",
+  "plano_trabalho",
+  "sacs",
+  "bfs",
+  "acic",
+];
 /** CCO: acesso somente às páginas do IPT (a chave `cco` marca o perfil; `ipt` libera as subpáginas). */
-const CCO_PAGE_KEYS: AuthPageKey[] = ["ipt", "cco"];
+const CCO_PAGE_KEYS: AuthPageKey[] = ["ipt", "ipt_despachos", "plano_trabalho", "upload", "cco"];
 
 function formatLastAccess(value: string | null | undefined): { label: string; detail: string; recent: boolean; never: boolean } {
   if (!value) {
@@ -95,10 +119,21 @@ function buildPagePermissions(allowedPageKeys: readonly AuthPageKey[]): Record<A
   return Object.fromEntries(AUTH_PAGE_KEYS.map((pageKey) => [pageKey, allowed.has(pageKey)])) as Record<AuthPageKey, boolean>;
 }
 
-function detectAccessProfile(user?: AuthUser | null): "default" | "ipt_restrito" | "cco" {
+function detectAccessProfile(user?: AuthUser | null): "default" | "cco" {
   if (user?.role === "host") return "default";
   if (user?.is_cco) return "cco";
-  return user?.is_ipt_restricted ? "ipt_restrito" : "default";
+  return "default";
+}
+
+function normalizePermissionsForRole(
+  permissions: Record<AuthPageKey, boolean>,
+  role: "host" | "user",
+): Record<AuthPageKey, boolean> {
+  if (role === "host") return buildPagePermissions(AUTH_PAGE_KEYS);
+  return {
+    ...permissions,
+    admin_users: false,
+  };
 }
 
 function buildInitialForm(user?: AuthUser | null): FormState {
@@ -108,9 +143,11 @@ function buildInitialForm(user?: AuthUser | null): FormState {
       ? buildPagePermissions(AUTH_PAGE_KEYS)
       : accessProfile === "cco"
       ? buildPagePermissions(CCO_PAGE_KEYS)
-      : accessProfile === "ipt_restrito"
-      ? buildPagePermissions(IPT_RESTRICTED_PAGE_KEYS)
       : buildPagePermissions(DEFAULT_USER_PAGE_KEYS);
+  const storedPermissions = Object.fromEntries(
+    AUTH_PAGE_KEYS.map((pageKey) => [pageKey, user?.page_permissions?.[pageKey] ?? fallbackPermissions[pageKey]])
+  ) as Record<AuthPageKey, boolean>;
+  const resolvedPermissions = accessProfile === "cco" && user?.role !== "host" ? fallbackPermissions : storedPermissions;
 
   return {
     username: user?.username ?? "",
@@ -120,9 +157,7 @@ function buildInitialForm(user?: AuthUser | null): FormState {
     access_profile: accessProfile,
     status: user?.status ?? "active",
     blocked: user?.blocked ?? false,
-    page_permissions: Object.fromEntries(
-      AUTH_PAGE_KEYS.map((pageKey) => [pageKey, user?.page_permissions?.[pageKey] ?? fallbackPermissions[pageKey]])
-    ) as Record<AuthPageKey, boolean>,
+    page_permissions: normalizePermissionsForRole(resolvedPermissions, user?.role ?? "user"),
   };
 }
 
@@ -168,17 +203,14 @@ export default function AdminUsersPage() {
     return editor.user.id !== user.id;
   }, [editor.user, user]);
 
-  const isPermissionPresetLocked =
-    form.role === "host" || form.access_profile === "ipt_restrito" || form.access_profile === "cco";
+  const isPermissionPresetLocked = form.role === "host" || form.access_profile === "cco";
 
-  function applyAccessProfile(profile: "default" | "ipt_restrito" | "cco", role: "host" | "user") {
+  function applyAccessProfile(profile: "default" | "cco", role: "host" | "user") {
     if (role === "host") {
       return buildPagePermissions(AUTH_PAGE_KEYS);
     }
     if (profile === "cco") return buildPagePermissions(CCO_PAGE_KEYS);
-    return profile === "ipt_restrito"
-      ? buildPagePermissions(IPT_RESTRICTED_PAGE_KEYS)
-      : buildPagePermissions(DEFAULT_USER_PAGE_KEYS);
+    return buildPagePermissions(DEFAULT_USER_PAGE_KEYS);
   }
 
   function openCreateDialog() {
@@ -194,16 +226,18 @@ export default function AdminUsersPage() {
     setSaving(true);
     setErrorMessage("");
     try {
+      const normalizedPermissions = normalizePermissionsForRole(form.page_permissions, form.role);
+      const payload = { ...form, page_permissions: normalizedPermissions };
       if (editor.mode === "create") {
-        await apiService.createUser(form);
+        await apiService.createUser(payload);
       } else if (editor.user) {
         await apiService.updateUser(editor.user.id, {
-          display_name: form.display_name,
-          password: form.password,
-          role: form.role,
-          status: form.status,
-          blocked: form.blocked,
-          page_permissions: form.page_permissions,
+          display_name: payload.display_name,
+          password: payload.password,
+          role: payload.role,
+          status: payload.status,
+          blocked: payload.blocked,
+          page_permissions: normalizedPermissions,
         });
       }
       setEditor({ open: false, mode: "create", user: null });
@@ -276,10 +310,6 @@ export default function AdminUsersPage() {
                         <span className="rounded-full border border-cyan-400/40 bg-cyan-500/15 px-2.5 py-1 text-xs font-semibold text-cyan-900 dark:border-cyan-400/30 dark:bg-cyan-500/20 dark:text-cyan-100">
                           CCO
                         </span>
-                      ) : item.is_ipt_restricted ? (
-                        <span className="rounded-full border border-cyan-400/35 bg-cyan-500/12 px-2.5 py-1 text-xs font-medium text-cyan-900 dark:border-cyan-400/25 dark:bg-cyan-500/18 dark:text-cyan-100">
-                          IPT restrito
-                        </span>
                       ) : (
                         <span className="rounded-full border border-violet-400/35 bg-violet-500/12 px-2.5 py-1 text-xs font-medium text-violet-900 dark:border-violet-400/25 dark:bg-violet-500/18 dark:text-violet-100">
                           Usuário
@@ -342,7 +372,7 @@ export default function AdminUsersPage() {
                       <div className="rounded-xl border border-border/70 bg-muted/20 px-3 py-2">
                         <div className="mb-1 text-xs font-semibold uppercase tracking-wide">Páginas liberadas</div>
                         <div className="text-foreground">
-                          {AUTH_PAGE_KEYS.filter((pageKey) => item.page_permissions?.[pageKey])
+                          {PERMISSION_PAGE_KEYS.filter((pageKey) => item.page_permissions?.[pageKey])
                             .map((pageKey) => PAGE_LABELS[pageKey])
                             .join(", ")}
                         </div>
@@ -443,7 +473,7 @@ export default function AdminUsersPage() {
               <Label htmlFor="access-profile">Acesso</Label>
               <Select
                 value={form.access_profile}
-                onValueChange={(value: "default" | "ipt_restrito" | "cco") =>
+                onValueChange={(value: "default" | "cco") =>
                   setForm((prev) => ({
                     ...prev,
                     access_profile: value,
@@ -457,8 +487,7 @@ export default function AdminUsersPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="default">Usuário padrão</SelectItem>
-                  <SelectItem value="ipt_restrito">Usuário IPT - Bateria e Upload</SelectItem>
-                  <SelectItem value="cco">CCO - Painel e páginas do IPT</SelectItem>
+                  <SelectItem value="cco">CCO - IPT, Despachos, Upload e Plano</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -494,11 +523,11 @@ export default function AdminUsersPage() {
               Permissões por página
             </div>
             <div className="grid gap-3 rounded-2xl border border-border/70 p-4 md:grid-cols-2">
-              {AUTH_PAGE_KEYS.map((pageKey) => (
+              {PERMISSION_PAGE_KEYS.map((pageKey) => (
                 <label key={pageKey} className="flex items-center gap-3 rounded-xl border border-border/60 px-3 py-2">
                   <Checkbox
                     checked={form.role === "host" ? true : form.page_permissions[pageKey]}
-                    disabled={isPermissionPresetLocked || pageKey === "admin_users"}
+                    disabled={isPermissionPresetLocked || (form.role !== "host" && pageKey === "admin_users")}
                     onCheckedChange={(checked) =>
                       setForm((prev) => ({
                         ...prev,

@@ -665,6 +665,11 @@ export interface IptModulosBateriaResponse {
   } | null;
 }
 
+export interface BateriaDataDisponivel {
+  data: string;
+  total: number;
+}
+
 /** Linha do cadastro setor↔módulo (aba Setores). */
 export interface SetorModulo {
   id: number;
@@ -1172,6 +1177,18 @@ export const apiService = {
   getIptModulosBateria: async (): Promise<IptModulosBateriaResponse> => {
     const { data } = await api.get('/dashboard/ipt-modulos-bateria');
     return data;
+  },
+  getBateriaDatasDisponiveis: async (): Promise<{ datas: BateriaDataDisponivel[] }> => {
+    const { data } = await api.get('/bateria/datas');
+    return data;
+  },
+  downloadBateriaXlsx: async (dataExportacao: string): Promise<Blob> => {
+    const response = await api.get('/bateria/export', {
+      params: { data: dataExportacao },
+      responseType: 'blob',
+      timeout: 60_000,
+    });
+    return response.data as Blob;
   },
   // ===== Setores (cadastro setor↔módulo) =====
   getSetores: async (): Promise<{ setores: SetorModulo[] }> => {

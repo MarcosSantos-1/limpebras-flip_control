@@ -18,6 +18,7 @@ const PAGE_ACCESS_BY_PATH: Record<string, AuthPageKey> = {
   "/indicadores": "indicadores",
   "/ipt": "ipt",
   "/ipt/bateria": "ipt",
+  "/ipt/despachos": "ipt_despachos",
   "/sacs": "sacs",
   "/bfs": "bfs",
   "/defesa": "defesa",
@@ -27,8 +28,8 @@ const PAGE_ACCESS_BY_PATH: Record<string, AuthPageKey> = {
 }
 
 const IPT_RESTRICTED_ALLOWED_PATHS = ["/ipt", "/ipt/bateria", "/upload"] as const
-/** CCO: acesso somente às páginas do IPT (qualquer rota sob /ipt). Home = Painel CCO. */
-const CCO_HOME_PATH = "/ipt/view"
+/** CCO: acesso operacional ao IPT. Home = IPT Geral. */
+const CCO_HOME_PATH = "/ipt"
 function isAllowedCcoPath(pathname: string): boolean {
   return pathname === "/ipt" || pathname.startsWith("/ipt/")
 }
@@ -36,6 +37,7 @@ function isAllowedCcoPath(pathname: string): boolean {
 function getPageKeyForPath(pathname: string): AuthPageKey | undefined {
   const direct = PAGE_ACCESS_BY_PATH[pathname]
   if (direct) return direct
+  if (pathname.startsWith("/ipt/despachos/")) return "ipt_despachos"
   if (pathname.startsWith("/ipt/")) return "ipt"
   if (pathname.startsWith("/upload")) return "upload"
   if (pathname.startsWith("/indicadores/")) return "indicadores"

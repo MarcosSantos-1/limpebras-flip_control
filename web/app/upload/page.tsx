@@ -120,6 +120,9 @@ interface UploadHistoryEntry {
   ordens_encerradas?: number | null;
   periodo_inicial?: string | null;
   periodo_final?: string | null;
+  imported_by?: string | null;
+  username?: string | null;
+  user_display_name?: string | null;
   created_at?: string | null;
 }
 
@@ -703,6 +706,7 @@ function HistoryBlock({
   expanded,
   onToggle,
   hint,
+  historyLimit = 10,
 }: {
   title: string;
   overview?: LastUploadInfo;
@@ -710,8 +714,9 @@ function HistoryBlock({
   onToggle: () => void;
   /** Texto curto abaixo do título (ex.: explicar que o bloco é só da última fila de upload). */
   hint?: string;
+  historyLimit?: number;
 }) {
-  const history = overview?.history ?? [];
+  const history = (overview?.history ?? []).slice(0, historyLimit);
 
   const summaryCells: { label: string; value: string; span?: "full" }[] = [
     { label: "Última atualização", value: formatDateTime(overview?.ultimo_import) },
@@ -781,6 +786,7 @@ function HistoryBlock({
                   <div className="text-xs font-semibold text-foreground">{entry.tipo_label || "Importação"}</div>
                   <div className="mt-3 grid gap-2 sm:grid-cols-2">
                     <HistoryStat label="Data" value={formatDateTime(entry.created_at)} />
+                    <HistoryStat label="Usuário" value={entry.imported_by || entry.user_display_name || entry.username || "—"} />
                     <HistoryStat label="Processados" value={String(entry.processados ?? 0)} />
                     <HistoryStat label="Arquivo" value={entry.source_file || "—"} className="sm:col-span-2" />
                     {entry.referencia_importada ? (

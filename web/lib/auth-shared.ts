@@ -3,6 +3,8 @@ export const AUTH_PAGE_KEYS = [
   "indicadores",
   "ipt",
   "ipt_restrito",
+  "ipt_despachos",
+  "plano_trabalho",
   "cco",
   "sacs",
   "bfs",

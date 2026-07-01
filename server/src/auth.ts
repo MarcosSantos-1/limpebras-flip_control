@@ -9,6 +9,7 @@ const SESSION_COOKIE_NAME = "flip_auth";
 const SESSION_TTL_DAYS = 30;
 const SESSION_TTL_MS = SESSION_TTL_DAYS * 24 * 60 * 60 * 1000;
 const NON_HOST_VISIBLE_PAGES = APP_PAGE_KEYS.filter((page) => page !== "admin_users");
+const CCO_ALLOWED_PAGES: AppPageKey[] = ["ipt", "ipt_despachos", "plano_trabalho", "upload", "cco"];
 
 /** Último UPDATE de last_seen_at por sessão (por processo) — evita 1 write por request. */
 const lastSeenUpdateAt = new Map<string, number>();
@@ -83,6 +84,12 @@ function parsePermissions(pagePermissions: AppPageKey[] | null, role: UserRole):
   const defaults = buildDefaultPermissions(role);
   if (!pagePermissions?.length) return defaults;
   const allowed = new Set(pagePermissions.filter((page): page is AppPageKey => isAppPageKey(page)));
+  if (role !== "host" && allowed.has("cco")) {
+    CCO_ALLOWED_PAGES.forEach((page) => allowed.add(page));
+  }
+  if (role !== "host") {
+    allowed.delete("admin_users");
+  }
   return Object.fromEntries(APP_PAGE_KEYS.map((page) => [page, role === "host" ? true : allowed.has(page)])) as Record<
     AppPageKey,
     boolean

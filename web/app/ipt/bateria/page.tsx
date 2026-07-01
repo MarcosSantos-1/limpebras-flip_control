@@ -78,9 +78,11 @@ import {
 } from "recharts";
 import Lottie from "lottie-react";
 import loadingAnimation from "@/public/Loading.json";
+import { ptBR } from "date-fns/locale";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Calendar as CalendarPicker } from "@/components/ui/calendar";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
@@ -797,6 +799,10 @@ function isoToday(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+function dateToIsoKey(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
 /** yyyy-MM-dd → dd/MM/yyyy. */
 function fmtIsoBr(iso?: string): string {
   if (!iso) return "—";
@@ -1494,6 +1500,11 @@ function setoresDiasOf(m: ModuleData): ModuleSetorDia[] {
 export default function BateriaDashboardPage() {
   const [data, setData] = useState<ApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [batteryExportDates, setBatteryExportDates] = useState<{ data: string; total: number }[]>([]);
+  const [batteryExportDate, setBatteryExportDate] = useState("");
+  const [batteryExportLoading, setBatteryExportLoading] = useState(false);
+  const [batteryExportDownloading, setBatteryExportDownloading] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [subFilter, setSubFilter] = useState<string[]>([]);
   const [signalFilter, setSignalFilter] = useState("all");
@@ -1660,6 +1671,57 @@ export default function BateriaDashboardPage() {
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  const batteryExportDateSet = useMemo(
+    () => new Set(batteryExportDates.map((item) => item.data)),
+    [batteryExportDates],
+  );
+  const selectedBatteryExportInfo = useMemo(
+    () => batteryExportDates.find((item) => item.data === batteryExportDate) ?? null,
+    [batteryExportDates, batteryExportDate],
+  );
+
+  const loadBatteryExportDates = useCallback(async () => {
+    setBatteryExportLoading(true);
+    try {
+      const result = await apiService.getBateriaDatasDisponiveis();
+      const datas = (result.datas ?? []).filter((item) => /^\d{4}-\d{2}-\d{2}$/.test(item.data));
+      setBatteryExportDates(datas);
+      setBatteryExportDate((current) =>
+        current && datas.some((item) => item.data === current) ? current : datas[0]?.data ?? "",
+      );
+    } catch {
+      toast.error("Não foi possível carregar as datas de bateria.");
+    } finally {
+      setBatteryExportLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (exportModalOpen) void loadBatteryExportDates();
+  }, [exportModalOpen, loadBatteryExportDates]);
+
+  const handleBatteryExportDownload = useCallback(async () => {
+    if (!batteryExportDate) return;
+    setBatteryExportDownloading(true);
+    try {
+      const blob = await apiService.downloadBateriaXlsx(batteryExportDate);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `Status de Bateria ${batteryExportDate}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      toast.success(`Planilha de ${fmtIsoBr(batteryExportDate)} baixada.`);
+      setExportModalOpen(false);
+    } catch {
+      toast.error("Não foi possível baixar a planilha desta data.");
+    } finally {
+      setBatteryExportDownloading(false);
+    }
+  }, [batteryExportDate]);
 
   // Manutenção ativa do módulo entra no status global da visão geral.
   const modules = useMemo(() => {
@@ -2791,12 +2853,78 @@ export default function BateriaDashboardPage() {
                 </div>
               </div>
             </div>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+              title="Exportar Status de Bateria por data"
+              onClick={() => setExportModalOpen(true)}
+            >
               <Calendar className="h-4 w-4" />
+              <Download className="h-3.5 w-3.5 opacity-70" />
               <span>Atualizado: {data?.lastUpdate ?? "Sem importação"}</span>
-            </div>
+            </Button>
           </div>
         </div>
+
+        <Dialog open={exportModalOpen} onOpenChange={setExportModalOpen}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Download className="h-5 w-5 text-emerald-500" />
+                Exportar bateria
+              </DialogTitle>
+              <DialogDescription>
+                Selecione uma data com dados importados para baixar a planilha de Status de Bateria.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="rounded-lg border border-border bg-muted/20 p-2">
+                <CalendarPicker
+                  key={batteryExportDates[0]?.data ?? "empty"}
+                  mode="single"
+                  locale={ptBR}
+                  selected={parseDateOnly(batteryExportDate) ?? undefined}
+                  defaultMonth={parseDateOnly(batteryExportDate || batteryExportDates[0]?.data) ?? undefined}
+                  disabled={(date) => !batteryExportDateSet.has(dateToIsoKey(date))}
+                  onSelect={(date) => {
+                    if (!date) return;
+                    const key = dateToIsoKey(date);
+                    if (batteryExportDateSet.has(key)) setBatteryExportDate(key);
+                  }}
+                  initialFocus
+                />
+              </div>
+              <div className="min-h-5 text-xs text-muted-foreground">
+                {batteryExportLoading
+                  ? "Carregando datas..."
+                  : batteryExportDate
+                    ? `${fmtIsoBr(batteryExportDate)} - ${selectedBatteryExportInfo?.total ?? 0} registros`
+                    : "Nenhuma data de bateria disponível para exportação."}
+              </div>
+            </div>
+            <DialogFooter className="gap-2">
+              <Button
+                type="button"
+                className={cn(BTN_SECONDARY)}
+                onClick={() => setExportModalOpen(false)}
+                disabled={batteryExportDownloading}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                className={cn("gap-1.5", BTN_EMERALD)}
+                disabled={!batteryExportDate || batteryExportLoading || batteryExportDownloading}
+                onClick={handleBatteryExportDownload}
+              >
+                <Download className="h-4 w-4" />
+                {batteryExportDownloading ? "Baixando..." : "Baixar planilha"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* Main */}
         <div className="px-6 py-6">

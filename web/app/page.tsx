@@ -875,7 +875,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (isCcoUser) {
-      router.replace("/ipt/view");
+      router.replace("/ipt");
     } else if (isIptRestrictedUser) {
       router.replace("/ipt/bateria");
     }

@@ -1,4 +1,5 @@
 import { FastifyPluginAsync } from "fastify";
+import * as XLSX from "xlsx";
 import { pool } from "../db.js";
 import { invalidatePrefix } from "../cache.js";
 import { refreshModuloSelimp } from "../services/refreshModuloSelimp.js";
@@ -11,6 +12,24 @@ function isIsoDate(value: unknown): value is string {
 
 function cleanSelimp(value: unknown): string {
   return String(value ?? "").trim();
+}
+
+function fmtDateTimeBr(value: unknown): string {
+  if (!value) return "";
+  const date = value instanceof Date ? value : new Date(String(value));
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+}
+
+function statusBateriaLabel(percentual: string | number | null, desatualizada: boolean | null): string {
+  if (desatualizada) return "DESATUALIZADA";
+  if (percentual == null) return "";
+  const n = Number(percentual);
+  if (!Number.isFinite(n)) return "";
+  if (n > 70) return "ALTA";
+  if (n > 30) return "REGULAR";
+  if (n > 15) return "BAIXA";
+  return "CRITICA";
 }
 
 // ===== Trocas de bateria =====
@@ -307,6 +326,68 @@ function mapManutencao(r: ManutencaoRow): ManutencaoRecordDto {
 const MANUTENCAO_STATUS_SINAL = "MANUTENÇÃO";
 
 export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
+  fastify.get("/bateria/datas", async () => {
+    const result = await pool.query<{ data: string; total: number }>(
+      `SELECT data_exportacao::text AS data, COUNT(*)::int AS total
+         FROM ipt_dados_bateria
+        GROUP BY data_exportacao
+        ORDER BY data_exportacao DESC`,
+    );
+    return { datas: result.rows.map((r) => ({ data: String(r.data).slice(0, 10), total: Number(r.total ?? 0) })) };
+  });
+
+  fastify.get<{ Querystring: { data?: string } }>("/bateria/export", async (request, reply) => {
+    const dataExportacao = String(request.query.data ?? "").trim();
+    if (!isIsoDate(dataExportacao)) {
+      return reply.code(400).send({ detail: "Informe data no formato yyyy-MM-dd." });
+    }
+
+    const result = await pool.query<{
+      nome: string | null;
+      status_comunicacao: string | null;
+      bateria_raw: string | null;
+      bateria_percentual: string | null;
+      bateria_desatualizada: boolean | null;
+      ultima_comunicacao: Date | string | null;
+      dias_execucao: string | null;
+    }>(
+      `SELECT nome, status_comunicacao, bateria_raw, bateria_percentual, bateria_desatualizada,
+              ultima_comunicacao, dias_execucao
+         FROM ipt_dados_bateria
+        WHERE data_exportacao = $1::date
+        ORDER BY nome`,
+      [dataExportacao],
+    );
+
+    if (result.rows.length === 0) {
+      return reply.code(404).send({ detail: "Nenhum dado de bateria encontrado para esta data." });
+    }
+
+    const aoa = [
+      ["Nome", "Comunicação", "Bateria", "Última Comunicação", "Status de Bateria", "Dias"],
+      ...result.rows.map((r) => [
+        r.nome ?? "",
+        r.status_comunicacao ?? "",
+        r.bateria_raw ?? "",
+        fmtDateTimeBr(r.ultima_comunicacao),
+        statusBateriaLabel(r.bateria_percentual, r.bateria_desatualizada),
+        r.dias_execucao ?? "",
+      ]),
+    ];
+    const workbook = XLSX.utils.book_new();
+    const sheet = XLSX.utils.aoa_to_sheet(aoa);
+    sheet["!cols"] = [{ wch: 42 }, { wch: 16 }, { wch: 18 }, { wch: 22 }, { wch: 20 }, { wch: 22 }];
+    XLSX.utils.book_append_sheet(workbook, sheet, "Bateria");
+    const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer;
+    const filename = `Status de Bateria ${dataExportacao}.xlsx`;
+
+    reply
+      .header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+      .header("Content-Disposition", `attachment; filename="${filename}"`)
+      .header("Cache-Control", "no-store");
+    return reply.send(buffer);
+  });
+
   // ---- Trocas ----
 
   fastify.get("/bateria/trocas", async () => {

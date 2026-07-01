@@ -2,7 +2,7 @@ import { FastifyPluginAsync } from "fastify";
 import { pool } from "../db.js";
 import { createSession, applySessionCookies, clearSessionCookie, deleteSession, requireAuth } from "../auth.js";
 import { decryptPassword, passwordsMatch } from "../auth-crypto.js";
-import { APP_PAGE_KEYS, DEFAULT_USER_ALLOWED_PAGES, buildDefaultPermissions, isAppPageKey, type AppPageKey, type UserRole } from "../auth-shared.js";
+import { APP_PAGE_KEYS, DEFAULT_USER_ALLOWED_PAGES, isAppPageKey, type AppPageKey, type UserRole } from "../auth-shared.js";
 import { encryptPassword } from "../auth-crypto.js";
 
 type UserRow = {
@@ -17,6 +17,8 @@ type UserRow = {
   last_access_at: Date | string | null;
 };
 
+const CCO_ALLOWED_PAGES: AppPageKey[] = ["ipt", "ipt_despachos", "plano_trabalho", "upload", "cco"];
+
 function safeDecryptVisiblePassword(encrypted: string): string {
   try {
     return decryptPassword(encrypted);
@@ -26,9 +28,21 @@ function safeDecryptVisiblePassword(encrypted: string): string {
   }
 }
 
+function normalizeAllowedPages(allowed: Set<AppPageKey>, role: UserRole): Set<AppPageKey> {
+  if (role === "host") return new Set(APP_PAGE_KEYS);
+  const normalized = new Set(allowed);
+  if (normalized.has("cco")) {
+    CCO_ALLOWED_PAGES.forEach((page) => normalized.add(page));
+  }
+  normalized.delete("admin_users");
+  return normalized;
+}
+
 function sanitizeUser(row: UserRow) {
-  const defaults = buildDefaultPermissions(row.role);
-  const allowed = new Set((row.page_permissions ?? []).filter((page): page is AppPageKey => isAppPageKey(page)));
+  const allowed = normalizeAllowedPages(
+    new Set((row.page_permissions ?? []).filter((page): page is AppPageKey => isAppPageKey(page))),
+    row.role
+  );
   const pagePermissions = Object.fromEntries(
     APP_PAGE_KEYS.map((pageKey) => [pageKey, row.role === "host" ? true : allowed.has(pageKey)])
   ) as Record<AppPageKey, boolean>;
@@ -94,7 +108,7 @@ async function getUserById(id: number) {
 
 async function replacePermissions(userId: number, role: UserRole, pagePermissions?: Record<string, boolean>) {
   await pool.query("DELETE FROM user_page_permissions WHERE user_id = $1", [userId]);
-  const allowedPages =
+  const requestedPages =
     role === "host"
       ? APP_PAGE_KEYS
       : APP_PAGE_KEYS.filter((pageKey) =>
@@ -102,6 +116,7 @@ async function replacePermissions(userId: number, role: UserRole, pagePermission
             ? pagePermissions[pageKey] === true
             : DEFAULT_USER_ALLOWED_PAGES.includes(pageKey)
         );
+  const allowedPages = Array.from(normalizeAllowedPages(new Set(requestedPages), role));
 
   for (const pageKey of allowedPages) {
     await pool.query(

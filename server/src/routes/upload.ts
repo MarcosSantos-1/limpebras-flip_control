@@ -1190,7 +1190,8 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
     session: SessionKey,
     uploadType: SessionUploadType,
     sourceFile: string,
-    summary: UploadSummary
+    summary: UploadSummary,
+    user?: { id: number; username: string; displayName: string | null } | null
   ) => {
     await pool.query(
       `INSERT INTO upload_events (
@@ -1215,12 +1216,30 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
           ordens_encerradas: summary.ordens_encerradas ?? null,
           snapshots_indicadores: summary.snapshots_indicadores ?? null,
           snapshots_servicos: summary.snapshots_servicos ?? null,
+          user: user
+            ? {
+                id: user.id,
+                username: user.username,
+                display_name: user.displayName,
+              }
+            : null,
         }),
       ]
     );
   };
 
-  const getSessionHistory = async (session: SessionKey) => {
+  const getSessionHistory = async (
+    session: SessionKey,
+    opts?: { uploadType?: SessionUploadType; limit?: number }
+  ) => {
+    const limit = Math.max(1, Math.min(50, opts?.limit ?? 10));
+    const params: unknown[] = [session];
+    let typeFilter = "";
+    if (opts?.uploadType) {
+      params.push(opts.uploadType);
+      typeFilter = ` AND upload_type = $${params.length}`;
+    }
+    params.push(limit);
     const result = await pool.query(
       `SELECT
          upload_type,
@@ -1236,9 +1255,10 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
          created_at
        FROM upload_events
        WHERE session_key = $1
+       ${typeFilter}
        ORDER BY created_at DESC, id DESC
-       LIMIT 10`,
-      [session]
+       LIMIT $${params.length}`,
+      params
     );
     return result.rows.map((row) => ({
       tipo: row.upload_type,
@@ -1254,6 +1274,10 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       periodo_inicial: row.metadata?.periodo_inicial ?? null,
       periodo_final: row.metadata?.periodo_final ?? null,
       ordens_encerradas: row.metadata?.ordens_encerradas ?? null,
+      user_id: row.metadata?.user?.id ?? null,
+      username: row.metadata?.user?.username ?? null,
+      user_display_name: row.metadata?.user?.display_name ?? null,
+      imported_by: row.metadata?.user?.display_name ?? row.metadata?.user?.username ?? null,
       created_at: row.created_at,
     }));
   };
@@ -1861,7 +1885,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
           });
         }
         const summary = await importFileByDetectedType(detectedType, buffer, sourceFile);
-        await recordUploadEvent("flip", detectedType, sourceFile, summary);
+        await recordUploadEvent("flip", detectedType, sourceFile, summary, request.authUser);
         return {
           ...summary,
           tipo_detectado: detectedType,
@@ -1882,7 +1906,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       }
       const summary = await importIptBuffer(detectedIptType, buffer, sourceFile);
       const sessionType = mapIptTypeToSessionType(detectedIptType);
-      await recordUploadEvent("ddmx", sessionType, sourceFile, summary);
+      await recordUploadEvent("ddmx", sessionType, sourceFile, summary, request.authUser);
       return {
         ...summary,
         tipo_detectado: sessionType,
@@ -1907,7 +1931,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       try {
         const buffer = await data.toBuffer();
         const summary = await importDdmxBuffer(target, buffer, data.filename);
-        await recordUploadEvent("ddmx", sessionType, data.filename, summary);
+        await recordUploadEvent("ddmx", sessionType, data.filename, summary, request.authUser);
         return {
           ...summary,
           tipo_detectado: sessionType,
@@ -2268,7 +2292,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
     try {
       const buffer = await data.toBuffer();
       const summary = await importConsolidadoBuffer("ipt_consolidado_veiculos", buffer, data.filename);
-      await recordUploadEvent("selimp", "iptConsolidadoVeiculos", data.filename, summary);
+      await recordUploadEvent("selimp", "iptConsolidadoVeiculos", data.filename, summary, request.authUser);
       return summary;
     } catch (error: unknown) {
       const detail = error instanceof Error ? error.message : "Falha no upload";
@@ -2286,7 +2310,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
     try {
       const buffer = await data.toBuffer();
       const summary = await importConsolidadoBuffer("ipt_consolidado_varricao", buffer, data.filename);
-      await recordUploadEvent("selimp", "iptConsolidadoVarricao", data.filename, summary);
+      await recordUploadEvent("selimp", "iptConsolidadoVarricao", data.filename, summary, request.authUser);
       return summary;
     } catch (error: unknown) {
       const detail = error instanceof Error ? error.message : "Falha no upload";
@@ -2532,7 +2556,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
             baixa_confianca: baixaConfianca,
           },
         };
-        await recordUploadEvent("selimp", "iptReport", sourceFile, result);
+        await recordUploadEvent("selimp", "iptReport", sourceFile, result, request.authUser);
         return result;
       } catch (error) {
         await client.query("ROLLBACK");
@@ -2641,7 +2665,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
           periodo_inicial: dataReferencia,
           periodo_final: dataReferencia,
         };
-        await recordUploadEvent("selimp", "iptStatusBateria", data.filename, summary);
+        await recordUploadEvent("selimp", "iptStatusBateria", data.filename, summary, request.authUser);
         return summary;
       } catch (e) {
         await client.query("ROLLBACK");
@@ -2759,7 +2783,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
           datas_importadas: datasImportadas,
           total_datas: datasImportadas.length,
         };
-        await recordUploadEvent("selimp", "iptStatusBateria", data.filename, summary);
+        await recordUploadEvent("selimp", "iptStatusBateria", data.filename, summary, request.authUser);
         return summary;
       } catch (e) {
         await client.query("ROLLBACK");
@@ -2833,7 +2857,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
           ultimo_import: batchAt,
           source_file: data.filename,
         };
-        await recordUploadEvent("selimp", "iptModulosBateria", data.filename, summary);
+        await recordUploadEvent("selimp", "iptModulosBateria", data.filename, summary, request.authUser);
         return summary;
       } catch (e) {
         await client.query("ROLLBACK");
@@ -2890,6 +2914,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       const count = await pool.query(`SELECT COUNT(*)::int AS total FROM ipt_dados_bateria`);
       const r = last.rows[0];
       const dataRef = r?.data_exportacao ? String(r.data_exportacao).slice(0, 10) : null;
+      const history = await getSessionHistory("selimp", { uploadType: "iptStatusBateria", limit: 5 });
       return {
         ultimo_import: r?.updated_at ?? null,
         source_file: r?.source_file ?? null,
@@ -2897,6 +2922,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         ultima_referencia: dataRef ? `Status Bateria (${formatPtDateKey(dataRef)})` : null,
         periodo_inicial: dataRef,
         periodo_final: dataRef,
+        history,
       };
     } catch {
       return { ultimo_import: null, source_file: null, total_registros: 0 };

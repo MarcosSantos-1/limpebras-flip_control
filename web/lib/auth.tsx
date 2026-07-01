@@ -31,7 +31,7 @@ function isIptRestrictedProfile(user: AuthUser | null | undefined): boolean {
   return user.is_ipt_restricted === true || user.page_permissions?.ipt_restrito === true;
 }
 
-/** Perfil CCO: acesso somente às páginas do IPT, com o Painel CCO como home. */
+/** Perfil CCO: acesso operacional ao IPT, upload e plano de trabalho, com IPT Geral como home. */
 function isCcoProfile(user: AuthUser | null | undefined): boolean {
   if (!user || user.role === "host") return false;
   return user.is_cco === true || user.page_permissions?.cco === true;
@@ -39,7 +39,7 @@ function isCcoProfile(user: AuthUser | null | undefined): boolean {
 
 function getDefaultAuthorizedPathForUser(user: AuthUser | null | undefined): string {
   if (!user) return "/login";
-  if (isCcoProfile(user)) return "/ipt/view";
+  if (isCcoProfile(user)) return "/ipt";
   return isIptRestrictedProfile(user) ? "/ipt/bateria" : "/";
 }
 

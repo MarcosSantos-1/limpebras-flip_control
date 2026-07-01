@@ -23,7 +23,6 @@ import {
   Battery,
   Network,
   Send,
-  Eye,
   type LucideIcon,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -54,10 +53,10 @@ const navItemsBeforeIpt: SidebarNavItem[] = [
 
 const navItemsAfterFlip: SidebarNavItem[] = [
   {
-    href: "https://geoplano-limpebras.vercel.app/",
+    href: "https://geoplano-limpebras.vercel.app/map",
     label: "Plano de trabalho",
     icon: Map,
-    skipAccessCheck: true,
+    pageKey: "plano_trabalho" as AuthPageKey,
     external: true,
   },
   { href: "/upload", label: "Upload", icon: Upload, pageKey: "upload" as AuthPageKey },
@@ -90,15 +89,8 @@ const iptNavItems: SidebarNavDotItem[] = [
     href: "/ipt/despachos",
     label: "Despachos SELIMP",
     icon: Send,
-    pageKey: "ipt" as AuthPageKey,
+    pageKey: "ipt_despachos" as AuthPageKey,
     dotClassName: "bg-amber-500 shadow-amber-500/40",
-  },
-  {
-    href: "/ipt/view",
-    label: "Painel CCO",
-    icon: Eye,
-    pageKey: "ipt" as AuthPageKey,
-    dotClassName: "bg-cyan-500 shadow-cyan-500/40",
   },
 ]
 
@@ -138,11 +130,12 @@ const userMenuItems: SidebarNavItem[] = [
 ]
 
 const ccoAfterNavItems: SidebarNavItem[] = [
+  { href: "/upload", label: "Upload", icon: Upload, pageKey: "upload" as AuthPageKey },
   {
-    href: "https://geoplano-limpebras.vercel.app/",
+    href: "https://geoplano-limpebras.vercel.app/map",
     label: "Plano de trabalho",
     icon: Map,
-    skipAccessCheck: true,
+    pageKey: "plano_trabalho" as AuthPageKey,
     external: true,
   },
 ]
@@ -151,10 +144,10 @@ const iptRestrictedNavItems: SidebarNavItem[] = [
   { href: "/ipt/bateria", label: "Análise de Módulos", icon: ChartColumnStacked, pageKey: "ipt" as AuthPageKey },
   { href: "/ipt", label: "IPT", icon: Activity, pageKey: "ipt" as AuthPageKey, match: "exact" as const },
   {
-    href: "https://geoplano-limpebras.vercel.app/",
+    href: "https://geoplano-limpebras.vercel.app/map",
     label: "GeoPlano / Plano de trabalho",
     icon: Map,
-    skipAccessCheck: true,
+    pageKey: "plano_trabalho" as AuthPageKey,
     external: true,
   },
   { href: "/upload", label: "Uploads", icon: Upload, pageKey: "upload" as AuthPageKey },
