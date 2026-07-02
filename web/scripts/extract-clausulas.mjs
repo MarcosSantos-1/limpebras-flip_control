@@ -1,5 +1,5 @@
 /**
- * Regenera web/lib/data/clausulas-penalidades.json a partir de docs/VALORES MULTAS.xlsx
+ * Regenera web/lib/data/clausulas-penalidades.json a partir de docs/02-contrato/multas-penalidades.xlsx
  * Uso (na pasta web): npm run extract-clausulas
  */
 import XLSX from "xlsx";
@@ -9,7 +9,7 @@ import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..", "..");
-const xlsxPath = path.join(root, "docs", "VALORES MULTAS.xlsx");
+const xlsxPath = path.join(root, "docs", "02-contrato", "multas-penalidades.xlsx");
 const outPath = path.join(__dirname, "..", "lib", "data", "clausulas-penalidades.json");
 
 if (!fs.existsSync(xlsxPath)) {
@@ -46,7 +46,7 @@ fs.mkdirSync(path.dirname(outPath), { recursive: true });
 fs.writeFileSync(
   outPath,
   JSON.stringify(
-    { source: "docs/VALORES MULTAS.xlsx", sheet: "R$ PENALIDADES", clausulas: out },
+    { source: "docs/02-contrato/multas-penalidades.xlsx", sheet: "R$ PENALIDADES", clausulas: out },
     null,
     2
   ),

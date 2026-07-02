@@ -1,0 +1,32 @@
+# Documentação e dados de referência (local, não versionado)
+/docs/
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Ambiente
+.env
+.env.*
+!.env.example
+
+# Dependências e build
+node_modules/
+dist/
+.next/
+out/
+*.tsbuildinfo
+
+# Logs
+*.log
+npm-debug.log*
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+
+# Dados sensíveis / dumps
+*.dump
+*.sql.gz

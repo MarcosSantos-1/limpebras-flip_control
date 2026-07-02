@@ -1,5 +1,5 @@
 /**
- * Reimporta o histórico de trocas a partir de docs/ipt/TROCAS_DE_MODULOS.xlsx
+ * Reimporta o histórico de trocas a partir de docs/04-ipt/dados/modulos/trocas-de-modulos.xlsx
  * resolvendo setor -> SELIMP pelo crosswalk do banco (setores_modulos).
  *
  *   node scripts/reimport-trocas-from-xlsx.mjs            # DRY-RUN (não grava)
@@ -10,7 +10,7 @@ import pg from "pg"; import * as XLSX from "../../web/node_modules/xlsx/xlsx.mjs
 const { Pool } = pg;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const EXECUTE = process.argv.includes("--execute");
-const XLSXF = path.join(__dirname, "../../docs/ipt/TROCAS_DE_MODULOS.xlsx");
+const XLSXF = path.join(__dirname, "../../docs/04-ipt/dados/modulos/trocas-de-modulos.xlsx");
 // Janela de gravação: só grava trocas com data_troca neste intervalo (inclusive).
 const WIN_INI = "2026-06-10";
 const WIN_FIM = "2026-06-17";

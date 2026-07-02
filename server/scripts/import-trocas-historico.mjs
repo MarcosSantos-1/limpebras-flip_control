@@ -1,10 +1,10 @@
 /**
- * Importa o histórico de trocas de bateria (docs/ipt/TROCAS_DE_MODULOS.xlsx, já
- * transformado em docs/ipt/trocas_historico_transformado.csv) para o Neon.
+ * Importa o histórico de trocas de bateria (docs/04-ipt/dados/modulos/trocas-de-modulos.xlsx,
+ * transformado em docs/04-ipt/dados/trocas/trocas-historico-transformado.csv) para o Neon.
  *
  * O CSV vem com cada linha já resolvida para o SELIMP correto (modulo_selimp),
  * usando o crosswalk setor→selimp do próprio banco (setores_modulos). As 7 linhas
- * ambíguas (praças CV em 2 módulos) ficam de fora — ver trocas_historico_ambiguas.csv.
+ * ambíguas (praças CV em 2 módulos) ficam de fora — ver trocas-historico-ambiguas.csv.
  *
  * Grava em:
  *   - bateria_trocas_eventos : 1 evento por troca (status 'concluida')
@@ -25,7 +25,7 @@ import pg from "pg";
 const { Pool } = pg;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const EXECUTE = process.argv.includes("--execute");
-const CSV = path.join(__dirname, "../../docs/ipt/trocas_historico_transformado.csv");
+const CSV = path.join(__dirname, "../../docs/04-ipt/dados/trocas/trocas-historico-transformado.csv");
 
 function readEnvDatabaseUrl() {
   const envPath = path.join(__dirname, "../.env");
