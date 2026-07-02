@@ -1281,6 +1281,22 @@ function isImageManutDoc(doc: Pick<ManutencaoArquivo, "contentType" | "titulo" |
   return /\.(jpe?g|png|gif|webp|bmp|heic)$/i.test(name);
 }
 
+function truncateFileTitle(title: string | undefined, maxLen = 30): string {
+  const t = title?.trim() || "Documento anexado";
+  if (t.length <= maxLen) return t;
+  return `${t.slice(0, maxLen - 3)}...`;
+}
+
+function manutDocumentosList(src: {
+  documentos?: ManutencaoArquivo[];
+  documentoUrl?: string;
+  documentoTitulo?: string;
+}): ManutencaoArquivo[] {
+  if (src.documentos && src.documentos.length > 0) return src.documentos;
+  if (src.documentoUrl) return [{ url: src.documentoUrl, titulo: src.documentoTitulo || "Documento anexado" }];
+  return [];
+}
+
 function contestacaoDiaHoje(e: Pick<ManutEntry, "contestacaoDias">): ManutEntry["contestacaoDias"][number] | undefined {
   const today = isoToday();
   return e.contestacaoDias.find((d) => d.data === today);
@@ -2657,11 +2673,7 @@ export default function BateriaDashboardPage() {
   }, [manutForm, manutModal.module, manutModal.editEventId, modulesBySelimp, moduloManut]);
 
   /** Contesta/descontesta um dia de despacho específico (com toast). */
-  const documentosOfEntry = useCallback((e: ManutEntry): ManutencaoArquivo[] => {
-    if (e.documentos && e.documentos.length > 0) return e.documentos;
-    if (e.documentoUrl) return [{ url: e.documentoUrl, titulo: e.documentoTitulo || "Documento anexado" }];
-    return [];
-  }, []);
+  const documentosOfEntry = useCallback((e: ManutEntry): ManutencaoArquivo[] => manutDocumentosList(e), []);
 
   const contestarDia = useCallback(
     (selimp: string, dia: string, contestado: boolean, print?: ManutencaoArquivo) => {
@@ -4279,6 +4291,7 @@ export default function BateriaDashboardPage() {
                           const ultimaTroca = mod
                             ? ultimaTrocaDate(trocaHistoryOf(mod, troca.records[mod.numeroSelimp], troca.history[mod.numeroSelimp]))
                             : "";
+                          const entryDocs = documentosOfEntry(e);
                           return (
                             <TableRow key={e.key} className="border-border/30 hover:bg-muted/20">
                               <TableCell className="text-center font-medium align-top">{e.sub || "—"}</TableCell>
@@ -4306,7 +4319,7 @@ export default function BateriaDashboardPage() {
                               <TableCell className="align-top text-xs text-muted-foreground tabular-nums">
                                 {e.ultimaComunicacao || "—"}
                               </TableCell>
-                              <TableCell className="align-top text-xs tabular-nums">
+                              <TableCell className="align-top max-w-[190px] text-xs tabular-nums">
                                 <div className="space-y-0.5">
                                   <div><span className="text-muted-foreground">Ordenado:</span> {isoBr(e.dataOrdenado)}</div>
                                   <div><span className="text-muted-foreground">Retirada:</span> {isoBr(e.dataRetirada)}</div>
@@ -4321,17 +4334,26 @@ export default function BateriaDashboardPage() {
                                   {e.createdAt && (
                                     <div className="text-[10px] text-muted-foreground/80">registrado {isoBrDateTime(e.createdAt)}</div>
                                   )}
-                                  {e.documentoUrl && (
-                                    <a
-                                      href={e.documentoUrl}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="mt-1 inline-flex max-w-full items-center gap-1 truncate text-[11px] font-medium text-sky-600 hover:underline dark:text-sky-400"
-                                      title={e.documentoTitulo || "Documento de manutenção"}
-                                    >
-                                      <FileText className="h-3 w-3 shrink-0" />
-                                      <span className="truncate">{e.documentoTitulo || "Documento anexado"}</span>
-                                    </a>
+                                  {entryDocs.length > 0 && (
+                                    <div className="mt-1 space-y-0.5">
+                                      {entryDocs.map((doc) => (
+                                        <a
+                                          key={doc.url}
+                                          href={doc.url}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="flex min-w-0 max-w-full items-center gap-1 text-[11px] font-medium text-sky-600 hover:underline dark:text-sky-400"
+                                          title={doc.titulo}
+                                        >
+                                          {isImageManutDoc(doc) ? (
+                                            <ImageIcon className="h-3 w-3 shrink-0" />
+                                          ) : (
+                                            <FileText className="h-3 w-3 shrink-0" />
+                                          )}
+                                          <span className="min-w-0 truncate">{truncateFileTitle(doc.titulo)}</span>
+                                        </a>
+                                      ))}
+                                    </div>
                                   )}
                                 </div>
                               </TableCell>
@@ -5498,52 +5520,7 @@ export default function BateriaDashboardPage() {
                     {/* Documento (PDF ou foto, global por módulo) */}
                     <div className="space-y-1.5">
                       <label className="text-xs font-medium text-muted-foreground">Documento de manutenção (PDF ou foto)</label>
-                      {e.documentoUrl && (
-                        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3">
-                          <span className="flex min-w-0 flex-1 items-center gap-2 text-xs font-medium text-emerald-700 dark:text-emerald-300">
-                            {isImageManutDoc(docs[0] ?? { url: e.documentoUrl, titulo: e.documentoTitulo }) ? (
-                              <ImageIcon className="h-4 w-4 shrink-0" />
-                            ) : (
-                              <FileText className="h-4 w-4 shrink-0" />
-                            )}
-                            <span className="truncate" title={e.documentoTitulo || "Documento anexado"}>
-                              {e.documentoTitulo || "Documento anexado"}
-                            </span>
-                          </span>
-                          <div className="flex shrink-0 items-center gap-1.5">
-                            <a
-                              href={e.documentoUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              download={e.documentoTitulo || undefined}
-                              className="inline-flex items-center gap-1 rounded-md border border-emerald-500/40 bg-background/60 px-2.5 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-300"
-                              title={e.documentoTitulo ? `Baixar ${e.documentoTitulo}` : "Baixar documento"}
-                            >
-                              <Download className="h-3.5 w-3.5" />
-                              {e.documentoTitulo ? `Baixar · ${e.documentoTitulo}` : "Baixar"}
-                            </a>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              className="h-7 gap-1 border-red-400/50 text-red-600 hover:bg-red-500/10 dark:text-red-400"
-                              disabled={contestUploading || contestRemovingDoc}
-                              onClick={() =>
-                                setContestDocDelete({
-                                  eventId: e.eventId!,
-                                  selimp: e.selimp,
-                                  titulo: e.documentoTitulo || "Documento anexado",
-                                  url: e.documentoUrl!,
-                                  path: docs[0]?.path,
-                                })
-                              }
-                            >
-                              <Trash2 className="h-3.5 w-3.5" /> Excluir
-                            </Button>
-                          </div>
-                        </div>
-                      )}
-                      {docs.slice(e.documentoUrl ? 1 : 0).map((doc) => (
+                      {docs.map((doc) => (
                         <div key={doc.url} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3">
                           <span className="flex min-w-0 flex-1 items-center gap-2 text-xs font-medium text-emerald-700 dark:text-emerald-300">
                             {isImageManutDoc(doc) ? (
@@ -5551,7 +5528,7 @@ export default function BateriaDashboardPage() {
                             ) : (
                               <FileText className="h-4 w-4 shrink-0" />
                             )}
-                            <span className="truncate" title={doc.titulo}>{doc.titulo}</span>
+                            <span className="truncate" title={doc.titulo}>{truncateFileTitle(doc.titulo, 40)}</span>
                           </span>
                           <div className="flex shrink-0 items-center gap-1.5">
                             <a
@@ -6041,16 +6018,26 @@ export default function BateriaDashboardPage() {
                             </div>
                           </div>
                           {ev.motivo && <p className="mt-1 text-xs text-foreground"><span className="text-muted-foreground">Motivo:</span> {ev.motivo}</p>}
-                          {ev.documentoUrl && (
-                            <a
-                              href={ev.documentoUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="mt-1 inline-flex max-w-full items-center gap-1 truncate text-xs font-medium text-sky-600 hover:underline dark:text-sky-400"
-                            >
-                              <FileText className="h-3 w-3 shrink-0" />
-                              <span className="truncate">{ev.documentoTitulo || "Documento anexado"}</span>
-                            </a>
+                          {manutDocumentosList(ev).length > 0 && (
+                            <div className="mt-1 space-y-0.5">
+                              {manutDocumentosList(ev).map((doc) => (
+                                <a
+                                  key={doc.url}
+                                  href={doc.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="flex min-w-0 max-w-full items-center gap-1 text-xs font-medium text-sky-600 hover:underline dark:text-sky-400"
+                                  title={doc.titulo}
+                                >
+                                  {isImageManutDoc(doc) ? (
+                                    <ImageIcon className="h-3 w-3 shrink-0" />
+                                  ) : (
+                                    <FileText className="h-3 w-3 shrink-0" />
+                                  )}
+                                  <span className="min-w-0 truncate">{truncateFileTitle(doc.titulo)}</span>
+                                </a>
+                              ))}
+                            </div>
                           )}
                           {ev.createdAt && <p className="mt-1 text-[10px] text-muted-foreground/80">registrado {isoBrDateTime(ev.createdAt)}</p>}
                         </div>
@@ -6266,7 +6253,7 @@ export default function BateriaDashboardPage() {
                                 ) : (
                                   <FileText className="h-4 w-4 shrink-0" />
                                 )}
-                                <span className="truncate" title={doc.titulo}>{doc.titulo}</span>
+                                <span className="truncate" title={doc.titulo}>{truncateFileTitle(doc.titulo, 40)}</span>
                               </span>
                               <Button
                                 type="button"
