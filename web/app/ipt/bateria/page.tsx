@@ -1542,6 +1542,8 @@ export default function BateriaDashboardPage() {
   const [contestPrintViewer, setContestPrintViewer] = useState<{ url: string; titulo: string } | null>(null);
   const [contestDocDelete, setContestDocDelete] = useState<{ eventId: number; selimp: string; titulo: string; url: string; path?: string } | null>(null);
   const [contestRemovingDoc, setContestRemovingDoc] = useState(false);
+  const [contestEditConfirm, setContestEditConfirm] = useState<{ entry: ManutEntry; dia: string } | null>(null);
+  const [contestEditingDay, setContestEditingDay] = useState<string | null>(null);
   const [manutEventDelete, setManutEventDelete] = useState<{ selimp: string; id: number; setor: string; status: string } | null>(null);
 
   // Paginação das listagens de Trocas e Manutenções
@@ -4334,10 +4336,12 @@ export default function BateriaDashboardPage() {
                                 </div>
                               </TableCell>
                               <TableCell className="align-top max-w-[180px] text-xs text-foreground">
-                                <Badge className={cn("mb-1 text-[10px]", MANUT_MOTIVO_BADGE_CLASS[e.motivoBadge])}>
-                                  {MANUT_MOTIVO_BADGE_LABEL[e.motivoBadge]}
-                                </Badge>
-                                {e.motivo || <span className="text-muted-foreground">—</span>}
+                                <div className="flex flex-col gap-1">
+                                  <Badge className={cn("w-fit text-[10px]", MANUT_MOTIVO_BADGE_CLASS[e.motivoBadge])}>
+                                    {MANUT_MOTIVO_BADGE_LABEL[e.motivoBadge]}
+                                  </Badge>
+                                  <span>{e.motivo || <span className="text-muted-foreground">—</span>}</span>
+                                </div>
                               </TableCell>
                               <TableCell className="text-center font-medium tabular-nums align-top">{e.quantidadeTrocas}</TableCell>
                               <TableCell className="text-center text-xs tabular-nums text-muted-foreground align-top">{fmtDisplayDate(ultimaTroca)}</TableCell>
@@ -4423,7 +4427,10 @@ export default function BateriaDashboardPage() {
                                             "h-7 gap-1 text-white",
                                             hoje.contestado ? "bg-emerald-600 hover:bg-emerald-700" : "bg-amber-500 hover:bg-amber-600",
                                           )}
-                                          onClick={() => setContestModule(e)}
+                                          onClick={() => {
+                                            setContestEditingDay(null);
+                                            setContestModule(e);
+                                          }}
                                         >
                                           {hoje.contestado ? <ShieldCheck className="h-3.5 w-3.5" /> : <ShieldAlert className="h-3.5 w-3.5" />}
                                           {hoje.contestado ? "Contestado" : "Contestar"}
@@ -5453,7 +5460,12 @@ export default function BateriaDashboardPage() {
         </Dialog>
 
         {/* ===== Modal de Contestação por dia ===== */}
-        <Dialog open={!!contestModule} onOpenChange={(o) => !o && setContestModule(null)}>
+        <Dialog open={!!contestModule} onOpenChange={(o) => {
+          if (!o) {
+            setContestModule(null);
+            setContestEditingDay(null);
+          }
+        }}>
           <DialogContent className="max-w-2xl max-h-[88vh] overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {contestModule && (() => {
               const e = manutEntries.find((x) => x.eventId === contestModule.eventId) ?? contestModule;
@@ -5603,17 +5615,18 @@ export default function BateriaDashboardPage() {
                         )}
                         {[...e.contestacaoDias].sort((a, b) => b.data.localeCompare(a.data)).map((d) => {
                           const isHoje = d.data === isoToday();
-                          const podeEditarHoje = isHoje;
+                          const podeEditar = isHoje || (contestEditingDay === d.data && !d.contestado);
                           return (
                           <div
                             key={d.data}
-                            tabIndex={!d.contestado && podeEditarHoje ? 0 : undefined}
+                            tabIndex={!d.contestado && podeEditar ? 0 : undefined}
                             className={cn(
                               "flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-muted/15 px-3 py-2",
-                              !d.contestado && podeEditarHoje && "outline-none focus-visible:ring-2 focus-visible:ring-amber-500/40",
+                              !d.contestado && podeEditar && "outline-none focus-visible:ring-2 focus-visible:ring-amber-500/40",
+                              contestEditingDay === d.data && !d.contestado && "border-amber-500/40 bg-amber-500/5",
                             )}
                             onPaste={
-                              !d.contestado && podeEditarHoje
+                              !d.contestado && podeEditar
                                 ? (ev) => {
                                     const file = clipboardEventToImageFile(ev, d.data);
                                     if (!file) return;
@@ -5628,8 +5641,10 @@ export default function BateriaDashboardPage() {
                               <span className="font-medium tabular-nums text-foreground">{fmtIsoBr(d.data)}</span>
                               {d.contestado ? (
                                 <Badge className="border-emerald-500/30 bg-emerald-500/15 text-[10px] text-emerald-600 dark:text-emerald-400">Contestado</Badge>
-                              ) : isHoje ? (
-                                <Badge className="border-amber-500/30 bg-amber-500/15 text-[10px] text-amber-700 dark:text-amber-300">Contestar hoje</Badge>
+                              ) : podeEditar ? (
+                                <Badge className="border-amber-500/30 bg-amber-500/15 text-[10px] text-amber-700 dark:text-amber-300">
+                                  {isHoje ? "Contestar hoje" : "Editar contestação"}
+                                </Badge>
                               ) : (
                                 <Badge className="border-zinc-500/30 bg-zinc-500/15 text-[10px] text-zinc-600 dark:text-zinc-300">Não contestado</Badge>
                               )}
@@ -5655,7 +5670,7 @@ export default function BateriaDashboardPage() {
                                   </a>
                                 </>
                               )}
-                              {d.contestado && podeEditarHoje ? (
+                              {d.contestado && isHoje ? (
                                 <Button
                                   size="sm"
                                   className={cn("h-7 gap-1", BTN_RED)}
@@ -5678,7 +5693,7 @@ export default function BateriaDashboardPage() {
                                 >
                                   Cancelar
                                 </Button>
-                              ) : !d.contestado && podeEditarHoje ? (
+                              ) : !d.contestado && podeEditar ? (
                                 <div className="flex items-center gap-1">
                                   <label className={cn("inline-flex h-7 cursor-pointer items-center gap-1 rounded-md px-2.5 text-xs font-semibold text-white", BTN_AMBER)}>
                                     <Upload className="h-3.5 w-3.5" />
@@ -5721,7 +5736,7 @@ export default function BateriaDashboardPage() {
                   </div>
 
                   <DialogFooter>
-                    <Button className={cn(BTN_SECONDARY)} onClick={() => setContestModule(null)}>Fechar</Button>
+                    <Button className={cn(BTN_SECONDARY)} onClick={() => { setContestModule(null); setContestEditingDay(null); }}>Fechar</Button>
                   </DialogFooter>
                 </>
               );
@@ -5753,6 +5768,40 @@ export default function BateriaDashboardPage() {
                 <img src={contestPrintViewer.url} alt={contestPrintViewer.titulo} className="max-h-[78vh] w-full object-contain" />
               </div>
             )}
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={!!contestEditConfirm} onOpenChange={(o) => !o && setContestEditConfirm(null)}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-base">
+                <Pencil className="h-5 w-5 text-amber-500" /> Editar contestação
+              </DialogTitle>
+              <DialogDescription>
+                Deseja realmente editar uma contestação não realizada
+                {contestEditConfirm ? (
+                  <> do dia <span className="font-medium text-foreground">{fmtIsoBr(contestEditConfirm.dia)}</span></>
+                ) : null}
+                ? Será necessário anexar o print para registrar a contestação (ex.: finais de semana em que o despacho não ocorreu).
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="gap-2">
+              <Button className={cn(BTN_SECONDARY)} onClick={() => setContestEditConfirm(null)}>
+                Cancelar
+              </Button>
+              <Button
+                className={cn("gap-1.5", BTN_AMBER, "text-white")}
+                onClick={() => {
+                  if (!contestEditConfirm) return;
+                  setHistModule(null);
+                  setContestEditingDay(contestEditConfirm.dia);
+                  setContestModule(contestEditConfirm.entry);
+                  setContestEditConfirm(null);
+                }}
+              >
+                <Pencil className="h-4 w-4" /> Editar contestação
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
 
@@ -5912,10 +5961,7 @@ export default function BateriaDashboardPage() {
                                     title="Editar contestação"
                                     onClick={() => {
                                       const entry = manutEntries.find((x) => x.eventId === rec.id);
-                                      if (entry) {
-                                        setHistModule(null);
-                                        setContestModule(entry);
-                                      }
+                                      if (entry) setContestEditConfirm({ entry, dia: d.data });
                                     }}
                                   >
                                     <Pencil className="h-3.5 w-3.5" />
