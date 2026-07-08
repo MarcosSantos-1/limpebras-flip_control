@@ -33,6 +33,7 @@ import {
   Info,
   LayoutDashboard,
   MapPin,
+  Moon,
   Percent,
   Repeat,
   Search,
@@ -164,6 +165,9 @@ const BTN_AMBER =
 
 const BTN_RED =
   "bg-linear-to-r from-red-600 to-rose-600 text-white hover:from-red-500 hover:to-rose-500 shadow-md shadow-rose-950/10 border-0 font-semibold transition-all hover:scale-[1.01] active:scale-[0.99]";
+
+const BTN_CYAN =
+  "bg-linear-to-r from-cyan-500 to-sky-600 text-white hover:from-cyan-400 hover:to-sky-500 shadow-md shadow-cyan-950/10 border-0 font-semibold transition-all hover:scale-[1.01] active:scale-[0.99]";
 
 const BTN_SECONDARY =
   "bg-linear-to-r from-zinc-200 to-slate-300 dark:from-zinc-800 dark:to-slate-700 text-zinc-800 dark:text-zinc-200 hover:from-zinc-300 hover:to-slate-400 dark:hover:from-zinc-700/80 dark:hover:to-slate-600/80 shadow-sm border-0 font-semibold transition-all hover:scale-[1.01] active:scale-[0.99]";
@@ -1134,6 +1138,45 @@ function bateriaDoDia(m: ModuleData, data: string): BateriaDia | null {
   return (m.bateriaPorDia ?? []).find((b) => b.data.slice(0, 10) === dia) ?? null;
 }
 
+/** Classe de frequência a partir do código do setor (ex.: MG10202VJ0026 → 0202 → alternado). */
+function freqClasseFromSetor(setor: string): "alternado" | "bissemanal" | "outro" {
+  const match = String(setor)
+    .replace(/\s+/g, "")
+    .toUpperCase()
+    .match(/^(?:CV|JT|MG|ST)\d(\d{4})[A-Z]{2}\d{4}/);
+  const prefix = match ? match[1].slice(0, 2) : "";
+  if (prefix === "02") return "alternado";
+  if (prefix === "03") return "bissemanal";
+  return "outro";
+}
+
+/** Datas de despacho SELIMP do módulo (yyyy-MM-dd), únicas e ordenadas do mais recente ao mais antigo. */
+function execDatesDesc(m: ModuleData): string[] {
+  const set = new Set<string>();
+  for (const sd of setoresDiasOf(m)) {
+    for (const e of sd.execucoes ?? []) {
+      if (e.data) set.add(e.data.slice(0, 10));
+    }
+  }
+  return Array.from(set).sort((a, b) => b.localeCompare(a));
+}
+
+/**
+ * Módulo "hibernando": offline agora (DESATUALIZADA), frequência bissemanal/alternada,
+ * fora de manutenção (exceto EM_ANALISE) e que volta a comunicar nos dias de frequência —
+ * online em ≥2 das 3 últimas datas de despacho, com a mais recente obrigatoriamente online.
+ */
+function isHibernando(m: ModuleData, manutStatus: ManutencaoModuloStatus | null): boolean {
+  if (m.statusBateria !== "DESATUALIZADA") return false;
+  const classes = setoresDiasOf(m).map((sd) => freqClasseFromSetor(sd.setor));
+  if (!classes.some((c) => c === "alternado" || c === "bissemanal")) return false;
+  if (isTrocaBlockedManutStatus(manutStatus)) return false;
+  const datas = execDatesDesc(m).slice(0, 3);
+  if (datas.length < 3) return false;
+  const online = datas.map((d) => bateriaDoDia(m, d)?.desatualizada === false);
+  return online[0] === true && online.filter(Boolean).length >= 2;
+}
+
 /** Cor do texto do percentual de bateria por faixa (cinza quando desatualizada). */
 function bateriaDiaColor(b: BateriaDia): string {
   if (b.desatualizada) return "text-zinc-500 dark:text-zinc-400";
@@ -1830,15 +1873,21 @@ export default function BateriaDashboardPage() {
     let maintenance = 0;
     let online = 0;
     let offline = 0;
+    let hibernando = 0;
 
     for (const m of modules) {
-      const inMaint = isInMaintenanceOverview(manutStatusForModule(m));
-      if (inMaint) {
+      const manutStatus = manutStatusForModule(m);
+      if (isInMaintenanceOverview(manutStatus)) {
         maintenance += 1;
         continue;
       }
       if (m.comunicacao === "ON") online += 1;
-      else if (m.comunicacao === "OFF") offline += 1;
+      else if (m.comunicacao === "OFF") {
+        // Hibernando é contabilizado à parte: só está offline por não ser dia de execução,
+        // diferente dos offline "de verdade" (pendentes de troca).
+        if (isHibernando(m, manutStatus)) hibernando += 1;
+        else offline += 1;
+      }
     }
 
     const pct = (n: number) => (total > 0 ? Math.round((n / total) * 100) : 0);
@@ -1846,9 +1895,11 @@ export default function BateriaDashboardPage() {
       total,
       online,
       offline,
+      hibernando,
       maintenance,
       pctOnline: pct(online),
       pctOffline: pct(offline),
+      pctHibernando: pct(hibernando),
       pctMaint: pct(maintenance),
     };
   }, [modules, manutStatusForModule]);
@@ -2153,6 +2204,7 @@ export default function BateriaDashboardPage() {
     }
     if (trocasAlertaFilter !== "all") {
       result = result.filter((m) => {
+        if (trocasAlertaFilter === "hibernando") return isHibernando(m, manutStatusForModule(m));
         const isProblema = alertaOf(m).level === "problema";
         return trocasAlertaFilter === "com_alerta" ? isProblema : !isProblema;
       });
@@ -3050,8 +3102,8 @@ export default function BateriaDashboardPage() {
                 </div>
               </div>
 
-              {/* Online / Offline / Manutenção */}
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              {/* Online / Hibernando / Offline / Manutenção */}
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
                 <Card className="relative overflow-hidden rounded-xl border-0 bg-linear-to-br from-emerald-600 to-emerald-900 text-white shadow-xl shadow-emerald-900/25 dark:bg-linear-to-br dark:from-emerald-700 dark:to-emerald-950 dark:shadow-emerald-950/35">
                   <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                     <CardTitle className="text-sm font-semibold text-white/95">Online</CardTitle>
@@ -3063,6 +3115,23 @@ export default function BateriaDashboardPage() {
                       <span className="font-mono text-2xl font-bold tabular-nums text-white/85">{`(${commMaintenanceStats.pctOnline}%)`}</span>
                     </div>
                     <p className="mt-2 text-sm font-medium text-white/90">Comunicação ativa</p>
+                  </CardContent>
+                </Card>
+
+                <Card className="relative overflow-hidden border-cyan-800/55 bg-linear-to-br from-cyan-600/92 via-sky-700 to-blue-950 text-white shadow-xl shadow-cyan-950/45 dark:border-cyan-950/55">
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <CardTitle className="text-sm font-semibold text-white/95">Hibernando</CardTitle>
+                    <span className="relative inline-flex size-5 shrink-0 items-center justify-center">
+                      <Moon className="size-5 text-white/85" />
+                      <span className="absolute -right-1.5 -top-1.5 text-[10px] font-bold leading-none text-white/90">z</span>
+                    </span>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                      <span className="font-mono text-4xl font-bold tracking-tight text-white tabular-nums">{commMaintenanceStats.hibernando}</span>
+                      <span className="font-mono text-2xl font-bold tabular-nums text-cyan-100/95">({commMaintenanceStats.pctHibernando}%)</span>
+                    </div>
+                    <p className="mt-2 text-sm font-medium text-cyan-50/95">Ociosos</p>
                   </CardContent>
                 </Card>
 
@@ -3618,6 +3687,7 @@ export default function BateriaDashboardPage() {
                         <SelectItem value="all">Alertas: Todos</SelectItem>
                         <SelectItem value="com_alerta">Com alerta crítico</SelectItem>
                         <SelectItem value="sem_alerta">Sem alerta crítico</SelectItem>
+                        <SelectItem value="hibernando">Somente hibernando</SelectItem>
                       </SelectContent>
                     </Select>
                     <Select value={trocaRecencia} onValueChange={setTrocasSort}>
@@ -3665,6 +3735,7 @@ export default function BateriaDashboardPage() {
                           const rec = troca.records[m.numeroSelimp];
                           const manutStatus = manutStatusForModule(m);
                           const manutStatusBlocking = isTrocaBlockedManutStatus(manutStatus) ? manutStatus : null;
+                          const hibernando = isHibernando(m, manutStatus);
                           const history = trocaHistoryOf(m, rec, troca.history[m.numeroSelimp]);
                           const historyConcluidas = history.filter((h) => h.status === "concluida").length;
                           const historySemData = Math.max(0, (m.quantidadeTrocas || 0) - historyConcluidas);
@@ -3759,6 +3830,11 @@ export default function BateriaDashboardPage() {
                                     )}
                                   </InfoTooltip>
                                   {renderBatteryStatus(m.statusBateria, false)}
+                                  {hibernando && (
+                                    <InfoTooltip text="Hibernando — offline nos dias sem execução; volta a comunicar nos dias de frequência">
+                                      <span className="inline-flex h-5 min-w-5 cursor-help items-center justify-center rounded-md border border-cyan-500/40 bg-cyan-500/15 px-1 text-[11px] font-bold text-cyan-600 dark:text-cyan-400">H</span>
+                                    </InfoTooltip>
+                                  )}
                                 </div>
                               </TableCell>
                               <TableCell className="text-center font-medium tabular-nums align-middle">
@@ -3800,28 +3876,36 @@ export default function BateriaDashboardPage() {
                                   aria-label={
                                     alerta.level === "problema"
                                       ? "Módulo problemático"
-                                      : alerta.level === "observacao"
-                                        ? "Módulo em observação"
-                                        : "Sem alerta"
+                                      : hibernando
+                                        ? "Módulo hibernando"
+                                        : alerta.level === "observacao"
+                                          ? "Módulo em observação"
+                                          : "Sem alerta"
                                   }
                                   title={
                                     alerta.level === "problema"
                                       ? "Problemático"
-                                      : alerta.level === "observacao"
-                                        ? "Em observação"
-                                        : "Sem alerta"
+                                      : hibernando
+                                        ? "Hibernando"
+                                        : alerta.level === "observacao"
+                                          ? "Em observação"
+                                          : "Sem alerta"
                                   }
                                   className={cn(
                                     "inline-flex h-7 w-7 items-center justify-center rounded-md border-0 transition-all hover:scale-[1.03] active:scale-[0.97]",
                                     alerta.level === "problema"
                                       ? BTN_RED
-                                      : alerta.level === "observacao"
-                                        ? BTN_AMBER
-                                        : "cursor-default opacity-40 bg-zinc-200 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-500 shadow-none hover:scale-100 active:scale-100",
+                                      : hibernando
+                                        ? BTN_CYAN
+                                        : alerta.level === "observacao"
+                                          ? BTN_AMBER
+                                          : "cursor-default opacity-40 bg-zinc-200 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-500 shadow-none hover:scale-100 active:scale-100",
                                   )}
                                 >
                                   {alerta.level === "problema" ? (
                                     <BellRing className="h-4 w-4" />
+                                  ) : hibernando ? (
+                                    <span className="text-sm font-bold leading-none">H</span>
                                   ) : alerta.level === "observacao" ? (
                                     <AlertTriangle className="h-4 w-4" />
                                   ) : (
@@ -4940,15 +5024,20 @@ export default function BateriaDashboardPage() {
           <DialogContent className="max-w-lg">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 text-base">
-                {alertModule && alertaOf(alertModule).level === "observacao" ? (
-                  <>
-                    <AlertTriangle className="h-5 w-5 text-amber-500" />
-                    Módulo em observação — {alertModule?.numeroSelimp}
-                  </>
-                ) : (
+                {alertModule && alertaOf(alertModule).level === "problema" ? (
                   <>
                     <BellRing className="h-5 w-5 text-red-500" />
                     Módulo problemático — {alertModule?.numeroSelimp}
+                  </>
+                ) : alertModule && isHibernando(alertModule, manutStatusForModule(alertModule)) ? (
+                  <>
+                    <span className="inline-flex h-5 w-5 items-center justify-center rounded-md border border-cyan-500/40 bg-cyan-500/15 text-[11px] font-bold text-cyan-600 dark:text-cyan-400">H</span>
+                    Módulo hibernando — {alertModule?.numeroSelimp}
+                  </>
+                ) : (
+                  <>
+                    <AlertTriangle className="h-5 w-5 text-amber-500" />
+                    Módulo em observação — {alertModule?.numeroSelimp}
                   </>
                 )}
               </DialogTitle>
@@ -4956,29 +5045,52 @@ export default function BateriaDashboardPage() {
             </DialogHeader>
             {alertModule && (() => {
               const a: AlertaInfo = alertaOf(alertModule);
+              const hibernandoModal = a.level !== "problema" && isHibernando(alertModule, manutStatusForModule(alertModule));
               return (
                 <div className="space-y-3">
                   {/* Mensagem: por que o módulo está sinalizado */}
-                  {a.reasons.length > 0 && (
+                  {(a.reasons.length > 0 || hibernandoModal) && (
                     <div className={cn(
                       "rounded-lg border p-3",
                       a.level === "problema"
                         ? "border-red-500/40 bg-red-500/10"
-                        : "border-amber-500/40 bg-amber-500/10",
+                        : hibernandoModal
+                          ? "border-cyan-500/40 bg-cyan-500/10"
+                          : "border-amber-500/40 bg-amber-500/10",
                     )}>
                       <div className={cn(
                         "mb-1.5 flex items-center gap-2 text-sm font-semibold",
-                        a.level === "problema" ? "text-red-600 dark:text-red-400" : "text-amber-600 dark:text-amber-400",
+                        a.level === "problema"
+                          ? "text-red-600 dark:text-red-400"
+                          : hibernandoModal
+                            ? "text-cyan-600 dark:text-cyan-400"
+                            : "text-amber-600 dark:text-amber-400",
                       )}>
-                        {a.level === "problema" ? <BellRing className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
-                        {a.level === "problema" ? "Classificado como problemático porque:" : "Em observação porque:"}
+                        {a.level === "problema" ? (
+                          <BellRing className="h-4 w-4" />
+                        ) : hibernandoModal ? (
+                          <span className="text-sm font-bold leading-none">H</span>
+                        ) : (
+                          <AlertTriangle className="h-4 w-4" />
+                        )}
+                        {a.level === "problema"
+                          ? "Classificado como problemático porque:"
+                          : hibernandoModal
+                            ? "Hibernando porque:"
+                            : "Em observação porque:"}
                       </div>
                       <ul className="space-y-1">
+                        {hibernandoModal && (
+                          <li className="flex items-start gap-2 text-xs">
+                            <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-cyan-500" />
+                            <span className="text-foreground">Volta a comunicar nos dias de frequência (online nas últimas datas de despacho)</span>
+                          </li>
+                        )}
                         {a.reasons.map((r, i) => (
                           <li key={i} className="flex items-start gap-2 text-xs">
                             <span className={cn(
                               "mt-1 h-1.5 w-1.5 shrink-0 rounded-full",
-                              r.severity === "problema" ? "bg-red-500" : "bg-amber-500",
+                              r.severity === "problema" ? "bg-red-500" : hibernandoModal ? "bg-cyan-500" : "bg-amber-500",
                             )} />
                             <span className="text-foreground">{r.text}</span>
                           </li>
