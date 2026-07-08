@@ -1545,6 +1545,73 @@ function turnosOf(m: ModuleData): { digito: string; label: string }[] {
   return out;
 }
 
+/** Copia um texto para a área de transferência e emite um toast rápido de confirmação. */
+function copyToClipboard(text: string, label?: string) {
+  const value = text.trim();
+  if (!value) return;
+  void navigator.clipboard?.writeText(value);
+  toast.success(`${label ?? "Copiado"}: ${value}`, { autoClose: 1200 });
+}
+
+/** Detalhe dos setores de um módulo (um por linha): sigla, turno colorido, praça (VP) e dias. */
+function SetoresAgendaInfo({ m }: { m: ModuleData }) {
+  const sds = setoresDiasOf(m);
+  if (sds.length === 0) {
+    return <p className="text-xs text-muted-foreground">{m.diasExecucao || "—"}</p>;
+  }
+  return (
+    <div className="space-y-2.5">
+      {sds.map((sd, i) => {
+        const sig = siglaFromSetor(sd.setor);
+        const t = turnoFromSetor(sd.setor);
+        const praca = sig === "VP" && sd.praca ? sd.praca : null;
+        const servicoTurno = [sig, t?.label].filter(Boolean).join(" - ");
+        return (
+          <div key={i} className="rounded-md border border-border/50 bg-background/70 px-3 py-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+              <button
+                type="button"
+                onClick={() => copyToClipboard(sd.setor, "Setor")}
+                title="Clique para copiar o setor"
+                className="cursor-pointer rounded font-mono text-sm font-semibold text-foreground transition-colors hover:text-emerald-600 dark:hover:text-emerald-400"
+              >
+                {sd.setor}
+              </button>
+              {(sig || t) && (
+                <button
+                  type="button"
+                  onClick={() => copyToClipboard(servicoTurno, "Serviço/Turno")}
+                  title="Clique para copiar tipo de serviço e turno"
+                  className="flex cursor-pointer items-center gap-1.5 rounded-md px-1 py-0.5 transition-colors hover:bg-muted"
+                >
+                  {sig && <Badge className={cn("text-[10px]", siglaBadge(sig))}>{sig}</Badge>}
+                  {t && <Badge className={cn("text-[10px]", turnoBadge(t.label))}>{t.label}</Badge>}
+                </button>
+              )}
+            </div>
+            {praca && (
+              <button
+                type="button"
+                onClick={() => copyToClipboard(praca, "Praça")}
+                title="Clique para copiar a praça"
+                className="mt-1.5 flex cursor-pointer items-center gap-1.5 text-left text-sm font-semibold text-emerald-700 transition-colors hover:text-emerald-500 dark:text-emerald-400"
+              >
+                <FontAwesomeIcon icon={faTree} className="h-3.5 w-3.5 shrink-0" />
+                <span>{praca}</span>
+              </button>
+            )}
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+              <span className="inline-flex items-center gap-1"><Calendar className="h-3 w-3 shrink-0" />{sd.dias || "—"}</span>
+              {sd.km != null && <span className="tabular-nums">{sd.km.toFixed(2)} km</span>}
+              {sd.execucao != null && <span className="tabular-nums text-sky-600 dark:text-sky-400">Exec. {sd.execucao}%</span>}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /** Siglas de serviço distintas do módulo. */
 function siglasOf(m: ModuleData): string[] {
   const seen = new Set<string>();
@@ -2219,6 +2286,11 @@ export default function BateriaDashboardPage() {
       // Qtd. de cargas = trocas registradas no painel (inclui manuais) — mesmo valor exibido na coluna.
       const cargas = (m: ModuleData): number =>
         trocaHistoryOf(m, troca.records[m.numeroSelimp], troca.history[m.numeroSelimp]).length;
+      // Data de troca agendada (só quando há agendamento em aberto); sem agendamento vai para o fim.
+      const agendada = (m: ModuleData): string => {
+        const rec = troca.records[m.numeroSelimp];
+        return rec?.status === "agendada" ? rec.dataAgendada ?? "" : "";
+      };
       result = [...result].sort((a, b) => {
         switch (trocasSort) {
           case "cargas-desc":
@@ -2245,6 +2317,24 @@ export default function BateriaDashboardPage() {
             return (exec(b) ?? -1) - (exec(a) ?? -1);
           case "exec-asc":
             return (exec(a) ?? 101) - (exec(b) ?? 101);
+          case "troca-desc": {
+            // Agendamentos mais recentes → mais antigos; sem agendamento vai para o fim.
+            const da = agendada(a);
+            const db = agendada(b);
+            if (!da && !db) return 0;
+            if (!da) return 1;
+            if (!db) return -1;
+            return db.localeCompare(da);
+          }
+          case "troca-asc": {
+            // Agendamentos mais antigos → mais recentes; sem agendamento vai para o fim.
+            const da = agendada(a);
+            const db = agendada(b);
+            if (!da && !db) return 0;
+            if (!da) return 1;
+            if (!db) return -1;
+            return da.localeCompare(db);
+          }
           default:
             return 0;
         }
@@ -2331,9 +2421,9 @@ export default function BateriaDashboardPage() {
   // O dropdown só guarda a recência de troca; as colunas usam o mesmo estado trocasSort.
   const trocaRecencia =
     trocasSort === "ultima-troca" || trocasSort === "ultima-troca-asc" ? trocasSort : "default";
-  const colSortDir = (col: "bateria" | "exec" | "cargas"): "asc" | "desc" | null =>
+  const colSortDir = (col: "bateria" | "exec" | "cargas" | "troca"): "asc" | "desc" | null =>
     trocasSort === `${col}-desc` ? "desc" : trocasSort === `${col}-asc` ? "asc" : null;
-  const cycleColSort = (col: "bateria" | "exec" | "cargas") =>
+  const cycleColSort = (col: "bateria" | "exec" | "cargas" | "troca") =>
     setTrocasSort((prev) =>
       prev === `${col}-desc` ? `${col}-asc` : prev === `${col}-asc` ? "default" : `${col}-desc`,
     );
@@ -3725,7 +3815,11 @@ export default function BateriaDashboardPage() {
                             <SortToggle label={"Qtd.\nCargas"} dir={colSortDir("cargas")} onClick={() => cycleColSort("cargas")} />
                           </TableHead>
                           <TableHead className="text-center">Ult. Troca</TableHead>
-                          <TableHead className="text-center">Troca</TableHead>
+                          <TableHead className="text-center">
+                            <div className="flex justify-center">
+                              <SortToggle label="Troca" dir={colSortDir("troca")} onClick={() => cycleColSort("troca")} />
+                            </div>
+                          </TableHead>
                           <TableHead className="text-center">Alertas</TableHead>
                         </TableRow>
                       </TableHeader>
@@ -5226,7 +5320,7 @@ export default function BateriaDashboardPage() {
 
         {/* ===== Modal de Agendamento ===== */}
         <Dialog open={!!agendarModule} onOpenChange={(o) => !o && setAgendarModule(null)}>
-          <DialogContent className="max-w-xl">
+          <DialogContent className="max-w-2xl">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 text-base">
                 <CalendarPlus className="h-5 w-5 text-emerald-500" />
@@ -5236,18 +5330,34 @@ export default function BateriaDashboardPage() {
             </DialogHeader>
             {agendarModule && (
               <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="rounded-lg bg-muted p-3">
-                    <span className="block text-xs text-muted-foreground">Setor</span>
-                    <span className="font-medium">{agendarModule.setor}</span>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
+                    <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <MapPin className="h-3.5 w-3.5 shrink-0" /> Setor
+                    </span>
+                    <span className="mt-0.5 block font-mono text-sm font-medium">{agendarModule.setor}</span>
                   </div>
-                  <div className="rounded-lg bg-muted p-3">
-                    <span className="block text-xs text-muted-foreground">Módulo SELIMP</span>
-                    <span className="font-medium">{agendarModule.numeroSelimp}</span>
+                  <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
+                    <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <Hash className="h-3.5 w-3.5 shrink-0" /> Módulo SELIMP
+                    </span>
+                    <div className="mt-0.5 flex items-center gap-2">
+                      <span className="font-medium">{agendarModule.numeroSelimp}</span>
+                      {renderBatteryStatus(agendarModule.statusBateria, false)}
+                    </div>
                   </div>
                 </div>
+                <div className="rounded-lg border border-border/60 bg-muted/15 p-3">
+                  <div className="mb-2 flex items-center gap-2 text-foreground">
+                    <LayoutDashboard className="h-4 w-4 text-emerald-500" />
+                    <span className="text-sm font-semibold">Setores do módulo</span>
+                  </div>
+                  <SetoresAgendaInfo m={agendarModule} />
+                </div>
                 <div>
-                  <label className="mb-1.5 block text-sm font-medium text-foreground">Data Agendamento</label>
+                  <label className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-foreground">
+                    <CalendarPlus className="h-4 w-4 text-emerald-500" /> Data Agendamento
+                  </label>
                   <DatePicker value={agendarDate} onChange={setAgendarDate} />
                 </div>
               </div>
@@ -5255,7 +5365,7 @@ export default function BateriaDashboardPage() {
             <DialogFooter className="gap-2">
               <Button className={cn(BTN_SECONDARY)} onClick={() => setAgendarModule(null)}>Cancelar</Button>
               <Button className={cn(BTN_EMERALD)} disabled={!agendarDate} onClick={confirmAgendar}>
-                Agendar
+                <CalendarPlus className="h-4 w-4" /> Agendar
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -5414,7 +5524,7 @@ export default function BateriaDashboardPage() {
 
         {/* ===== Modal de Agendamento em lote ===== */}
         <Dialog open={bulkAgendarOpen} onOpenChange={setBulkAgendarOpen}>
-          <DialogContent className="max-w-md">
+          <DialogContent className="max-w-2xl">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 text-base">
                 {bulkAgendarMode === "reagendar" ? <RefreshCw className="h-5 w-5 text-amber-500" /> : <CalendarPlus className="h-5 w-5 text-emerald-500" />}
@@ -5427,18 +5537,22 @@ export default function BateriaDashboardPage() {
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
-              <div className="max-h-40 overflow-y-auto rounded-lg border border-border/60 bg-muted/20 p-2">
-                <ul className="space-y-1 text-sm">
-                  {selectedModules.map((m) => (
-                    <li key={m.numeroSelimp} className="flex items-center justify-between gap-2">
-                      <span className="truncate font-mono text-xs">{m.setor}</span>
-                      <span className="shrink-0 text-xs text-muted-foreground">{m.numeroSelimp}</span>
-                    </li>
-                  ))}
-                </ul>
+              <div className="max-h-88 space-y-2.5 overflow-y-auto rounded-lg border border-border/60 bg-muted/15 p-2.5">
+                {selectedModules.map((m) => (
+                  <div key={m.numeroSelimp} className="rounded-lg border border-border/50 bg-background/70 p-3">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <span className="flex items-center gap-1.5 font-mono text-xs font-semibold">
+                        <Hash className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />{m.numeroSelimp}
+                      </span>
+                      {renderBatteryStatus(m.statusBateria, false)}
+                    </div>
+                    <SetoresAgendaInfo m={m} />
+                  </div>
+                ))}
               </div>
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-foreground">
+                <label className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-foreground">
+                  <CalendarPlus className="h-4 w-4 text-emerald-500" />
                   {bulkAgendarMode === "reagendar" ? "Nova data de agendamento" : "Data Agendamento"}
                 </label>
                 <DatePicker value={bulkAgendarDate} onChange={setBulkAgendarDate} />
@@ -5451,6 +5565,7 @@ export default function BateriaDashboardPage() {
                 disabled={!bulkAgendarDate}
                 onClick={confirmBulkAgendar}
               >
+                {bulkAgendarMode === "reagendar" ? <RefreshCw className="h-4 w-4" /> : <CalendarPlus className="h-4 w-4" />}
                 {bulkAgendarMode === "reagendar" ? "Reagendar" : "Agendar"} {selectedModules.length}
               </Button>
             </DialogFooter>
