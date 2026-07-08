@@ -1236,6 +1236,14 @@ const MANUT_MOTIVO_BADGE_CLASS: Record<ManutencaoMotivoBadge, string> = {
 
 const MANUT_MOTIVO_BADGE_OPTIONS: ManutencaoMotivoBadge[] = ["SINAL", "BATERIA", "AVARIA", "PERCENTUAL"];
 
+/** Motivo do equipamento na mensagem copiável de contestação (por categoria da manutenção). */
+const CONTESTACAO_MOTIVO_POR_BADGE: Record<ManutencaoMotivoBadge, string> = {
+  SINAL: "sinal com baixa ou nenhuma durabilidade",
+  PERCENTUAL: "equipamento pouco tempo online, afetando percentuais de execução",
+  AVARIA: "avaria física no equipamento, impossibilitando a operação normal",
+  BATERIA: "bateria com baixa autonomia ou desgaste, comprometendo a execução do serviço",
+};
+
 const MANUT_OPEN_STATUSES = new Set<ManutencaoModuloStatus>([
   "EM_ANALISE", "PENDENTE", "RETIRANDO", "ATIVA", "REINSTALANDO",
 ]);
@@ -2129,6 +2137,16 @@ export default function BateriaDashboardPage() {
         const agendada = rec?.status === "agendada";
         return trocasAgendadaFilter === "sim" ? agendada : !agendada;
       });
+      if (trocasAgendadaFilter === "sim") {
+        result = [...result].sort((a, b) => {
+          const da = troca.records[a.numeroSelimp]?.dataAgendada ?? "";
+          const db = troca.records[b.numeroSelimp]?.dataAgendada ?? "";
+          if (!da && !db) return 0;
+          if (!da) return 1;
+          if (!db) return -1;
+          return db.localeCompare(da);
+        });
+      }
     }
     if (trocasBateriaFilter.length > 0) {
       result = result.filter((m) => trocasBateriaFilter.includes(m.statusBateria));
@@ -2740,7 +2758,8 @@ export default function BateriaDashboardPage() {
     if (!e) return "";
     const ordenado = e.dataOrdenado ? fmtIsoBr(e.dataOrdenado) : "—";
     const diaTxt = dia ? ` referente ao despacho de ${fmtIsoBr(dia)}` : "";
-    return `Setor ${e.setor} (SELIMP ${e.selimp}) em processo de manutenção${diaTxt}, conforme comunicado à SELIMP via e-mail no dia ${ordenado}. Solicitamos a desconsideração do percentual zerado, pois o serviço não pôde ser executado.`;
+    const motivo = CONTESTACAO_MOTIVO_POR_BADGE[e.motivoBadge] ?? CONTESTACAO_MOTIVO_POR_BADGE.SINAL;
+    return `Setor ${e.setor} (SELIMP ${e.selimp}) em processo de manutenção${diaTxt}, conforme comunicado à SELIMP via e-mail no dia ${ordenado}. Solicitamos a desconsideração do plano, devido o seguinte problema no equipamento: ${motivo}.`;
   }, []);
 
   /** Upload do documento (PDF ou foto) que atesta a manutenção → Firebase Storage + estado local do modal. */
