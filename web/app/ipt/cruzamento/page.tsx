@@ -61,7 +61,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@/components/motion-ui/motion-dialog";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
 import { apiService, type IptPreviewResponse } from "@/lib/api";
 import { SUBPREFEITURAS, subprefBadgeClass } from "@/lib/mock/ipt-shared";

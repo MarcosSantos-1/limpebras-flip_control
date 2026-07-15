@@ -92,7 +92,10 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@/components/motion-ui/motion-dialog";
+import { MorphingDialogImageViewer } from "@/components/motion-ui/morphing-dialog-shell";
+import { BorderTrailCard } from "@/components/motion-ui/border-trail-card";
+import { TextShimmer } from "@/components/motion-primitives/text-shimmer";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -1673,7 +1676,6 @@ export default function BateriaDashboardPage() {
   const [contestModule, setContestModule] = useState<ManutEntry | null>(null);
   const [contestUploading, setContestUploading] = useState(false);
   const [contestDayUploading, setContestDayUploading] = useState<string | null>(null);
-  const [contestPrintViewer, setContestPrintViewer] = useState<{ url: string; titulo: string } | null>(null);
   const [contestDocDelete, setContestDocDelete] = useState<{ eventId: number; selimp: string; titulo: string; url: string; path?: string } | null>(null);
   const [contestRemovingDoc, setContestRemovingDoc] = useState(false);
   const [contestEditConfirm, setContestEditConfirm] = useState<{ entry: ManutEntry; dia: string } | null>(null);
@@ -3105,20 +3107,20 @@ export default function BateriaDashboardPage() {
         <div className="px-6 py-6">
           <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <TabsList className="bg-muted/50 border border-border">
-                <TabsTrigger value="overview" className="data-[state=active]:bg-emerald-500 data-[state=active]:text-white text-muted-foreground">
+              <TabsList className="border border-border bg-muted/50 [&_[data-active-pill]]:bg-emerald-500 [&_[data-state=active]]:text-white">
+                <TabsTrigger value="overview" className="text-muted-foreground data-[state=active]:bg-transparent data-[state=active]:text-white">
                   <LayoutDashboard className="mr-2 h-4 w-4" /> Visão Geral
                 </TabsTrigger>
-                <TabsTrigger value="trocas" className="data-[state=active]:bg-emerald-500 data-[state=active]:text-white text-muted-foreground">
+                <TabsTrigger value="trocas" className="text-muted-foreground data-[state=active]:bg-transparent data-[state=active]:text-white">
                   <Repeat className="mr-2 h-4 w-4" /> Trocas de Bateria
                 </TabsTrigger>
-                <TabsTrigger value="maintenance" className="data-[state=active]:bg-emerald-500 data-[state=active]:text-white text-muted-foreground">
+                <TabsTrigger value="maintenance" className="text-muted-foreground data-[state=active]:bg-transparent data-[state=active]:text-white">
                   <Wrench className="mr-2 h-4 w-4" /> Manutenções
                 </TabsTrigger>
-                <TabsTrigger value="modules" className="data-[state=active]:bg-emerald-500 data-[state=active]:text-white text-muted-foreground">
+                <TabsTrigger value="modules" className="text-muted-foreground data-[state=active]:bg-transparent data-[state=active]:text-white">
                   <Gauge className="mr-2 h-4 w-4" /> Performance
                 </TabsTrigger>
-                <TabsTrigger value="setores" className="data-[state=active]:bg-emerald-500 data-[state=active]:text-white text-muted-foreground">
+                <TabsTrigger value="setores" className="text-muted-foreground data-[state=active]:bg-transparent data-[state=active]:text-white">
                   <MapPin className="mr-2 h-4 w-4" /> Setores
                 </TabsTrigger>
               </TabsList>
@@ -5808,14 +5810,28 @@ export default function BateriaDashboardPage() {
                           </div>
                         </div>
                       ))}
-                      <label
+                      <BorderTrailCard
+                        loading={contestUploading}
+                        className="flex cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border-dashed border-border/70 bg-muted/15 px-4 py-5 text-center text-xs text-muted-foreground transition-colors hover:bg-muted/30"
                         onDragOver={(ev) => ev.preventDefault()}
                         onDrop={(ev) => { ev.preventDefault(); if (ev.dataTransfer.files?.length) void handleUploadDocumento(e, ev.dataTransfer.files); }}
-                        className="flex cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-border/70 bg-muted/15 px-4 py-5 text-center text-xs text-muted-foreground transition-colors hover:bg-muted/30"
+                        onClick={() => {
+                          const input = document.getElementById(`contest-doc-${e.eventId}`) as HTMLInputElement | null;
+                          input?.click();
+                        }}
                       >
-                        <Upload className="h-5 w-5" />
-                        {contestUploading ? "Enviando..." : e.documentoUrl ? "Solte um novo arquivo para substituir, ou clique" : "Solte o PDF ou foto aqui, ou clique para anexar"}
+                        <Upload className="mx-auto h-5 w-5" />
+                        {contestUploading ? (
+                          <TextShimmer as="span" className="text-xs" duration={1.4}>
+                            Enviando...
+                          </TextShimmer>
+                        ) : (
+                          <span>
+                            {e.documentoUrl ? "Solte um novo arquivo para substituir, ou clique" : "Solte o PDF ou foto aqui, ou clique para anexar"}
+                          </span>
+                        )}
                         <input
+                          id={`contest-doc-${e.eventId}`}
                           type="file"
                           accept={MANUT_DOC_ACCEPT}
                           multiple
@@ -5823,7 +5839,7 @@ export default function BateriaDashboardPage() {
                           disabled={contestUploading}
                           onChange={(ev) => { if (ev.target.files?.length) void handleUploadDocumento(e, ev.target.files); ev.target.value = ""; }}
                         />
-                      </label>
+                      </BorderTrailCard>
                     </div>
 
                     {/* Timeline por dia de despacho */}
@@ -5875,15 +5891,24 @@ export default function BateriaDashboardPage() {
                             <div className="flex shrink-0 items-center gap-1.5">
                               {d.contestado && d.printUrl && (
                                 <>
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    variant="outline"
-                                    className="h-7 gap-1"
-                                    onClick={() => setContestPrintViewer({ url: d.printUrl!, titulo: d.printTitulo || `Print ${fmtIsoBr(d.data)}` })}
-                                  >
-                                    <Eye className="h-3.5 w-3.5" /> Ver
-                                  </Button>
+                                  <div className="inline-flex items-center gap-1.5">
+                                    <MorphingDialogImageViewer
+                                      src={d.printUrl}
+                                      alt={d.printTitulo || `Print ${fmtIsoBr(d.data)}`}
+                                      title={d.printTitulo || `Print ${fmtIsoBr(d.data)}`}
+                                      thumbClassName="h-7 w-12 rounded-md border border-border object-cover"
+                                      footer={
+                                        <a
+                                          href={d.printUrl}
+                                          download={d.printTitulo || `print-${d.data}`}
+                                          className="inline-flex h-8 items-center gap-1 rounded-md border border-border px-2.5 text-xs font-semibold hover:bg-muted"
+                                        >
+                                          <Download className="h-3.5 w-3.5" /> Baixar
+                                        </a>
+                                      }
+                                    />
+                                    <span className="text-[10px] font-medium text-muted-foreground">Ver</span>
+                                  </div>
                                   <a
                                     href={d.printUrl}
                                     download={d.printTitulo || `print-${d.data}`}
@@ -5920,7 +5945,13 @@ export default function BateriaDashboardPage() {
                                 <div className="flex items-center gap-1">
                                   <label className={cn("inline-flex h-7 cursor-pointer items-center gap-1 rounded-md px-2.5 text-xs font-semibold text-white", BTN_AMBER)}>
                                     <Upload className="h-3.5 w-3.5" />
-                                    {contestDayUploading === `${e.selimp}-${d.data}` ? "Enviando..." : "Anexar"}
+                                    {contestDayUploading === `${e.selimp}-${d.data}` ? (
+                                      <TextShimmer as="span" className="text-xs font-semibold text-white" duration={1.2}>
+                                        Enviando...
+                                      </TextShimmer>
+                                    ) : (
+                                      "Anexar"
+                                    )}
                                     <input
                                       type="file"
                                       accept="image/*"
@@ -5968,32 +5999,6 @@ export default function BateriaDashboardPage() {
         </Dialog>
 
         {/* ===== Confirmação: excluir documento da contestação ===== */}
-        <Dialog open={!!contestPrintViewer} onOpenChange={(open) => !open && setContestPrintViewer(null)}>
-          <DialogContent className="max-w-5xl border-0 bg-background/95 p-0">
-            {contestPrintViewer && (
-              <div className="relative">
-                <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
-                  <DialogTitle className="truncate text-sm font-semibold">{contestPrintViewer.titulo}</DialogTitle>
-                  <div className="flex items-center gap-2">
-                    <a
-                      href={contestPrintViewer.url}
-                      download={contestPrintViewer.titulo}
-                      className="inline-flex h-8 items-center gap-1 rounded-md border border-border px-2.5 text-xs font-semibold hover:bg-muted"
-                    >
-                      <Download className="h-3.5 w-3.5" /> Baixar
-                    </a>
-                    <Button size="sm" variant="outline" className="h-8 w-8 p-0" onClick={() => setContestPrintViewer(null)}>
-                      <X className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={contestPrintViewer.url} alt={contestPrintViewer.titulo} className="max-h-[78vh] w-full object-contain" />
-              </div>
-            )}
-          </DialogContent>
-        </Dialog>
-
         <Dialog open={!!contestEditConfirm} onOpenChange={(o) => !o && setContestEditConfirm(null)}>
           <DialogContent className="max-w-md">
             <DialogHeader>

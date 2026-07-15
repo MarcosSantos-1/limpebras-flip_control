@@ -3,7 +3,8 @@
 import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { SpotlightCard } from "@/components/motion-ui/spotlight-card";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/motion-ui/motion-dialog";
 import { apiService, SAC } from "@/lib/api";
 import { endOfMonth, format, startOfMonth } from "date-fns";
 import {
@@ -319,7 +320,7 @@ export default function SACsPage() {
 
         {/* Estatísticas */}
         <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-          <Card className="hover:shadow-md transition-all duration-200 border-l-4 border-l-blue-500">
+          <SpotlightCard className="hover:shadow-md transition-all duration-200 border-l-4 border-l-blue-500">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">Total</CardTitle>
               <CardDescription>{periodoLabel}</CardDescription>
@@ -327,43 +328,43 @@ export default function SACsPage() {
             <CardContent>
               <div className="text-4xl font-bold text-blue-600 dark:text-blue-400">{stats.total}</div>
             </CardContent>
-          </Card>
+          </SpotlightCard>
           
-          <Card className="hover:shadow-md transition-all duration-200 border-l-4 border-l-indigo-500">
+          <SpotlightCard className="hover:shadow-md transition-all duration-200 border-l-4 border-l-indigo-500">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">Demandantes (IA)</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="text-4xl font-bold text-indigo-600 dark:text-indigo-400">{stats.demandantes}</div>
             </CardContent>
-          </Card>
+          </SpotlightCard>
 
-          <Card className="hover:shadow-md transition-all duration-200 border-l-4 border-l-cyan-500">
+          <SpotlightCard className="hover:shadow-md transition-all duration-200 border-l-4 border-l-cyan-500">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">Escalonados (IRD)</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="text-4xl font-bold text-cyan-600 dark:text-cyan-400">{stats.escalonados}</div>
             </CardContent>
-          </Card>
+          </SpotlightCard>
 
-          <Card className="hover:shadow-md transition-all duration-200 border-l-4 border-l-green-500">
+          <SpotlightCard className="hover:shadow-md transition-all duration-200 border-l-4 border-l-green-500">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">No Prazo</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="text-4xl font-bold text-green-600 dark:text-green-400">{stats.noPrazo}</div>
             </CardContent>
-          </Card>
+          </SpotlightCard>
 
-          <Card className="hover:shadow-md transition-all duration-200 border-l-4 border-l-red-500">
+          <SpotlightCard className="hover:shadow-md transition-all duration-200 border-l-4 border-l-red-500">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">Fora do Prazo</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="text-4xl font-bold text-red-600 dark:text-red-400">{stats.foraPrazo}</div>
             </CardContent>
-          </Card>
+          </SpotlightCard>
         </div>
 
         {/* Filtros */}

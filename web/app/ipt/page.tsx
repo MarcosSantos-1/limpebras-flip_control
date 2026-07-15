@@ -65,8 +65,8 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+} from "@/components/motion-ui/motion-dialog";
+import { MorphingMenuPopover } from "@/components/motion-ui/observation-popover";
 import {
   apiService,
   type IptPreviewBateriaResumoSetor,
@@ -3022,13 +3022,12 @@ export default function IPTPage() {
                                                           {obsDiaria && (() => {
                                                             const DIcon = diariaCategory?.Icon ?? AlertTriangle;
                                                             return (
-                                                              <Popover
+                                                              <MorphingMenuPopover
                                                                 open={obsDiariaMenuKey === diariaActionKey}
                                                                 onOpenChange={(open) =>
                                                                   setObsDiariaMenuKey(open ? diariaActionKey : null)
                                                                 }
-                                                              >
-                                                                <PopoverTrigger asChild>
+                                                                trigger={
                                                                   <button
                                                                     type="button"
                                                                     onClick={(e) => e.stopPropagation()}
@@ -3038,13 +3037,9 @@ export default function IPTPage() {
                                                                   >
                                                                     <DIcon className="h-4 w-4" />
                                                                   </button>
-                                                                </PopoverTrigger>
-                                                                <PopoverContent
-                                                                  className="w-auto min-w-[9.5rem] p-1 z-[120]"
-                                                                  align="start"
-                                                                  side="bottom"
-                                                                  onClick={(e) => e.stopPropagation()}
-                                                                >
+                                                                }
+                                                                contentClassName="z-[120]"
+                                                              >
                                                                   <button
                                                                     type="button"
                                                                     className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm hover:bg-muted"
@@ -3075,8 +3070,7 @@ export default function IPTPage() {
                                                                     <Trash2 className="h-4 w-4 shrink-0" />
                                                                     Cancelar
                                                                   </button>
-                                                                </PopoverContent>
-                                                              </Popover>
+                                                              </MorphingMenuPopover>
                                                             );
                                                           })()}
                                                           {!obsDiaria && hasBateria && (

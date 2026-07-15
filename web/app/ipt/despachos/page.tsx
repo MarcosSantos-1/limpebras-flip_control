@@ -63,7 +63,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@/components/motion-ui/motion-dialog";
 import { DatePicker } from "@/components/ui/date-picker";
 import { apiService, type DespachoLinha, type DespachosResponse, type StatusDiaDespacho } from "@/lib/api";
 import { SUBPREFEITURAS, subprefBadgeClass } from "@/lib/mock/ipt-shared";

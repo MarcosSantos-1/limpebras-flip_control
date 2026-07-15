@@ -3,7 +3,10 @@
 import { Fragment, useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/motion-ui/motion-dialog";
+import { BorderTrailCard } from "@/components/motion-ui/border-trail-card";
+import { MorphingDialogImageViewer } from "@/components/motion-ui/morphing-dialog-shell";
+import { TextMorph } from "@/components/motion-primitives/text-morph";
 import { apiService } from "@/lib/api";
 import {
   formatFlipDateTimeUtc,
@@ -332,10 +335,11 @@ function FotoInputZone({
       <div className={landscape ? "flex flex-col gap-3" : "flex flex-wrap gap-4"}>
         {images.map((img, i) => (
           <div key={i} className={`relative group ${landscape ? "w-full max-w-md" : ""}`}>
-            <img
+            <MorphingDialogImageViewer
               src={img}
-              alt=""
-              className={
+              alt={`Foto ${i + 1}`}
+              title={`Foto ${i + 1}`}
+              thumbClassName={
                 landscape
                   ? "w-full aspect-video object-contain rounded-xl border-2 border-emerald-200 dark:border-emerald-800 shadow-sm"
                   : "w-28 h-28 object-cover rounded-xl border-2 border-emerald-200 dark:border-emerald-800 shadow-sm"
@@ -344,14 +348,14 @@ function FotoInputZone({
             <button
               type="button"
               onClick={() => removeImage(i)}
-              className="absolute -top-1.5 -right-1.5 w-7 h-7 rounded-full bg-red-500 hover:bg-red-600 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-md"
+              className="absolute -top-1.5 -right-1.5 z-20 w-7 h-7 rounded-full bg-red-500 hover:bg-red-600 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-md"
             >
               <X className="h-3.5 w-3.5" />
             </button>
           </div>
         ))}
         {images.length < maxCount && (
-          <div
+          <BorderTrailCard
             className={`${landscape ? "w-full max-w-md aspect-video" : "w-32 h-32"} rounded-xl border-2 border-dashed flex flex-col items-center justify-center cursor-pointer transition-all ${
               isDragging
                 ? "border-emerald-500 bg-emerald-100 dark:bg-emerald-900/40 scale-105 shadow-md"
@@ -368,7 +372,9 @@ function FotoInputZone({
             }}
           >
             {isDragging ? (
-              <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">Solte aqui</span>
+              <TextMorph as="span" className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">
+                Solte aqui
+              </TextMorph>
             ) : (
               <>
                 <ImagePlus className="h-8 w-8 text-emerald-500/70 dark:text-emerald-400/70 mb-1" />
@@ -382,7 +388,7 @@ function FotoInputZone({
               className="hidden"
               onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ""; }}
             />
-          </div>
+          </BorderTrailCard>
         )}
       </div>
       <button
@@ -391,7 +397,13 @@ function FotoInputZone({
         className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg border-2 border-dashed border-emerald-300 dark:border-emerald-700 hover:border-emerald-500 hover:bg-emerald-50/50 dark:hover:bg-emerald-950/50 transition-all"
       >
         <ClipboardPaste className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-        Colar foto {pasteStatus === "success" && "✓"} {pasteStatus === "error" && "✗"}
+        {pasteStatus === "success" ? (
+          <TextMorph as="span">Colar foto ✓</TextMorph>
+        ) : pasteStatus === "error" ? (
+          <TextMorph as="span">Colar foto ✗</TextMorph>
+        ) : (
+          "Colar foto"
+        )}
       </button>
     </div>
   );

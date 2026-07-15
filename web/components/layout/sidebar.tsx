@@ -15,10 +15,7 @@ import {
   ShieldCheck,
   ChartColumnStacked,
   Users,
-  LogOut,
   ChevronDown,
-  ChevronUp,
-  Sparkles,
   Map,
   Battery,
   Network,
@@ -26,10 +23,9 @@ import {
   type LucideIcon,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { ThemeToggle } from "@/components/theme-toggle"
 import { useAuth } from "@/lib/auth"
 import type { AuthPageKey } from "@/lib/api"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { UserToolbar } from "@/components/motion-ui/user-toolbar"
 
 type SidebarNavItem = {
   href: string
@@ -351,72 +347,18 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
 
         <div className="border-t border-border/70 bg-background/50 p-4 max-[1440px]:p-3">
           <div className="px-2 max-[1440px]:px-1">
-            <Popover>
-              <PopoverTrigger asChild>
-                <button
-                  type="button"
-                  className="group flex w-full items-center gap-3 max-[1440px]:gap-2 rounded-2xl border border-border/70 bg-linear-to-r from-background via-background to-cyan-500/5 px-3 py-3 max-[1440px]:px-2.5 max-[1440px]:py-2.5 text-left shadow-sm transition hover:border-blue-400/35 hover:shadow-md"
-                >
-                  <div className="flex h-10 w-10 max-[1440px]:h-9 max-[1440px]:w-9 shrink-0 items-center justify-center rounded-xl bg-linear-to-br from-blue-600 to-cyan-500 text-white shadow-md">
-                    <Sparkles className="h-4 w-4" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-semibold text-foreground">
-                      {user?.display_name || user?.username || "Sem sessão"}
-                    </div>
-                    <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
-                      <span className="rounded-full bg-blue-500/10 px-2 py-0.5 font-medium text-blue-700 dark:text-blue-300">
-                        {user?.role === "host" ? "Host" : "Usuário"}
-                      </span>
-                      <span className="truncate">
-                        {user?.status === "active" ? "Ativo" : "Inativo"}
-                      </span>
-                    </div>
-                  </div>
-                  <ChevronUp className="h-4 w-4 shrink-0 text-muted-foreground transition group-data-[state=open]:rotate-180" />
-                </button>
-              </PopoverTrigger>
-              <PopoverContent align="end" side="top" className="w-72 rounded-2xl border-border/80 p-3 shadow-xl">
-                <div className="space-y-3">
-                  <div className="rounded-xl border border-border/70 bg-muted/25 px-3 py-3">
-                    <div className="text-sm font-semibold text-foreground">
-                      {user?.display_name || user?.username || "Sem sessão"}
-                    </div>
-                    <div className="mt-1 text-xs text-muted-foreground">
-                      @{user?.username || "usuario"}
-                    </div>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <span className="rounded-full bg-blue-500/10 px-2.5 py-1 text-[11px] font-medium text-blue-700 dark:text-blue-300">
-                        {user?.role === "host" ? "Host" : "Usuário padrão"}
-                      </span>
-                      <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
-                        {user?.status === "active" ? "Status ativo" : "Status inativo"}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between rounded-xl border border-border/70 px-3 py-2.5">
-                    <span className="text-sm font-medium text-foreground">Tema</span>
-                    <ThemeToggle />
-                  </div>
-
-                  {visibleUserMenuItems.length > 0 && (
-                    <div className="space-y-1 rounded-xl border border-border/70 p-1.5">
-                      {visibleUserMenuItems.map((item) => renderNavItem(item, { compact: true }))}
-                    </div>
-                  )}
-
-                  <button
-                    type="button"
-                    onClick={() => void logout()}
-                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-zinc-900 px-3 py-2.5 text-sm font-medium text-white transition hover:bg-zinc-800 dark:bg-white dark:text-zinc-900 dark:hover:bg-zinc-200"
-                  >
-                    <LogOut className="h-4 w-4" />
-                    Sair
-                  </button>
-                </div>
-              </PopoverContent>
-            </Popover>
+            <UserToolbar
+              displayName={user?.display_name || user?.username || "Sem sessão"}
+              username={user?.username || "usuario"}
+              roleLabel={user?.role === "host" ? "Host" : "Usuário"}
+              statusLabel={user?.status === "active" ? "Ativo" : "Inativo"}
+              menuItems={visibleUserMenuItems.map((item) => ({
+                href: item.href,
+                label: item.label,
+                icon: item.icon,
+              }))}
+              onLogout={() => void logout()}
+            />
           </div>
         </div>
       </div>

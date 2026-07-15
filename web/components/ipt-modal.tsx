@@ -8,7 +8,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog"
+} from "@/components/motion-ui/motion-dialog"
 import { apiService } from "@/lib/api"
 import { format, startOfMonth, endOfMonth } from "date-fns"
 

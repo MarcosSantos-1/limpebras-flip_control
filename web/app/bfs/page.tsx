@@ -3,7 +3,7 @@
 import { Fragment, useState, useEffect, useMemo, useCallback } from "react";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/motion-ui/motion-dialog";
 import { apiService } from "@/lib/api";
 import { formatFlipDateTimeUtc, formatFlipDateTimeUtcWithWeekday } from "@/lib/flip-datetime";
 import { format, startOfMonth, endOfMonth } from "date-fns";

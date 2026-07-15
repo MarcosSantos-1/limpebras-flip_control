@@ -15,7 +15,7 @@ import {
   Filler,
   ChartOptions,
 } from "chart.js"
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/motion-ui/motion-dialog"
 
 const Line = dynamic(() => import("react-chartjs-2").then((mod) => mod.Line), { ssr: false })
 

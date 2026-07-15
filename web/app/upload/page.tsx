@@ -16,11 +16,22 @@ import {
   ShieldAlert,
   Table2,
   Upload,
+  Clock,
+  File,
+  Database,
+  User,
+  Hash,
+  Layers,
   type LucideIcon,
 } from "lucide-react";
 import { toast } from "react-toastify";
 import { MainLayout } from "@/components/layout/main-layout";
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/motion-primitives/accordion";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -29,7 +40,7 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@/components/motion-ui/motion-dialog";
 import { DatePicker } from "@/components/ui/date-picker";
 import { Label } from "@/components/ui/label";
 import {
@@ -39,9 +50,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { TextShimmer } from "@/components/motion-primitives/text-shimmer";
+import { TextMorph } from "@/components/motion-primitives/text-morph";
+import { BorderTrailCard } from "@/components/motion-ui/border-trail-card";
 import { apiService, type CronogramaImportReport } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
+
+const ACCORDION_VARIANTS = {
+  expanded: { opacity: 1, y: 0 },
+  collapsed: { opacity: 0, y: -6 },
+};
 
 type SessionKey = "flip" | "ddmx" | "selimp";
 type UploadKey =
@@ -277,7 +296,7 @@ function SessionAccordionItem({
         a.bar,
       )}
     >
-      <AccordionTrigger className="rounded-none py-5 hover:no-underline data-[state=open]:border-b data-[state=open]:border-slate-100 dark:data-[state=open]:border-border">
+      <AccordionTrigger className="flex w-full items-center justify-between gap-3 rounded-none py-5 text-left data-expanded:border-b data-expanded:border-slate-100 dark:data-expanded:border-border">
         <div className="flex items-start gap-3.5 text-left">
           <div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-xl", a.icon)}>
             <Icon className="h-5 w-5" strokeWidth={2} />
@@ -287,8 +306,11 @@ function SessionAccordionItem({
             <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{subtitle}</p>
           </div>
         </div>
+        <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 group-data-expanded:rotate-180" />
       </AccordionTrigger>
-      <AccordionContent className={cn("pb-6 pt-1", contentClassName ?? "space-y-0")}>{children}</AccordionContent>
+      <AccordionContent className={cn("overflow-hidden pb-6 pt-1", contentClassName ?? "space-y-0")}>
+        {children}
+      </AccordionContent>
     </AccordionItem>
   );
 }
@@ -435,122 +457,79 @@ function CronogramaPreview({
 
 function SummaryBox({ state }: { state: UploadState }) {
   if (state.status === "success" && state.result) {
+    const chips: { icon: LucideIcon; label: string; value: string | number }[] = [
+      { icon: Layers, label: "Processados", value: state.result.processados ?? 0 },
+      { icon: Hash, label: "Total", value: state.result.total ?? 0 },
+      { icon: Database, label: "Inseridos", value: state.result.inseridos ?? 0 },
+      { icon: CheckCircle2, label: "Atualizados", value: state.result.atualizados ?? 0 },
+    ];
+    if (state.result.tipo_detectado_label) {
+      chips.push({ icon: FileText, label: "Tipo", value: state.result.tipo_detectado_label });
+    }
+    if (state.result.referencia_importada) {
+      chips.push({ icon: CalendarDays, label: "Ref.", value: state.result.referencia_importada });
+    }
+    if (state.result.ordens_encerradas !== undefined) {
+      chips.push({ icon: CheckCircle2, label: "Encerrados", value: state.result.ordens_encerradas });
+    }
+
     return (
-      <div
-        className={cn(
-          "mt-6 rounded-2xl border p-5 text-sm shadow-sm",
-          "border-emerald-200/60 bg-gradient-to-br from-emerald-50/90 via-white to-white",
-          "shadow-emerald-900/[0.06] dark:border-emerald-800/50 dark:bg-gradient-to-br dark:from-emerald-950/50 dark:via-card dark:to-card dark:shadow-md dark:shadow-black/30",
-        )}
-      >
-        <div className="flex items-center gap-2.5 font-semibold text-emerald-900 dark:text-emerald-300">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300">
-            <CheckCircle2 className="h-4 w-4" />
-          </span>
+      <div className="mt-3 rounded-xl border border-emerald-200/70 bg-emerald-50/50 px-3 py-2.5 dark:border-emerald-800/40 dark:bg-emerald-950/25">
+        <div className="flex items-center gap-2 text-sm font-semibold text-emerald-800 dark:text-emerald-300">
+          <CheckCircle2 className="h-4 w-4 shrink-0" />
           Upload concluído
         </div>
-        <div className="mt-4 grid gap-2.5 text-xs leading-relaxed text-muted-foreground sm:grid-cols-2">
-          <div>Processados: <span className="font-semibold text-foreground">{state.result.processados ?? 0}</span></div>
-          <div>Total: <span className="font-semibold text-foreground">{state.result.total ?? 0}</span></div>
-          <div>Inseridos: <span className="font-semibold text-foreground">{state.result.inseridos ?? 0}</span></div>
-          <div>Atualizados: <span className="font-semibold text-foreground">{state.result.atualizados ?? 0}</span></div>
-          {state.result.tipo_detectado_label && (
-            <div>Tipo detectado: <span className="font-semibold text-foreground">{state.result.tipo_detectado_label}</span></div>
-          )}
-          {state.result.referencia_importada && (
-            <div>Referencia: <span className="font-semibold text-foreground">{state.result.referencia_importada}</span></div>
-          )}
-          {state.result.ordens_encerradas !== undefined && (
-            <div>Encerrados: <span className="font-semibold text-foreground">{state.result.ordens_encerradas}</span></div>
-          )}
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {chips.map((c) => (
+            <span
+              key={c.label}
+              className="inline-flex items-center gap-1 rounded-md border border-emerald-200/60 bg-white/80 px-2 py-1 text-[11px] text-muted-foreground dark:border-emerald-800/40 dark:bg-card/60"
+              title={c.label}
+            >
+              <c.icon className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
+              <span className="font-medium text-foreground/80">{c.label}:</span>
+              <span className="font-semibold tabular-nums text-foreground">{c.value}</span>
+            </span>
+          ))}
         </div>
         {state.result.estimativa && (
-          <div className="mt-4 border-t border-emerald-200/70 pt-4 text-xs leading-relaxed text-muted-foreground dark:border-emerald-500/15">
-            <div className="font-semibold text-emerald-900 dark:text-emerald-200">Origem das datas</div>
-            <div className="mt-2 grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
-              <div>
-                Com data SELIMP:{" "}
-                <span className="font-semibold text-emerald-700 dark:text-emerald-400">
-                  {state.result.estimativa.com_data_selimp ?? 0}
-                </span>
-              </div>
-              <div>
-                Estimadas (legado):{" "}
-                <span className="font-semibold text-amber-700 dark:text-amber-400">
-                  {state.result.estimativa.estimadas ?? 0}
-                </span>
-              </div>
-              <div>
-                Despachos inesperados:{" "}
-                <span className="font-semibold text-orange-700 dark:text-orange-400">
-                  {state.result.estimativa.despachos_inesperados ?? 0}
-                </span>
-              </div>
-              {(state.result.estimativa.fora_periodo ?? 0) > 0 && (
-                <div>
-                  Fora do período:{" "}
-                  <span className="font-semibold text-red-700 dark:text-red-400">
-                    {state.result.estimativa.fora_periodo}
-                  </span>
-                </div>
-              )}
-              <div>
-                Alta confiança:{" "}
-                <span className="font-semibold text-emerald-700 dark:text-emerald-400">{state.result.estimativa.alta_confianca ?? 0}</span>
-              </div>
-              <div>
-                Média:{" "}
-                <span className="font-semibold text-amber-700 dark:text-amber-400">{state.result.estimativa.media_confianca ?? 0}</span>
-              </div>
-              <div>
-                Baixa:{" "}
-                <span className="font-semibold text-red-700 dark:text-red-400">{state.result.estimativa.baixa_confianca ?? 0}</span>
-              </div>
-            </div>
+          <div className="mt-2 flex flex-wrap gap-1.5 border-t border-emerald-200/50 pt-2 dark:border-emerald-800/30">
+            {[
+              { label: "SELIMP", value: state.result.estimativa.com_data_selimp ?? 0 },
+              { label: "Estimadas", value: state.result.estimativa.estimadas ?? 0 },
+              { label: "Inesperados", value: state.result.estimativa.despachos_inesperados ?? 0 },
+              { label: "Alta", value: state.result.estimativa.alta_confianca ?? 0 },
+              { label: "Média", value: state.result.estimativa.media_confianca ?? 0 },
+              { label: "Baixa", value: state.result.estimativa.baixa_confianca ?? 0 },
+            ].map((item) => (
+              <span
+                key={item.label}
+                className="rounded-md bg-emerald-100/70 px-1.5 py-0.5 text-[10px] font-medium text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-200"
+              >
+                {item.label} {item.value}
+              </span>
+            ))}
           </div>
         )}
         {state.result.datas_importadas && state.result.datas_importadas.length > 0 && (
-          <div className="mt-4 border-t border-emerald-200/70 pt-4 text-xs leading-relaxed text-muted-foreground dark:border-emerald-500/15">
-            <div className="font-semibold text-emerald-900 dark:text-emerald-200">
-              Datas importadas ({state.result.total_datas ?? state.result.datas_importadas.length})
-            </div>
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {state.result.datas_importadas.map((d) => (
-                <span
-                  key={d}
-                  className="rounded-md bg-emerald-100 px-2 py-0.5 font-mono text-[11px] font-medium text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-200"
-                >
-                  {new Date(`${d}T12:00:00`).toLocaleDateString("pt-BR")}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-        {state.result.parse_stats && (
-          <div className="mt-4 border-t border-emerald-200/70 pt-4 text-xs leading-relaxed text-muted-foreground dark:border-emerald-500/15">
-            <div className="font-semibold text-emerald-900 dark:text-emerald-200">Leitura da planilha (veiculos)</div>
-            <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
-              <div>
-                Linhas de dados na aba:{" "}
-                <span className="font-semibold text-foreground">{state.result.parse_stats.linhas_na_planilha ?? "—"}</span>
-              </div>
-              <div>
-                Importadas:{" "}
-                <span className="font-semibold text-foreground">{state.result.parse_stats.linhas_importadas ?? "—"}</span>
-              </div>
-              <div>
-                Ignoradas (linha vazia):{" "}
-                <span className="font-semibold text-foreground">{state.result.parse_stats.ignoradas_linha_vazia ?? 0}</span>
-              </div>
-              <div>
-                Ignoradas (sem setor):{" "}
-                <span className="font-semibold text-foreground">{state.result.parse_stats.ignoradas_sem_setor ?? 0}</span>
-              </div>
-              <div className="sm:col-span-2">
-                Ignoradas (data invalida):{" "}
-                <span className="font-semibold text-foreground">{state.result.parse_stats.ignoradas_sem_data ?? 0}</span>
-              </div>
-            </div>
+          <div className="mt-2 flex flex-wrap items-center gap-1 border-t border-emerald-200/50 pt-2 dark:border-emerald-800/30">
+            <CalendarDays className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
+            <span className="text-[10px] font-medium text-muted-foreground">
+              {state.result.total_datas ?? state.result.datas_importadas.length} datas
+            </span>
+            {state.result.datas_importadas.slice(0, 8).map((d) => (
+              <span
+                key={d}
+                className="rounded bg-emerald-100 px-1.5 py-0.5 font-mono text-[10px] text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-200"
+              >
+                {new Date(`${d}T12:00:00`).toLocaleDateString("pt-BR")}
+              </span>
+            ))}
+            {state.result.datas_importadas.length > 8 && (
+              <span className="text-[10px] text-muted-foreground">
+                +{state.result.datas_importadas.length - 8}
+              </span>
+            )}
           </div>
         )}
       </div>
@@ -559,21 +538,11 @@ function SummaryBox({ state }: { state: UploadState }) {
 
   if (state.status === "error") {
     return (
-      <div
-        className={cn(
-          "mt-6 rounded-2xl border p-5 text-sm shadow-sm",
-          "border-red-200/70 bg-gradient-to-br from-red-50/90 via-white to-white shadow-red-900/[0.05]",
-          "dark:border-red-900/60 dark:bg-gradient-to-br dark:from-red-950/45 dark:via-card dark:to-card dark:shadow-md dark:shadow-black/30",
-        )}
-      >
-        <div className="flex items-start gap-3 text-red-900 dark:text-red-300">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300">
-            <AlertCircle className="h-4 w-4" />
-          </span>
-          <div className="min-w-0">
-            <div className="font-semibold">Erro no upload</div>
-            <div className="mt-2 text-xs leading-relaxed text-red-900/85 dark:text-red-200/90">{state.error}</div>
-          </div>
+      <div className="mt-3 flex items-start gap-2 rounded-xl border border-red-200/70 bg-red-50/60 px-3 py-2.5 text-sm dark:border-red-900/50 dark:bg-red-950/30">
+        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-600 dark:text-red-400" />
+        <div className="min-w-0">
+          <div className="font-semibold text-red-900 dark:text-red-300">Erro no upload</div>
+          <div className="mt-0.5 text-xs leading-relaxed text-red-800/90 dark:text-red-200/90">{state.error}</div>
         </div>
       </div>
     );
@@ -585,22 +554,20 @@ function SummaryBox({ state }: { state: UploadState }) {
 function DdmxSnapFields({ snap }: { snap?: DdmxTipoSnapshot }) {
   const tem = Boolean(snap?.ultimo_import || snap?.source_file);
   return (
-    <dl className="mt-2 space-y-2 text-[11px]">
-      <div className="rounded-lg border border-slate-100 bg-slate-50/50 px-2.5 py-2 dark:border-border dark:bg-muted/50">
-        <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Arquivo</dt>
-        <dd className="mt-0.5 break-all font-medium text-foreground">{tem ? snap?.source_file || "—" : "—"}</dd>
-      </div>
-      <div className="rounded-lg border border-slate-100 bg-slate-50/50 px-2.5 py-2 dark:border-border dark:bg-muted/50">
-        <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Atualizado</dt>
-        <dd className="mt-0.5 font-medium text-foreground">
-          {tem ? formatDateTime(snap?.ultimo_import) : "Ainda não importado"}
-        </dd>
-      </div>
-      <div className="rounded-lg border border-slate-100 bg-slate-50/50 px-2.5 py-2 dark:border-border dark:bg-muted/50">
-        <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Registros na base</dt>
-        <dd className="mt-0.5 font-medium tabular-nums text-foreground">{tem ? snap?.total_registros ?? 0 : "—"}</dd>
-      </div>
-    </dl>
+    <div className="mt-1.5 flex flex-wrap gap-1.5 text-[11px]">
+      <span className="inline-flex max-w-full items-center gap-1 truncate rounded-md border border-border/60 bg-muted/40 px-1.5 py-0.5">
+        <File className="h-3 w-3 shrink-0 text-muted-foreground" />
+        <span className="truncate font-medium">{tem ? snap?.source_file || "—" : "—"}</span>
+      </span>
+      <span className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/40 px-1.5 py-0.5">
+        <Clock className="h-3 w-3 text-muted-foreground" />
+        <span className="font-medium">{tem ? formatDateTime(snap?.ultimo_import) : "Sem import"}</span>
+      </span>
+      <span className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/40 px-1.5 py-0.5">
+        <Database className="h-3 w-3 text-muted-foreground" />
+        <span className="font-medium tabular-nums">{tem ? snap?.total_registros ?? 0 : "—"}</span>
+      </span>
+    </div>
   );
 }
 
@@ -610,92 +577,32 @@ function DdmxPorTipoBlock({ overview }: { overview?: UploadOverviewResponse }) {
   const snapVarr = overview?.iptHistoricoOsVarricao;
 
   return (
-    <div
-      className={cn(
-        "mt-6 rounded-2xl border p-5 text-xs leading-relaxed shadow-sm",
-        "border-sky-200/55 bg-gradient-to-br from-sky-50/80 via-white to-slate-50/50",
-        "shadow-sky-900/[0.04] dark:border-sky-800/45 dark:bg-gradient-to-br dark:from-sky-950/45 dark:via-card dark:to-card dark:text-foreground dark:shadow-md dark:shadow-black/25",
-      )}
-    >
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-sm font-semibold tracking-tight text-foreground">Última importação por linha DDMX</span>
-        <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-800 dark:bg-sky-900/60 dark:text-sky-100">
-          DDMX
-        </span>
+    <div className="mt-3 rounded-xl border border-sky-200/60 bg-sky-50/40 px-3 py-2.5 dark:border-sky-800/40 dark:bg-sky-950/20">
+      <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+        <Table2 className="h-4 w-4 text-sky-600 dark:text-sky-400" />
+        Última importação por linha DDMX
       </div>
-      <p className="mt-2 max-w-3xl text-[11px] leading-relaxed text-slate-600 dark:text-muted-foreground">
-        Frota geral e compactadores compartilham o mesmo cartão (dois históricos OS distintos na base). Varrição permanece separada — outro layout de planilha.
-      </p>
-      <div className="mt-4 grid gap-3 md:grid-cols-2">
-        <div
-          className={cn(
-            "relative overflow-hidden rounded-xl border p-4 shadow-sm",
-            "border-slate-200/90 bg-white/90 backdrop-blur-[2px]",
-            "dark:border-border dark:bg-muted/40",
-          )}
-        >
-          <div className="absolute left-0 top-0 h-full w-1 rounded-l-xl bg-violet-500" aria-hidden />
-          <div className="pl-2">
-            <div className="flex items-center gap-2">
-              <span className="h-2 w-2 shrink-0 rounded-full bg-violet-500" aria-hidden />
-              <div className="text-sm font-semibold text-foreground">Veículos e compactadores</div>
-            </div>
-            <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
-              Histórico OS da frota em geral e histórico OS de compactação — enviados pela mesma sessão DDMX, armazenados em conjuntos diferentes.
-            </p>
-
-            <div className="mt-4 border-t border-slate-100 pt-4 dark:border-border">
-              <div className="text-[10px] font-bold uppercase tracking-wide text-violet-800 dark:text-violet-300">Veículos (geral)</div>
-              <DdmxSnapFields snap={snapVeic} />
-            </div>
-            <div className="mt-4 border-t border-slate-100 pt-4 dark:border-border">
-              <div className="text-[10px] font-bold uppercase tracking-wide text-amber-800 dark:text-amber-300">Compactadores</div>
-              <DdmxSnapFields snap={snapComp} />
-            </div>
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        <div className="rounded-lg border border-border/60 bg-card/70 px-2.5 py-2">
+          <div className="flex items-center gap-1.5 text-xs font-semibold">
+            <span className="h-1.5 w-1.5 rounded-full bg-violet-500" />
+            Veículos
           </div>
+          <DdmxSnapFields snap={snapVeic} />
+          <div className="mt-2 flex items-center gap-1.5 border-t border-border/50 pt-2 text-xs font-semibold">
+            <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+            Compactadores
+          </div>
+          <DdmxSnapFields snap={snapComp} />
         </div>
-
-        <div
-          className={cn(
-            "relative overflow-hidden rounded-xl border p-4 shadow-sm",
-            "border-slate-200/90 bg-white/90 backdrop-blur-[2px]",
-            "dark:border-border dark:bg-muted/40",
-          )}
-        >
-          <div className="absolute left-0 top-0 h-full w-1 rounded-l-xl bg-sky-500" aria-hidden />
-          <div className="pl-2">
-            <div className="flex items-center gap-2">
-              <span className="h-2 w-2 shrink-0 rounded-full bg-sky-500" aria-hidden />
-              <div className="text-sm font-semibold text-foreground">Varrição</div>
-            </div>
-            <p className="mt-1 text-[11px] leading-snug text-muted-foreground">Histórico OS específico de varrição.</p>
-            <DdmxSnapFields snap={snapVarr} />
+        <div className="rounded-lg border border-border/60 bg-card/70 px-2.5 py-2">
+          <div className="flex items-center gap-1.5 text-xs font-semibold">
+            <span className="h-1.5 w-1.5 rounded-full bg-sky-500" />
+            Varrição
           </div>
+          <DdmxSnapFields snap={snapVarr} />
         </div>
       </div>
-    </div>
-  );
-}
-
-function HistoryStat({
-  label,
-  value,
-  className,
-}: {
-  label: string;
-  value: string;
-  className?: string;
-}) {
-  return (
-    <div
-      className={cn(
-        "rounded-lg border border-slate-100 bg-white px-3 py-2.5 shadow-[0_1px_0_0_rgba(15,23,42,0.03)]",
-        "dark:border-border dark:bg-muted/55 dark:shadow-none",
-        className,
-      )}
-    >
-      <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</div>
-      <div className="mt-1 text-sm font-medium leading-snug text-foreground">{value}</div>
     </div>
   );
 }
@@ -712,92 +619,97 @@ function HistoryBlock({
   overview?: LastUploadInfo;
   expanded: boolean;
   onToggle: () => void;
-  /** Texto curto abaixo do título (ex.: explicar que o bloco é só da última fila de upload). */
   hint?: string;
   historyLimit?: number;
 }) {
   const history = (overview?.history ?? []).slice(0, historyLimit);
 
-  const summaryCells: { label: string; value: string; span?: "full" }[] = [
-    { label: "Última atualização", value: formatDateTime(overview?.ultimo_import) },
-    { label: "Arquivo", value: overview?.source_file || "—", span: "full" },
+  const meta: { icon: LucideIcon; label: string; value: string }[] = [
+    { icon: Clock, label: "Atualização", value: formatDateTime(overview?.ultimo_import) },
+    { icon: File, label: "Arquivo", value: overview?.source_file || "—" },
+    { icon: Database, label: "Registros", value: String(overview?.total_registros ?? 0) },
   ];
   if (overview?.tipo_detectado_label) {
-    summaryCells.push({ label: "Tipo detectado", value: overview.tipo_detectado_label, span: "full" });
+    meta.push({ icon: FileText, label: "Tipo", value: overview.tipo_detectado_label });
   }
-  if (overview?.ultima_referencia) {
-    summaryCells.push({ label: "Última referência", value: overview.ultima_referencia, span: "full" });
-  } else if (overview?.referencia_importada) {
-    summaryCells.push({ label: "Referência", value: overview.referencia_importada, span: "full" });
+  if (overview?.ultima_referencia || overview?.referencia_importada) {
+    meta.push({
+      icon: CalendarDays,
+      label: "Referência",
+      value: overview.ultima_referencia || overview.referencia_importada || "—",
+    });
   }
-  summaryCells.push({ label: "Registros (visão resumida)", value: String(overview?.total_registros ?? 0) });
   if (overview?.total_encerradas !== undefined) {
-    summaryCells.push({ label: "Encerrados acumulados", value: String(overview.total_encerradas ?? 0) });
+    meta.push({ icon: CheckCircle2, label: "Encerrados", value: String(overview.total_encerradas ?? 0) });
   }
 
   return (
-    <div
-      className={cn(
-        "mt-6 rounded-2xl border p-5 text-xs leading-relaxed shadow-sm",
-        "border-slate-200/80 bg-gradient-to-b from-slate-50/80 to-white",
-        "shadow-slate-900/[0.03] dark:border-border dark:bg-gradient-to-b dark:from-card dark:to-muted/30 dark:shadow-md dark:shadow-black/20",
-      )}
-    >
-      <div className="text-sm font-semibold tracking-tight text-foreground">{title}</div>
-      {hint ? (
-        <p className="mt-2 rounded-lg border border-slate-100 bg-white/60 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground dark:border-border dark:bg-muted/40">
-          {hint}
-        </p>
-      ) : null}
-      <div className="mt-4 grid gap-2.5 sm:grid-cols-2">
-        {summaryCells.map((cell) => (
-          <HistoryStat
-            key={cell.label}
-            label={cell.label}
-            value={cell.value}
-            className={cell.span === "full" ? "sm:col-span-2" : undefined}
-          />
+    <div className="mt-3 rounded-xl border border-border/70 bg-muted/20 px-3 py-2.5">
+      <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+        <LayoutDashboard className="h-4 w-4 shrink-0 text-muted-foreground" />
+        {title}
+      </div>
+      {hint ? <p className="mt-1 text-[11px] leading-snug text-muted-foreground">{hint}</p> : null}
+
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {meta.map((item) => (
+          <span
+            key={item.label}
+            className="inline-flex max-w-full items-center gap-1 rounded-md border border-border/60 bg-background/80 px-2 py-1 text-[11px] text-muted-foreground"
+            title={`${item.label}: ${item.value}`}
+          >
+            <item.icon className="h-3 w-3 shrink-0" />
+            <span className="font-medium text-foreground/70">{item.label}</span>
+            <span className="truncate font-semibold text-foreground">{item.value}</span>
+          </span>
         ))}
       </div>
 
       {history.length > 0 && (
-        <>
+        <div className="mt-2">
           <Button
             variant="ghost"
             type="button"
-            className="mt-5 h-9 border border-slate-200/80 bg-white px-3 text-xs shadow-sm hover:bg-slate-50 dark:border-border dark:bg-muted/40 dark:hover:bg-muted/70"
+            size="sm"
+            className="h-7 px-2 text-[11px]"
             onClick={onToggle}
           >
-            {expanded ? <ChevronUp className="mr-1 h-4 w-4" /> : <ChevronDown className="mr-1 h-4 w-4" />}
-            {expanded ? "Ocultar histórico" : `Ver histórico (${Math.min(history.length, 10)} recentes)`}
+            {expanded ? <ChevronUp className="mr-1 h-3.5 w-3.5" /> : <ChevronDown className="mr-1 h-3.5 w-3.5" />}
+            {expanded ? "Ocultar histórico" : `Histórico (${Math.min(history.length, 10)})`}
           </Button>
 
           {expanded && (
-            <div className="mt-4 space-y-3 border-t border-slate-100 pt-4 dark:border-border">
+            <ul className="mt-1.5 space-y-1 border-t border-border/50 pt-2">
               {history.slice(0, 10).map((entry, index) => (
-                <div
+                <li
                   key={`${entry.created_at}-${entry.source_file}-${index}`}
-                  className={cn(
-                    "rounded-xl border p-4 shadow-sm",
-                    "border-slate-200/70 bg-white",
-                    "dark:border-border dark:bg-muted/35",
-                  )}
+                  className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-border/50 bg-background/70 px-2 py-1.5 text-[11px]"
                 >
-                  <div className="text-xs font-semibold text-foreground">{entry.tipo_label || "Importação"}</div>
-                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                    <HistoryStat label="Data" value={formatDateTime(entry.created_at)} />
-                    <HistoryStat label="Usuário" value={entry.imported_by || entry.user_display_name || entry.username || "—"} />
-                    <HistoryStat label="Processados" value={String(entry.processados ?? 0)} />
-                    <HistoryStat label="Arquivo" value={entry.source_file || "—"} className="sm:col-span-2" />
-                    {entry.referencia_importada ? (
-                      <HistoryStat label="Referência" value={entry.referencia_importada} className="sm:col-span-2" />
-                    ) : null}
-                  </div>
-                </div>
+                  <span className="inline-flex items-center gap-1 font-semibold text-foreground">
+                    <FileText className="h-3 w-3 text-muted-foreground" />
+                    {entry.tipo_label || "Importação"}
+                  </span>
+                  <span className="inline-flex items-center gap-1 text-muted-foreground">
+                    <Clock className="h-3 w-3" />
+                    {formatDateTime(entry.created_at)}
+                  </span>
+                  <span className="inline-flex items-center gap-1 text-muted-foreground">
+                    <User className="h-3 w-3" />
+                    {entry.imported_by || entry.user_display_name || entry.username || "—"}
+                  </span>
+                  <span className="inline-flex items-center gap-1 tabular-nums text-muted-foreground">
+                    <Hash className="h-3 w-3" />
+                    {entry.processados ?? 0}
+                  </span>
+                  <span className="inline-flex min-w-0 max-w-full items-center gap-1 truncate text-muted-foreground">
+                    <File className="h-3 w-3 shrink-0" />
+                    <span className="truncate">{entry.source_file || "—"}</span>
+                  </span>
+                </li>
               ))}
-            </div>
+            </ul>
           )}
-        </>
+        </div>
       )}
     </div>
   );
@@ -821,9 +733,10 @@ function UploadDropzone({
   const [dragActive, setDragActive] = useState(false);
 
   return (
-    <div
+    <BorderTrailCard
+      loading={loading}
       className={cn(
-        "rounded-2xl border border-dashed bg-gradient-to-b p-8 text-center shadow-sm transition-all duration-200",
+        "rounded-2xl border-dashed bg-gradient-to-b p-8 text-center shadow-sm transition-all duration-200",
         DROPZONE_SURFACE[tone],
         dragActive
           ? "scale-[1.01] border-primary/40 shadow-md shadow-primary/10 ring-2 ring-primary/20 dark:border-primary/30"
@@ -860,14 +773,22 @@ function UploadDropzone({
           <FileSpreadsheet className="h-6 w-6 text-primary" />
         </div>
         <div className="mt-5 text-sm font-semibold tracking-tight text-foreground">
-          {loading ? "Processando arquivo…" : "Clique ou arraste o arquivo aqui"}
+          {loading ? (
+            <TextShimmer as="span" className="text-sm font-semibold" duration={1.6}>
+              Processando arquivo…
+            </TextShimmer>
+          ) : (
+            <TextMorph as="span" className="inline-flex">
+              Clique ou arraste o arquivo aqui
+            </TextMorph>
+          )}
         </div>
         <p className="mx-auto mt-2 max-w-lg text-xs leading-relaxed text-slate-600 dark:text-muted-foreground">{helperText}</p>
         <p className="mt-3 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
           Formatos: <span className="font-semibold text-foreground/80">{accept.replace(/\./g, "").replace(/,/g, " · ")}</span>
         </p>
       </label>
-    </div>
+    </BorderTrailCard>
   );
 }
 
@@ -1373,7 +1294,11 @@ export default function UploadPage() {
             */}
           </div>
         ) : (
-        <Accordion type="multiple" defaultValue={[]} className="space-y-5">
+        <Accordion
+          className="space-y-5"
+          transition={{ type: "spring", stiffness: 140, damping: 22 }}
+          variants={ACCORDION_VARIANTS}
+        >
           <SessionAccordionItem
             value="flip"
             accent="violet"
@@ -1693,7 +1618,11 @@ export default function UploadPage() {
               </DialogDescription>
             </DialogHeader>
 
-            <Accordion type="multiple" defaultValue={[]} className="space-y-4">
+            <Accordion
+              className="space-y-4"
+              transition={{ type: "spring", stiffness: 140, damping: 22 }}
+              variants={ACCORDION_VARIANTS}
+            >
               <SessionAccordionItem
                 value="cronograma"
                 accent="slate"
