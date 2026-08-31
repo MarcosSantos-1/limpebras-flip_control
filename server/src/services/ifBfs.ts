@@ -2,7 +2,7 @@ import { pool } from "../db.js";
 import { BFS_IF_EXCLUSAO_SQL, sqlBfsFiscalNaoEhSelimp } from "../constants/bfs.js";
 import { SUB_SIGLAS, regionalToSigla } from "../constants/regionais.js";
 
-/** Mesma regra do ADC / dashboard: média dos % das 4 subs; se alguma sub 0%, divisor 3. */
+/** Média aritmética dos % das 4 subs (JT, CV, ST, MG). Sub sem BFS entra como 0%. */
 export function calcularMediaIfPorSubprefeitura(
   bySigla: Record<string, { total: number; sem_irregularidade: number }>
 ): number {
@@ -11,8 +11,7 @@ export function calcularMediaIfPorSubprefeitura(
     return total > 0 ? (sem_irregularidade / total) * 100 : 0;
   });
   const somaPercentuais = percentuais.reduce((acc, value) => acc + value, 0);
-  const divisor = percentuais.some((value) => value === 0) ? 3 : 4;
-  return somaPercentuais / divisor;
+  return somaPercentuais / SUB_SIGLAS.length;
 }
 
 /**

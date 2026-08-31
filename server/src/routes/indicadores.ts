@@ -14,6 +14,7 @@ import { calcularCenariosIPT, calcularPFComDetalhes, type IptCenarios, type PfDe
 import { montarRespostaConservador, type Linha as IptLinhaConservador } from "../services/ipt-conservador.js";
 import { BFS_IF_EXCLUSAO_SQL, sqlBfsFiscalNaoEhSelimp } from "../constants/bfs.js";
 import { SUB_SIGLAS, DOMICILIOS_POR_REGIONAL, regionalToSigla } from "../constants/regionais.js";
+import { calcularMediaIfPorSubprefeitura } from "../services/ifBfs.js";
 import {
   normalizarSetor,
   compareSetores,
@@ -482,20 +483,6 @@ const isModuleInactive = (statusBateria: string, statusComunicacao: string, dias
   }
   return false;
 };
-
-function calcularMediaIfPorSubprefeitura(
-  bySigla: Record<string, { total: number; sem_irregularidade: number }>
-): number {
-  const percentuais = SUB_SIGLAS.map((sigla) => {
-    const { total, sem_irregularidade } = bySigla[sigla];
-    return total > 0 ? (sem_irregularidade / total) * 100 : 0;
-  });
-
-  const somaPercentuais = percentuais.reduce((acc, value) => acc + value, 0);
-  // Regra solicitada: quando alguma sub ficar zerada, usa divisor 3.
-  const divisor = percentuais.some((value) => value === 0) ? 3 : 4;
-  return somaPercentuais / divisor;
-}
 
 type DashboardIndicadorTipo = "IA" | "IRD" | "IF" | "IPT" | "ADC";
 

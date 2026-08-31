@@ -628,8 +628,7 @@ function calcularMediaIfPorSubprefeituraSnapshot(
     return total > 0 ? (sem_irregularidade / total) * 100 : 0;
   });
   const somaPercentuais = percentuais.reduce((acc, value) => acc + value, 0);
-  const divisor = percentuais.some((value) => value === 0) ? 3 : 4;
-  return somaPercentuais / divisor;
+  return somaPercentuais / SUB_SIGLAS.length;
 }
 
 function isFullMonthPeriod(inicio: string, fim: string): { ano: number; mes: number } | null {

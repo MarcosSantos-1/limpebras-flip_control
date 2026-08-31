@@ -565,15 +565,10 @@ export async function gerarRelatorioContestacaoPDF(
           if_percentual: ifAjustado,
         };
       });
-      /**
-       * Replica a lógica usada no IF oficial da tabela superior:
-       * quando alguma SUB fica com IF zerado, não dilui por 4 (usa divisor 3).
-       */
       const percentuaisAjustados = rowsAjustado.map((r) => r.if_percentual ?? 0);
       const somaAjustada = percentuaisAjustados.reduce((s, p) => s + p, 0);
-      const divisorAjustado =
-        percentuaisAjustados.some((p) => p <= 0) ? 3 : 4;
-      const mediaAjustada = divisorAjustado > 0 ? somaAjustada / divisorAjustado : 0;
+      const mediaAjustada =
+        percentuaisAjustados.length > 0 ? somaAjustada / percentuaisAjustados.length : 0;
       const pontuacaoAjustada = pontuacaoFromIF(mediaAjustada);
 
       let yAjust = y + 15; // espaço entre tabelas
