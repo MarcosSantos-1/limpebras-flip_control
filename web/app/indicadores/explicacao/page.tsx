@@ -784,7 +784,12 @@ export default function ExplicacaoIndicadoresPage() {
                     <thead>
                       <tr className="bg-zinc-100 dark:bg-zinc-800">
                         <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-left">Subprefeitura</th>
-                        <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">Sem Irregularidades</th>
+                        <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-center leading-tight text-emerald-800 dark:text-emerald-300 whitespace-normal">
+                          Sem irregularidades
+                        </th>
+                        <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-center leading-tight text-red-800 dark:text-red-300 whitespace-normal">
+                          Com irregularidades
+                        </th>
                         <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">Vistorias Total</th>
                         <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">IF (%)</th>
                         <th className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">Média</th>
@@ -796,8 +801,16 @@ export default function ExplicacaoIndicadoresPage() {
                         <tr key={row.subprefeitura}>
                           <td className="border border-zinc-300 dark:border-zinc-700 p-2">{row.subprefeitura}</td>
                           <td className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">{row.sem_irregularidades.toLocaleString("pt-BR")}</td>
+                          <td className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">
+                            {Math.max(0, row.vistorias_total - row.sem_irregularidades).toLocaleString("pt-BR")}
+                          </td>
                           <td className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">{row.vistorias_total.toLocaleString("pt-BR")}</td>
-                          <td className="border border-zinc-300 dark:border-zinc-700 p-2 text-center">{row.if_percentual.toFixed(1)}%</td>
+                          <td
+                            className="border border-zinc-300 dark:border-zinc-700 p-2 text-center"
+                            aria-label={row.vistorias_total === 0 ? "Sem vistorias no período" : undefined}
+                          >
+                            {row.vistorias_total > 0 ? `${row.if_percentual.toFixed(1)}%` : ""}
+                          </td>
                           {idx === 0 ? (
                             <td
                               className="border border-zinc-300 dark:border-zinc-700 p-2 text-center font-semibold bg-zinc-50 dark:bg-zinc-900"
