@@ -36,7 +36,7 @@ const PAGE_LABELS: Record<AuthPageKey, string> = {
   indicadores: "Indicadores",
   ipt: "IPT Geral",
   ipt_restrito: "IPT restrito",
-  ipt_despachos: "Despachos SELIMP",
+  ipt_despachos: "Despachos",
   plano_trabalho: "Plano de trabalho",
   cco: "CCO",
   sacs: "SACs",

@@ -73,6 +73,7 @@ import {
   type IptPreviewBateriaSetorDia,
   type IptPreviewBateriaDdmxDia,
   type IptPreviewModuloBateria,
+  type FonteAgregadaOperacional,
 } from "@/lib/api";
 import { useIptData } from "@/lib/use-ipt-data";
 import { ManualIndicatorBadge } from "@/components/manual-indicator-badge";
@@ -96,6 +97,12 @@ ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend)
 
 const pct = (value?: number | null) => (value == null ? "--" : `${value.toFixed(1)}%`);
 const clamp = (value: number, min = 0, max = 100) => Math.min(max, Math.max(min, value));
+const fonteOperacionalLabel = (fonte?: FonteAgregadaOperacional) => {
+  if (fonte === "ddmx") return "DDMX";
+  if (fonte === "mista") return "SELIMP + DDMX";
+  if (fonte === "selimp") return "SELIMP";
+  return "Sem dados";
+};
 
 /** Card principal da IPT Geral.
  *  Light: branco SÓLIDO com sombra + borda definidas (destaca nos monitores do
@@ -988,41 +995,18 @@ export default function IPTPage() {
     [iptPreviewCards]
   );
 
-  /** Média de execução sem zerados e com zerados ponderada por despacho (SELIMP) */
+  /** Agregados operacionais do backend: SELIMP por plano/data, com fallback DDMX onde faltar. */
   const subprefeituraInsights = useMemo(() => {
-    const bySub = new Map<
-      string,
-      { despachoSum: number; despachoCount: number; despachoNonzeroCount: number; totalPlanos: number }
-    >();
-    for (const row of cardsComparativoItens) {
-      const sub = row.subprefeitura || "Não informado";
-      if (!bySub.has(sub)) {
-        bySub.set(sub, { despachoSum: 0, despachoCount: 0, despachoNonzeroCount: 0, totalPlanos: 0 });
-      }
-      const entry = bySub.get(sub)!;
-      entry.totalPlanos += 1;
-      entry.despachoSum += row.raw_selimp_sum ?? 0;
-      entry.despachoCount += row.raw_selimp_count ?? 0;
-      entry.despachoNonzeroCount += row.raw_selimp_nonzero_count ?? (row.raw_selimp_count ?? 0);
-    }
-    const result: Array<{
-      subprefeitura: string;
-      mediaComZerados: number | null;
-      mediaSemZerados: number | null;
-      totalPlanos: number;
-      zerados: number;
-    }> = [];
-    bySub.forEach((val, sub) => {
-      result.push({
-        subprefeitura: sub,
-        mediaComZerados: val.despachoCount > 0 ? val.despachoSum / val.despachoCount : null,
-        mediaSemZerados: val.despachoNonzeroCount > 0 ? val.despachoSum / val.despachoNonzeroCount : null,
-        totalPlanos: val.totalPlanos,
-        zerados: val.despachoCount - val.despachoNonzeroCount,
-      });
-    });
-    return result.sort((a, b) => (b.mediaSemZerados ?? -1) - (a.mediaSemZerados ?? -1));
-  }, [cardsComparativoItens]);
+    return topSubprefeituras
+      .map((item) => ({
+        subprefeitura: item.subprefeitura,
+        mediaComZerados: item.media_execucao,
+        mediaSemZerados: item.media_sem_zerados ?? null,
+        totalPlanos: item.quantidade_planos,
+        zerados: item.despachos_zerados ?? 0,
+      }))
+      .sort((a, b) => (b.mediaSemZerados ?? -1) - (a.mediaSemZerados ?? -1));
+  }, [topSubprefeituras]);
 
   /** Médias globais ponderadas por despacho (SELIMP) */
   const globalInsights = useMemo(() => {
@@ -1734,8 +1718,10 @@ export default function IPTPage() {
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div>
-                  <CardTitle className="text-base">Subprefeituras (Percentual Real)</CardTitle>
-                  <CardDescription>Execução média por subprefeitura no mês selecionado.</CardDescription>
+                  <CardTitle className="text-base">Subprefeituras (Percentual operacional)</CardTitle>
+                  <CardDescription>
+                    Execução operacional: SELIMP quando disponível, com fallback DDMX por plano/dia.
+                  </CardDescription>
                 </div>
                 <span className="text-xs font-medium text-muted-foreground bg-muted/50 px-2 py-1 rounded-full">
                   {topSubprefeituras.length} subprefeituras
@@ -1748,12 +1734,17 @@ export default function IPTPage() {
                   <div
                     key={item.subprefeitura}
                     className="group rounded-xl bg-background/60 p-3 shadow-sm transition-all hover:shadow-md hover:bg-emerald-500/5 hover:ring-1 hover:ring-emerald-500/20 cursor-default"
-                    title={`${item.subprefeitura || "Não informado"}: ${pct(item.media_execucao)} com zerados | ${pct(item.media_sem_zerados)} sem zerados | ${item.total_despachos ?? 0} despachos`}
+                    title={`${item.subprefeitura || "Não informado"}: ${pct(item.media_execucao)} com zerados | ${pct(item.media_sem_zerados)} sem zerados | ${item.total_despachos ?? 0} despachos | Fonte: ${fonteOperacionalLabel(item.fonte_percentual)}`}
                   >
                     <div className="mb-2 flex items-center justify-between gap-2">
-                      <span className="truncate font-semibold text-sm group-hover:text-emerald-700 dark:group-hover:text-emerald-300">
-                        {item.subprefeitura || "Não informado"}
-                      </span>
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="truncate font-semibold text-sm group-hover:text-emerald-700 dark:group-hover:text-emerald-300">
+                          {item.subprefeitura || "Não informado"}
+                        </span>
+                        <span className="shrink-0 rounded-full border border-border bg-muted/60 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+                          {fonteOperacionalLabel(item.fonte_percentual)}
+                        </span>
+                      </div>
                       <span className="text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400 shrink-0">
                         {pct(item.media_execucao)}
                       </span>
@@ -1924,7 +1915,9 @@ export default function IPTPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <CardTitle className="text-base">Serviços (ativos)</CardTitle>
-                  <CardDescription>Execução acumulada, previstos e cobertura de despacho no mês selecionado.</CardDescription>
+                  <CardDescription>
+                    Execução operacional: SELIMP quando disponível, com fallback DDMX por plano/dia.
+                  </CardDescription>
                 </div>
                 <span className="text-xs font-medium text-muted-foreground bg-muted/50 px-2 py-1 rounded-full">
                   {topServicos.length} serviços
@@ -1942,13 +1935,18 @@ export default function IPTPage() {
                     title={`${item.total_despachos ?? 0}/${item.despachos_previstos ?? item.total_despachos ?? 0} despachos previstos no mes${item.cobertura_despachos != null ? ` - ${item.cobertura_despachos.toFixed(1)}% despachado` : ""}${item.despachos_zerados != null ? ` - ${item.despachos_zerados} com 0%` : ""}`}
                   >
                     <div className="mb-2 flex items-center justify-between gap-2">
-                      <span className="truncate font-semibold text-sm group-hover:text-cyan-700 dark:group-hover:text-cyan-300 min-w-0">
-                        {item.tipo_servico || "Não informado"}
-                      </span>
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="truncate font-semibold text-sm group-hover:text-cyan-700 dark:group-hover:text-cyan-300 min-w-0">
+                          {item.tipo_servico || "Não informado"}
+                        </span>
+                        <span className="shrink-0 rounded-full border border-border bg-muted/60 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+                          {fonteOperacionalLabel(item.fonte_percentual)}
+                        </span>
+                      </div>
                       <div className="flex items-center gap-1.5 shrink-0">
                         <span
                           className="text-lg font-bold tabular-nums text-cyan-600 dark:text-cyan-400 underline decoration-dotted decoration-cyan-600/50 underline-offset-2 cursor-help"
-                          title="Com zerados: media acumulada do percentual SELIMP nos despachos encerrados ate a data (inclui execucao 0%). Nao despachados entram na cobertura abaixo."
+                          title={`Com zerados: média operacional acumulada. Fonte: ${fonteOperacionalLabel(item.fonte_percentual)}. DDMX é somente estimativa e não compõe o IPT.`}
                         >
                           {pct(item.media_execucao)}
                         </span>
@@ -1957,7 +1955,7 @@ export default function IPTPage() {
                         </span>
                         <span
                           className="text-base font-bold tabular-nums text-emerald-600 dark:text-emerald-400 underline decoration-dotted decoration-emerald-600/50 underline-offset-2 cursor-help"
-                          title="Sem zerados: média acumulada apenas nos despachos SELIMP com percentual maior que 0%."
+                          title={`Sem zerados: média operacional apenas dos despachos acima de 0%. Fonte: ${fonteOperacionalLabel(item.fonte_percentual)}.`}
                         >
                           {pct(item.media_sem_zerados ?? null)}
                         </span>
@@ -2942,7 +2940,7 @@ export default function IPTPage() {
                                                       <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/20 px-2 py-0.5 text-emerald-700 dark:text-emerald-300">
                                                         <Check className="h-3.5 w-3.5" /> Sim
                                                       </span>
-                                                    ) : d.despachos_selimp > 0 ? (
+                                                    ) : d.despachos_selimp > 0 || d.despachos_nosso > 0 ? (
                                                       <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/20 px-2 py-0.5 text-amber-800 dark:text-amber-200">
                                                         Inesperado
                                                       </span>

@@ -83,7 +83,7 @@ const iptNavItems: SidebarNavDotItem[] = [
   },
   {
     href: "/ipt/despachos",
-    label: "Despachos SELIMP",
+    label: "Despachos",
     icon: Send,
     pageKey: "ipt_despachos" as AuthPageKey,
     dotClassName: "bg-amber-500 shadow-amber-500/40",

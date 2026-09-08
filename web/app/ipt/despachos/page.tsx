@@ -99,6 +99,9 @@ const STATUS_META: Record<StatusDiaDespacho, { label: string; className: string;
   nao_previsto: { label: "Sem previsão", className: "border-border/60 bg-muted/40 text-muted-foreground", dot: "bg-muted-foreground/40" },
 };
 
+const linhaJaDespachada = (linha: DespachoLinha) =>
+  linha.despachadoManual || linha.despachosSelimp > 0 || linha.percentualDdmx != null;
+
 /**
  * Categorias da observação diária — espelham a página IPT Geral para manter
  * o mesmo visual/semântica (o título salvo é o que aparece lá).
@@ -436,12 +439,16 @@ export default function DespachosPage() {
 
   /** Shift = intervalo (sequência); clique/ctrl = alterna individual. */
   function handleRowSelect(setor: string, index: number, e: React.MouseEvent) {
+    const linha = linhasFiltradas[index];
+    if (!linha || linhaJaDespachada(linha)) return;
     const isShift = e.shiftKey;
     setSelected((prev) => {
       const next = new Set(prev);
       if (isShift && lastIdx != null) {
         const [a, b] = [Math.min(lastIdx, index), Math.max(lastIdx, index)];
-        for (let i = a; i <= b; i++) next.add(linhasFiltradas[i].setor);
+        for (let i = a; i <= b; i++) {
+          if (!linhaJaDespachada(linhasFiltradas[i])) next.add(linhasFiltradas[i].setor);
+        }
       } else if (next.has(setor)) {
         next.delete(setor);
       } else {
@@ -582,8 +589,10 @@ export default function DespachosPage() {
               <div className="flex items-center gap-3">
                 <Send className="h-6 w-6 text-amber-500" />
                 <div>
-                  <h1 className="text-xl font-bold text-foreground">Despachos SELIMP</h1>
-                  <p className="text-xs text-muted-foreground">Acompanhamento diário: planejado × despachado</p>
+                  <h1 className="text-xl font-bold text-foreground">Despachos</h1>
+                  <p className="text-xs text-muted-foreground">
+                    Planejado × despachado · SELIMP com fallback operacional DDMX
+                  </p>
                 </div>
               </div>
             </div>
@@ -846,12 +855,13 @@ export default function DespachosPage() {
                     {!loading &&
                       linhasFiltradas.map((l, idx) => {
                         const sel = selected.has(l.setor);
+                        const jaDespachada = linhaJaDespachada(l);
                         return (
                         <TableRow
                           key={l.setor}
                           className={cn("hover:bg-amber-500/5", selMode && sel && "bg-amber-500/10")}
-                          onClick={selMode ? (e) => handleRowSelect(l.setor, idx, e) : undefined}
-                          style={selMode ? { cursor: "pointer", userSelect: "none" } : undefined}
+                          onClick={selMode && !jaDespachada ? (e) => handleRowSelect(l.setor, idx, e) : undefined}
+                          style={selMode ? { cursor: jaDespachada ? "not-allowed" : "pointer", userSelect: "none" } : undefined}
                         >
                           {selMode && (
                             <TableCell className="text-center">
@@ -863,9 +873,14 @@ export default function DespachosPage() {
                                 }}
                                 className={cn(
                                   "flex h-4 w-4 items-center justify-center rounded border transition-colors",
-                                  sel ? "border-amber-500 bg-amber-500 text-white" : "border-zinc-400 hover:border-amber-500 dark:border-zinc-600",
+                                  jaDespachada
+                                    ? "cursor-not-allowed border-border bg-muted opacity-40"
+                                    : sel
+                                      ? "border-amber-500 bg-amber-500 text-white"
+                                      : "border-zinc-400 hover:border-amber-500 dark:border-zinc-600",
                                 )}
-                                aria-label={sel ? "Desmarcar" : "Marcar"}
+                                disabled={jaDespachada}
+                                aria-label={jaDespachada ? "Setor já despachado" : sel ? "Desmarcar" : "Marcar"}
                               >
                                 {sel && <Check className="h-3 w-3" />}
                               </button>
@@ -901,12 +916,30 @@ export default function DespachosPage() {
                               </Badge>
                             ) : l.despachosSelimp > 0 ? (
                               <span className="font-mono text-sm tabular-nums">{l.despachosSelimp} SELIMP</span>
+                            ) : l.percentualDdmx != null ? (
+                              <span className="font-mono text-sm tabular-nums">{l.despachosDdmx} DDMX</span>
                             ) : (
                               <span className="text-muted-foreground">—</span>
                             )}
                           </TableCell>
                           <TableCell className="text-center font-mono text-sm tabular-nums">
-                            {l.percentual != null ? `${l.percentual}%` : "—"}
+                            {l.percentual != null ? (
+                              <span className="inline-flex items-center gap-1.5">
+                                <span>{l.percentual}%</span>
+                                <Badge
+                                  variant="outline"
+                                  className={cn(
+                                    "px-1.5 py-0 text-[9px]",
+                                    l.fontePercentual === "ddmx"
+                                      ? "border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300"
+                                      : "border-blue-500/40 bg-blue-500/10 text-blue-700 dark:text-blue-300",
+                                  )}
+                                  title={l.fontePercentual === "ddmx" ? "Estimativa operacional; não compõe o IPT" : "Dado SELIMP"}
+                                >
+                                  {l.fontePercentual?.toUpperCase()}
+                                </Badge>
+                              </span>
+                            ) : "—"}
                           </TableCell>
                           <TableCell className="text-center">
                             {obsDiarias[l.setor] ? (
@@ -929,7 +962,7 @@ export default function DespachosPage() {
                           </TableCell>
                           <TableCell className="text-center">
                             <div className="flex items-center justify-center gap-1.5">
-                              {!l.despachadoManual && l.despachosSelimp === 0 && (
+                              {!jaDespachada && (
                                 <button
                                   type="button"
                                   onClick={(e) => {

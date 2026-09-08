@@ -1,7 +1,20 @@
 import { pool } from "../db.js";
 import { listCronogramaSetores, type CronogramaSetorInfo } from "./cronograma.js";
-import { normalizarSetor, SERVICO_POR_CODIGO, getFrequenciaDescricao, parseSetor } from "../constants/ipt.js";
+import {
+  normalizarSetor,
+  SERVICO_POR_CODIGO,
+  getFrequenciaDescricao,
+  parseSetor,
+  registerVpCanonicalFromSelimp,
+  resolveVpCanonicalFromDdmx,
+} from "../constants/ipt.js";
 import { parseDespachoColagem } from "./parseDespachoColagem.js";
+import {
+  despachoOperacionalPresente,
+  escolherPercentualOperacional,
+  extrairPercentualDdmx,
+  type FontePercentualOperacional,
+} from "./ddmx-operacional.js";
 
 /** dom..sab → tokens usados em cronograma_setores.dias_semana. */
 const WEEKDAY_TOKEN = ["dom", "seg", "ter", "qua", "qui", "sex", "sab"] as const;
@@ -26,7 +39,11 @@ export interface DespachoLinha {
   esperado: boolean;
   despachadoManual: boolean;
   despachosSelimp: number;
+  despachosDdmx: number;
+  percentualSelimp: number | null;
+  percentualDdmx: number | null;
   percentual: number | null;
+  fontePercentual: FontePercentualOperacional;
   percentualHistorico: number | null; // último % SELIMP conhecido antes do dia (histórico)
   status: StatusDia;
   veiculos: string[];
@@ -114,7 +131,7 @@ function tipoServicoLabel(info: CronogramaSetorInfo): string {
   return (info.servico && SERVICO_POR_CODIGO[info.servico]) || info.frequenciaTexto || info.servico || "—";
 }
 
-function statusDoDia(esperado: boolean, despachado: boolean, percentual: number | null): StatusDia {
+export function statusDoDia(esperado: boolean, despachado: boolean, percentual: number | null): StatusDia {
   if (esperado && !despachado) return "nao_despachado";
   if (!esperado && despachado) return "fora_plano";
   if (despachado && percentual === 0) return "zerado";
@@ -126,6 +143,11 @@ interface SelimpDia {
   count: number;
   pct: number | null;
   zeros: number;
+}
+
+interface DdmxDia {
+  count: number;
+  pct: number;
 }
 
 /**
@@ -180,9 +202,11 @@ export async function buildDespachosResponse(
     [rangeStart, dia],
   );
   const selPorDia = new Map<string, Map<string, SelimpDia>>();
+  const vpCanonicalByMergeKey = new Map<string, string>();
   for (const r of selRes.rows) {
-    const setor = normalizarSetor(r.plano);
-    if (!setor) continue;
+    const setorRaw = normalizarSetor(r.plano);
+    if (!setorRaw) continue;
+    const setor = registerVpCanonicalFromSelimp(setorRaw, vpCanonicalByMergeKey);
     if (!selPorDia.has(r.data)) selPorDia.set(r.data, new Map());
     const m = selPorDia.get(r.data)!;
     const prev = m.get(setor);
@@ -196,6 +220,66 @@ export async function buildDespachosResponse(
     }
   }
 
+  type DdmxRow = {
+    setor: string | null;
+    data: string;
+    raw: Record<string, unknown>;
+  };
+  const ddmxRows: DdmxRow[] = [];
+  try {
+    const [varricao, veiculos] = await Promise.all([
+      pool.query<DdmxRow>(
+        `SELECT setor, to_char(data_referencia, 'YYYY-MM-DD') AS data, raw
+         FROM ipt_ddmx_varricao
+         WHERE data_referencia >= $1::date AND data_referencia <= $2::date`,
+        [rangeStart, dia],
+      ),
+      pool.query<DdmxRow>(
+        `SELECT setor, to_char(data_referencia, 'YYYY-MM-DD') AS data, raw
+         FROM ipt_ddmx_veiculos
+         WHERE data_referencia >= $1::date AND data_referencia <= $2::date`,
+        [rangeStart, dia],
+      ),
+    ]);
+    ddmxRows.push(...varricao.rows, ...veiculos.rows);
+  } catch {
+    // Ambientes ainda sem as tabelas dedicadas usam somente o armazenamento legado abaixo.
+  }
+
+  if (ddmxRows.length === 0) {
+    const legacyDdmx = await pool.query<DdmxRow>(
+      `SELECT setor, to_char(data_referencia, 'YYYY-MM-DD') AS data, raw
+       FROM ipt_imports
+       WHERE file_type = ANY($1)
+         AND data_referencia >= $2::date AND data_referencia <= $3::date`,
+      [
+        ["ipt_historico_os", "ipt_historico_os_varricao", "ipt_historico_os_compactadores"],
+        rangeStart,
+        dia,
+      ],
+    );
+    ddmxRows.push(...legacyDdmx.rows);
+  }
+
+  const ddmxPorDia = new Map<string, Map<string, DdmxDia>>();
+  for (const r of ddmxRows) {
+    const raw = r.raw ?? {};
+    const setorRaw = normalizarSetor(String(raw.rota ?? raw.plano ?? raw.setor ?? r.setor ?? ""));
+    if (!setorRaw) continue;
+    const percentual = extrairPercentualDdmx(raw);
+    if (percentual == null) continue;
+    const setor = resolveVpCanonicalFromDdmx(setorRaw, vpCanonicalByMergeKey);
+    if (!ddmxPorDia.has(r.data)) ddmxPorDia.set(r.data, new Map());
+    const diaMap = ddmxPorDia.get(r.data)!;
+    const atual = diaMap.get(setor);
+    if (!atual) {
+      diaMap.set(setor, { count: 1, pct: percentual });
+    } else {
+      atual.pct = (atual.pct * atual.count + percentual) / (atual.count + 1);
+      atual.count += 1;
+    }
+  }
+
   // Pré-calcula o Set de datas (escalonado) por setor para lookups rápidos.
   const datasSetPorSetor = new Map<string, Set<string>>();
   for (const s of setoresFiltrados) datasSetPorSetor.set(s.setor, new Set(s.datas));
@@ -203,6 +287,7 @@ export async function buildDespachosResponse(
   // --- Linhas do dia (só acionáveis: esperado OU despachado/SELIMP). ---
   const despDia = despPorDia.get(dia) ?? new Map();
   const selDia = selPorDia.get(dia) ?? new Map();
+  const ddmxDia = ddmxPorDia.get(dia) ?? new Map();
 
   /** Último % SELIMP conhecido do setor antes do dia (varre o histórico de 14 dias para trás). */
   function ultimoPctHistorico(setor: string): number | null {
@@ -219,13 +304,16 @@ export async function buildDespachosResponse(
     const esperado = esperadoNoDia(s, dia, datasSetPorSetor.get(s.setor)!);
     const manual = despDia.get(s.setor);
     const sel = selDia.get(s.setor) as SelimpDia | undefined;
+    const ddmx = ddmxDia.get(s.setor) as DdmxDia | undefined;
     const despachadoManual = !!manual && !/cancel|inativ/i.test(manual.status ?? "");
     const despachosSelimp = sel?.count ?? 0;
-    const despachado = despachadoManual || despachosSelimp > 0;
+    const percentualSelimp = sel?.pct != null ? Math.round(sel.pct) : null;
+    const percentualDdmx = ddmx?.pct != null ? Math.round(ddmx.pct) : null;
+    const efetivo = escolherPercentualOperacional(percentualSelimp, percentualDdmx);
+    const despachado = despachoOperacionalPresente(despachadoManual, despachosSelimp, percentualDdmx);
     if (!esperado && !despachado) continue; // fora do recorte acionável
 
-    const percentual = sel?.pct != null ? Math.round(sel.pct) : null;
-    const status = statusDoDia(esperado, despachado, percentual);
+    const status = statusDoDia(esperado, despachado, efetivo.percentual);
 
     linhas.push({
       setor: s.setor,
@@ -236,7 +324,11 @@ export async function buildDespachosResponse(
       esperado,
       despachadoManual,
       despachosSelimp,
-      percentual,
+      despachosDdmx: ddmx?.count ?? 0,
+      percentualSelimp,
+      percentualDdmx,
+      percentual: efetivo.percentual,
+      fontePercentual: efetivo.fonte,
       percentualHistorico: ultimoPctHistorico(s.setor),
       status,
       veiculos: manual?.veiculos ?? [],
@@ -256,8 +348,13 @@ export async function buildDespachosResponse(
     const turnoTxt = TURNO_POR_DIGITO[parsed.turno] ?? null;
     // Respeita filtros explícitos (quando chamado com sub/turno).
     if (filtros.subprefeitura && parsed.sub !== filtros.subprefeitura) continue;
+    if (filtros.servico && parsed.servico !== filtros.servico) continue;
     if (filtros.turno && (turnoTxt ?? "").toLowerCase() !== filtros.turno.toLowerCase()) continue;
     const sel = selDia.get(setor) as SelimpDia | undefined;
+    const ddmx = ddmxDia.get(setor) as DdmxDia | undefined;
+    const percentualSelimp = sel?.pct != null ? Math.round(sel.pct) : null;
+    const percentualDdmx = ddmx?.pct != null ? Math.round(ddmx.pct) : null;
+    const efetivo = escolherPercentualOperacional(percentualSelimp, percentualDdmx);
     linhas.push({
       setor,
       subprefeitura: parsed.sub,
@@ -267,10 +364,49 @@ export async function buildDespachosResponse(
       esperado: false,
       despachadoManual: true,
       despachosSelimp: sel?.count ?? 0,
-      percentual: sel?.pct != null ? Math.round(sel.pct) : null,
+      despachosDdmx: ddmx?.count ?? 0,
+      percentualSelimp,
+      percentualDdmx,
+      percentual: efetivo.percentual,
+      fontePercentual: efetivo.fonte,
       percentualHistorico: ultimoPctHistorico(setor),
       status: "fora_plano",
       veiculos: manual.veiculos ?? [],
+      proximaProgramacao: null,
+    });
+  }
+
+  // DDMX com percentual também é um despacho operacional, mesmo fora do cronograma.
+  const linhasSet = new Set(linhas.map((l) => l.setor));
+  for (const [setor, ddmx] of ddmxDia) {
+    if (cronSet.has(setor) || linhasSet.has(setor)) continue;
+    const parsed = parseSetor(setor);
+    if (!parsed) continue;
+    const turnoTxt = TURNO_POR_DIGITO[parsed.turno] ?? null;
+    if (filtros.subprefeitura && parsed.sub !== filtros.subprefeitura) continue;
+    if (filtros.servico && parsed.servico !== filtros.servico) continue;
+    if (filtros.turno && (turnoTxt ?? "").toLowerCase() !== filtros.turno.toLowerCase()) continue;
+    const sel = selDia.get(setor) as SelimpDia | undefined;
+    const percentualSelimp = sel?.pct != null ? Math.round(sel.pct) : null;
+    const percentualDdmx = Math.round(ddmx.pct);
+    const efetivo = escolherPercentualOperacional(percentualSelimp, percentualDdmx);
+    linhas.push({
+      setor,
+      subprefeitura: parsed.sub,
+      tipo_servico: SERVICO_POR_CODIGO[parsed.servico] ?? parsed.servico,
+      frequencia: getFrequenciaDescricao(parsed.frequencia) || null,
+      turno: turnoTxt,
+      esperado: false,
+      despachadoManual: false,
+      despachosSelimp: sel?.count ?? 0,
+      despachosDdmx: ddmx.count,
+      percentualSelimp,
+      percentualDdmx,
+      percentual: efetivo.percentual,
+      fontePercentual: efetivo.fonte,
+      percentualHistorico: ultimoPctHistorico(setor),
+      status: "fora_plano",
+      veiculos: [],
       proximaProgramacao: null,
     });
   }
@@ -286,7 +422,9 @@ export async function buildDespachosResponse(
   linhas.sort((a, b) => ordem[a.status] - ordem[b.status] || a.setor.localeCompare(b.setor));
 
   const previstos = linhas.filter((l) => l.esperado).length;
-  const despachados = linhas.filter((l) => l.esperado && (l.despachadoManual || l.despachosSelimp > 0)).length;
+  const despachados = linhas.filter(
+    (l) => l.esperado && despachoOperacionalPresente(l.despachadoManual, l.despachosSelimp, l.percentualDdmx),
+  ).length;
   const kpis: DespachosKpis = {
     previstos,
     despachados,
@@ -302,6 +440,7 @@ export async function buildDespachosResponse(
     const k = addDaysKey(dia, -i);
     const despK = despPorDia.get(k) ?? new Map();
     const selK = selPorDia.get(k) ?? new Map();
+    const ddmxK = ddmxPorDia.get(k) ?? new Map();
     let prev = 0;
     let desp = 0;
     for (const s of setoresFiltrados) {
@@ -311,7 +450,8 @@ export async function buildDespachosResponse(
       const manual = despK.get(s.setor) as { status: string | null } | undefined;
       const despachadoManual = !!manual && !/cancel|inativ/i.test(manual.status ?? "");
       const sel = selK.get(s.setor) as SelimpDia | undefined;
-      if (despachadoManual || (sel?.count ?? 0) > 0) desp += 1;
+      const ddmx = ddmxK.get(s.setor) as DdmxDia | undefined;
+      if (despachoOperacionalPresente(despachadoManual, sel?.count ?? 0, ddmx?.pct ?? null)) desp += 1;
     }
     tendencia14d.push({
       data: ddMM(k),

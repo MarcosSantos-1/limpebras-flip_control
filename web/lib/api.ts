@@ -324,6 +324,8 @@ export interface CronogramaImportReport {
 }
 
 export type StatusDiaDespacho = "conforme" | "nao_despachado" | "fora_plano" | "zerado" | "nao_previsto";
+export type FontePercentualOperacional = "selimp" | "ddmx" | null;
+export type FonteAgregadaOperacional = Exclude<FontePercentualOperacional, null> | "mista" | "sem_dados";
 
 export interface DespachoLinha {
   setor: string;
@@ -334,7 +336,11 @@ export interface DespachoLinha {
   esperado: boolean;
   despachadoManual: boolean;
   despachosSelimp: number;
+  despachosDdmx: number;
+  percentualSelimp: number | null;
+  percentualDdmx: number | null;
   percentual: number | null;
+  fontePercentual: FontePercentualOperacional;
   percentualHistorico: number | null;
   status: StatusDiaDespacho;
   veiculos: string[];
@@ -416,6 +422,7 @@ export interface IptPreviewResponse {
     quantidade_planos: number;
     media_execucao: number | null;
     media_sem_zerados?: number | null;
+    fonte_percentual?: FonteAgregadaOperacional;
     total_despachos?: number;
     despachos_previstos?: number;
     despachos_nao_despachados?: number;
@@ -427,6 +434,7 @@ export interface IptPreviewResponse {
     quantidade_planos: number;
     media_execucao: number | null;
     media_sem_zerados?: number | null;
+    fonte_percentual?: FonteAgregadaOperacional;
     total_despachos?: number;
     despachos_previstos?: number;
     despachos_nao_despachados?: number;
@@ -451,6 +459,9 @@ export interface IptPreviewResponse {
       raw_selimp_sum?: number;
       raw_selimp_count?: number;
       raw_selimp_nonzero_count?: number;
+      raw_nosso_sum?: number;
+      raw_nosso_count?: number;
+      raw_nosso_nonzero_count?: number;
     }>;
   };
   /** Itens completos com detalhes diários, equipamentos, frequência e próxima programação */
