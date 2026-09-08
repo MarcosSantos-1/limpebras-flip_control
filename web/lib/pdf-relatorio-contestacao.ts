@@ -557,7 +557,7 @@ export async function gerarRelatorioContestacaoPDF(
         const vistAjustado = Math.max(0, (row.vistorias_total ?? 0) - contested);
         const ifAjustado = vistAjustado > 0
           ? ((row.sem_irregularidades ?? 0) / vistAjustado) * 100
-          : 0;
+          : 100;
         return {
           subprefeitura: row.subprefeitura ?? "--",
           sem_irregularidades: row.sem_irregularidades ?? 0,

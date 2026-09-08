@@ -625,7 +625,7 @@ function calcularMediaIfPorSubprefeituraSnapshot(
 ): number {
   const percentuais = SUB_SIGLAS.map((sigla) => {
     const { total, sem_irregularidade } = bySigla[sigla];
-    return total > 0 ? (sem_irregularidade / total) * 100 : 0;
+    return total > 0 ? (sem_irregularidade / total) * 100 : 100;
   });
   const somaPercentuais = percentuais.reduce((acc, value) => acc + value, 0);
   return somaPercentuais / SUB_SIGLAS.length;

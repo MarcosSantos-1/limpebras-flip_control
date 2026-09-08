@@ -14,7 +14,7 @@ import { calcularCenariosIPT, calcularPFComDetalhes, type IptCenarios, type PfDe
 import { montarRespostaConservador, type Linha as IptLinhaConservador } from "../services/ipt-conservador.js";
 import { BFS_IF_EXCLUSAO_SQL, sqlBfsFiscalNaoEhSelimp } from "../constants/bfs.js";
 import { SUB_SIGLAS, DOMICILIOS_POR_REGIONAL, regionalToSigla } from "../constants/regionais.js";
-import { calcularMediaIfPorSubprefeitura } from "../services/ifBfs.js";
+import { calcularMediaIfPorSubprefeitura, calcularPercentualIfSub } from "../services/ifBfs.js";
 import {
   normalizarSetor,
   compareSetores,
@@ -729,7 +729,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         total_sem_irregularidade: semIrreg,
         if_por_sub: SUB_SIGLAS.map((sigla) => {
           const { total, sem_irregularidade } = bySigla[sigla];
-          const pct = total > 0 ? (sem_irregularidade / total) * 100 : 0;
+          const pct = calcularPercentualIfSub(total, sem_irregularidade);
           return { subprefeitura: sigla, total, sem_irregularidade, if_percentual: pct };
         }),
       };
@@ -1109,7 +1109,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
 
       const ifPorSub = SUB_SIGLAS.map((sigla) => {
         const { total, sem_irregularidade } = ifBySigla[sigla];
-        const pct = total > 0 ? (sem_irregularidade / total) * 100 : 0;
+        const pct = calcularPercentualIfSub(total, sem_irregularidade);
         const subResult = pontuacaoIFFromPercentual(pct);
         return {
           subprefeitura: sigla,
@@ -1143,7 +1143,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
           "Todos os BFS exceto 5 serviços: Coleta e transporte de entulho e grandes objetos...; Fornecimento, instalação e reposição de papeleiras...; Remoção de animais mortos de proprietários não identificados...; Operação dos Ecopontos; Remoção de Resíduos dos Ecopontos",
           "Exclui BFS cujo fiscal (coluna Fiscal) começa por \"SELIMP -\" (fiscalização interna SELIMP)",
           "Sem irregularidade = Status = 'Sem Irregularidades'",
-          "Cálculo: IF por sub (JT, CV, ST, MG) = (sem irregularidades / total) × 100, média dos 4 = IF final",
+          "Cálculo: IF por sub (JT, CV, ST, MG) = (sem irregularidades / total) × 100; sub sem BFS = 100%; média dos 4 = IF final",
         ],
         memoria_calculo:
           totalBfs > 0

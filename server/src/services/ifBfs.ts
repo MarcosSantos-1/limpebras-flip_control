@@ -2,13 +2,18 @@ import { pool } from "../db.js";
 import { BFS_IF_EXCLUSAO_SQL, sqlBfsFiscalNaoEhSelimp } from "../constants/bfs.js";
 import { SUB_SIGLAS, regionalToSigla } from "../constants/regionais.js";
 
-/** Média aritmética dos % das 4 subs (JT, CV, ST, MG). Sub sem BFS entra como 0%. */
+/** Sub sem BFS não possui irregularidade constatada e entra como 100% no IF. */
+export function calcularPercentualIfSub(total: number, semIrregularidade: number): number {
+  return total > 0 ? (semIrregularidade / total) * 100 : 100;
+}
+
+/** Média aritmética dos % das 4 subs (JT, CV, ST, MG). */
 export function calcularMediaIfPorSubprefeitura(
   bySigla: Record<string, { total: number; sem_irregularidade: number }>
 ): number {
   const percentuais = SUB_SIGLAS.map((sigla) => {
     const { total, sem_irregularidade } = bySigla[sigla];
-    return total > 0 ? (sem_irregularidade / total) * 100 : 0;
+    return calcularPercentualIfSub(total, sem_irregularidade);
   });
   const somaPercentuais = percentuais.reduce((acc, value) => acc + value, 0);
   return somaPercentuais / SUB_SIGLAS.length;
@@ -52,7 +57,7 @@ export async function computeIfEstimadoAdc(params: {
       total += Number(row.total ?? 0);
       semIrreg += Number(row.sem_irregularidade ?? 0);
     }
-    const ifPercent = total > 0 ? (semIrreg / total) * 100 : 0;
+    const ifPercent = calcularPercentualIfSub(total, semIrreg);
     return {
       if_percent: ifPercent,
       total_fiscalizacoes: total,
