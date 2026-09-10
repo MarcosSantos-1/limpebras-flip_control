@@ -623,12 +623,13 @@ async function insertIptServiceSnapshotsFromConsolidado(
 function calcularMediaIfPorSubprefeituraSnapshot(
   bySigla: Record<string, { total: number; sem_irregularidade: number }>
 ): number {
-  const percentuais = SUB_SIGLAS.map((sigla) => {
+  const percentuais = SUB_SIGLAS.filter((sigla) => bySigla[sigla].total > 0).map((sigla) => {
     const { total, sem_irregularidade } = bySigla[sigla];
-    return total > 0 ? (sem_irregularidade / total) * 100 : 100;
+    return (sem_irregularidade / total) * 100;
   });
+  if (percentuais.length === 0) return 0;
   const somaPercentuais = percentuais.reduce((acc, value) => acc + value, 0);
-  return somaPercentuais / SUB_SIGLAS.length;
+  return somaPercentuais / percentuais.length;
 }
 
 function isFullMonthPeriod(inicio: string, fim: string): { ano: number; mes: number } | null {

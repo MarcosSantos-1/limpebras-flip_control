@@ -731,7 +731,8 @@ export default function ExplicacaoIndicadoresPage() {
                 IF por sub = (sem irregularidades / total BFS escalonados) × 100
               </div>
               <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-2">
-                Média dos 4 percentuais (JT, CV, ST, MG) = IF final. BFS do período, exceto 5 serviços excluídos e exceto fiscalizações em que o fiscal (coluna Fiscal) começa por &quot;SELIMP -&quot;.
+                O IF final é a média dos percentuais das subs com BFS. Sub sem vistoria fica zerada na memória de cálculo e não entra no divisor.
+                BFS do período, exceto 5 serviços excluídos e fiscalizações em que o fiscal começa por &quot;SELIMP -&quot;.
               </p>
             </div>
 
@@ -742,7 +743,7 @@ export default function ExplicacaoIndicadoresPage() {
                   <strong>Por sub (JT, CV, ST, MG):</strong> IF_sub = (sem irregularidades / vistorias total) × 100 (percentual).
                 </li>
                 <li>
-                  <strong>IF final:</strong> média dos 4 percentuais (soma ÷ 4). Ex: 67%.
+                  <strong>IF final:</strong> média dos percentuais somente das subs com BFS. Ex.: uma sub sem BFS faz a soma ser dividida por 3.
                 </li>
                 <li>
                   <strong>Excluídos do cálculo:</strong>
@@ -856,7 +857,8 @@ export default function ExplicacaoIndicadoresPage() {
                     </p>
                   )}
                   <p className="text-sm">
-                    IF = média dos 4 percentuais = {formatarValor(detalhes.if.percentual ?? ((detalhes.if.valor ?? 0) / 10), 2)}%
+                    IF = média das {(detalhes.if.if_por_sub ?? []).filter((row) => row.vistorias_total > 0).length} subs com BFS ={" "}
+                    {formatarValor(detalhes.if.percentual ?? ((detalhes.if.valor ?? 0) / 10), 2)}%
                   </p>
                   <p className="text-sm">
                     Pontuação: <strong className="text-violet-600 dark:text-violet-300">{formatarValor(detalhes.if.pontuacao, 2)} pts</strong>

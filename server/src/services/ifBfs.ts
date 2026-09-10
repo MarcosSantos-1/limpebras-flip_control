@@ -2,26 +2,27 @@ import { pool } from "../db.js";
 import { BFS_IF_EXCLUSAO_SQL, sqlBfsFiscalNaoEhSelimp } from "../constants/bfs.js";
 import { SUB_SIGLAS, regionalToSigla } from "../constants/regionais.js";
 
-/** Sub sem BFS não possui irregularidade constatada e entra como 100% no IF. */
+/** Sub sem BFS não possui percentual apurado e fica zerada na memória de cálculo. */
 export function calcularPercentualIfSub(total: number, semIrregularidade: number): number {
-  return total > 0 ? (semIrregularidade / total) * 100 : 100;
+  return total > 0 ? (semIrregularidade / total) * 100 : 0;
 }
 
-/** Média aritmética dos % das 4 subs (JT, CV, ST, MG). */
+/** Média aritmética somente das subs que tiveram ao menos uma BFS no período. */
 export function calcularMediaIfPorSubprefeitura(
   bySigla: Record<string, { total: number; sem_irregularidade: number }>
 ): number {
-  const percentuais = SUB_SIGLAS.map((sigla) => {
+  const percentuais = SUB_SIGLAS.filter((sigla) => bySigla[sigla].total > 0).map((sigla) => {
     const { total, sem_irregularidade } = bySigla[sigla];
     return calcularPercentualIfSub(total, sem_irregularidade);
   });
+  if (percentuais.length === 0) return 0;
   const somaPercentuais = percentuais.reduce((acc, value) => acc + value, 0);
-  return somaPercentuais / SUB_SIGLAS.length;
+  return somaPercentuais / percentuais.length;
 }
 
 /**
  * IF estimado alinhado ao ADC: BFS no período, exclui 5 serviços e fiscais SELIMP -;
- * todas as subs → média dos 4 percentuais; uma sub → (sem irreg. / total) × 100 naquela sub.
+ * todas as subs → média apenas das subs com BFS; uma sub → (sem irreg. / total) × 100.
  */
 export async function computeIfEstimadoAdc(params: {
   periodo_inicial: string;

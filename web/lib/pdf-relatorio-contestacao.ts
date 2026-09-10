@@ -557,7 +557,7 @@ export async function gerarRelatorioContestacaoPDF(
         const vistAjustado = Math.max(0, (row.vistorias_total ?? 0) - contested);
         const ifAjustado = vistAjustado > 0
           ? ((row.sem_irregularidades ?? 0) / vistAjustado) * 100
-          : 100;
+          : 0;
         return {
           subprefeitura: row.subprefeitura ?? "--",
           sem_irregularidades: row.sem_irregularidades ?? 0,
@@ -565,7 +565,9 @@ export async function gerarRelatorioContestacaoPDF(
           if_percentual: ifAjustado,
         };
       });
-      const percentuaisAjustados = rowsAjustado.map((r) => r.if_percentual ?? 0);
+      const percentuaisAjustados = rowsAjustado
+        .filter((r) => r.vistorias_total > 0)
+        .map((r) => r.if_percentual ?? 0);
       const somaAjustada = percentuaisAjustados.reduce((s, p) => s + p, 0);
       const mediaAjustada =
         percentuaisAjustados.length > 0 ? somaAjustada / percentuaisAjustados.length : 0;

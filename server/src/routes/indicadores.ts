@@ -984,6 +984,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
       const ifResult = pontuacaoIFFromPercentual(mediaPercentualIf);
       const totalBfs = Object.values(ifBySigla).reduce((a, x) => a + x.total, 0);
       const semIrreg = Object.values(ifBySigla).reduce((a, x) => a + x.sem_irregularidade, 0);
+      const subsComBfsIf = SUB_SIGLAS.filter((sigla) => ifBySigla[sigla].total > 0);
 
       const periodo = { inicial: inicio, final: fim };
 
@@ -1143,11 +1144,20 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
           "Todos os BFS exceto 5 serviços: Coleta e transporte de entulho e grandes objetos...; Fornecimento, instalação e reposição de papeleiras...; Remoção de animais mortos de proprietários não identificados...; Operação dos Ecopontos; Remoção de Resíduos dos Ecopontos",
           "Exclui BFS cujo fiscal (coluna Fiscal) começa por \"SELIMP -\" (fiscalização interna SELIMP)",
           "Sem irregularidade = Status = 'Sem Irregularidades'",
-          "Cálculo: IF por sub (JT, CV, ST, MG) = (sem irregularidades / total) × 100; sub sem BFS = 100%; média dos 4 = IF final",
+          "Cálculo: IF por sub = (sem irregularidades / total) × 100; sub sem BFS fica com 0% na memória e não entra no divisor; IF final = média das subs com BFS",
         ],
         memoria_calculo:
           totalBfs > 0
-            ? `IF = média das 4 subs: (JT: ${ifPorSub.find((s) => s.subprefeitura === "JT")?.if_percentual?.toFixed(1) ?? 0}% + CV: ${ifPorSub.find((s) => s.subprefeitura === "CV")?.if_percentual?.toFixed(1) ?? 0}% + ST: ${ifPorSub.find((s) => s.subprefeitura === "ST")?.if_percentual?.toFixed(1) ?? 0}% + MG: ${ifPorSub.find((s) => s.subprefeitura === "MG")?.if_percentual?.toFixed(1) ?? 0}%) / 4 = ${(ifResult.percentual ?? 0).toFixed(2)}%`
+            ? `IF = média das ${subsComBfsIf.length} subs com BFS: (${subsComBfsIf
+                .map(
+                  (sigla) =>
+                    `${sigla}: ${ifPorSub
+                      .find((s) => s.subprefeitura === sigla)
+                      ?.if_percentual.toFixed(1) ?? "0.0"}%`
+                )
+                .join(" + ")}) / ${subsComBfsIf.length} = ${(ifResult.percentual ?? 0).toFixed(2)}%\nSubs sem BFS (0% na memória, fora do divisor): ${
+                SUB_SIGLAS.filter((sigla) => ifBySigla[sigla].total === 0).join(", ") || "nenhuma"
+              }`
             : "IF = (média dos % por sub) — Nenhum BFS escalonado no período.",
       };
 

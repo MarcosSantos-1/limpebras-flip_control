@@ -200,7 +200,7 @@ export default function SimuladorADCPage() {
       const d = ifPorSub[sub];
       const sem = Number(d?.sem) || 0;
       const total = Number(d?.total) || 0;
-      pcts.push(total > 0 ? (sem / total) * 100 : 0);
+      if (total > 0) pcts.push((sem / total) * 100);
     }
     const media = pcts.length > 0 ? pcts.reduce((a, b) => a + b, 0) / pcts.length : 0;
     return { pcts, media, pontuacao: pontuacaoIF(media) };
@@ -364,7 +364,9 @@ export default function SimuladorADCPage() {
           <Card className="border-0 shadow-md bg-amber-50/60 dark:bg-amber-950/30">
             <CardHeader>
               <CardTitle className="text-lg text-amber-800 dark:text-amber-200">IF – Indicador de Fiscalização</CardTitle>
-              <CardDescription>IF = média dos 4 subs. Cada sub: (sem irregularidades / total) × 100.</CardDescription>
+              <CardDescription>
+                IF = média das subs com BFS. Sub sem vistoria não entra no divisor.
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               {SUBS.map((sub) => (
@@ -402,7 +404,7 @@ export default function SimuladorADCPage() {
               ))}
               <div className="pt-3 mt-3 bg-amber-100/30 dark:bg-amber-900/20 rounded-lg px-3 py-2">
                 <div className="flex justify-between text-sm">
-                  <span>Média IF:</span>
+                  <span>Média IF ({ifResult.pcts.length} subs com BFS):</span>
                   <strong className="font-mono">{ifResult.media.toFixed(1)}%</strong>
                 </div>
                 <div className="flex justify-between text-sm mt-1">
