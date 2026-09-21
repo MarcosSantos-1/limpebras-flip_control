@@ -19,6 +19,7 @@ import {
 } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { ADCRingChart } from "@/components/adc-ring-chart";
+import { ForecastWatermark } from "@/components/forecast-watermark";
 import Lottie from "lottie-react";
 import loadingAnimation from "@/public/Loading.json";
 import { SACsChart } from "@/components/sacs-chart";
@@ -362,8 +363,13 @@ function DashboardContent() {
     const irdPontos = Math.min(kpisData.indicadores?.ird?.pontuacao || 0, 20);
     const iaPontos = Math.min(kpisData.indicadores?.ia?.pontuacao || 0, 20);
     const ifPontos = Math.min(kpisData.indicadores?.if?.pontuacao || 0, 20);
-    const iptPontos = kpisData.indicadores?.ipt?.pontuacao || 0;
+    const iptOficialPontos = kpisData.indicadores?.ipt?.pontuacao || 0;
     const iptValor = kpisData.indicadores?.ipt?.valor ?? null;
+    const iptPrevisao =
+      !kpisData.adc_override?.ativo && kpisData.ipt_sem_dados && kpisData.ipt_previsao
+        ? kpisData.ipt_previsao
+        : null;
+    const iptPontos = iptPrevisao ? iptPrevisao.pontuacao : iptOficialPontos;
     const totalADC =
       kpisData.adc_override?.ativo && kpisData.adc_override.adc_total != null
         ? kpisData.adc_override.adc_total
@@ -376,10 +382,11 @@ function DashboardContent() {
         IF: { valor: kpisData.indicadores?.if?.valor || 0, pontuacao: ifPontos },
         IPT: {
           valor: iptValor != null && !Number.isNaN(iptValor) ? iptValor : undefined,
-          pontuacao: iptPontos != null && !Number.isNaN(iptPontos) ? iptPontos : undefined,
+          pontuacao: iptOficialPontos != null && !Number.isNaN(iptOficialPontos) ? iptOficialPontos : undefined,
         },
         ADC: { total: totalADC, percentual: percentualADC },
       },
+      iptPrevisao,
       sacs_hoje: kpisData.sacs_hoje || 0,
       cncs_urgentes: kpisData.cncs_urgentes || 0,
     };
@@ -621,9 +628,25 @@ function DashboardContent() {
                 <CardHeader className="p-0 pb-2 relative z-10">
                   <CardTitle className="text-sm font-medium text-white/95 dark:text-purple-300">IPT - INDICADOR PLANO DE TRABALHO</CardTitle>
                 </CardHeader>
+                {indicators.iptPrevisao && <ForecastWatermark className="text-white" />}
                 <CardContent className="p-0 relative z-10">
                   {adcManual ? (
                     <ManualIndicatorBadge observacao={adcManualObservacao} iconClassName="text-white/90" />
+                  ) : indicators.iptPrevisao ? (
+                    <>
+                  <div className="mb-1 text-lg font-semibold text-white/85 dark:text-purple-200/80">
+                    ≈ {indicators.iptPrevisao.pontuacao} pontos
+                    <span className="text-xs text-white/70 dark:text-purple-300/70 block mt-1 leading-tight">
+                      média dos serviços (DDMX)
+                    </span>
+                  </div>
+                  <div
+                    className="text-4xl tracking-tight font-bold text-white drop-shadow-md"
+                    title={`Média dos serviços c/ zeros: ${indicators.iptPrevisao.percentual.toFixed(1)}% · ${indicators.iptPrevisao.servicos} serviços`}
+                  >
+                    ~{Math.round(indicators.iptPrevisao.percentual)}%
+                  </div>
+                    </>
                   ) : (
                     <>
                   <div className="mb-1 text-lg font-semibold text-white/85 dark:text-purple-200/80">
@@ -656,6 +679,7 @@ function DashboardContent() {
                 <ADCRingChart
                   total={indicators.data?.ADC?.total || 0}
                   percentual={indicators.data?.ADC?.percentual || 0}
+                  iptEmPrevisao={Boolean(indicators.iptPrevisao)}
                 />
               </Link>
             </div>

@@ -176,6 +176,12 @@ export interface KPIs {
   sacs_hoje: number;
   cncs_urgentes: number;
   ipt_sem_dados?: boolean;
+  /** Média dos serviços c/ zeros quando não há IPT SELIMP. Não substitui `indicadores.ipt`. */
+  ipt_previsao?: {
+    percentual: number;
+    pontuacao: number;
+    servicos: number;
+  } | null;
   adc_override?: AdcOverrideInfo;
 }
 

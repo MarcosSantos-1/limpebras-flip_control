@@ -5,9 +5,11 @@ import { useMemo } from "react"
 interface ADCRingChartProps {
   total: number
   percentual: number
+  /** O total inclui pontos de IPT estimados pela média dos serviços, não o IPT oficial. */
+  iptEmPrevisao?: boolean
 }
 
-export function ADCRingChart({ total, percentual }: ADCRingChartProps) {
+export function ADCRingChart({ total, percentual, iptEmPrevisao = false }: ADCRingChartProps) {
   const circumference = 2 * Math.PI * 90 // raio 90
   const strokeDashoffset = useMemo(() => {
     return circumference - (percentual / 100) * circumference
@@ -119,6 +121,11 @@ export function ADCRingChart({ total, percentual }: ADCRingChartProps) {
             <div className="text-sm font-medium text-zinc-700 dark:text-zinc-400">
               Pontos ADC
             </div>
+            {iptEmPrevisao && (
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
+                IPT em previsão
+              </div>
+            )}
             <div 
               className="text-lg font-semibold mt-1"
               style={{

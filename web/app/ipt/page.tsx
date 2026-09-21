@@ -77,6 +77,7 @@ import {
 } from "@/lib/api";
 import { useIptData } from "@/lib/use-ipt-data";
 import { ManualIndicatorBadge } from "@/components/manual-indicator-badge";
+import { ForecastWatermark } from "@/components/forecast-watermark";
 import { getSortKey, getSubFromPlano } from "@/lib/ipt-utils";
 import { cn } from "@/lib/utils";
 import { countIptBaseDadosExportRows, exportIptBaseDadosXlsx } from "@/lib/ipt-export-base-dados";
@@ -979,6 +980,9 @@ export default function IPTPage() {
     };
   }, [topServicos]);
 
+  const previsaoIptPercentual =
+    Boolean(kpisData?.ipt_sem_dados) && !adcManual ? mediaServicosAtivos.comZerados : null;
+
   /** Itens do comparativo no escopo do mês (cards) - para métricas do card Subprefeituras */
   const cardsComparativoItens = useMemo(
     () => (iptPreviewCards?.comparativo?.itens ?? []) as Array<{
@@ -1314,14 +1318,20 @@ export default function IPTPage() {
                 </div>
               )}
 
-              <div className="rounded-xl bg-emerald-500/[0.07] p-3.5 shadow-sm transition-all hover:shadow-md dark:bg-emerald-500/10">
+              <div className="relative overflow-hidden rounded-xl bg-emerald-500/[0.07] p-3.5 shadow-sm transition-all hover:shadow-md dark:bg-emerald-500/10">
+                {previsaoIptPercentual != null && (
+                  <ForecastWatermark className="text-emerald-800 dark:text-emerald-100" />
+                )}
+                <div className="relative z-10">
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-xs text-muted-foreground">
-                    {iptCard.cenarios?.diagnostico.cobertura_fonte === "oficial_selimp"
-                      ? "IPT oficial / cobertura inferida"
-                      : "IPT com cobertura presumida em 100%"}
+                    {previsaoIptPercentual != null
+                      ? "Previsão pela média dos serviços (DDMX)"
+                      : iptCard.cenarios?.diagnostico.cobertura_fonte === "oficial_selimp"
+                        ? "IPT oficial / cobertura inferida"
+                        : "IPT com cobertura presumida em 100%"}
                   </p>
-                  {iptCard.cenarios && (
+                  {previsaoIptPercentual == null && iptCard.cenarios && (
                     <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase ${iptRiskTone}`}>
                       {iptCard.cenarios.diagnostico.cobertura_fonte === "oficial_selimp"
                         ? `cob. ${iptCard.cenarios.diagnostico.cobertura_usada.toFixed(1)}%`
@@ -1329,13 +1339,27 @@ export default function IPTPage() {
                     </span>
                   )}
                 </div>
-                <p className="text-3xl font-bold text-emerald-600 mt-0.5">
-                  {iptCard.valor != null ? `${iptCard.valor.toFixed(1)}%` : "--"}
+                <p
+                  className="text-3xl font-bold text-emerald-600 mt-0.5"
+                  title={
+                    previsaoIptPercentual != null
+                      ? `Média dos serviços c/ zeros: ${previsaoIptPercentual.toFixed(1)}% · ${mediaServicosAtivos.totalComZerados} serviços`
+                      : undefined
+                  }
+                >
+                  {previsaoIptPercentual != null
+                    ? `~${Math.round(previsaoIptPercentual)}%`
+                    : iptCard.valor != null
+                      ? `${iptCard.valor.toFixed(1)}%`
+                      : "--"}
                 </p>
+                {previsaoIptPercentual != null && (
+                  <p className="mt-1 text-[11px] leading-tight text-muted-foreground">média dos serviços (DDMX)</p>
+                )}
                 <div className="mt-2.5 h-2 rounded-full bg-emerald-200/40 dark:bg-emerald-900/20">
                   <div
                     className="h-2 rounded-full bg-linear-to-r from-emerald-500 to-teal-500 transition-all"
-                    style={{ width: `${clamp(iptCard.valor ?? 0)}%` }}
+                    style={{ width: `${clamp(previsaoIptPercentual ?? iptCard.valor ?? 0)}%` }}
                   />
                 </div>
                 {/* marcadores de faixa */}
@@ -1351,17 +1375,26 @@ export default function IPTPage() {
                     </div>
                   ))}
                 </div>
+                </div>
               </div>
 
               <div className="rounded-xl bg-teal-500/[0.07] p-3.5 shadow-sm transition-all hover:shadow-md flex items-center justify-between dark:bg-teal-500/10">
                 <div>
-                  <p className="text-xs text-muted-foreground">Pontuação IPT no cenário principal</p>
-                  <p className="text-3xl font-bold text-teal-600 mt-0.5">{iptCard.pontuacao ?? 0}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {previsaoIptPercentual != null ? "Pontuação prevista da média" : "Pontuação IPT no cenário principal"}
+                  </p>
+                  <p className="text-3xl font-bold text-teal-600 mt-0.5">
+                    {previsaoIptPercentual != null
+                      ? kpisData?.ipt_previsao?.pontuacao != null
+                        ? `≈ ${kpisData.ipt_previsao.pontuacao}`
+                        : "—"
+                      : (iptCard.pontuacao ?? 0)}
+                  </p>
                 </div>
                 <Target className="h-8 w-8 text-teal-500/40" />
               </div>
 
-              {iptCard.cenarios && (
+              {previsaoIptPercentual == null && iptCard.cenarios && (
                 <div className="rounded-xl border border-border/70 bg-muted/50 p-3 text-xs text-muted-foreground dark:bg-muted/40">
                   <div className="grid grid-cols-3 gap-2 text-center">
                     <div>

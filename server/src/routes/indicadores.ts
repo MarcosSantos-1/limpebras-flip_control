@@ -42,6 +42,7 @@ import { listCronogramaSetores } from "../services/cronograma.js";
 import { buildDespachosResponse, colarDespachos, despacharManual } from "../services/despachosDiarios.js";
 import { percentDisplayToDecimal } from "../services/parseRelatorioConsolidado.js";
 import { formatDataInstalacaoBr } from "../services/formatDataInstalacaoBr.js";
+import { todayKeyBrt } from "../services/sac-derive.js";
 
 /** Ordens SELIMP a partir das planilhas consolidadas (prioridade sobre Report oficial). */
 async function fetchOrdensConsolidadoNoPeriodo(
@@ -579,6 +580,67 @@ type AdcOverrideRow = {
   observacao: string;
 };
 
+export type IptPrevisaoKpi = {
+  percentual: number;
+  pontuacao: number;
+  servicos: number;
+};
+
+/** Média simples de `media_execucao` por tipo de serviço — a mesma conta do card "Média dos serviços c/ zeros". */
+function mediaSimplesServicosComZeros(
+  servicos: Array<{ media_execucao?: number | null }>
+): { percentual: number; servicos: number } | null {
+  const values = servicos
+    .map((item) => item.media_execucao)
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  if (values.length === 0) return null;
+  const percentual = values.reduce((acc, value) => acc + value, 0) / values.length;
+  return { percentual: Number(percentual.toFixed(2)), servicos: values.length };
+}
+
+/**
+ * Previsão de IPT quando não há SELIMP: média dos serviços na janela dos cards
+ * (início do período até hoje, para não contar despachos futuros zerados).
+ * Reusa o cache de `/dashboard/ipt-preview`.
+ */
+async function calcularIptPrevisaoServicos(
+  client: any,
+  inicio: string,
+  fim: string
+): Promise<IptPrevisaoKpi | null> {
+  const hoje = todayKeyBrt();
+  if (!hoje || inicio > hoje) return null;
+  const scopeEnd = fim < hoje ? fim : hoje;
+  if (scopeEnd < inicio) return null;
+
+  const yesterdayKey = getYesterdayDateKeyBrt();
+  const previewKey = cacheKey("ipt_preview", {
+    periodo_inicial: inicio,
+    periodo_final: scopeEnd,
+    mostrar_todos: "",
+    subprefeitura: "",
+  });
+  const preview = await getOrSet(previewKey, () =>
+    buildIptPreviewFromConsolidado(client, {
+      escopo: "periodo",
+      scopeStart: inicio,
+      scopeEnd,
+      subFilter: "",
+      yesterdayKey,
+    })
+  );
+  const servicos = Array.isArray((preview as { servicos?: unknown }).servicos)
+    ? ((preview as { servicos: Array<{ media_execucao?: number | null }> }).servicos)
+    : [];
+  const media = mediaSimplesServicosComZeros(servicos);
+  if (!media) return null;
+  return {
+    percentual: media.percentual,
+    pontuacao: pontuacaoIPT(media.percentual).pontuacao,
+    servicos: media.servicos,
+  };
+}
+
 async function fetchAdcOverride(client: any, periodoInicial: string): Promise<AdcOverrideRow | null> {
   const [y, m] = periodoInicial.split("-").map(Number);
   if (!y || !m) return null;
@@ -769,7 +831,8 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         return applyAdcOverrideToKpis(basePayload, override);
       }
 
-      return basePayload;
+      const iptPrevisao = iptSemDados ? await calcularIptPrevisaoServicos(client, inicio, fim) : null;
+      return { ...basePayload, ipt_previsao: iptPrevisao };
       } finally {
         client.release();
       }
