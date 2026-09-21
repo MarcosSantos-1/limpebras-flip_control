@@ -17,6 +17,7 @@ import { getLastCronogramaImport } from "../services/cronograma.js";
 import { parseSetoresModulosWorkbook } from "../services/parseSetoresModulos.js";
 import { enrichDadosBateriaFromSetoresModulos } from "../services/enrichDadosBateriaFromSetores.js";
 import { normalizarSetor, parseSetor, resolveTipoServicoExibicao } from "../constants/ipt.js";
+import { maximosDiariosPorPlano } from "../services/ddmx-operacional.js";
 import { parseConsolidadoVeiculos, parseConsolidadoVarricao } from "../services/parseRelatorioConsolidado.js";
 import { type ReportLinhaRaw } from "../services/estimarDataReport.js";
 import { resolverDatasReport, extrairDataPlanejadaRaw } from "../services/resolverDatasReport.js";
@@ -338,20 +339,29 @@ async function insertIptServiceSnapshots(
     percentual: string | null;
     media_sem_zerados: string | null;
   }>(
-    `SELECT
-       COALESCE(NULLIF(TRIM(tipo_servico), ''), 'Nao informado') AS tipo_servico,
+    `WITH dias AS (
+       SELECT
+         COALESCE(NULLIF(TRIM(tipo_servico), ''), 'Nao informado') AS tipo_servico,
+         plano,
+         data_estimada::date AS dia,
+         MAX(percentual_execucao) AS percentual
+       FROM ipt_report_linhas
+       WHERE periodo_inicial = $1::date
+         AND periodo_final = $2::date
+         AND periodo_tipo = $3
+         AND LOWER(COALESCE(status, '')) LIKE '%encerrado%'
+         AND percentual_execucao IS NOT NULL
+         AND (data_estimada IS NULL OR data_estimada <= LEAST(CURRENT_DATE, $2::date))
+       GROUP BY 1, 2, 3
+     )
+     SELECT
+       tipo_servico,
        COUNT(DISTINCT plano)::int AS quantidade_planos,
        COUNT(*)::int AS total_despachos,
-       COUNT(*) FILTER (WHERE COALESCE(percentual_execucao, 0) <= 0)::int AS despachos_zerados,
-       ROUND(AVG(percentual_execucao), 4) AS percentual,
-       ROUND(AVG(percentual_execucao) FILTER (WHERE percentual_execucao > 0), 4) AS media_sem_zerados
-     FROM ipt_report_linhas
-     WHERE periodo_inicial = $1::date
-       AND periodo_final = $2::date
-       AND periodo_tipo = $3
-       AND LOWER(COALESCE(status, '')) LIKE '%encerrado%'
-       AND percentual_execucao IS NOT NULL
-       AND (data_estimada IS NULL OR data_estimada <= LEAST(CURRENT_DATE, $2::date))
+       COUNT(*) FILTER (WHERE COALESCE(percentual, 0) <= 0)::int AS despachos_zerados,
+       ROUND(AVG(percentual), 4) AS percentual,
+       ROUND(AVG(percentual) FILTER (WHERE percentual > 0), 4) AS media_sem_zerados
+     FROM dias
      GROUP BY 1
      ORDER BY 1`,
     [opts.periodoInicial, opts.periodoFinal, opts.periodoTipo]
@@ -443,15 +453,20 @@ async function rebuildIptServiceAccSnapshotsForMonth(
     const planos = new Set<string>();
     for (const day of [...byDay.keys()].sort()) {
       const dayRows = byDay.get(day) ?? [];
+      const porPlanoDia = new Map<string, number>();
+      for (const item of dayRows) {
+        const prev = porPlanoDia.get(item.plano);
+        porPlanoDia.set(item.plano, prev == null ? item.percentual : Math.max(prev, item.percentual));
+      }
       let daySum = 0;
       let dayZeroCount = 0;
-      for (const item of dayRows) {
-        totalSum += item.percentual;
+      for (const [plano, percentualDiaPlano] of porPlanoDia) {
+        totalSum += percentualDiaPlano;
         totalCount += 1;
-        daySum += item.percentual;
-        planos.add(item.plano);
-        if (item.percentual > 0) {
-          positiveSum += item.percentual;
+        daySum += percentualDiaPlano;
+        planos.add(plano);
+        if (percentualDiaPlano > 0) {
+          positiveSum += percentualDiaPlano;
           positiveCount += 1;
         } else {
           zeroCount += 1;
@@ -459,7 +474,7 @@ async function rebuildIptServiceAccSnapshotsForMonth(
         }
       }
       const percentual = totalCount > 0 ? Number((totalSum / totalCount).toFixed(4)) : null;
-      const percentualDia = dayRows.length > 0 ? Number((daySum / dayRows.length).toFixed(4)) : null;
+      const percentualDia = porPlanoDia.size > 0 ? Number((daySum / porPlanoDia.size).toFixed(4)) : null;
       const mediaSemZerados = positiveCount > 0 ? Number((positiveSum / positiveCount).toFixed(4)) : 0;
       await insertMetricSnapshot(client, {
         snapshotType: "ipt_servico_acc",
@@ -474,7 +489,7 @@ async function rebuildIptServiceAccSnapshotsForMonth(
         mediaSemZerados,
         quantidadePlanos: planos.size,
         totalDespachos: totalCount,
-        totalDespachosDia: dayRows.length,
+        totalDespachosDia: porPlanoDia.size,
         despachosZerados: zeroCount,
         despachosZeradosDia: dayZeroCount,
         sourceFile: opts.sourceFile,
@@ -482,7 +497,7 @@ async function rebuildIptServiceAccSnapshotsForMonth(
           generated_from: "ipt_report_linhas",
           acumulado: true,
           acumulado_de: opts.monthStart,
-          percentual_dia: "media_com_zerados_do_dia",
+          percentual_dia: "media_do_maximo_por_plano",
           service_label_strategy: "resolveTipoServicoExibicao",
         },
       });
@@ -578,18 +593,27 @@ async function insertIptServiceSnapshotsFromConsolidado(
     percentual: string | null;
     media_sem_zerados: string | null;
   }>(
-    `SELECT
-       COALESCE(NULLIF(TRIM(servico), ''), 'Nao informado') AS servico,
-       (data_referencia AT TIME ZONE 'America/Sao_Paulo')::date::text AS data_ref,
+    `WITH dias AS (
+       SELECT
+         COALESCE(NULLIF(TRIM(servico), ''), 'Nao informado') AS servico,
+         setor,
+         (data_referencia AT TIME ZONE 'America/Sao_Paulo')::date::text AS data_ref,
+         MAX((raw->>'percentual_selimp')::numeric) AS percentual
+       FROM ipt_imports
+       WHERE file_type IN ('ipt_consolidado_veiculos','ipt_consolidado_varricao')
+         AND source_file = $1
+         AND (raw->>'percentual_selimp') IS NOT NULL
+       GROUP BY 1, 2, 3
+     )
+     SELECT
+       servico,
+       data_ref,
        COUNT(DISTINCT setor)::int AS quantidade_planos,
        COUNT(*)::int AS total_despachos,
-       COUNT(*) FILTER (WHERE COALESCE((raw->>'percentual_selimp')::numeric, 0) <= 0)::int AS despachos_zerados,
-       ROUND(AVG((raw->>'percentual_selimp')::numeric), 4) AS percentual,
-       ROUND(AVG((raw->>'percentual_selimp')::numeric) FILTER (WHERE (raw->>'percentual_selimp')::numeric > 0), 4) AS media_sem_zerados
-     FROM ipt_imports
-     WHERE file_type IN ('ipt_consolidado_veiculos','ipt_consolidado_varricao')
-       AND source_file = $1
-       AND (raw->>'percentual_selimp') IS NOT NULL
+       COUNT(*) FILTER (WHERE COALESCE(percentual, 0) <= 0)::int AS despachos_zerados,
+       ROUND(AVG(percentual), 4) AS percentual,
+       ROUND(AVG(percentual) FILTER (WHERE percentual > 0), 4) AS media_sem_zerados
+     FROM dias
      GROUP BY 1, 2
      ORDER BY 2, 1`,
     [opts.sourceFile]
@@ -659,16 +683,21 @@ async function getIptPercentFromReportSnapshot(
   fim: string
 ): Promise<{ percentual: number; base: number } | null> {
   const reportRes = await client.query(
-    `SELECT plano, percentual_execucao, status
+    `SELECT plano, percentual_execucao, status, data_estimada::text AS data_estimada
      FROM ipt_report_linhas
      WHERE data_estimada >= $1::date AND data_estimada <= $2::date`,
     [inicio, fim]
   );
-  const porPlano = new Map<string, number[]>();
+  const itensDia: Array<{ plano: string; dia: string; percentual: number }> = [];
   let linhasEncerradas = 0;
   let zerosEncerradas = 0;
   let zerosTotal = 0;
-  for (const row of reportRes.rows as Array<{ plano: string; percentual_execucao: string | number | null; status: string | null }>) {
+  for (const row of reportRes.rows as Array<{
+    plano: string;
+    percentual_execucao: string | number | null;
+    status: string | null;
+    data_estimada: string | null;
+  }>) {
     const pctRawAll = Number(row.percentual_execucao);
     const pctAll = Number.isFinite(pctRawAll) ? Math.min(1, Math.max(0, pctRawAll > 1 ? pctRawAll / 100 : pctRawAll)) : null;
     if (pctAll === 0) zerosTotal += 1;
@@ -680,10 +709,13 @@ async function getIptPercentFromReportSnapshot(
     if (!Number.isFinite(pctRaw)) continue;
     const pctDecimal = Math.min(1, Math.max(0, pctRaw > 1 ? pctRaw / 100 : pctRaw));
     if (pctDecimal === 0) zerosEncerradas += 1;
-    const arr = porPlano.get(plano) ?? [];
-    arr.push(pctDecimal);
-    porPlano.set(plano, arr);
+    itensDia.push({
+      plano,
+      dia: String(row.data_estimada ?? "").slice(0, 10),
+      percentual: pctDecimal,
+    });
   }
+  const porPlano = maximosDiariosPorPlano(itensDia);
   const ordens: Array<{ percentual: number }> = [];
   for (const arr of porPlano.values()) {
     const max = Math.max(...arr);

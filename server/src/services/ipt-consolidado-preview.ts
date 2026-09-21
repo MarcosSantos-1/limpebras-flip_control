@@ -24,9 +24,15 @@ import {
 import {
   adicionarFallbackOperacional,
   criarAcumuladorExecucao,
+  escolherPercentualOperacional,
+  chaveDataDdmx,
+  extrairIntervaloDdmx,
   extrairPercentualDdmx,
   fonteAgregada,
+  isServicoBolha,
+  percentualDoDia,
   type AcumuladorExecucao,
+  type LinhaExecucaoDia,
 } from "./ddmx-operacional.js";
 
 const normalizeText = (value: string): string =>
@@ -41,6 +47,17 @@ const normalizeModuleCode = (value: string): string =>
     .trim()
     .replace(/\s+/g, "")
     .toUpperCase();
+
+function percentualConsolidado(raw: Record<string, unknown>): number | null {
+  for (const candidate of [raw.percentual_selimp, raw.percentual_limpebras]) {
+    if (candidate == null || candidate === "") continue;
+    const n = Number(candidate);
+    if (!Number.isFinite(n)) continue;
+    if (n >= 0 && n <= 1) return Number((n * 100).toFixed(2));
+    return Number(Math.min(100, Math.max(0, n)).toFixed(2));
+  }
+  return null;
+}
 
 function toDateKey(value: string | Date | null | undefined): string | null {
   if (value == null) return null;
@@ -156,10 +173,10 @@ export async function buildIptPreviewFromConsolidado(
   const dparams: unknown[] = [ddmxFileTypes];
   if (escopo === "dia_anterior" && scopeStart) {
     dparams.push(scopeStart);
-    ddmxDateFilter = ` AND data_referencia = $${dparams.length}::date`;
+    ddmxDateFilter = ` AND (data_referencia IS NULL OR data_referencia = $${dparams.length}::date)`;
   } else if (escopo === "periodo" && scopeStart && scopeEnd) {
     dparams.push(scopeStart, scopeEnd);
-    ddmxDateFilter = ` AND data_referencia >= $2::date AND data_referencia <= $3::date`;
+    ddmxDateFilter = ` AND (data_referencia IS NULL OR (data_referencia >= $2::date AND data_referencia <= $3::date))`;
   }
   const ddmxLegacyQuery = `SELECT setor, data_referencia, raw, servico
      FROM ipt_imports
@@ -170,10 +187,10 @@ export async function buildIptPreviewFromConsolidado(
   const newDateParams: unknown[] = [];
   if (escopo === "dia_anterior" && scopeStart) {
     newDateParams.push(scopeStart);
-    ddmxNewDateFilter = ` AND data_referencia = $1::date`;
+    ddmxNewDateFilter = ` AND (data_referencia IS NULL OR data_referencia = $1::date)`;
   } else if (escopo === "periodo" && scopeStart && scopeEnd) {
     newDateParams.push(scopeStart, scopeEnd);
-    ddmxNewDateFilter = ` AND data_referencia >= $1::date AND data_referencia <= $2::date`;
+    ddmxNewDateFilter = ` AND (data_referencia IS NULL OR (data_referencia >= $1::date AND data_referencia <= $2::date))`;
   }
   const ddmxVarricaoQuery = `SELECT setor, data_referencia, raw, servico
      FROM ipt_ddmx_varricao
@@ -580,6 +597,9 @@ export async function buildIptPreviewFromConsolidado(
     nosso_sum: number;
     nosso_count: number;
     nosso_zero_count: number;
+    ddmx_linhas: LinhaExecucaoDia[];
+    consolidado_max: number | null;
+    consolidado_count: number;
     despachos_selimp: number;
     despachos_nosso: number;
     estimados: number;
@@ -633,6 +653,9 @@ export async function buildIptPreviewFromConsolidado(
       nosso_sum: 0,
       nosso_count: 0,
       nosso_zero_count: 0,
+      ddmx_linhas: [],
+      consolidado_max: null,
+      consolidado_count: 0,
       despachos_selimp: 0,
       despachos_nosso: 0,
       estimados: 0,
@@ -690,14 +713,18 @@ export async function buildIptPreviewFromConsolidado(
     const planoRaw = normalizarSetor(rotaOrSetor);
     if (!planoRaw) continue;
     const plano = resolveVpCanonicalFromDdmx(planoRaw, vpCanonicalByMergeKey);
-    const dateKey = toDateKey(row.data_referencia);
-    if (!dateKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) continue;
+    const dateKey = chaveDataDdmx(row.data_referencia, rawData);
+    if (!dateKey) continue;
+    if (escopo === "dia_anterior" && scopeStart && dateKey !== scopeStart) continue;
+    if (escopo === "periodo" && scopeStart && scopeEnd && (dateKey < scopeStart || dateKey > scopeEnd)) continue;
 
     const planoEntry = getOrCreatePlano(plano);
 
     // tipo_servico do DDMX
     if (!planoEntry.tipo_servico) {
-      const tipoRaw = String(rawData.tipo_de_servico ?? rawData.tipo_servico ?? rawData.servico ?? row.servico ?? "").trim();
+      const tipoRaw = String(
+        rawData.tipo_de_servico ?? rawData.tipo_servico ?? rawData.servico ?? rawData.operacao ?? row.servico ?? "",
+      ).trim();
       if (tipoRaw) planoEntry.tipo_servico = tipoRaw;
     }
 
@@ -708,6 +735,8 @@ export async function buildIptPreviewFromConsolidado(
     const bucket = ensureBucket(planoEntry, dateKey);
 
     const pctVal = extrairPercentualDdmx(rawData);
+    const intervalo = extrairIntervaloDdmx(rawData);
+    bucket.ddmx_linhas.push({ percentual: pctVal, inicio: intervalo.inicio, fim: intervalo.fim });
     if (pctVal != null) {
       bucket.nosso_sum += pctVal;
       bucket.nosso_count += 1;
@@ -732,6 +761,48 @@ export async function buildIptPreviewFromConsolidado(
     }
   }
 
+  // Consolidado de veículos (Histórico de operações) só preenche plano+dia sem report e sem DDMX.
+  let consolidadoDateFilter = "";
+  const consolidadoParams: unknown[] = [];
+  if (escopo === "dia_anterior" && scopeStart) {
+    consolidadoParams.push(scopeStart);
+    consolidadoDateFilter = ` AND data_referencia = $1::date`;
+  } else if (escopo === "periodo" && scopeStart && scopeEnd) {
+    consolidadoParams.push(scopeStart, scopeEnd);
+    consolidadoDateFilter = ` AND data_referencia >= $1::date AND data_referencia <= $2::date`;
+  }
+  const consolidadoRes = await client.query(
+    `SELECT setor, data_referencia, servico, raw
+     FROM ipt_imports
+     WHERE file_type = 'ipt_consolidado_veiculos'${consolidadoDateFilter}`,
+    consolidadoParams,
+  );
+  for (const row of (consolidadoRes.rows ?? []) as Array<{
+    setor: string | null;
+    data_referencia: string | Date | null;
+    servico: string | null;
+    raw: Record<string, unknown> | null;
+  }>) {
+    const raw = row.raw ?? {};
+    const planoRaw = normalizarSetor(String(raw.setor ?? row.setor ?? "").trim());
+    if (!planoRaw) continue;
+    const plano = resolveVpCanonicalFromDdmx(planoRaw, vpCanonicalByMergeKey);
+    const dateKey = toDateKey(row.data_referencia);
+    if (!dateKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) continue;
+
+    const planoEntry = getOrCreatePlano(plano);
+    if (!planoEntry.tipo_servico) {
+      const tipoRaw = String(raw.operacao ?? row.servico ?? "").trim();
+      if (tipoRaw) planoEntry.tipo_servico = tipoRaw;
+    }
+    const bucket = ensureBucket(planoEntry, dateKey);
+    if (bucket.selimp_count > 0 || bucket.ddmx_linhas.length > 0) continue;
+    const pct = percentualConsolidado(raw);
+    if (pct == null) continue;
+    bucket.consolidado_max = bucket.consolidado_max == null ? pct : Math.max(bucket.consolidado_max, pct);
+    bucket.consolidado_count += 1;
+  }
+
   // --- Montar resultado ---
   const rows = Array.from(byPlano.values())
     .map((item) => {
@@ -750,12 +821,17 @@ export async function buildIptPreviewFromConsolidado(
       let despachosSelimp = 0;
       let zeroCountSelimp = 0;
       let maxSelimp: number | null = null;
+      let sumDiasSelimp = 0;
+      let countDiasSelimp = 0;
+      let sumDiasNosso = 0;
+      let countDiasNosso = 0;
       let sumNosso = 0;
       let countNosso = 0;
       let zeroCountNosso = 0;
       const operacional = criarAcumuladorExecucao();
       let countOperacionalSelimp = 0;
       let countOperacionalDdmx = 0;
+      let linhasFonte = 0;
       let despachosNosso = 0;
       let estimados = 0;
 
@@ -763,44 +839,57 @@ export async function buildIptPreviewFromConsolidado(
         .map((dateKey) => {
           const bucket = item.diario.get(dateKey);
           if (!bucket) return null;
-          const percentualSelimp =
-            bucket.selimp_count > 0 ? Number((bucket.selimp_sum / bucket.selimp_count).toFixed(2)) : null;
-          const percentualNosso =
-            bucket.nosso_count > 0 ? Number((bucket.nosso_sum / bucket.nosso_count).toFixed(2)) : null;
+          const bolha = isServicoBolha(parseSetor(item.plano)?.servico ?? item.servico_sigla);
+          const usandoConsolidado =
+            bucket.selimp_count === 0 && bucket.ddmx_linhas.length === 0 && bucket.consolidado_max != null;
+          const percentualSelimp = usandoConsolidado ? bucket.consolidado_max : bucket.selimp_max;
+          const percentualNosso = percentualDoDia(bucket.ddmx_linhas, bolha);
+          const despachosSelimpDia = bucket.despachos_selimp + (usandoConsolidado ? bucket.consolidado_count : 0);
           sumSelimp += bucket.selimp_sum;
           countSelimp += bucket.selimp_count;
-          despachosSelimp += bucket.despachos_selimp;
+          despachosSelimp += despachosSelimpDia;
           zeroCountSelimp += bucket.selimp_zero_count;
-          if (bucket.selimp_max != null) maxSelimp = maxSelimp == null ? bucket.selimp_max : Math.max(maxSelimp, bucket.selimp_max);
           sumNosso += bucket.nosso_sum;
           countNosso += bucket.nosso_count;
           zeroCountNosso += bucket.nosso_zero_count;
-          adicionarFallbackOperacional(
-            operacional,
-            {
-              sum: bucket.selimp_sum,
-              count: bucket.selimp_count,
-              nonzeroCount: bucket.selimp_count - bucket.selimp_zero_count,
-            },
-            {
-              sum: bucket.nosso_sum,
-              count: bucket.nosso_count,
-              nonzeroCount: bucket.nosso_count - bucket.nosso_zero_count,
-            },
-          );
-          if (bucket.selimp_count > 0) {
-            countOperacionalSelimp += bucket.selimp_count;
-          } else if (bucket.nosso_count > 0) {
-            countOperacionalDdmx += bucket.nosso_count;
+          if (percentualSelimp != null) {
+            sumDiasSelimp += percentualSelimp;
+            countDiasSelimp += 1;
+            maxSelimp = maxSelimp == null ? percentualSelimp : Math.max(maxSelimp, percentualSelimp);
+          }
+          if (percentualNosso != null) {
+            sumDiasNosso += percentualNosso;
+            countDiasNosso += 1;
+          }
+          const escolha = escolherPercentualOperacional(percentualSelimp, percentualNosso, { bolha });
+          if (escolha.percentual != null && escolha.fonte) {
+            const amostra = {
+              sum: escolha.percentual,
+              count: 1,
+              nonzeroCount: escolha.percentual > 0 ? 1 : 0,
+            };
+            const vazia = { sum: 0, count: 0, nonzeroCount: 0 };
+            adicionarFallbackOperacional(
+              operacional,
+              escolha.fonte === "selimp" ? amostra : vazia,
+              escolha.fonte === "ddmx" ? amostra : vazia,
+            );
+            if (escolha.fonte === "selimp") {
+              countOperacionalSelimp += 1;
+              linhasFonte += usandoConsolidado ? bucket.consolidado_count : bucket.selimp_count;
+            } else {
+              countOperacionalDdmx += 1;
+              linhasFonte += bucket.ddmx_linhas.length;
+            }
           }
           despachosNosso += bucket.despachos_nosso;
           estimados += bucket.estimados;
           return {
             data: dateKey,
             esperado: false,
-            percentual_selimp: percentualSelimp,
-            percentual_nosso: percentualNosso,
-            despachos_selimp: bucket.despachos_selimp,
+            percentual_selimp: percentualSelimp == null ? null : Number(percentualSelimp.toFixed(2)),
+            percentual_nosso: percentualNosso == null ? null : Number(percentualNosso.toFixed(2)),
+            despachos_selimp: despachosSelimpDia,
             despachos_nosso: bucket.despachos_nosso,
             data_estimada: bucket.data_estimada_alg,
           };
@@ -808,12 +897,12 @@ export async function buildIptPreviewFromConsolidado(
         .filter((d): d is NonNullable<typeof d> => d != null)
         .sort((a, b) => b.data.localeCompare(a.data));
 
-      const percentualSelimp = countSelimp > 0 ? Number((sumSelimp / countSelimp).toFixed(2)) : null;
+      const percentualSelimp = countDiasSelimp > 0 ? Number((sumDiasSelimp / countDiasSelimp).toFixed(2)) : null;
       const iptOrdemBlend =
         percentualSelimp != null && maxSelimp != null
           ? Number((0.48 * maxSelimp + 0.52 * percentualSelimp).toFixed(2))
           : null;
-      const percentualNosso = countNosso > 0 ? Number((sumNosso / countNosso).toFixed(2)) : null;
+      const percentualNosso = countDiasNosso > 0 ? Number((sumDiasNosso / countDiasNosso).toFixed(2)) : null;
       const origem =
         despachosSelimp > 0 && despachosNosso > 0
           ? "ambos"
@@ -872,6 +961,7 @@ export async function buildIptPreviewFromConsolidado(
         raw_nosso_nonzero_count: countNosso - zeroCountNosso,
         raw_operacional_sum: operacional.sum,
         raw_operacional_count: operacional.count,
+        raw_operacional_linhas: linhasFonte,
         raw_operacional_nonzero_count: operacional.nonzeroCount,
         raw_operacional_selimp_count: countOperacionalSelimp,
         raw_operacional_ddmx_count: countOperacionalDdmx,
@@ -1054,8 +1144,8 @@ export async function buildIptPreviewFromConsolidado(
     addPlanned(plannedServMap, tipoServico, plano, row.status ?? "");
   }
 
-  type OperationalAgg = AcumuladorExecucao & { quantidade: number };
-  const createOperationalAgg = (): OperationalAgg => ({ quantidade: 0, ...criarAcumuladorExecucao() });
+  type OperationalAgg = AcumuladorExecucao & { quantidade: number; linhas: number };
+  const createOperationalAgg = (): OperationalAgg => ({ quantidade: 0, linhas: 0, ...criarAcumuladorExecucao() });
   const legacySubMap = new Map<string, OperationalAgg>();
   const legacyServMap = new Map<string, OperationalAgg>();
   for (const r of rowsFiltered) {
@@ -1064,6 +1154,7 @@ export async function buildIptPreviewFromConsolidado(
     subAgg.quantidade += 1;
     subAgg.sum += r.raw_operacional_sum;
     subAgg.count += r.raw_operacional_count;
+    subAgg.linhas += r.raw_operacional_linhas;
     subAgg.nonzeroCount += r.raw_operacional_nonzero_count;
     if (r.raw_operacional_selimp_count > 0) subAgg.fontes.add("selimp");
     if (r.raw_operacional_ddmx_count > 0) subAgg.fontes.add("ddmx");
@@ -1074,6 +1165,7 @@ export async function buildIptPreviewFromConsolidado(
     srvAgg.quantidade += 1;
     srvAgg.sum += r.raw_operacional_sum;
     srvAgg.count += r.raw_operacional_count;
+    srvAgg.linhas += r.raw_operacional_linhas;
     srvAgg.nonzeroCount += r.raw_operacional_nonzero_count;
     if (r.raw_operacional_selimp_count > 0) srvAgg.fontes.add("selimp");
     if (r.raw_operacional_ddmx_count > 0) srvAgg.fontes.add("ddmx");
@@ -1081,33 +1173,33 @@ export async function buildIptPreviewFromConsolidado(
   }
   const subprefeituras = Array.from(legacySubMap.entries()).map(([subprefeitura, v]) => {
     const planned = plannedSubMap.get(subprefeitura);
-    const previsto = planned?.previstos ?? v.count;
+    const previsto = planned?.previstos ?? v.linhas;
     return {
       subprefeitura,
       quantidade_planos: v.quantidade,
       media_execucao: v.count > 0 ? Number((v.sum / v.count).toFixed(2)) : null,
       media_sem_zerados: v.nonzeroCount > 0 ? Number((v.sum / v.nonzeroCount).toFixed(2)) : null,
       fonte_percentual: fonteAgregada(v.fontes),
-      total_despachos: v.count,
+      total_despachos: v.linhas,
       despachos_previstos: previsto,
       despachos_nao_despachados: planned?.naoDespachados ?? 0,
-      cobertura_despachos: previsto > 0 ? Number(((v.count / previsto) * 100).toFixed(2)) : null,
+      cobertura_despachos: previsto > 0 ? Number(((v.linhas / previsto) * 100).toFixed(2)) : null,
       despachos_zerados: v.count - v.nonzeroCount,
     };
   });
   const servicos = Array.from(legacyServMap.entries()).map(([tipo_servico, v]) => {
     const planned = plannedServMap.get(tipo_servico);
-    const previsto = planned?.previstos ?? v.count;
+    const previsto = planned?.previstos ?? v.linhas;
     return {
       tipo_servico,
       quantidade_planos: v.quantidade,
       media_execucao: v.count > 0 ? Number((v.sum / v.count).toFixed(2)) : null,
       media_sem_zerados: v.nonzeroCount > 0 ? Number((v.sum / v.nonzeroCount).toFixed(2)) : null,
       fonte_percentual: fonteAgregada(v.fontes),
-      total_despachos: v.count,
+      total_despachos: v.linhas,
       despachos_previstos: previsto,
       despachos_nao_despachados: planned?.naoDespachados ?? 0,
-      cobertura_despachos: previsto > 0 ? Number(((v.count / previsto) * 100).toFixed(2)) : null,
+      cobertura_despachos: previsto > 0 ? Number(((v.linhas / previsto) * 100).toFixed(2)) : null,
       despachos_zerados: v.count - v.nonzeroCount,
     };
   });

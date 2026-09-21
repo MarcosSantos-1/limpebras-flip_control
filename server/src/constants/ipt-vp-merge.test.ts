@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   getVpMergeKey,
   registerVpCanonicalFromSelimp,
+  resolveTipoServicoExibicao,
   resolveVpCanonicalFromDdmx,
 } from "./ipt.js";
 
@@ -55,4 +56,19 @@ test("register e resolve nao alteram planos de outros servicos", () => {
   assert.equal(registerVpCanonicalFromSelimp("CV10500GO0015", registry), "CV10500GO0015");
   assert.equal(resolveVpCanonicalFromDdmx("CV10500GO0015", registry), "CV10500GO0015");
   assert.equal(registry.size, 0);
+});
+
+test("texto de compactador de varrição cai no serviço CV", () => {
+  assert.equal(
+    resolveTipoServicoExibicao("", "Coleta manual de resíduos de varrição com compactador"),
+    "Coleta manual de resíduos de varrição com compactador",
+  );
+  assert.equal(
+    resolveTipoServicoExibicao("CV20406CV0022", "operacao qualquer"),
+    "Coleta manual de resíduos de varrição com compactador",
+  );
+  assert.equal(
+    resolveTipoServicoExibicao("", "Coleta manual de resíduos de feiras-livres com compactador"),
+    "Coleta manual de resíduos de feiras-livres com compactador",
+  );
 });

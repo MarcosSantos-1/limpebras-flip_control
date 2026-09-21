@@ -33,22 +33,22 @@ const FILE_CONFIG: Record<IptFileType, ParseConfig> = {
   ipt_historico_os: {
     keyAliases: ["id", "rota", "veiculo"],
     setorAliases: ["setor", "rota"],
-    dateAliases: ["data", "data_planejado", "data_criacao", "data_liberacao", "data_inicio", "data_final"],
-    servicoAliases: ["tipo_de_servico", "tipo_servico"],
+    dateAliases: ["data", "data_planejado", "data_criacao", "data_liberacao", "data_inicio", "inicio_executado", "inicio_planejado", "data_final", "fim_executado", "data_fim"],
+    servicoAliases: ["tipo_de_servico", "tipo_servico", "servico", "operacao"],
     signalAliases: ["rota", "setor", "percentual_execucao", "data_planejado", "id"],
   },
   ipt_historico_os_varricao: {
     keyAliases: ["id", "rota", "veiculo"],
     setorAliases: ["setor", "rota"],
-    dateAliases: ["data", "data_planejado", "data_criacao", "data_liberacao", "data_inicio", "data_final"],
-    servicoAliases: ["tipo_de_servico", "tipo_servico"],
+    dateAliases: ["data", "data_planejado", "data_criacao", "data_liberacao", "data_inicio", "inicio_executado", "inicio_planejado", "data_final", "fim_executado", "data_fim"],
+    servicoAliases: ["tipo_de_servico", "tipo_servico", "servico", "operacao"],
     signalAliases: ["rota", "setor", "percentual_execucao", "data_planejado", "id"],
   },
   ipt_historico_os_compactadores: {
     keyAliases: ["id", "rota", "plano", "veiculo"],
     setorAliases: ["setor", "rota", "plano"],
-    dateAliases: ["data", "data_planejado", "data_criacao", "data_liberacao", "data_inicio", "data_final"],
-    servicoAliases: ["tipo_de_servico", "tipo_servico", "servico"],
+    dateAliases: ["data", "data_planejado", "data_criacao", "data_liberacao", "data_inicio", "inicio_executado", "inicio_planejado", "data_final", "fim_executado", "data_fim"],
+    servicoAliases: ["tipo_de_servico", "tipo_servico", "servico", "operacao"],
     signalAliases: ["rota", "setor", "percentual_execucao", "percentual", "data_planejado", "id"],
   },
   ipt_report_selimp: {

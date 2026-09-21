@@ -37,6 +37,7 @@ import {
 import { config } from "../config.js";
 import { requireHost } from "../auth.js";
 import { buildIptPreviewFromConsolidado } from "../services/ipt-consolidado-preview.js";
+import { maximosDiariosPorPlano } from "../services/ddmx-operacional.js";
 import { listCronogramaSetores } from "../services/cronograma.js";
 import { buildDespachosResponse, colarDespachos, despacharManual } from "../services/despachosDiarios.js";
 import { percentDisplayToDecimal } from "../services/parseRelatorioConsolidado.js";
@@ -49,14 +50,14 @@ async function fetchOrdensConsolidadoNoPeriodo(
   fim: string
 ): Promise<{ ordens: Array<{ percentual: number }>; P: number; R: number; F: number; cenarios?: IptCenarios }> {
   const veicRes = await client.query(
-    `SELECT setor, raw
+    `SELECT setor, data_referencia::text AS data_referencia, raw
      FROM ipt_imports
      WHERE file_type = 'ipt_consolidado_veiculos'
        AND data_referencia >= $1::date AND data_referencia <= $2::date`,
     [inicio, fim]
   );
   const varrRes = await client.query(
-    `SELECT setor, raw
+    `SELECT setor, data_referencia::text AS data_referencia, raw
      FROM ipt_imports
      WHERE file_type = 'ipt_consolidado_varricao'
        AND data_referencia >= $1::date AND data_referencia <= $2::date`,
@@ -67,7 +68,7 @@ async function fetchOrdensConsolidadoNoPeriodo(
   if (allRows.length === 0) {
     return { ordens, P: 0, R: 0, F: 0 };
   }
-  const porPlano = new Map<string, number[]>();
+  const itensDia: Array<{ plano: string; dia: string; percentual: number }> = [];
   for (const row of allRows) {
     const plano = normalizarSetor(String(row.setor ?? "").trim());
     if (!plano) continue;
@@ -75,10 +76,13 @@ async function fetchOrdensConsolidadoNoPeriodo(
     const s = Number(raw.percentual_selimp);
     if (!Number.isFinite(s)) continue;
     const pctDecimal = percentDisplayToDecimal(s > 1 ? s : s * 100);
-    const arr = porPlano.get(plano) ?? [];
-    arr.push(pctDecimal);
-    porPlano.set(plano, arr);
+    itensDia.push({
+      plano,
+      dia: String(row.data_referencia ?? "").slice(0, 10),
+      percentual: pctDecimal,
+    });
   }
+  const porPlano = maximosDiariosPorPlano(itensDia);
   for (const arr of porPlano.values()) {
     const max = Math.max(...arr);
     const media = arr.reduce((a, b) => a + b, 0) / arr.length;
@@ -154,7 +158,7 @@ async function fetchOrdensSelimpNoPeriodo(
   }
 
   const reportRes = await client.query(
-    `SELECT plano, percentual_execucao, status
+    `SELECT plano, percentual_execucao, status, data_estimada::text AS data_estimada
      FROM ipt_report_linhas
      WHERE data_estimada >= $1::date AND data_estimada <= $2::date`,
     [inicio, fim]
@@ -163,7 +167,7 @@ async function fetchOrdensSelimpNoPeriodo(
   const ordens: Array<{ percentual: number }> = [];
 
   if ((reportRes.rows?.length ?? 0) > 0) {
-    const porPlano = new Map<string, number[]>();
+    const itensDia: Array<{ plano: string; dia: string; percentual: number }> = [];
     let linhasEncerradas = 0;
     let zerosEncerradas = 0;
     let zerosTotal = 0;
@@ -180,10 +184,13 @@ async function fetchOrdensSelimpNoPeriodo(
       if (!Number.isFinite(pctRaw)) continue;
       const pctDecimal = Math.min(1, Math.max(0, pctRaw > 1 ? pctRaw / 100 : pctRaw));
       if (pctDecimal === 0) zerosEncerradas += 1;
-      const arr = porPlano.get(plano) ?? [];
-      arr.push(pctDecimal);
-      porPlano.set(plano, arr);
+      itensDia.push({
+        plano,
+        dia: String(row.data_estimada ?? "").slice(0, 10),
+        percentual: pctDecimal,
+      });
     }
+    const porPlano = maximosDiariosPorPlano(itensDia);
     for (const arr of porPlano.values()) {
       const max = Math.max(...arr);
       const media = arr.reduce((a, b) => a + b, 0) / arr.length;
@@ -499,14 +506,14 @@ async function fetchLinhasParaConservador(
   fim: string,
 ): Promise<{ linhas: IptLinhaConservador[]; fonte: string }> {
   const veicRes = await client.query(
-    `SELECT setor, raw
+    `SELECT setor, data_referencia::text AS data_referencia, raw
      FROM ipt_imports
      WHERE file_type = 'ipt_consolidado_veiculos'
        AND data_referencia >= $1::date AND data_referencia <= $2::date`,
     [inicio, fim],
   );
   const varrRes = await client.query(
-    `SELECT setor, raw
+    `SELECT setor, data_referencia::text AS data_referencia, raw
      FROM ipt_imports
      WHERE file_type = 'ipt_consolidado_varricao'
        AND data_referencia >= $1::date AND data_referencia <= $2::date`,
@@ -525,16 +532,17 @@ async function fetchLinhasParaConservador(
       const pctDecimal = percentDisplayToDecimal(s > 1 ? s : s * 100);
       linhas.push({
         plano,
+        dia: String(row.data_referencia ?? "").slice(0, 10) || undefined,
         percentual: Math.min(1, Math.max(0, pctDecimal)),
         subprefeitura: String(raw.subprefeitura ?? "").trim() || undefined,
-        servico: String(raw.servico ?? "").trim() || undefined,
+        servico: String(raw.servico ?? raw.operacao ?? "").trim() || undefined,
       });
     }
     return { linhas, fonte: "consolidado_selimp" };
   }
 
   const reportRes = await client.query(
-    `SELECT plano, percentual_execucao, status, subprefeitura, tipo_servico
+    `SELECT plano, percentual_execucao, status, subprefeitura, tipo_servico, data_estimada::text AS data_estimada
      FROM ipt_report_linhas
      WHERE data_estimada >= $1::date AND data_estimada <= $2::date`,
     [inicio, fim],
@@ -550,6 +558,7 @@ async function fetchLinhasParaConservador(
     const pctDecimal = Math.min(1, Math.max(0, pctRaw > 1 ? pctRaw / 100 : pctRaw));
     linhas.push({
       plano,
+      dia: String(row.data_estimada ?? "").slice(0, 10) || undefined,
       percentual: pctDecimal,
       subprefeitura: String(row.subprefeitura ?? "").trim() || undefined,
       servico: String(row.tipo_servico ?? "").trim() || undefined,
@@ -2047,7 +2056,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
               const rows = await pool.query<{ plano: string; data: string; pct: string | null }>(
                 `SELECT plano,
                         to_char(data_estimada, 'YYYY-MM-DD') AS data,
-                        AVG(CASE WHEN percentual_execucao > 1 THEN percentual_execucao ELSE percentual_execucao * 100 END) AS pct
+                        MAX(CASE WHEN percentual_execucao > 1 THEN percentual_execucao ELSE percentual_execucao * 100 END) AS pct
                    FROM ipt_report_linhas
                   WHERE data_estimada >= (CURRENT_DATE - $1::int)
                     AND LOWER(COALESCE(status, '')) LIKE '%encerrad%'
@@ -2217,14 +2226,19 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
           (async () => {
             try {
               const rows = await pool.query<{ servico: string | null; sub: string | null; pct: string | null }>(
-                `SELECT sm.servico, sm.subprefeitura AS sub,
-                        AVG(CASE WHEN r.percentual_execucao > 1 THEN r.percentual_execucao ELSE r.percentual_execucao * 100 END) AS pct
-                   FROM ipt_report_linhas r
-                   JOIN setores_modulos sm ON sm.setor = r.plano
-                  WHERE r.data_estimada >= date_trunc('month', CURRENT_DATE)::date
-                    AND LOWER(COALESCE(r.status, '')) LIKE '%encerrad%'
-                    AND r.percentual_execucao IS NOT NULL
-                  GROUP BY sm.servico, sm.subprefeitura`,
+                `WITH dias AS (
+                   SELECT sm.servico, sm.subprefeitura AS sub, r.plano, r.data_estimada::date AS dia,
+                          MAX(CASE WHEN r.percentual_execucao > 1 THEN r.percentual_execucao ELSE r.percentual_execucao * 100 END) AS pct
+                     FROM ipt_report_linhas r
+                     JOIN setores_modulos sm ON sm.setor = r.plano
+                    WHERE r.data_estimada >= date_trunc('month', CURRENT_DATE)::date
+                      AND LOWER(COALESCE(r.status, '')) LIKE '%encerrad%'
+                      AND r.percentual_execucao IS NOT NULL
+                    GROUP BY sm.servico, sm.subprefeitura, r.plano, r.data_estimada::date
+                 )
+                 SELECT servico, sub, AVG(pct) AS pct
+                   FROM dias
+                  GROUP BY servico, sub`,
               );
               execucaoPorServicoSub = rows.rows
                 .filter((r) => r.servico && r.sub && r.pct != null)

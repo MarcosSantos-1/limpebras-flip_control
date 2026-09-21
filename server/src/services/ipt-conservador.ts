@@ -32,6 +32,8 @@ export interface Linha {
   subprefeitura?: string;
   /** Código de serviço normalizado (opcional, para corte). */
   servico?: string;
+  /** Dia yyyy-mm-dd. Quando presente, o blend usa o máximo do plano naquele dia. */
+  dia?: string;
 }
 
 export interface VarianteResultado {
@@ -153,12 +155,28 @@ export function calcularVariantesIpt(linhas: Linha[]): {
   const linhasZeradas = linhas.filter((l) => l.percentual <= 0).length;
   const linhasNaoZeradas = linhas.filter((l) => l.percentual > 0);
 
-  // Agregação por plano (mantendo zeros)
+  // Agregação por plano. Com dia informado, cada plano+dia entra uma vez (o máximo).
   const porPlano = new Map<string, number[]>();
-  for (const l of linhas) {
-    const arr = porPlano.get(l.plano) ?? [];
-    arr.push(l.percentual);
-    porPlano.set(l.plano, arr);
+  const usaDia = linhas.some((l) => l.dia);
+  if (usaDia) {
+    const porDia = new Map<string, number>();
+    for (const l of linhas) {
+      const chave = `${l.plano}|${l.dia ?? ""}`;
+      const prev = porDia.get(chave);
+      if (prev == null || l.percentual > prev) porDia.set(chave, l.percentual);
+    }
+    for (const [chave, percentual] of porDia) {
+      const plano = chave.slice(0, chave.lastIndexOf("|"));
+      const arr = porPlano.get(plano) ?? [];
+      arr.push(percentual);
+      porPlano.set(plano, arr);
+    }
+  } else {
+    for (const l of linhas) {
+      const arr = porPlano.get(l.plano) ?? [];
+      arr.push(l.percentual);
+      porPlano.set(l.plano, arr);
+    }
   }
   const planosDistintos = porPlano.size;
   let planosZerados = 0;

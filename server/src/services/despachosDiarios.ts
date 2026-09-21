@@ -12,8 +12,13 @@ import { parseDespachoColagem } from "./parseDespachoColagem.js";
 import {
   despachoOperacionalPresente,
   escolherPercentualOperacional,
+  chaveDataDdmx,
+  extrairIntervaloDdmx,
   extrairPercentualDdmx,
+  isServicoBolha,
+  percentualDoDia,
   type FontePercentualOperacional,
+  type LinhaExecucaoDia,
 } from "./ddmx-operacional.js";
 
 /** dom..sab → tokens usados em cronograma_setores.dias_semana. */
@@ -148,6 +153,7 @@ interface SelimpDia {
 interface DdmxDia {
   count: number;
   pct: number;
+  linhas: LinhaExecucaoDia[];
 }
 
 /**
@@ -194,7 +200,13 @@ export async function buildDespachosResponse(
     `SELECT plano,
             to_char(data_estimada, 'YYYY-MM-DD') AS data,
             COUNT(*)::int AS c,
-            AVG(percentual_execucao) AS pct,
+            MAX(
+              CASE
+                WHEN percentual_execucao IS NULL THEN NULL
+                WHEN percentual_execucao > 1 THEN percentual_execucao
+                ELSE percentual_execucao * 100
+              END
+            ) AS pct,
             COUNT(*) FILTER (WHERE COALESCE(percentual_execucao, 0) <= 0)::int AS zeros
      FROM ipt_report_linhas
      WHERE data_estimada >= $1::date AND data_estimada <= $2::date
@@ -210,13 +222,13 @@ export async function buildDespachosResponse(
     if (!selPorDia.has(r.data)) selPorDia.set(r.data, new Map());
     const m = selPorDia.get(r.data)!;
     const prev = m.get(setor);
-    const pctVal = r.pct == null ? null : Number(r.pct) > 1 ? Number(r.pct) : Number(r.pct) * 100;
+    const pctVal = r.pct == null ? null : Number(r.pct);
     if (!prev) {
       m.set(setor, { count: r.c, pct: pctVal, zeros: r.zeros });
     } else {
       prev.count += r.c;
       prev.zeros += r.zeros;
-      if (pctVal != null) prev.pct = prev.pct == null ? pctVal : (prev.pct + pctVal) / 2;
+      if (pctVal != null) prev.pct = prev.pct == null ? pctVal : Math.max(prev.pct, pctVal);
     }
   }
 
@@ -231,13 +243,13 @@ export async function buildDespachosResponse(
       pool.query<DdmxRow>(
         `SELECT setor, to_char(data_referencia, 'YYYY-MM-DD') AS data, raw
          FROM ipt_ddmx_varricao
-         WHERE data_referencia >= $1::date AND data_referencia <= $2::date`,
+         WHERE data_referencia IS NULL OR (data_referencia >= $1::date AND data_referencia <= $2::date)`,
         [rangeStart, dia],
       ),
       pool.query<DdmxRow>(
         `SELECT setor, to_char(data_referencia, 'YYYY-MM-DD') AS data, raw
          FROM ipt_ddmx_veiculos
-         WHERE data_referencia >= $1::date AND data_referencia <= $2::date`,
+         WHERE data_referencia IS NULL OR (data_referencia >= $1::date AND data_referencia <= $2::date)`,
         [rangeStart, dia],
       ),
     ]);
@@ -251,7 +263,7 @@ export async function buildDespachosResponse(
       `SELECT setor, to_char(data_referencia, 'YYYY-MM-DD') AS data, raw
        FROM ipt_imports
        WHERE file_type = ANY($1)
-         AND data_referencia >= $2::date AND data_referencia <= $3::date`,
+         AND (data_referencia IS NULL OR (data_referencia >= $2::date AND data_referencia <= $3::date))`,
       [
         ["ipt_historico_os", "ipt_historico_os_varricao", "ipt_historico_os_compactadores"],
         rangeStart,
@@ -266,17 +278,30 @@ export async function buildDespachosResponse(
     const raw = r.raw ?? {};
     const setorRaw = normalizarSetor(String(raw.rota ?? raw.plano ?? raw.setor ?? r.setor ?? ""));
     if (!setorRaw) continue;
+    const dataKey = chaveDataDdmx(r.data, raw);
+    if (!dataKey || dataKey < rangeStart || dataKey > dia) continue;
     const percentual = extrairPercentualDdmx(raw);
-    if (percentual == null) continue;
+    const intervalo = extrairIntervaloDdmx(raw);
     const setor = resolveVpCanonicalFromDdmx(setorRaw, vpCanonicalByMergeKey);
-    if (!ddmxPorDia.has(r.data)) ddmxPorDia.set(r.data, new Map());
-    const diaMap = ddmxPorDia.get(r.data)!;
+    if (!ddmxPorDia.has(dataKey)) ddmxPorDia.set(dataKey, new Map());
+    const diaMap = ddmxPorDia.get(dataKey)!;
     const atual = diaMap.get(setor);
+    const linha: LinhaExecucaoDia = { percentual, inicio: intervalo.inicio, fim: intervalo.fim };
     if (!atual) {
-      diaMap.set(setor, { count: 1, pct: percentual });
+      diaMap.set(setor, { count: 1, pct: percentual ?? 0, linhas: [linha] });
     } else {
-      atual.pct = (atual.pct * atual.count + percentual) / (atual.count + 1);
       atual.count += 1;
+      atual.linhas.push(linha);
+    }
+  }
+  for (const diaMap of ddmxPorDia.values()) {
+    for (const [setor, atual] of diaMap) {
+      const pct = percentualDoDia(atual.linhas, isServicoBolha(parseSetor(setor)?.servico));
+      if (pct == null) {
+        diaMap.delete(setor);
+        continue;
+      }
+      atual.pct = pct;
     }
   }
 
@@ -309,7 +334,9 @@ export async function buildDespachosResponse(
     const despachosSelimp = sel?.count ?? 0;
     const percentualSelimp = sel?.pct != null ? Math.round(sel.pct) : null;
     const percentualDdmx = ddmx?.pct != null ? Math.round(ddmx.pct) : null;
-    const efetivo = escolherPercentualOperacional(percentualSelimp, percentualDdmx);
+    const efetivo = escolherPercentualOperacional(percentualSelimp, percentualDdmx, {
+      bolha: isServicoBolha(parseSetor(s.setor)?.servico),
+    });
     const despachado = despachoOperacionalPresente(despachadoManual, despachosSelimp, percentualDdmx);
     if (!esperado && !despachado) continue; // fora do recorte acionável
 
@@ -354,7 +381,9 @@ export async function buildDespachosResponse(
     const ddmx = ddmxDia.get(setor) as DdmxDia | undefined;
     const percentualSelimp = sel?.pct != null ? Math.round(sel.pct) : null;
     const percentualDdmx = ddmx?.pct != null ? Math.round(ddmx.pct) : null;
-    const efetivo = escolherPercentualOperacional(percentualSelimp, percentualDdmx);
+    const efetivo = escolherPercentualOperacional(percentualSelimp, percentualDdmx, {
+      bolha: isServicoBolha(parsed.servico),
+    });
     linhas.push({
       setor,
       subprefeitura: parsed.sub,
@@ -389,7 +418,9 @@ export async function buildDespachosResponse(
     const sel = selDia.get(setor) as SelimpDia | undefined;
     const percentualSelimp = sel?.pct != null ? Math.round(sel.pct) : null;
     const percentualDdmx = Math.round(ddmx.pct);
-    const efetivo = escolherPercentualOperacional(percentualSelimp, percentualDdmx);
+    const efetivo = escolherPercentualOperacional(percentualSelimp, percentualDdmx, {
+      bolha: isServicoBolha(parsed.servico),
+    });
     linhas.push({
       setor,
       subprefeitura: parsed.sub,

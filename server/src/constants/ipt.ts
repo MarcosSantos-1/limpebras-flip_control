@@ -171,6 +171,10 @@ export function resolveTipoServicoExibicao(plano: string, tipoServicoRaw: string
     return SERVICO_ASSEIO_POPULACAO_RUA;
   }
 
+  if (compact.includes("compactador") && compact.includes("varricao") && !compact.includes("feira")) {
+    return SERVICO_POR_CODIGO.CV;
+  }
+
   return raw;
 }
 
