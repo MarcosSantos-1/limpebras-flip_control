@@ -2,6 +2,7 @@ import pg from "pg";
 import { config } from "./config.js";
 import { encryptPassword } from "./auth-crypto.js";
 import { APP_PAGE_KEYS, DEFAULT_USER_ALLOWED_PAGES } from "./auth-shared.js";
+import { preencherVinculosPortateisHistorico } from "./services/vincularPortateisHistorico.js";
 
 const { Pool } = pg;
 
@@ -649,6 +650,29 @@ export async function runMigrations() {
       `UPDATE ipt_dados_bateria SET selimp_id = NULL, updated_at = NOW()
        WHERE tipo_modulo = 'PORTATIL' AND selimp_id IS NOT NULL`
     ).catch(() => {});
+
+    // Um portátil cobre a equipe inteira (serviço + sub), não um mapa.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS portatil_vinculos (
+        id              SERIAL PRIMARY KEY,
+        nome            TEXT NOT NULL,
+        subprefeitura   TEXT,
+        servico         TEXT,
+        origem          TEXT NOT NULL DEFAULT 'manual',
+        created_at      TIMESTAMPTZ DEFAULT NOW(),
+        updated_at      TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client.query("ALTER TABLE portatil_vinculos ADD COLUMN IF NOT EXISTS subprefeitura TEXT").catch(() => {});
+    await client.query("ALTER TABLE portatil_vinculos ADD COLUMN IF NOT EXISTS servico TEXT").catch(() => {});
+    await client.query("ALTER TABLE portatil_vinculos ADD COLUMN IF NOT EXISTS origem TEXT NOT NULL DEFAULT 'manual'").catch(() => {});
+    await client.query("ALTER TABLE portatil_vinculos DROP COLUMN IF EXISTS setor").catch(() => {});
+    await client.query("DROP INDEX IF EXISTS ux_portatil_vinculos_nome_setor").catch(() => {});
+    await client.query("DROP INDEX IF EXISTS idx_portatil_vinculos_setor").catch(() => {});
+    await client.query(
+      "CREATE UNIQUE INDEX IF NOT EXISTS ux_portatil_vinculos_nome ON portatil_vinculos(nome)"
+    ).catch(() => {});
+    await preencherVinculosPortateisHistorico(client).catch(() => {});
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS modulo_selimp (

@@ -20,6 +20,7 @@ import {
   Battery,
   Network,
   Send,
+  Smartphone,
   type LucideIcon,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -73,6 +74,13 @@ const iptNavItems: SidebarNavDotItem[] = [
     icon: Battery,
     pageKey: "ipt" as AuthPageKey,
     dotClassName: "bg-emerald-500 shadow-emerald-500/40",
+  },
+  {
+    href: "/ipt/portateis",
+    label: "Portáteis",
+    icon: Smartphone,
+    pageKey: "ipt" as AuthPageKey,
+    dotClassName: "bg-cyan-500 shadow-cyan-500/40",
   },
   {
     href: "/ipt/cruzamento",
@@ -138,6 +146,7 @@ const ccoAfterNavItems: SidebarNavItem[] = [
 
 const iptRestrictedNavItems: SidebarNavItem[] = [
   { href: "/ipt/bateria", label: "Análise de Módulos", icon: ChartColumnStacked, pageKey: "ipt" as AuthPageKey },
+  { href: "/ipt/portateis", label: "Portáteis", icon: Smartphone, pageKey: "ipt" as AuthPageKey },
   { href: "/ipt", label: "IPT", icon: Activity, pageKey: "ipt" as AuthPageKey, match: "exact" as const },
   {
     href: "https://geoplano-limpebras.vercel.app/map",

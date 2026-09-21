@@ -18,6 +18,7 @@ const PAGE_ACCESS_BY_PATH: Record<string, AuthPageKey> = {
   "/indicadores": "indicadores",
   "/ipt": "ipt",
   "/ipt/bateria": "ipt",
+  "/ipt/portateis": "ipt",
   "/ipt/despachos": "ipt_despachos",
   "/sacs": "sacs",
   "/bfs": "bfs",
@@ -27,7 +28,7 @@ const PAGE_ACCESS_BY_PATH: Record<string, AuthPageKey> = {
   "/admin/users": "admin_users",
 }
 
-const IPT_RESTRICTED_ALLOWED_PATHS = ["/ipt", "/ipt/bateria", "/upload"] as const
+const IPT_RESTRICTED_ALLOWED_PATHS = ["/ipt", "/ipt/bateria", "/ipt/portateis", "/upload"] as const
 /** CCO: acesso operacional ao IPT. Home = IPT Geral. */
 const CCO_HOME_PATH = "/ipt"
 function isAllowedCcoPath(pathname: string): boolean {

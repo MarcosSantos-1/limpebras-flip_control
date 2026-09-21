@@ -710,6 +710,31 @@ export interface SetorModuloPatch {
   ddmxInstalacao?: string | null;
 }
 
+/** Sub e serviço da equipe do portátil. Não há mapa: o módulo cobre o serviço inteiro. */
+export interface PortatilAtribuicao {
+  subprefeitura: string | null;
+  servico: string | null;
+  origem: "historico" | "manual";
+}
+
+/** Snapshot mais recente de um módulo PORTATIL em ipt_dados_bateria. */
+export interface PortatilModulo {
+  nome: string;
+  dataExportacao: string;
+  comunicacao: "ON" | "OFF";
+  bateriaRaw: string | null;
+  bateriaPercentual: number | null;
+  bateriaDesatualizada: boolean;
+  ultimaComunicacao: string | null;
+  atribuicao: PortatilAtribuicao | null;
+}
+
+export interface PortateisModulosResponse {
+  modulos: PortatilModulo[];
+  dataExportacao: string | null;
+  servicos: string[];
+}
+
 // API calls
 export const apiService = {
   extractErrorMessage: getErrorMessage,
@@ -1214,6 +1239,17 @@ export const apiService = {
   },
   updateSetorModulo: async (id: number, patch: SetorModuloPatch): Promise<{ ok: boolean; setor: SetorModulo }> => {
     const { data } = await api.put(`/setores/${id}`, patch);
+    return data;
+  },
+  getPortateisModulos: async (): Promise<PortateisModulosResponse> => {
+    const { data } = await api.get('/portateis/modulos');
+    return data;
+  },
+  updatePortatilVinculo: async (
+    nome: string,
+    atribuicao: { subprefeitura: string; servico: string },
+  ): Promise<{ ok: boolean; nome: string; atribuicao: PortatilAtribuicao | null }> => {
+    const { data } = await api.put('/portateis/vinculos', { nome, ...atribuicao });
     return data;
   },
   // ===== Trocas de bateria =====
