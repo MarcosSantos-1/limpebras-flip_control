@@ -25,6 +25,8 @@ import {
   SERVICO_ASSEIO_POPULACAO_RUA,
   CRONOGRAMA_SERVICOS,
   getYesterdayDateKeyBrt,
+  registerVpCanonicalFromSelimp,
+  resolveVpCanonicalFromDdmx,
   parseDateKeyLocal,
   diffInDaysAbs,
   isFrequencyDate,
@@ -37,7 +39,8 @@ import {
 import { config } from "../config.js";
 import { requireHost } from "../auth.js";
 import { buildIptPreviewFromConsolidado } from "../services/ipt-consolidado-preview.js";
-import { maximosDiariosPorPlano } from "../services/ddmx-operacional.js";
+import { chaveDataDdmx, extrairPercentualDdmx, maximosDiariosPorPlano } from "../services/ddmx-operacional.js";
+import { parseDdmxBateriaFromRaw } from "../services/parseDdmxBateria.js";
 import { listCronogramaSetores } from "../services/cronograma.js";
 import { buildDespachosResponse, colarDespachos, despacharManual } from "../services/despachosDiarios.js";
 import { percentDisplayToDecimal } from "../services/parseRelatorioConsolidado.js";
@@ -709,6 +712,185 @@ function applyAdcOverrideToKpis(payload: Record<string, unknown>, override: AdcO
       pontuacao_ipt: pontuacaoIpt,
     },
   };
+}
+
+type ExecFonte = "ddmx" | "selimp";
+type ExecDia = { data: string; percentual: number | null; fonte: ExecFonte };
+type DdmxDiaAcc = { sum: number; count: number };
+type DdmxBateriaAcc = {
+  data: string;
+  sum: number;
+  count: number;
+  raw: string;
+  rawIgual: boolean;
+  desatualizadas: number;
+  total: number;
+};
+export type BateriaDdmxAtual = {
+  data: string;
+  percentual: number | null;
+  raw: string;
+  desatualizada: boolean;
+  despachos: number;
+};
+
+function adicionarBateriaDdmx(map: Map<string, DdmxBateriaAcc>, plano: string, data: string, parsed: ReturnType<typeof parseDdmxBateriaFromRaw>) {
+  const cur = map.get(plano);
+  if (!cur || data > cur.data) {
+    map.set(plano, {
+      data,
+      sum: parsed.bateria_percentual ?? 0,
+      count: parsed.bateria_percentual != null ? 1 : 0,
+      raw: parsed.bateria_raw,
+      rawIgual: true,
+      desatualizadas: parsed.bateria_desatualizada ? 1 : 0,
+      total: 1,
+    });
+    return;
+  }
+  if (data !== cur.data) return;
+  if (parsed.bateria_percentual != null) {
+    cur.sum += parsed.bateria_percentual;
+    cur.count += 1;
+  }
+  if (parsed.bateria_raw && cur.raw && parsed.bateria_raw !== cur.raw) cur.rawIgual = false;
+  if (!cur.raw && parsed.bateria_raw) cur.raw = parsed.bateria_raw;
+  if (parsed.bateria_desatualizada) cur.desatualizadas += 1;
+  cur.total += 1;
+}
+
+function finalizarBateriaDdmx(acc: DdmxBateriaAcc): BateriaDdmxAtual {
+  return {
+    data: acc.data,
+    percentual: acc.count > 0 ? Math.round((acc.sum / acc.count) * 100) / 100 : null,
+    raw: acc.rawIgual ? acc.raw : "",
+    desatualizada: acc.total > 0 && acc.desatualizadas === acc.total,
+    despachos: acc.total,
+  };
+}
+
+/** DDMX no dia vence. Dia despachado sem percentual entra na data e fica de fora da média. SELIMP só preenche dia sem DDMX. */
+function mesclarExecucaoDdmxSelimp(
+  selimpPorPlano: Map<string, Map<string, number>>,
+  ddmxPorPlano: Map<string, Map<string, DdmxDiaAcc>>,
+  bateriaPorPlano: Map<string, DdmxBateriaAcc>,
+  setores: Array<{ setor: string; servico: string; sub: string }>,
+  monthStart: string,
+): {
+  history: Map<string, ExecDia[]>;
+  media: Map<string, number>;
+  bateria: Map<string, BateriaDdmxAtual>;
+  vp: Map<string, string>;
+  execucaoPorServicoSub: { servico: string; sub: string; execucao: number }[];
+} {
+  const vp = new Map<string, string>();
+  for (const row of setores) {
+    if (row.setor) registerVpCanonicalFromSelimp(row.setor, vp);
+  }
+
+  const selimpCanon = new Map<string, Map<string, number>>();
+  for (const [plano, dias] of selimpPorPlano) {
+    const canon = registerVpCanonicalFromSelimp(plano, vp);
+    const bucket = selimpCanon.get(canon) ?? new Map<string, number>();
+    for (const [data, pct] of dias) {
+      const prev = bucket.get(data);
+      bucket.set(data, prev == null ? pct : Math.max(prev, pct));
+    }
+    selimpCanon.set(canon, bucket);
+  }
+
+  const ddmxCanon = new Map<string, Map<string, DdmxDiaAcc>>();
+  for (const [plano, dias] of ddmxPorPlano) {
+    const canon = resolveVpCanonicalFromDdmx(plano, vp);
+    const bucket = ddmxCanon.get(canon) ?? new Map<string, DdmxDiaAcc>();
+    for (const [data, acc] of dias) {
+      const prev = bucket.get(data);
+      if (!prev) bucket.set(data, { sum: acc.sum, count: acc.count });
+      else {
+        prev.sum += acc.sum;
+        prev.count += acc.count;
+      }
+    }
+    ddmxCanon.set(canon, bucket);
+  }
+
+  const bateria = new Map<string, BateriaDdmxAtual>();
+  for (const [plano, acc] of bateriaPorPlano) {
+    const canon = resolveVpCanonicalFromDdmx(plano, vp);
+    const leitura = finalizarBateriaDdmx(acc);
+    const prev = bateria.get(canon);
+    if (!prev || leitura.data > prev.data) {
+      bateria.set(canon, leitura);
+      continue;
+    }
+    if (leitura.data !== prev.data) continue;
+    const count = (prev.percentual != null ? prev.despachos : 0) + (leitura.percentual != null ? leitura.despachos : 0);
+    const sum =
+      (prev.percentual != null ? prev.percentual * prev.despachos : 0) +
+      (leitura.percentual != null ? leitura.percentual * leitura.despachos : 0);
+    bateria.set(canon, {
+      data: leitura.data,
+      percentual: count > 0 ? Math.round((sum / count) * 100) / 100 : null,
+      raw: prev.raw && leitura.raw && prev.raw === leitura.raw ? prev.raw : "",
+      desatualizada: prev.desatualizada && leitura.desatualizada,
+      despachos: prev.despachos + leitura.despachos,
+    });
+  }
+
+  const history = new Map<string, ExecDia[]>();
+  const media = new Map<string, number>();
+  const planos = new Set<string>([...selimpCanon.keys(), ...ddmxCanon.keys()]);
+  for (const plano of planos) {
+    const byDate = new Map<string, ExecDia>();
+    for (const [data, acc] of ddmxCanon.get(plano) ?? []) {
+      byDate.set(data, {
+        data,
+        percentual: acc.count > 0 ? Math.round((acc.sum / acc.count) * 100) / 100 : null,
+        fonte: "ddmx",
+      });
+    }
+    for (const [data, pct] of selimpCanon.get(plano) ?? []) {
+      if (byDate.has(data)) continue;
+      byDate.set(data, { data, percentual: pct, fonte: "selimp" });
+    }
+    const list = Array.from(byDate.values()).sort((a, b) => b.data.localeCompare(a.data));
+    history.set(plano, list);
+    const vals = list
+      .map((item) => item.percentual)
+      .filter((value): value is number => value != null && Number.isFinite(value));
+    if (vals.length > 0) {
+      media.set(plano, Math.round((vals.reduce((sum, value) => sum + value, 0) / vals.length) * 100) / 100);
+    }
+  }
+
+  const setorMeta = new Map<string, { servico: string; sub: string }>();
+  for (const row of setores) {
+    if (!row.setor || !row.servico || !row.sub) continue;
+    setorMeta.set(registerVpCanonicalFromSelimp(row.setor, vp), { servico: row.servico, sub: row.sub });
+  }
+  const chartAcc = new Map<string, { servico: string; sub: string; sum: number; count: number }>();
+  for (const [plano, list] of history) {
+    const meta = setorMeta.get(plano);
+    if (!meta) continue;
+    for (const dia of list) {
+      if (dia.data < monthStart || dia.percentual == null || !Number.isFinite(dia.percentual)) continue;
+      const key = `${meta.servico}|${meta.sub}`;
+      const cur = chartAcc.get(key) ?? { servico: meta.servico, sub: meta.sub, sum: 0, count: 0 };
+      cur.sum += dia.percentual;
+      cur.count += 1;
+      chartAcc.set(key, cur);
+    }
+  }
+  const execucaoPorServicoSub = Array.from(chartAcc.values())
+    .filter((row) => row.count > 0)
+    .map((row) => ({
+      servico: row.servico,
+      sub: row.sub,
+      execucao: Math.round((row.sum / row.count) * 100) / 100,
+    }))
+    .filter((row) => Number.isFinite(row.execucao));
+
+  return { history, media, bateria, vp, execucaoPorServicoSub };
 }
 
 export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
@@ -2096,7 +2278,13 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         // Todas as queries são resilientes: falha em uma não derruba o endpoint.
         const PERIODO_DIAS = 60;
         const execMap = new Map<string, number>();
-        const execHistoryMap = new Map<string, Array<{ data: string; percentual: number }>>();
+        const execHistoryMap = new Map<string, ExecDia[]>();
+        const selimpPorPlano = new Map<string, Map<string, number>>();
+        const ddmxPorPlano = new Map<string, Map<string, DdmxDiaAcc>>();
+        const bateriaDdmxPorPlano = new Map<string, DdmxBateriaAcc>();
+        const setoresMeta: Array<{ setor: string; servico: string; sub: string }> = [];
+        let vpExecucao = new Map<string, string>();
+        let bateriaDdmxCanon = new Map<string, BateriaDdmxAtual>();
         const kmMap = new Map<string, number>();
         const pracaMap = new Map<string, string>();
         const offStreakMap = new Map<string, number>();
@@ -2109,11 +2297,11 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
         // Bateria diária por módulo (últimos ~35 dias) — usado no accordion (bateria por dia da execução).
         const bateriaPorDiaMap = new Map<string, { data: string; percentual: number | null; desatualizada: boolean }[]>();
         let evolucaoProdutividade: { data: string; produtividade: number }[] = [];
-        // Execução SELIMP por tipo de serviço × subprefeitura (mês corrente) — gráfico "Produtividade dos Setores".
+        // Execução do mês por tipo de serviço × sub (DDMX como base) — gráfico "Produtividade dos Setores".
         let execucaoPorServicoSub: { servico: string; sub: string; execucao: number }[] = [];
 
         await Promise.all([
-          // % de execução por setor (ipt_report_linhas, encerrados, últimos 60 dias)
+          // % SELIMP por setor (ipt_report_linhas, encerrados, últimos 60 dias) — só entra no dia sem DDMX
           (async () => {
             try {
               const rows = await pool.query<{ plano: string; data: string; pct: string | null }>(
@@ -2133,18 +2321,106 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
                 if (!key || r.pct == null) continue;
                 const percentual = Math.round(Number(r.pct) * 100) / 100;
                 if (!Number.isFinite(percentual)) continue;
-                const list = execHistoryMap.get(key) ?? [];
-                list.push({ data: r.data, percentual });
-                execHistoryMap.set(key, list);
-              }
-              for (const [key, list] of execHistoryMap) {
-                const media = list.length > 0
-                  ? list.reduce((sum, item) => sum + item.percentual, 0) / list.length
-                  : null;
-                if (media != null) execMap.set(key, Math.round(media * 100) / 100);
+                const dias = selimpPorPlano.get(key) ?? new Map<string, number>();
+                const prev = dias.get(r.data);
+                dias.set(r.data, prev == null ? percentual : Math.max(prev, percentual));
+                selimpPorPlano.set(key, dias);
               }
             } catch {
-              /* execução é opcional */
+              /* execução SELIMP é opcional */
+            }
+          })(),
+          // Execução e bateria DDMX (tabelas dedicadas + ipt_imports legado), últimos 60 dias
+          (async () => {
+            try {
+              const hoje = todayKeyBrt();
+              const cutoff = (() => {
+                if (!/^\d{4}-\d{2}-\d{2}$/.test(hoje)) return "";
+                const [y, m, d] = hoje.split("-").map(Number);
+                const dt = new Date(Date.UTC(y, m - 1, d));
+                dt.setUTCDate(dt.getUTCDate() - PERIODO_DIAS);
+                const mm = String(dt.getUTCMonth() + 1).padStart(2, "0");
+                const dd = String(dt.getUTCDate()).padStart(2, "0");
+                return `${dt.getUTCFullYear()}-${mm}-${dd}`;
+              })();
+              type DdmxRow = { setor: string | null; data_referencia: string | Date | null; raw: Record<string, unknown> | null };
+              const fileTypes = ["ipt_historico_os", "ipt_historico_os_varricao", "ipt_historico_os_compactadores"];
+              const legacy = await pool.query<DdmxRow>(
+                `SELECT setor, data_referencia, raw
+                   FROM ipt_imports
+                  WHERE file_type = ANY($1::text[])
+                    AND (data_referencia IS NULL OR data_referencia >= (CURRENT_DATE - $2::int))`,
+                [fileTypes, PERIODO_DIAS],
+              );
+              let dedicadas: DdmxRow[] = [];
+              try {
+                const [vr, vv] = await Promise.all([
+                  pool.query<DdmxRow>(
+                    `SELECT setor, data_referencia, raw
+                       FROM ipt_ddmx_varricao
+                      WHERE data_referencia IS NULL OR data_referencia >= (CURRENT_DATE - $1::int)`,
+                    [PERIODO_DIAS],
+                  ),
+                  pool.query<DdmxRow>(
+                    `SELECT setor, data_referencia, raw
+                       FROM ipt_ddmx_veiculos
+                      WHERE data_referencia IS NULL OR data_referencia >= (CURRENT_DATE - $1::int)`,
+                    [PERIODO_DIAS],
+                  ),
+                ]);
+                dedicadas = [...(vr.rows ?? []), ...(vv.rows ?? [])];
+              } catch {
+                /* tabelas ipt_ddmx_* ainda não criadas */
+              }
+              const visto = new Set<string>();
+              const absorver = (row: DdmxRow, legado: boolean) => {
+                const rawData = (row.raw ?? {}) as Record<string, unknown>;
+                const rota = String(rawData.rota ?? rawData.plano ?? rawData.setor ?? row.setor ?? "").trim();
+                const plano = normalizarSetor(rota);
+                if (!plano) return;
+                const dateKey = chaveDataDdmx(row.data_referencia, rawData);
+                if (!dateKey || (cutoff && dateKey < cutoff) || (hoje && dateKey > hoje)) return;
+                const chave = `${plano}|${dateKey}`;
+                if (legado && visto.has(chave)) return;
+                if (!legado) visto.add(chave);
+                const dias = ddmxPorPlano.get(plano) ?? new Map<string, DdmxDiaAcc>();
+                const acc = dias.get(dateKey) ?? { sum: 0, count: 0 };
+                const pct = extrairPercentualDdmx(rawData);
+                if (pct != null) {
+                  acc.sum += pct;
+                  acc.count += 1;
+                }
+                dias.set(dateKey, acc);
+                ddmxPorPlano.set(plano, dias);
+                const parsed = parseDdmxBateriaFromRaw(rawData);
+                if (parsed.bateria_raw || parsed.bateria_percentual != null) {
+                  adicionarBateriaDdmx(bateriaDdmxPorPlano, plano, dateKey, parsed);
+                }
+              };
+              for (const row of dedicadas) absorver(row, false);
+              for (const row of legacy.rows ?? []) absorver(row, true);
+            } catch {
+              /* execução DDMX é opcional */
+            }
+          })(),
+          (async () => {
+            try {
+              const rows = await pool.query<{ setor: string | null; servico: string | null; sub: string | null }>(
+                `SELECT setor, servico, subprefeitura AS sub
+                   FROM setores_modulos
+                  WHERE setor IS NOT NULL AND TRIM(setor) <> ''`,
+              );
+              for (const row of rows.rows) {
+                const setor = normalizarSetor(String(row.setor ?? ""));
+                if (!setor) continue;
+                setoresMeta.push({
+                  setor,
+                  servico: String(row.servico ?? "").trim(),
+                  sub: String(row.sub ?? "").trim(),
+                });
+              }
+            } catch {
+              /* metadados de setor são opcionais */
             }
           })(),
           // KM de produção por setor (setores_modulos)
@@ -2285,36 +2561,6 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
               /* série temporal é opcional */
             }
           })(),
-          // Execução SELIMP por tipo de serviço × subprefeitura no mês corrente (ipt_report_linhas × setores_modulos)
-          (async () => {
-            try {
-              const rows = await pool.query<{ servico: string | null; sub: string | null; pct: string | null }>(
-                `WITH dias AS (
-                   SELECT sm.servico, sm.subprefeitura AS sub, r.plano, r.data_estimada::date AS dia,
-                          MAX(CASE WHEN r.percentual_execucao > 1 THEN r.percentual_execucao ELSE r.percentual_execucao * 100 END) AS pct
-                     FROM ipt_report_linhas r
-                     JOIN setores_modulos sm ON sm.setor = r.plano
-                    WHERE r.data_estimada >= date_trunc('month', CURRENT_DATE)::date
-                      AND LOWER(COALESCE(r.status, '')) LIKE '%encerrad%'
-                      AND r.percentual_execucao IS NOT NULL
-                    GROUP BY sm.servico, sm.subprefeitura, r.plano, r.data_estimada::date
-                 )
-                 SELECT servico, sub, AVG(pct) AS pct
-                   FROM dias
-                  GROUP BY servico, sub`,
-              );
-              execucaoPorServicoSub = rows.rows
-                .filter((r) => r.servico && r.sub && r.pct != null)
-                .map((r) => ({
-                  servico: String(r.servico),
-                  sub: String(r.sub),
-                  execucao: Math.round(Number(r.pct) * 100) / 100,
-                }))
-                .filter((r) => Number.isFinite(r.execucao));
-            } catch {
-              /* execução por serviço é opcional */
-            }
-          })(),
           // Bateria diária por módulo (últimos ~35 dias) para casar com os dias de execução no accordion.
           (async () => {
             try {
@@ -2346,6 +2592,21 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
           })(),
         ]);
 
+        const hojeMes = todayKeyBrt();
+        const monthStart = /^\d{4}-\d{2}-\d{2}$/.test(hojeMes) ? `${hojeMes.slice(0, 8)}01` : "";
+        const seriesExec = mesclarExecucaoDdmxSelimp(
+          selimpPorPlano,
+          ddmxPorPlano,
+          bateriaDdmxPorPlano,
+          setoresMeta,
+          monthStart,
+        );
+        for (const [plano, list] of seriesExec.history) execHistoryMap.set(plano, list);
+        for (const [plano, media] of seriesExec.media) execMap.set(plano, media);
+        vpExecucao = seriesExec.vp;
+        bateriaDdmxCanon = seriesExec.bateria;
+        execucaoPorServicoSub = seriesExec.execucaoPorServicoSub;
+
         const modules = result.rows.map((r) => {
           const ultima = r.ultima_comunicacao;
           const statusSinal = String(r.status_sinal_manual ?? r.status_sinal_calculado ?? "");
@@ -2356,7 +2617,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
             : []
           ).map((d) => {
             const setorStr = String(d?.setor ?? "");
-            const key = normalizarSetor(setorStr);
+            const key = registerVpCanonicalFromSelimp(normalizarSetor(setorStr), vpExecucao);
             const execucao = execMap.get(key);
             const execucoes = key ? execHistoryMap.get(key) ?? [] : [];
             const km = kmMap.get(key);
@@ -2377,6 +2638,12 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
             execVals.length > 0
               ? Math.round((execVals.reduce((a, b) => a + b, 0) / execVals.length) * 100) / 100
               : null;
+          let bateriaDdmx: BateriaDdmxAtual | null = null;
+          for (const sd of setoresDias) {
+            const leitura = bateriaDdmxCanon.get(registerVpCanonicalFromSelimp(normalizarSetor(sd.setor), vpExecucao));
+            if (!leitura) continue;
+            if (!bateriaDdmx || leitura.data > bateriaDdmx.data) bateriaDdmx = leitura;
+          }
           return {
             id: r.id,
             subprefeitura: String(r.sub ?? ""),
@@ -2407,6 +2674,7 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
             produtividade: tm ? tm.produtividade : Number(r.produtividade_bateria ?? 0),
             contagemDesde: tm?.desde ?? null,
             bateriaPorDia: bateriaPorDiaMap.get(selimpKey) ?? [],
+            bateriaDdmx,
           };
         });
 

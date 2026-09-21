@@ -204,11 +204,21 @@ interface ModuleData {
   produtividade: number;
   contagemDesde?: string | null;
   bateriaPorDia?: BateriaDia[];
+  bateriaDdmx?: BateriaDdmxAtual | null;
 }
 
 interface ExecucaoSelimpDia {
   data: string;
-  percentual: number;
+  percentual: number | null;
+  fonte?: "ddmx" | "selimp";
+}
+
+interface BateriaDdmxAtual {
+  data: string;
+  percentual: number | null;
+  raw: string;
+  desatualizada: boolean;
+  despachos: number;
 }
 
 interface BateriaDia {
@@ -621,7 +631,7 @@ function exportTrocasBateriaXlsx(
     "Última Troca",
     "Motivo atual",
     "Qtd. cargas SELIMP",
-    "Execução média SELIMP 30d (%)",
+    "Execução média 30d (%)",
     "Serviços",
     "Setores/Dias",
     "Comunicação",
@@ -637,7 +647,7 @@ function exportTrocasBateriaXlsx(
     "Dias ON",
     "Dias OFF",
     "Dias OFF consecutivos",
-    "Execução média SELIMP 60d (%)",
+    "Execução média 60d (%)",
     "Manutenção atual",
     "Data ordenado manutenção",
     "Data manutenção realizada",
@@ -761,7 +771,7 @@ function exportTrocasBateriaXlsx(
     ["Período selecionado", periodLabel],
     ["Módulos exportados", modules.length],
     ["Eventos de troca exportados", trocaRows.length],
-    ["Execução média SELIMP", "Últimos 60 e 30 dias, percentual somente"],
+    ["Execução média", "Últimos 60 e 30 dias, DDMX como base"],
     ["Exportado em", new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })],
   ]);
   metaSheet["!cols"] = [{ wch: 28 }, { wch: 48 }];
@@ -1110,27 +1120,44 @@ function duracoesBateriaAtualizada(m: ModuleData, history: TrocaHistoryRecord[],
 }
 
 function execucaoSelimpHistoryOf(m: ModuleData, limit = 10, days = 30): ExecucaoSelimpDia[] {
-  const byDate = new Map<string, { sum: number; count: number }>();
+  const byDate = new Map<string, { sum: number; count: number; fonte: "ddmx" | "selimp" }>();
   for (const sd of setoresDiasOf(m)) {
     for (const item of sd.execucoes ?? []) {
-      if (!item.data || !Number.isFinite(item.percentual)) continue;
+      if (!item.data || item.percentual == null || !Number.isFinite(item.percentual)) continue;
       if (!isDateInPeriod(item.data, `${days}d`)) continue;
-      const cur = byDate.get(item.data) ?? { sum: 0, count: 0 };
+      const cur = byDate.get(item.data) ?? { sum: 0, count: 0, fonte: item.fonte === "selimp" ? "selimp" : "ddmx" };
       cur.sum += item.percentual;
       cur.count += 1;
+      if (item.fonte === "ddmx") cur.fonte = "ddmx";
       byDate.set(item.data, cur);
     }
   }
   return Array.from(byDate.entries())
-    .map(([data, v]) => ({ data, percentual: Math.round((v.sum / v.count) * 10) / 10 }))
+    .map(([data, v]) => ({ data, percentual: Math.round((v.sum / v.count) * 10) / 10, fonte: v.fonte }))
     .sort((a, b) => b.data.localeCompare(a.data))
     .slice(0, limit);
+}
+
+/** DDMX na janela recente manda no rótulo; SELIMP só quando a série não tem DDMX. */
+function fonteExecucaoRecente(m: ModuleData, days = 30): "ddmx" | "selimp" | null {
+  let ddmx = false;
+  let selimp = false;
+  for (const sd of setoresDiasOf(m)) {
+    for (const item of sd.execucoes ?? []) {
+      if (!item.data || !isDateInPeriod(item.data, `${days}d`)) continue;
+      if (item.fonte === "ddmx") ddmx = true;
+      else if (item.percentual != null) selimp = true;
+    }
+  }
+  if (ddmx) return "ddmx";
+  if (selimp) return "selimp";
+  return null;
 }
 
 function mediaExecucaoSelimp(m: ModuleData, days = 30): number | null {
   const vals = execucaoSelimpHistoryOf(m, 999, days)
     .map((item) => item.percentual)
-    .filter((value) => Number.isFinite(value));
+    .filter((value): value is number => value != null && Number.isFinite(value));
   if (vals.length > 0) return Math.round((vals.reduce((sum, value) => sum + value, 0) / vals.length) * 10) / 10;
   return days >= 60 && m.produtividadeExecucao != null ? Math.round(m.produtividadeExecucao * 10) / 10 : null;
 }
@@ -2022,7 +2049,7 @@ export default function BateriaDashboardPage() {
     return SUB_ORDER.filter((s) => present.has(s));
   }, [data]);
 
-  /** Execução SELIMP no mês por tipo de serviço × sub (barras agrupadas). */
+  /** Execução do mês por tipo de serviço × sub (DDMX como base, SELIMP no dia sem DDMX). */
   const execServicoSubChartData = useMemo(() => {
     const rows = data?.execucaoPorServicoSub ?? [];
     const byServico = new Map<string, Record<string, number | string>>();
@@ -3839,6 +3866,7 @@ export default function BateriaDashboardPage() {
                           const timeline = trocaTimelineItems(history, moduloManut.history[m.numeroSelimp] ?? []);
                           const execucaoHistory = execucaoSelimpHistoryOf(m);
                           const execucaoMedia = mediaExecucaoSelimp(m);
+                          const fonteExec = fonteExecucaoRecente(m);
                           // Nº de vezes que o módulo foi efetivamente à manutenção (eventos REALIZADA).
                           const vezesEmManutencao = (moduloManut.history[m.numeroSelimp] ?? []).filter((e) => e.status === "REALIZADA").length;
                           // Troca concluída mais recente (history vem em ordem decrescente por data): só nela
@@ -4014,7 +4042,7 @@ export default function BateriaDashboardPage() {
                               <TableRow className="border-emerald-500/20 bg-emerald-500/5 hover:bg-emerald-500/5">
                                 <TableCell colSpan={13} className="p-0 align-middle">
                                   <div className="space-y-4 px-4 py-4">
-                                    <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+                                    <div className="grid grid-cols-2 gap-3 lg:grid-cols-6">
                                       <div className="rounded-lg border border-border/60 bg-background/70 p-3">
                                         <span className="block text-xs text-muted-foreground">Trocas registradas</span>
                                         <span className="mt-1 block text-xl font-bold tabular-nums text-foreground">{history.length}</span>
@@ -4026,6 +4054,25 @@ export default function BateriaDashboardPage() {
                                       <div className="rounded-lg border border-border/60 bg-background/70 p-3">
                                         <span className="block text-xs text-muted-foreground">Bateria atual</span>
                                         <span className="mt-1 block font-semibold text-foreground">{batteryLabel(m.bateria, m.bateriaPercentual)}</span>
+                                      </div>
+                                      <div className="rounded-lg border border-border/60 bg-background/70 p-3">
+                                        <span className="block text-xs text-muted-foreground">Bateria DDMX</span>
+                                        {m.bateriaDdmx ? (
+                                          <>
+                                            <span className={cn("mt-1 block font-semibold", m.bateriaDdmx.desatualizada ? "text-zinc-500 dark:text-zinc-400" : "text-foreground")}>
+                                              {m.bateriaDdmx.percentual != null && Number.isFinite(m.bateriaDdmx.percentual)
+                                                ? `${Math.round(m.bateriaDdmx.percentual)}%`
+                                                : m.bateriaDdmx.raw.trim() || "—"}
+                                            </span>
+                                            <span className="mt-1 block text-[11px] tabular-nums text-muted-foreground">
+                                              {fmtIsoBr(m.bateriaDdmx.data)}
+                                              {m.bateriaDdmx.desatualizada ? " · desatualizada" : ""}
+                                              {m.bateriaDdmx.despachos > 1 ? ` · ${m.bateriaDdmx.despachos} despachos` : ""}
+                                            </span>
+                                          </>
+                                        ) : (
+                                          <span className="mt-1 block font-semibold text-muted-foreground">—</span>
+                                        )}
                                       </div>
                                       <div className="rounded-lg border border-border/60 bg-background/70 p-3">
                                         <span className="block text-xs text-muted-foreground">Última comunicação atual</span>
@@ -4041,7 +4088,13 @@ export default function BateriaDashboardPage() {
                                       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                                         <div className="flex items-center gap-2">
                                           <Percent className="h-4 w-4 text-sky-500" />
-                                          <span className="text-sm font-semibold text-foreground">Execução SELIMP</span>
+                                          <span className="text-sm font-semibold text-foreground">
+                                            {fonteExec === "selimp"
+                                              ? "Execução SELIMP"
+                                              : fonteExec === "ddmx"
+                                                ? "Execução DDMX"
+                                                : "Execução"}
+                                          </span>
                                         </div>
                                         <Badge className="border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-300">
                                           Média 30d: {execucaoMedia != null ? `${execucaoMedia}%` : "—"}
@@ -4058,7 +4111,7 @@ export default function BateriaDashboardPage() {
                                                 <span className="text-xs font-bold tabular-nums text-foreground">{item.percentual}%</span>
                                               </div>
                                               <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
-                                                <div className="h-full rounded-full bg-sky-500" style={{ width: `${Math.max(0, Math.min(100, item.percentual))}%` }} />
+                                                <div className="h-full rounded-full bg-sky-500" style={{ width: `${Math.max(0, Math.min(100, item.percentual ?? 0))}%` }} />
                                               </div>
                                               <div className="mt-1.5 flex items-center gap-1">
                                                 <Battery className={cn("h-3 w-3 shrink-0", bat ? bateriaDiaColor(bat) : "text-muted-foreground/50")} />
@@ -4072,7 +4125,7 @@ export default function BateriaDashboardPage() {
                                         </div>
                                       ) : (
                                         <p className="rounded-lg bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                                          Sem percentuais SELIMP encerrados nos últimos 30 dias para os setores deste módulo.
+                                          Sem percentuais de execução nos últimos 30 dias para os setores deste módulo.
                                         </p>
                                       )}
                                     </div>
@@ -4754,13 +4807,13 @@ export default function BateriaDashboardPage() {
                   </CardContent>
                 </Card>
 
-                {/* Produtividade dos Setores: execução SELIMP por tipo de serviço × sub (mês corrente) */}
+                {/* Produtividade dos Setores: execução por tipo de serviço × sub (mês corrente, DDMX como base) */}
                 <Card className={GLASS_CARD}>
                   <CardHeader className="pb-2">
                     <CardTitle className="flex items-center gap-2 text-foreground">
                       <Percent className="h-5 w-5 text-sky-500" /> Produtividade dos Setores
                     </CardTitle>
-                    <CardDescription>% de execução SELIMP por serviço e sub · {mesLabel}</CardDescription>
+                    <CardDescription>% de execução por serviço e sub · {mesLabel}</CardDescription>
                   </CardHeader>
                   <CardContent>
                     <div className="mb-3 rounded-lg border border-sky-500/20 bg-sky-500/5 p-3">
