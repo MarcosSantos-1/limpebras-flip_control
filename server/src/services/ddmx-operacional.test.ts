@@ -11,6 +11,7 @@ import {
   fonteAgregada,
   maximosDiariosPorPlano,
   percentualDoDia,
+  servicoForaDoDespachoDdmx,
 } from "./ddmx-operacional.js";
 import { statusDoDia } from "./despachosDiarios.js";
 
@@ -58,6 +59,14 @@ test("agregação seleciona a fonte por item e identifica origem mista", () => {
   assert.equal(acumulador.count, 2);
   assert.equal(acumulador.nonzeroCount, 2);
   assert.equal(fonteAgregada(acumulador.fontes), "mista");
+});
+
+test("CF e VF ficam fora do despacho operacional; LF e CV permanecem", () => {
+  assert.equal(servicoForaDoDespachoDdmx("CF"), true);
+  assert.equal(servicoForaDoDespachoDdmx("vf"), true);
+  assert.equal(servicoForaDoDespachoDdmx("LF"), false);
+  assert.equal(servicoForaDoDespachoDdmx("CV"), false);
+  assert.equal(servicoForaDoDespachoDdmx(null), false);
 });
 
 test("histórico de operações sem data_referencia usa o início executado", () => {

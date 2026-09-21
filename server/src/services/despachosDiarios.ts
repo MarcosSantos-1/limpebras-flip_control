@@ -17,6 +17,7 @@ import {
   extrairPercentualDdmx,
   isServicoBolha,
   percentualDoDia,
+  servicoForaDoDespachoDdmx,
   type FontePercentualOperacional,
   type LinhaExecucaoDia,
 } from "./ddmx-operacional.js";
@@ -326,6 +327,7 @@ export async function buildDespachosResponse(
 
   const linhas: DespachoLinha[] = [];
   for (const s of setoresFiltrados) {
+    if (servicoForaDoDespachoDdmx(s.servico ?? parseSetor(s.setor)?.servico)) continue;
     const esperado = esperadoNoDia(s, dia, datasSetPorSetor.get(s.setor)!);
     const manual = despDia.get(s.setor);
     const sel = selDia.get(s.setor) as SelimpDia | undefined;
@@ -371,7 +373,7 @@ export async function buildDespachosResponse(
     if (cronSet.has(setor)) continue; // já tratado no laço do cronograma
     if (/cancel|inativ/i.test(manual.status ?? "")) continue;
     const parsed = parseSetor(setor);
-    if (!parsed) continue;
+    if (!parsed || servicoForaDoDespachoDdmx(parsed.servico)) continue;
     const turnoTxt = TURNO_POR_DIGITO[parsed.turno] ?? null;
     // Respeita filtros explícitos (quando chamado com sub/turno).
     if (filtros.subprefeitura && parsed.sub !== filtros.subprefeitura) continue;
@@ -410,7 +412,7 @@ export async function buildDespachosResponse(
   for (const [setor, ddmx] of ddmxDia) {
     if (cronSet.has(setor) || linhasSet.has(setor)) continue;
     const parsed = parseSetor(setor);
-    if (!parsed) continue;
+    if (!parsed || servicoForaDoDespachoDdmx(parsed.servico)) continue;
     const turnoTxt = TURNO_POR_DIGITO[parsed.turno] ?? null;
     if (filtros.subprefeitura && parsed.sub !== filtros.subprefeitura) continue;
     if (filtros.servico && parsed.servico !== filtros.servico) continue;
@@ -475,6 +477,7 @@ export async function buildDespachosResponse(
     let prev = 0;
     let desp = 0;
     for (const s of setoresFiltrados) {
+      if (servicoForaDoDespachoDdmx(s.servico ?? parseSetor(s.setor)?.servico)) continue;
       const esperado = esperadoNoDia(s, k, datasSetPorSetor.get(s.setor)!);
       if (!esperado) continue;
       prev += 1;
@@ -637,6 +640,7 @@ export async function colarDespachos(
   let naoDespachado = 0;
   const turnoMap = new Map<string, { previstos: number; despachados: number }>();
   for (const s of setores) {
+    if (servicoForaDoDespachoDdmx(s.servico ?? parseSetor(s.setor)?.servico)) continue;
     if (!esperadoNoDia(s, dia, datasSetPorSetor.get(s.setor)!)) continue;
     const despachado = cobertos.has(s.setor);
     if (!despachado) naoDespachado++;

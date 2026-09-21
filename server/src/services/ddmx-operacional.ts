@@ -55,6 +55,13 @@ export function isServicoBolha(sigla: string | null | undefined): boolean {
   return SERVICOS_BOLHA.has(String(sigla ?? "").trim().toUpperCase());
 }
 
+/** Feiras sem rastreio de percentual no DDMX: não entram na tela nem na conta de Despachos. */
+const SERVICOS_FORA_DESPACHO_DDMX = new Set(["CF", "VF"]);
+
+export function servicoForaDoDespachoDdmx(sigla: string | null | undefined): boolean {
+  return SERVICOS_FORA_DESPACHO_DDMX.has(String(sigla ?? "").trim().toUpperCase());
+}
+
 export interface LinhaExecucaoDia {
   percentual: number | null;
   inicio?: Date | null;
