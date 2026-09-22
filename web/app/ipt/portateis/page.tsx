@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowDown, ArrowUp, ArrowUpDown, LayoutDashboard, Link2, Loader2, MapPin, Moon, RefreshCw, Search, Smartphone, Table2, Unlink, Wifi, WifiOff, Wrench } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, LayoutDashboard, Link2, Loader2, MapPin, Moon, RefreshCw, Search, Smartphone, Store, Table2, Unlink, Wifi, WifiOff, Wrench } from "lucide-react";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,11 +13,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiService, type PortatilAtribuicao, type PortatilModulo } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { servicoCurto, subLabel } from "./labels";
+import { isServicoFeira, servicoCurto, subLabel } from "./labels";
 import { ServicoTab } from "./servico-tab";
 
 type StatusFilter = "all" | "ON" | "OFF";
-type VinculoFilter = "all" | "com" | "sem";
+type VinculoFilter = "all" | "com" | "sem" | "feira";
 type ColSort = "default" | "bateria-desc" | "bateria-asc" | "comunicacao-desc" | "comunicacao-asc";
 
 const GLASS_CARD =
@@ -113,6 +113,7 @@ export default function PortateisPage() {
     const online = modulos.filter((modulo) => modulo.comunicacao === "ON").length;
     const offline = modulos.length - online;
     const vinculados = modulos.filter((modulo) => Boolean(modulo.atribuicao?.servico)).length;
+    const feira = modulos.filter((modulo) => isServicoFeira(modulo.atribuicao?.servico)).length;
     const pct = (count: number) => (modulos.length === 0 ? 0 : Math.round((count / modulos.length) * 100));
     return {
       total: modulos.length,
@@ -120,6 +121,7 @@ export default function PortateisPage() {
       offline,
       vinculados,
       semVinculo: modulos.length - vinculados,
+      feira,
       pctOnline: pct(online),
       pctOffline: pct(offline),
     };
@@ -132,6 +134,7 @@ export default function PortateisPage() {
       const vinculado = Boolean(modulo.atribuicao?.servico);
       if (vinculoFilter === "com" && !vinculado) return false;
       if (vinculoFilter === "sem" && vinculado) return false;
+      if (vinculoFilter === "feira" && !isServicoFeira(modulo.atribuicao?.servico)) return false;
       if (bateriaFilter.length > 0 && !bateriaFilter.includes(statusBateria(modulo) ?? "")) return false;
       if (!term) return true;
       const blob = [
@@ -153,6 +156,14 @@ export default function PortateisPage() {
         (a, b) =>
           dir * ((Date.parse(a.ultimaComunicacao ?? "") || 0) - (Date.parse(b.ultimaComunicacao ?? "") || 0)),
       );
+    } else if (vinculoFilter === "feira") {
+      const subOrder = ["CV", "JT", "ST", "MG"];
+      rows.sort((a, b) => {
+        const left = subOrder.indexOf(a.atribuicao?.subprefeitura ?? "");
+        const right = subOrder.indexOf(b.atribuicao?.subprefeitura ?? "");
+        const bySub = (left < 0 ? 99 : left) - (right < 0 ? 99 : right);
+        return bySub || a.nome.localeCompare(b.nome, "pt-BR");
+      });
     }
     return rows;
   }, [bateriaFilter, colSort, modulos, search, statusFilter, vinculoFilter]);
@@ -227,7 +238,7 @@ export default function PortateisPage() {
                       <h2 className="text-lg font-semibold">Total de módulos portáteis</h2>
                       <p className="mt-4 font-mono text-6xl font-bold tabular-nums">{stats.total}</p>
                     </div>
-                    <div className="grid min-w-[220px] flex-1 grid-cols-1 gap-4 sm:grid-cols-2 xl:max-w-xl">
+                    <div className="grid min-w-[220px] flex-1 grid-cols-1 gap-4 sm:grid-cols-3 xl:max-w-3xl">
                       <button type="button" className="text-left" onClick={() => toggleVinculo("com")}>
                         <div className={cn("flex h-full flex-col justify-between rounded-xl border border-white/20 bg-white/10 p-4 backdrop-blur-sm", vinculoFilter === "com" && "ring-2 ring-white")}>
                           <div className="flex items-start justify-between gap-2">
@@ -244,6 +255,16 @@ export default function PortateisPage() {
                             <Unlink className="size-8 shrink-0 text-amber-100/95" />
                           </div>
                           <p className="mt-4 font-mono text-4xl font-bold tabular-nums">{stats.semVinculo}</p>
+                        </div>
+                      </button>
+                      <button type="button" className="text-left" onClick={() => toggleVinculo("feira")}>
+                        <div className={cn("flex h-full flex-col justify-between rounded-xl border border-white/20 bg-white/10 p-4 backdrop-blur-sm", vinculoFilter === "feira" && "ring-2 ring-white")}>
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-xs font-medium uppercase tracking-wide text-white/80">Feira</p>
+                            <Store className="size-8 shrink-0 text-amber-200/95" />
+                          </div>
+                          <p className="mt-4 font-mono text-4xl font-bold tabular-nums">{stats.feira}</p>
+                          <p className="mt-1 text-[11px] text-white/70">Leitura diária</p>
                         </div>
                       </button>
                     </div>
@@ -345,6 +366,7 @@ export default function PortateisPage() {
                           <SelectItem value="all">Vínculo: todos</SelectItem>
                           <SelectItem value="com">Vinculados</SelectItem>
                           <SelectItem value="sem">Sem vínculo</SelectItem>
+                          <SelectItem value="feira">Feira</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>

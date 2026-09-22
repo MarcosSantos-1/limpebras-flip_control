@@ -14,6 +14,13 @@ const SERVICO_CURTO: Array<[RegExp, string]> = [
   [/sarjetas e cal[cç]adas/i, "Sarjetas e calçadas"],
 ];
 
+/** Portáteis de feira: varrição, lavagem e coleta no mesmo módulo. Leitura diária. */
+export const SERVICO_FEIRA = "FEIRA";
+
+export function isServicoFeira(servico?: string | null): boolean {
+  return String(servico ?? "").trim().toUpperCase() === SERVICO_FEIRA;
+}
+
 export const SUBS = [
   { sigla: "CV", label: "Casa Verde / Limão / Cachoeirinha" },
   { sigla: "JT", label: "Jaçanã / Tremembé" },

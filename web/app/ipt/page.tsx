@@ -126,6 +126,14 @@ const FEATURE_CARD =
 const EXPANDED_ROW =
   "bg-linear-to-r from-emerald-600 via-emerald-600 to-teal-700 text-zinc-100 shadow-[0_8px_24px_-12px_rgba(16,185,129,0.85)] [&_*]:!text-zinc-100";
 
+/**
+ * O report deixou de trazer o percentual de execução SELIMP.
+ * A coluna fica isolada aqui: `true` devolve o % de execução na tabela principal
+ * e na tabela de detalhes. A bateria SELIMP continua visível nos dois lugares.
+ */
+const SHOW_COLUNA_EXECUCAO_SELIMP = false;
+const COMPARATIVO_COLSPAN = SHOW_COLUNA_EXECUCAO_SELIMP ? 7 : 6;
+
 /** Subcard NEUTRO (acinzentado tipo cards de Contestação): superfície sólida e
  *  discreta, sem o padrão "tint fraco + borda colorida escura". A cor da categoria
  *  fica só no ícone/título. Resolve o baixo contraste do light e o escuro demais do dark. */
@@ -2288,7 +2296,7 @@ export default function IPTPage() {
                     <col style={{ width: columnWidths.plano }} />
                     <col style={{ width: columnWidths.sub }} />
                     <col style={{ width: columnWidths.servico }} />
-                    <col style={{ width: columnWidths.selimp }} />
+                    {SHOW_COLUNA_EXECUCAO_SELIMP && <col style={{ width: columnWidths.selimp }} />}
                     <col style={{ width: columnWidths.nossa }} />
                     <col style={{ width: columnWidths.origem }} />
                   </colgroup>
@@ -2428,7 +2436,7 @@ export default function IPTPage() {
                           )}
                         </div>
                       </th>
-                      <th className="text-left px-2 py-3.5 align-top">
+                      {SHOW_COLUNA_EXECUCAO_SELIMP && <th className="text-left px-2 py-3.5 align-top">
                         <div className="relative" data-filter-anchor="true">
                           <button
                             type="button"
@@ -2460,7 +2468,7 @@ export default function IPTPage() {
                             </div>
                           )}
                         </div>
-                      </th>
+                      </th>}
                       <th className="text-left px-2 py-3.5 align-top">
                         <div className="relative" data-filter-anchor="true">
                           <button
@@ -2662,9 +2670,11 @@ export default function IPTPage() {
                           <td className="px-3 py-2 wrap-break-word whitespace-normal leading-snug">
                             {row.tipo_servico || "-"}
                           </td>
-                          <td className="px-3 py-2">
-                            <PercentualBar value={row.percentual_selimp} compact />
-                          </td>
+                          {SHOW_COLUNA_EXECUCAO_SELIMP && (
+                            <td className="px-3 py-2">
+                              <PercentualBar value={row.percentual_selimp} compact />
+                            </td>
+                          )}
                           <td className="px-3 py-2">
                             <PercentualBar value={row.percentual_nosso} compact />
                           </td>
@@ -2689,7 +2699,7 @@ export default function IPTPage() {
                         </tr>
                         {isExpanded && hasDetails && (
                           <tr key={`${rowKey}-detail`}>
-                            <td colSpan={7} className="bg-muted/30 px-4 py-4 align-top border-b border-border dark:bg-muted/20">
+                            <td colSpan={COMPARATIVO_COLSPAN} className="bg-muted/30 px-4 py-4 align-top border-b border-border dark:bg-muted/20">
                               <div className="space-y-4 text-sm">
                                 {!hasAnyDetails && (
                                   <div className="rounded-xl border border-border/70 bg-muted/50 p-4 text-muted-foreground dark:bg-muted/40">
@@ -2934,7 +2944,7 @@ export default function IPTPage() {
                                               <th className="text-left py-2 px-2">
                                                 <span className="flex items-center gap-1"><Check className="h-3.5 w-3.5" /> Esperado?</span>
                                               </th>
-                                              <th className="text-left py-2 px-2">% SELIMP</th>
+                                              {SHOW_COLUNA_EXECUCAO_SELIMP && <th className="text-left py-2 px-2">% SELIMP</th>}
                                               <th className="text-left py-2 px-2">
                                                 <span className="flex items-center gap-1"><Battery className="h-3.5 w-3.5" /> Bat. SELIMP</span>
                                               </th>
@@ -2953,7 +2963,7 @@ export default function IPTPage() {
                                           </thead>
                                           <tbody>
                                             {row.detalhes_diarios.map((d) => {
-                                              const pctSel = toNum(d.percentual_selimp);
+                                              const pctSel = SHOW_COLUNA_EXECUCAO_SELIMP ? toNum(d.percentual_selimp) : null;
                                               const rowBg =
                                                 pctSel != null && pctSel >= 90
                                                   ? "bg-emerald-500/5"
@@ -2983,9 +2993,11 @@ export default function IPTPage() {
                                                       </span>
                                                     )}
                                                   </td>
-                                                  <td className="py-2 px-2">
-                                                    <PercentualBar value={d.percentual_selimp} compact />
-                                                  </td>
+                                                  {SHOW_COLUNA_EXECUCAO_SELIMP && (
+                                                    <td className="py-2 px-2">
+                                                      <PercentualBar value={d.percentual_selimp} compact />
+                                                    </td>
+                                                  )}
                                                   <td className="py-2 px-2">
                                                     <BateriaSelimpBadge bateriaDia={d.bateria_setor_dia} />
                                                   </td>
@@ -3148,7 +3160,7 @@ export default function IPTPage() {
                   })}
                   {!loading && filteredComparativo.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="px-3 py-6 text-center text-muted-foreground">
+                      <td colSpan={COMPARATIVO_COLSPAN} className="px-3 py-6 text-center text-muted-foreground">
                         Sem dados para os filtros selecionados.
                       </td>
                     </tr>
