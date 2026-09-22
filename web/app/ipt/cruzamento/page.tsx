@@ -1,46 +1,28 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { format, startOfDay } from "date-fns";
+import { format, startOfDay, startOfMonth } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import type { DateRange } from "react-day-picker";
 import {
-  Network,
   ArrowLeft,
   AlertTriangle,
   Search,
   Download,
   CalendarRange,
-  TrendingDown,
-  Layers,
-  MapPin,
   Loader2,
-  Users,
-  CheckCircle2,
   RefreshCw,
-  Construction,
-  Moon,
-  Cpu,
-  EyeOff,
-  GitCompare,
   Wrench,
+  Users,
+  MapPin,
+  Layers,
 } from "lucide-react";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  CartesianGrid,
-} from "recharts";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -63,196 +45,160 @@ import {
   DialogTitle,
 } from "@/components/motion-ui/motion-dialog";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
-import { apiService, type IptPreviewResponse } from "@/lib/api";
-import { SUBPREFEITURAS, subprefBadgeClass } from "@/lib/mock/ipt-shared";
-import { getSubFromPlano } from "@/lib/ipt-utils";
 import {
-  buildCruzamento,
-  ROOT_CAUSE_META,
-  STATUS_META,
-  type ModuloContextMap,
-  type ObservacoesMap,
-  type RootCause,
-  type SectorAnalysis,
-} from "@/lib/cruzamento-engine";
-import { exportCruzamentoPlanoAcao } from "@/lib/cruzamento-export";
+  apiService,
+  type GargaloDia,
+  type GargaloSetor,
+  type GargalosResponse,
+  type MotivoGargalo,
+  type ServicoGargalo,
+} from "@/lib/api";
+import { SUBPREFEITURAS, subprefBadgeClass } from "@/lib/mock/ipt-shared";
+import { MOTIVO_GARGALO_LABEL, exportGargalos } from "@/lib/cruzamento-export";
 import { cn } from "@/lib/utils";
 
-/** Janela padrão de análise: a partir de 01/mai (abril = troca de plano, ignorado). */
-function maioInicio(ref: Date): Date {
-  const candidato = new Date(ref.getFullYear(), 4, 1); // maio = índice 4
-  if (candidato > ref) candidato.setFullYear(ref.getFullYear() - 1);
-  return startOfDay(candidato);
-}
-
-const CAUSA_ORDER: RootCause[] = ["pontos_cegos", "hardware", "hibernando", "divergencia", "operacao"];
-
-const CAUSA_ICON: Record<RootCause, typeof Users> = {
-  pontos_cegos: EyeOff,
-  hardware: Cpu,
-  hibernando: Moon,
-  divergencia: GitCompare,
-  operacao: Users,
-  ok: CheckCircle2,
-};
-
-const CAUSA_TINT: Record<RootCause, { card: string; chip: string; bar: string }> = {
-  pontos_cegos: { card: "bg-slate-500", chip: "border-slate-500/40 bg-slate-500/12 text-slate-700 dark:text-slate-300", bar: "#64748b" },
-  hardware: { card: "bg-rose-500", chip: "border-rose-500/40 bg-rose-500/12 text-rose-700 dark:text-rose-300", bar: "#f43f5e" },
-  hibernando: { card: "bg-violet-500", chip: "border-violet-500/40 bg-violet-500/12 text-violet-700 dark:text-violet-300", bar: "#8b5cf6" },
-  divergencia: { card: "bg-cyan-500", chip: "border-cyan-500/40 bg-cyan-500/12 text-cyan-700 dark:text-cyan-300", bar: "#06b6d4" },
-  operacao: { card: "bg-amber-500", chip: "border-amber-500/40 bg-amber-500/12 text-amber-700 dark:text-amber-300", bar: "#f59e0b" },
-  ok: { card: "bg-emerald-500", chip: "border-emerald-500/40 bg-emerald-500/12 text-emerald-700 dark:text-emerald-300", bar: "#10b981" },
+const MOTIVO_CHIP: Record<MotivoGargalo, string> = {
+  bateria: "border-rose-500/40 bg-rose-500/12 text-rose-700 dark:text-rose-300",
+  falta_envio: "border-amber-500/40 bg-amber-500/12 text-amber-800 dark:text-amber-300",
+  planejamento: "border-slate-500/40 bg-slate-500/12 text-slate-700 dark:text-slate-300",
+  nunca: "border-orange-500/40 bg-orange-500/12 text-orange-800 dark:text-orange-300",
+  execucao_baixa: "border-yellow-500/40 bg-yellow-500/12 text-yellow-800 dark:text-yellow-200",
 };
 
 const fmtInt = (v: number) => Math.round(v).toLocaleString("pt-BR");
-const fmtPct = (v: number | null) => (v == null ? "—" : `${v.toFixed(0)}%`);
+const fmtPct = (v: number | null) => (v == null ? "—" : `${Math.round(v).toLocaleString("pt-BR")}%`);
+const fmtPp = (v: number) =>
+  v.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
-const semSinal = (s?: string) => !!s && !/com\s*sinal|^on$/i.test(s.trim());
-
-/**
- * Monta o contexto de intervenção por módulo (chaveado por numero_selimp em
- * maiúsculas), cruzando getIptModulosBateria (nº de trocas) + getBateriaTrocas
- * (resultado da última troca) + getModuloManutencoes (manutenção realizada).
- */
-function buildModuloContext(
-  modulos: Awaited<ReturnType<typeof apiService.getIptModulosBateria>>,
-  trocas: Awaited<ReturnType<typeof apiService.getBateriaTrocas>>,
-  manut: Awaited<ReturnType<typeof apiService.getModuloManutencoes>>
-): ModuloContextMap {
-  const map: ModuloContextMap = {};
-  const ensure = (sel?: string) => {
-    const key = (sel ?? "").toUpperCase();
-    if (!key) return null;
-    return (map[key] ??= {
-      qtdTrocas: 0,
-      temTroca: false,
-      ultimaTrocaSemSinal: false,
-      manutencaoRealizada: false,
-      manutencaoRealizadaSemSinal: false,
-    });
-  };
-
-  for (const m of modulos.modules ?? []) {
-    const c = ensure(m.numeroSelimp);
-    if (c) c.qtdTrocas = m.quantidadeTrocas ?? 0;
-  }
-
-  for (const [sel, eventos] of Object.entries(trocas.history ?? {})) {
-    const c = ensure(sel);
-    if (!c || !eventos.length) continue;
-    c.temTroca = true;
-    if (!c.qtdTrocas) c.qtdTrocas = eventos.length;
-    // Evento mais recente (por dataTroca, com fallback em createdAt).
-    const ultima = [...eventos].sort((a, b) =>
-      (a.dataTroca ?? a.createdAt ?? "").localeCompare(b.dataTroca ?? b.createdAt ?? "")
-    ).at(-1);
-    if (ultima) c.ultimaTrocaSemSinal = semSinal(ultima.statusSinalDepois);
-  }
-
-  for (const [sel, eventos] of Object.entries(manut.history ?? {})) {
-    const c = ensure(sel);
-    if (!c) continue;
-    for (const ev of eventos) {
-      if (ev.status === "REALIZADA") {
-        c.manutencaoRealizada = true;
-        if (!ev.sinalRecuperado) c.manutencaoRealizadaSemSinal = true;
-      }
-    }
-  }
-
-  return map;
+function fraseLista(s: GargaloSetor): string {
+  const motivo = s.frase.charAt(0).toUpperCase() + s.frase.slice(1);
+  if (s.pp >= 0.05) return `Tira ${fmtPp(s.pp)} pp deste serviço — ${s.frase}`;
+  return motivo;
 }
 
-/** Cores da célula do heatmap diário (a partir do detalhe cru). */
-function celulaEstado(d: SectorAnalysis["detalhes"][number]): { className: string; label: string; pct: number | null } {
-  if (!d.esperado) return { className: "bg-muted-foreground/15", label: "Sem previsão", pct: null };
-  const pct = d.percentual_selimp;
-  if ((d.despachos_selimp ?? 0) === 0) return { className: "bg-rose-500", label: "Não despachado", pct: null };
-  if (pct != null && pct <= 0) return { className: "bg-rose-400", label: "Zerado (0%)", pct: 0 };
-  if (pct != null && pct < 50) return { className: "bg-amber-400", label: "Parcial", pct };
-  return { className: "bg-emerald-500", label: "Executado", pct };
+function celula(d: GargaloDia): { className: string; label: string } {
+  if (!d.encerrado && d.naoEnviado) return { className: "bg-rose-500 text-white", label: "Não enviado" };
+  if (!d.encerrado) return { className: "bg-muted-foreground/25 text-foreground", label: "Não encerrado" };
+  if (d.percentual != null && d.percentual <= 0) return { className: "bg-rose-400 text-white", label: "Zerado" };
+  if (d.percentual != null && d.percentual < 50) return { className: "bg-amber-400 text-white", label: "Parcial" };
+  return { className: "bg-emerald-500 text-white", label: "Executado" };
 }
 
-/** Overlay diagonal repetido "EM DESENVOLVIMENTO" — não captura cliques. */
-function DevWatermark({ className }: { className?: string }) {
+function servicoPesa(s: ServicoGargalo): boolean {
+  return s.setoresProblema > 0 || s.naoEnviados > 0 || (s.gap ?? 0) >= 5;
+}
+
+function ListaGargalos({
+  titulo,
+  descricao,
+  icon,
+  setores,
+  onAbrir,
+}: {
+  titulo: string;
+  descricao: string;
+  icon: ReactNode;
+  setores: GargaloSetor[];
+  onAbrir: (s: GargaloSetor) => void;
+}) {
   return (
-    <div
-      aria-hidden
-      className={cn("pointer-events-none absolute inset-0 z-30 overflow-hidden select-none", className)}
-    >
-      <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 -rotate-[18deg] flex-col gap-6 opacity-[0.10]">
-        {Array.from({ length: 7 }).map((_, i) => (
-          <div key={i} className="flex gap-8 whitespace-nowrap text-2xl font-black uppercase tracking-widest">
-            {Array.from({ length: 6 }).map((__, j) => (
-              <span key={j}>Em desenvolvimento</span>
+    <Card className="border-border/70">
+      <CardHeader className="space-y-1">
+        <div className="flex items-center justify-between gap-2">
+          <CardTitle className="flex items-center gap-2 text-base">
+            {icon}
+            {titulo}
+          </CardTitle>
+          <span className="text-xs text-muted-foreground">{setores.length} setores</span>
+        </div>
+        <p className="text-xs text-muted-foreground">{descricao}</p>
+      </CardHeader>
+      <CardContent className="p-0">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-10 text-center">#</TableHead>
+              <TableHead>Setor</TableHead>
+              <TableHead className="text-center">Encerr. / prev.</TableHead>
+              <TableHead className="text-center">%</TableHead>
+              <TableHead className="text-center">Pontos</TableHead>
+              <TableHead>O que pesa</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {setores.map((s, i) => (
+              <TableRow key={s.plano} className="cursor-pointer hover:bg-muted/40" onClick={() => onAbrir(s)}>
+                <TableCell className="text-center font-mono text-xs tabular-nums text-muted-foreground">{i + 1}</TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className={cn("h-5 px-1.5 text-[10px]", subprefBadgeClass(s.sub))}>
+                      {s.sub}
+                    </Badge>
+                    <div className="min-w-0">
+                      <div className="font-medium">{s.plano}</div>
+                      <div className="truncate text-xs text-muted-foreground">{s.frequencia}</div>
+                    </div>
+                  </div>
+                </TableCell>
+                <TableCell className="text-center font-mono text-sm tabular-nums">
+                  {s.encerrados}
+                  <span className="text-muted-foreground"> / {s.previstos}</span>
+                </TableCell>
+                <TableCell className="text-center font-mono text-sm tabular-nums">{fmtPct(s.percentual)}</TableCell>
+                <TableCell className="text-center font-mono text-sm font-bold tabular-nums text-rose-600 dark:text-rose-400">
+                  {s.pp >= 0.05 ? fmtPp(s.pp) : "—"}
+                </TableCell>
+                <TableCell>
+                  <Badge variant="outline" className={cn("mb-1 text-[10px]", MOTIVO_CHIP[s.motivo])}>
+                    {MOTIVO_GARGALO_LABEL[s.motivo]}
+                  </Badge>
+                  <p className="max-w-xs text-xs text-muted-foreground">{fraseLista(s)}</p>
+                </TableCell>
+              </TableRow>
             ))}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/** Chip de aviso "em desenvolvimento". */
-function DevBadge({ className }: { className?: string }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border border-amber-400/50 bg-amber-400/15 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-amber-700 dark:text-amber-300",
-        className
-      )}
-    >
-      <Construction className="h-3 w-3" />
-      Em desenvolvimento
-    </span>
+            {setores.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={6} className="py-8 text-center text-sm text-muted-foreground">
+                  Nenhum setor neste grupo para os filtros atuais.
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
   );
 }
 
 export default function CruzamentoPage() {
   const hoje = useMemo(() => startOfDay(new Date()), []);
-  const inicioPadrao = useMemo(() => maioInicio(hoje), [hoje]);
+  const inicioMes = useMemo(() => startOfMonth(hoje), [hoje]);
 
-  const [range, setRange] = useState<DateRange | undefined>({ from: inicioPadrao, to: hoje });
+  const [range, setRange] = useState<DateRange | undefined>({ from: inicioMes, to: hoje });
   const [sub, setSub] = useState("all");
   const [serv, setServ] = useState("all");
-  const [causaFiltro, setCausaFiltro] = useState<RootCause | "all">("all");
-  const [apenasComPrevisao, setApenasComPrevisao] = useState(true);
   const [busca, setBusca] = useState("");
-  const [selecionado, setSelecionado] = useState<SectorAnalysis | null>(null);
-
-  const [preview, setPreview] = useState<IptPreviewResponse | null>(null);
-  const [obs, setObs] = useState<ObservacoesMap | null>(null);
-  const [modulos, setModulos] = useState<ModuloContextMap | null>(null);
+  const [selecionado, setSelecionado] = useState<GargaloSetor | null>(null);
+  const [dias, setDias] = useState<GargaloDia[] | null>(null);
+  const [diasLoading, setDiasLoading] = useState(false);
+  const [data, setData] = useState<GargalosResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
-  const [salvandoCausa, setSalvandoCausa] = useState(false);
+  const [salvando, setSalvando] = useState(false);
 
-  const from = range?.from ?? inicioPadrao;
+  const from = range?.from ?? inicioMes;
   const to = range?.to ?? hoje;
 
   const carregar = useCallback(async () => {
     setLoading(true);
     setErro(null);
     try {
-      const inicio = format(from, "yyyy-MM-dd");
-      const fim = format(to, "yyyy-MM-dd");
-      const [previewRes, obsRes, modulosRes, trocasRes, manutRes] = await Promise.all([
-        apiService.getIptPreview(inicio, fim, false, "all"),
-        apiService.getIptObservacoes(inicio, fim),
-        apiService.getIptModulosBateria(),
-        apiService.getBateriaTrocas(),
-        apiService.getModuloManutencoes(),
-      ]);
-      setPreview(previewRes);
-      setObs(obsRes as ObservacoesMap);
-      setModulos(buildModuloContext(modulosRes, trocasRes, manutRes));
+      const res = await apiService.getGargalos(format(from, "yyyy-MM-dd"), format(to, "yyyy-MM-dd"));
+      setData(res);
     } catch (e) {
-      setErro(e instanceof Error ? e.message : "Falha ao carregar o cruzamento.");
-      setPreview(null);
-      setObs(null);
-      setModulos(null);
+      setErro(e instanceof Error ? e.message : "Falha ao carregar os gargalos.");
+      setData(null);
     } finally {
       setLoading(false);
     }
@@ -260,79 +206,91 @@ export default function CruzamentoPage() {
 
   useEffect(() => {
     void carregar();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [from, to, nonce]);
+  }, [carregar, nonce]);
 
-  /** Serviços disponíveis (para o filtro). */
-  const servicoOptions = useMemo(() => {
-    const set = new Set<string>();
-    for (const it of preview?.itens ?? []) if (it.tipo_servico) set.add(it.tipo_servico);
-    return Array.from(set).sort((a, b) => a.localeCompare(b, "pt-BR"));
-  }, [preview]);
+  const periodoLabel = `${format(from, "dd/MM/yy", { locale: ptBR })} – ${format(to, "dd/MM/yy", { locale: ptBR })}`;
 
-  /** Itens dentro do escopo estrutural (sub + serviço) — base para resumo e cards. */
-  const itensScoped = useMemo(() => {
-    const itens = preview?.itens ?? [];
-    return itens.filter((it) => {
-      if (sub !== "all") {
-        const itemSub = getSubFromPlano(it.plano) || it.subprefeitura;
-        if (itemSub !== sub) return false;
-      }
-      if (serv !== "all" && it.tipo_servico !== serv) return false;
-      return true;
-    });
-  }, [preview, sub, serv]);
-
-  const result = useMemo(
-    () => buildCruzamento(itensScoped, { obs: obs ?? undefined, modulos: modulos ?? undefined, apenasComPrevisao }),
-    [itensScoped, obs, modulos, apenasComPrevisao]
-  );
-
-  /** Lista visível: aplica busca + filtro de causa sobre o ranking. */
-  const setoresVisiveis = useMemo(() => {
+  const problemas = useMemo(() => {
     const t = busca.trim().toLowerCase();
-    return result.setores.filter((s) => {
-      if (causaFiltro !== "all" && s.causaRaiz !== causaFiltro) return false;
+    return (data?.setores ?? []).filter((s) => {
+      if (sub !== "all" && s.sub !== sub) return false;
+      if (serv !== "all" && s.tipoServico !== serv) return false;
       if (!t) return true;
       return (
         s.plano.toLowerCase().includes(t) ||
         s.sub.toLowerCase().includes(t) ||
-        s.tipoServico.toLowerCase().includes(t)
+        s.tipoServico.toLowerCase().includes(t) ||
+        s.frase.toLowerCase().includes(t)
       );
     });
-  }, [result.setores, busca, causaFiltro]);
+  }, [data, sub, serv, busca]);
 
-  const periodoLabel = `${format(from, "dd/MM/yy", { locale: ptBR })} – ${format(to, "dd/MM/yy", { locale: ptBR })}`;
+  const nossos = useMemo(() => problemas.filter((s) => s.grupo === "nosso"), [problemas]);
+  const operacionais = useMemo(() => problemas.filter((s) => s.grupo === "operacional"), [problemas]);
 
-  const registrarCausa = useCallback(
-    async (setor: SectorAnalysis, titulo: string) => {
-      setSalvandoCausa(true);
+  const servicosVisiveis = useMemo(() => {
+    const lista = data?.servicos ?? [];
+    if (serv !== "all") return lista.filter((s) => s.tipoServico === serv);
+    return lista.filter(servicoPesa);
+  }, [data, serv]);
+
+  const servicosQuietos = useMemo(() => {
+    if (serv !== "all") return [];
+    return (data?.servicos ?? []).filter((s) => !servicoPesa(s));
+  }, [data, serv]);
+
+  const planoAberto = selecionado?.plano ?? null;
+
+  useEffect(() => {
+    if (!planoAberto) {
+      setDias(null);
+      return;
+    }
+    let cancel = false;
+    setDiasLoading(true);
+    setDias(null);
+    apiService
+      .getGargaloDetalhe(planoAberto, format(from, "yyyy-MM-dd"), format(to, "yyyy-MM-dd"))
+      .then((res) => {
+        if (!cancel) setDias(res.dias);
+      })
+      .catch(() => {
+        if (!cancel) setDias([]);
+      })
+      .finally(() => {
+        if (!cancel) setDiasLoading(false);
+      });
+    return () => {
+      cancel = true;
+    };
+  }, [planoAberto, from, to]);
+
+  useEffect(() => {
+    if (!selecionado || !data) return;
+    const atual = data.setores.find((s) => s.plano === selecionado.plano);
+    if (atual && atual.obsTitulo !== selecionado.obsTitulo) setSelecionado(atual);
+  }, [data, selecionado]);
+
+  const registrar = useCallback(
+    async (titulo: string) => {
+      if (!selecionado) return;
+      setSalvando(true);
       try {
-        await apiService.createIptObservacaoGlobal(setor.plano, titulo);
+        await apiService.createIptObservacaoGlobal(selecionado.plano, titulo);
+        setSelecionado({ ...selecionado, obsTitulo: titulo });
         await carregar();
-      } catch {
-        // silencioso: a UI continua utilizável mesmo se o registro falhar
+      } catch (e) {
+        setErro(e instanceof Error ? e.message : "Não foi possível registrar a causa.");
       } finally {
-        setSalvandoCausa(false);
+        setSalvando(false);
       }
     },
-    [carregar]
+    [selecionado, carregar],
   );
-
-  const exportar = useCallback(() => {
-    exportCruzamentoPlanoAcao(result.setores, {
-      periodoLabel,
-      subLabel: sub === "all" ? "Todas" : sub,
-      servicoLabel: serv === "all" ? "Todos" : serv,
-    });
-  }, [result.setores, periodoLabel, sub, serv]);
-
-  const dadosPorServico = useMemo(() => result.porServico.slice(0, 8), [result.porServico]);
 
   return (
     <MainLayout>
       <div className="min-h-screen bg-background">
-        {/* Header */}
         <div className="sticky top-0 z-20 border-b border-border bg-background/95 backdrop-blur-md">
           <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-4">
             <div className="flex items-center gap-4">
@@ -343,25 +301,19 @@ export default function CruzamentoPage() {
                 <ArrowLeft className="h-4 w-4" />
               </Link>
               <div className="flex items-center gap-3">
-                <Network className="h-6 w-6 text-violet-500" />
+                <AlertTriangle className="h-6 w-6 text-amber-500" />
                 <div>
-                  <h1 className="text-xl font-bold text-foreground">Cruzamento Inteligente</h1>
+                  <h1 className="text-xl font-bold text-foreground">Gargalos de execução</h1>
                   <p className="text-xs text-muted-foreground">
-                    Setores problemáticos priorizados por impacto no IPT · causa-raiz · plano de ação
+                    O que puxa o percentual de cada serviço para baixo
                   </p>
                 </div>
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              <DevBadge />
-              <Badge
-                variant="outline"
-                className="gap-1.5 border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300"
-              >
-                <CalendarRange className="h-3.5 w-3.5" />
-                Análise a partir de mai/{from.getFullYear()}
-              </Badge>
-            </div>
+            <Badge variant="outline" className="gap-1.5">
+              <CalendarRange className="h-3.5 w-3.5" />
+              {periodoLabel}
+            </Badge>
           </div>
         </div>
 
@@ -372,18 +324,17 @@ export default function CruzamentoPage() {
             </div>
           )}
 
-          {/* Filtros */}
           <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-border/70 bg-card/60 p-3">
             <DateRangePicker
               value={range}
               onChange={setRange}
               maxDate={hoje}
               modeLabel="Período"
-              className="bg-violet-600 hover:bg-violet-700"
+              className="bg-amber-600 hover:bg-amber-700"
             />
             <Select value={sub} onValueChange={setSub}>
               <SelectTrigger className="h-10 w-[170px]">
-                <MapPin className="mr-1 h-4 w-4 text-violet-500" />
+                <MapPin className="mr-1 h-4 w-4 text-amber-600" />
                 <SelectValue placeholder="Subprefeitura" />
               </SelectTrigger>
               <SelectContent>
@@ -396,27 +347,19 @@ export default function CruzamentoPage() {
               </SelectContent>
             </Select>
             <Select value={serv} onValueChange={setServ}>
-              <SelectTrigger className="h-10 w-[230px]">
-                <Layers className="mr-1 h-4 w-4 text-violet-500" />
+              <SelectTrigger className="h-10 w-[260px]">
+                <Layers className="mr-1 h-4 w-4 text-amber-600" />
                 <SelectValue placeholder="Tipo de serviço" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Todos os serviços</SelectItem>
-                {servicoOptions.map((s) => (
-                  <SelectItem key={s} value={s}>
-                    {s}
+                {(data?.servicos ?? []).map((s) => (
+                  <SelectItem key={s.tipoServico} value={s.tipoServico}>
+                    {s.tipoServico}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            <label className="flex select-none items-center gap-2 rounded-lg border border-border/70 px-3 py-2 text-xs font-medium text-muted-foreground">
-              <Switch
-                checked={apenasComPrevisao}
-                onCheckedChange={setApenasComPrevisao}
-                className="data-[state=checked]:bg-violet-600"
-              />
-              Só setores com previsão
-            </label>
             <div className="relative ml-auto min-w-[200px] flex-1 sm:max-w-xs">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -438,312 +381,113 @@ export default function CruzamentoPage() {
             </Button>
             <Button
               variant="outline"
-              className="h-10 gap-2 border-violet-500/40 text-violet-700 hover:bg-violet-500/10 dark:text-violet-300"
-              onClick={exportar}
-              disabled={result.setores.length === 0}
+              className="h-10 gap-2"
+              onClick={() =>
+                exportGargalos(problemas, {
+                  periodoLabel,
+                  subLabel: sub === "all" ? "Todas" : sub,
+                  servicoLabel: serv === "all" ? "Todos" : serv,
+                })
+              }
+              disabled={problemas.length === 0}
             >
               <Download className="h-4 w-4" />
-              Plano de ação
+              Exportar
             </Button>
           </div>
 
-          {loading && !preview ? (
+          {loading && !data ? (
             <div className="flex items-center justify-center py-24">
-              <Loader2 className="h-7 w-7 animate-spin text-violet-500" />
+              <Loader2 className="h-7 w-7 animate-spin text-amber-500" />
             </div>
           ) : (
             <>
-              {/* Hero: diagnóstico do impacto */}
-              <div className="relative overflow-hidden rounded-2xl border border-violet-400/40 bg-linear-to-br from-violet-600/95 via-purple-700 to-indigo-950 px-6 py-8 shadow-xl shadow-indigo-950/30 ring-1 ring-white/15 sm:px-8">
-                <div className="pointer-events-none absolute -right-24 -top-24 size-72 rounded-full bg-fuchsia-400/15 blur-3xl" aria-hidden />
-                <DevWatermark className="text-white" />
-                <DevBadge className="absolute right-4 top-4 z-40 border-white/40 bg-white/15 text-white" />
-                <div className="relative flex flex-col gap-8 xl:flex-row xl:items-center xl:justify-between">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 text-violet-100/95">
-                      <TrendingDown className="size-8 shrink-0 text-white" aria-hidden />
-                      <div>
-                        <p className="text-xs font-medium uppercase tracking-wider text-white/85">Diagnóstico do período · {periodoLabel}</p>
-                        <h2 className="text-lg font-semibold text-white">Impacto no IPT (despachos-equivalentes perdidos)</h2>
-                      </div>
-                    </div>
-                    <p className="mt-4 text-[clamp(3rem,8vw,4.25rem)] font-bold leading-none tracking-tight text-white tabular-nums drop-shadow-sm">
-                      {fmtInt(result.resumo.impactoTotal)}
-                    </p>
-                    <p className="mt-2 text-sm text-violet-100/90">
-                      de {fmtInt(result.resumo.previstosTotal)} despachos previstos ·{" "}
-                      {result.resumo.setoresCriticos} setores com alerta ·{" "}
-                      <span className="font-semibold text-white">
-                        top 10 concentram {result.resumo.concentracaoTop10.toFixed(0)}% do impacto
-                      </span>
-                    </p>
-                  </div>
-                  <div className="grid flex-1 grid-cols-2 gap-4 sm:grid-cols-3 xl:max-w-2xl">
-                    <div className="rounded-xl border border-white/20 bg-white/10 p-4 backdrop-blur-sm">
-                      <p className="text-xs font-medium uppercase tracking-wide text-white/80">Setores analisados</p>
-                      <p className="mt-3 font-mono text-3xl font-bold tabular-nums text-white">{result.resumo.totalSetores}</p>
-                    </div>
-                    <div className="rounded-xl border border-white/20 bg-white/10 p-4 backdrop-blur-sm">
-                      <p className="text-xs font-medium uppercase tracking-wide text-white/80">Cobertura geral</p>
-                      <p className="mt-3 font-mono text-3xl font-bold tabular-nums text-white">{fmtPct(result.resumo.coberturaGeral)}</p>
-                    </div>
-                    <div className="rounded-xl border border-white/20 bg-white/10 p-4 backdrop-blur-sm">
-                      <p className="text-xs font-medium uppercase tracking-wide text-white/80">Nunca executados</p>
-                      <p className="mt-3 font-mono text-3xl font-bold tabular-nums text-white">{result.resumo.nuncaExecutados}</p>
-                    </div>
-                  </div>
+              <p className="max-w-3xl text-sm text-muted-foreground">
+                A média de cada serviço olha só os despachos encerrados. Cada dia conta uma vez, então um setor
+                diário derruba o percentual bem mais do que um mensal. O que não foi enviado fica de fora dessa
+                média — é buraco nosso de planejamento, e aparece pelo volume.
+              </p>
+
+              {!loading && (data?.servicos.length ?? 0) === 0 && (
+                <div className="rounded-xl border border-border/70 bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
+                  Não há despachos encerrados neste período. Ajuste as datas para um mês que já tenha relatório SELIMP.
                 </div>
-              </div>
-
-              {/* Cards por causa-raiz (clicáveis = filtram o ranking) */}
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-                {CAUSA_ORDER.map((causa) => {
-                  const Icon = CAUSA_ICON[causa];
-                  const meta = ROOT_CAUSE_META[causa];
-                  const dados = result.resumo.porCausa[causa];
-                  const ativo = causaFiltro === causa;
-                  return (
-                    <button
-                      key={causa}
-                      type="button"
-                      onClick={() => setCausaFiltro((prev) => (prev === causa ? "all" : causa))}
-                      className={cn(
-                        "group relative overflow-hidden rounded-2xl border bg-card p-4 pl-5 text-left transition-all hover:shadow-md",
-                        ativo ? "border-violet-500/60 ring-2 ring-violet-500/30" : "border-border/70"
-                      )}
-                      title={meta.descricao}
-                    >
-                      <div className={cn("absolute inset-y-0 left-0 w-1", CAUSA_TINT[causa].card)} aria-hidden />
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{meta.label}</p>
-                          <p className="mt-2 font-mono text-3xl font-bold tabular-nums">{dados.setores}</p>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            {fmtInt(dados.impacto)} impacto · → {meta.responsavel}
-                          </p>
-                        </div>
-                        <Icon className="size-5 shrink-0 text-muted-foreground/70" />
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* IV-b: trocas/manutenções sem efeito (desperdício de manutenção) */}
-              {result.trocasSemEfeito.length > 0 && (
-                <Card className="relative overflow-hidden border-rose-500/30 bg-rose-500/[0.03]">
-                  <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
-                    <div className="flex items-center gap-2">
-                      <Wrench className="h-5 w-5 text-rose-500" />
-                      <div>
-                        <CardTitle className="text-base">Trocas/manutenções sem efeito</CardTitle>
-                        <p className="text-xs text-muted-foreground">
-                          ≥ {2} intervenções e o módulo segue ruim — desperdício e forte indício de hardware
-                        </p>
-                      </div>
-                    </div>
-                    <span className="text-xs font-semibold text-rose-600 dark:text-rose-400">
-                      {result.trocasSemEfeito.length} setores
-                    </span>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="flex flex-wrap gap-2">
-                      {result.trocasSemEfeito.slice(0, 24).map((s) => (
-                        <button
-                          key={s.plano}
-                          type="button"
-                          onClick={() => setSelecionado(s)}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/30 bg-card px-2.5 py-1.5 text-xs transition-colors hover:bg-rose-500/10"
-                          title={`${s.qtdTrocas} trocas · ${ROOT_CAUSE_META[s.causaRaiz].label}`}
-                        >
-                          <Badge variant="outline" className={cn("h-4 px-1 text-[9px]", subprefBadgeClass(s.sub))}>
-                            {s.sub}
-                          </Badge>
-                          <span className="font-medium">{s.plano}</span>
-                          <span className="rounded bg-rose-500/15 px-1 py-0.5 text-[9px] font-bold text-rose-700 dark:text-rose-300">
-                            {s.qtdTrocas}× troca
-                          </span>
-                        </button>
-                      ))}
-                      {result.trocasSemEfeito.length > 24 && (
-                        <span className="self-center text-xs text-muted-foreground">
-                          +{result.trocasSemEfeito.length - 24} setores
-                        </span>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
               )}
 
-              {/* Ranking por impacto */}
-              <Card className="relative overflow-hidden border-border/70">
-                <DevWatermark />
-                <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
-                  <div className="flex items-center gap-2">
-                    <AlertTriangle className="h-5 w-5 text-violet-500" />
-                    <CardTitle className="text-base">Ranking por impacto no IPT</CardTitle>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {causaFiltro !== "all" && (
-                      <Badge variant="outline" className={cn("gap-1 text-[11px]", CAUSA_TINT[causaFiltro].chip)}>
-                        {ROOT_CAUSE_META[causaFiltro].label}
-                        <button type="button" onClick={() => setCausaFiltro("all")} className="ml-1 hover:opacity-70">
-                          ✕
-                        </button>
-                      </Badge>
-                    )}
-                    <span className="text-xs text-muted-foreground">
-                      {setoresVisiveis.length} setores · ordenado por impacto
-                    </span>
-                  </div>
-                </CardHeader>
-                <CardContent className="p-0">
-                  <div>
-                    <Table className="[&_tr]:border-border/40">
-                      <TableHeader className="bg-card">
-                        <TableRow>
-                          <TableHead className="w-12 text-center">#</TableHead>
-                          <TableHead>Setor</TableHead>
-                          <TableHead>Serviço / Frequência</TableHead>
-                          <TableHead className="text-center">Desp. × Prev.</TableHead>
-                          <TableHead className="text-center">% médio</TableHead>
-                          <TableHead className="text-center">Impacto</TableHead>
-                          <TableHead className="text-center">Bateria</TableHead>
-                          <TableHead className="text-center">Causa</TableHead>
-                          <TableHead className="text-center">Status</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {setoresVisiveis.map((s, i) => (
-                          <TableRow
-                            key={s.plano}
-                            className="cursor-pointer transition-colors hover:bg-violet-500/5"
-                            onClick={() => setSelecionado(s)}
-                          >
-                            <TableCell className="text-center font-mono text-sm font-bold tabular-nums text-muted-foreground">
-                              {i + 1}
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex items-center gap-2">
-                                <Badge variant="outline" className={cn("h-5 px-1.5 text-[10px]", subprefBadgeClass(s.sub))}>
-                                  {s.sub}
-                                </Badge>
-                                <span className="font-medium">{s.plano}</span>
-                                {s.isVarricao && (
-                                  <span className="rounded bg-violet-500/15 px-1 py-0.5 text-[9px] font-bold text-violet-700 dark:text-violet-300">
-                                    VARR
-                                  </span>
-                                )}
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              <div className="text-sm">{s.tipoServico}</div>
-                              <div className="text-xs text-muted-foreground">{s.frequenciaLabel}</div>
-                            </TableCell>
-                            <TableCell className="text-center font-mono text-sm tabular-nums">
-                              {s.despachados}
-                              <span className="text-muted-foreground"> / {s.previstos}</span>
-                            </TableCell>
-                            <TableCell className="text-center font-mono text-sm tabular-nums">
-                              {s.percentualMedio != null ? `${s.percentualMedio.toFixed(0)}%` : "—"}
-                            </TableCell>
-                            <TableCell className="text-center">
-                              <span className="font-mono text-sm font-bold tabular-nums text-rose-600 dark:text-rose-400">
-                                {s.impactoIpt.toFixed(1)}
-                              </span>
-                            </TableCell>
-                            <TableCell className="text-center">
-                              {s.temBateria ? (
-                                <span
-                                  className={cn(
-                                    "font-mono text-xs font-semibold tabular-nums",
-                                    s.bateriaProblema ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground"
-                                  )}
-                                >
-                                  {s.bateriaMedia != null ? `${s.bateriaMedia.toFixed(0)}%` : "—"}
-                                </span>
-                              ) : (
-                                <span className="text-[10px] text-muted-foreground">s/ mód.</span>
-                              )}
-                            </TableCell>
-                            <TableCell className="text-center">
-                              <Badge variant="outline" className={cn("text-[10px]", CAUSA_TINT[s.causaRaiz].chip)}>
-                                {ROOT_CAUSE_META[s.causaRaiz].label}
-                                {s.causaManual && " ✓"}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="text-center">
-                              <Badge variant="outline" className={cn("text-[10px]", STATUS_META[s.status].className)}>
-                                {STATUS_META[s.status].label}
-                              </Badge>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                        {setoresVisiveis.length === 0 && (
-                          <TableRow>
-                            <TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">
-                              Nenhum setor encontrado para os filtros atuais.
-                            </TableCell>
-                          </TableRow>
-                        )}
-                      </TableBody>
-                    </Table>
-                  </div>
-                </CardContent>
-              </Card>
+              {sub !== "all" && (
+                <p className="text-xs text-muted-foreground">
+                  Os pontos de cada card são do serviço inteiro. A lista abaixo mostra só {sub}.
+                </p>
+              )}
 
-              {/* Gráficos */}
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                <Card className="relative overflow-hidden border-border/70">
-                  <DevWatermark />
-                  <CardHeader className="space-y-0">
-                    <CardTitle className="text-base">Impacto por tipo de serviço</CardTitle>
-                    <p className="text-xs text-muted-foreground">Onde se concentra a perda de IPT</p>
-                  </CardHeader>
-                  <CardContent>
-                    <ResponsiveContainer width="100%" height={280}>
-                      <BarChart data={dadosPorServico} layout="vertical" margin={{ left: 8, right: 16 }}>
-                        <CartesianGrid strokeDasharray="3 3" className="stroke-border/50" horizontal={false} />
-                        <XAxis type="number" tick={{ fontSize: 11 }} />
-                        <YAxis type="category" dataKey="chave" width={150} tick={{ fontSize: 10 }} />
-                        <Tooltip
-                          contentStyle={{ borderRadius: 12, border: "1px solid hsl(var(--border))", background: "hsl(var(--card))", fontSize: 12 }}
-                          formatter={(v: number) => [Math.round(v), "Impacto"]}
-                        />
-                        <Bar dataKey="impacto" radius={[0, 6, 6, 0]} fill="#8b5cf6" />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </CardContent>
-                </Card>
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
+                {servicosVisiveis.map((s) => (
+                  <Card key={s.tipoServico} className="border-border/70">
+                    <CardHeader className="space-y-1 pb-2">
+                      <p className="text-3xl font-bold tabular-nums">{fmtPct(s.percentual)}</p>
+                      <CardTitle className="text-sm font-medium leading-snug">{s.tipoServico}</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-1.5 text-sm text-muted-foreground">
+                      {s.percentual == null ? (
+                        <p>Nenhum despacho encerrado neste período.</p>
+                      ) : (s.gap ?? 0) >= 0.5 ? (
+                        <p>
+                          {fmtPp(s.gap ?? 0)} pp abaixo de 100%
+                          {s.setoresProblema > 0 ? ` · ${s.setoresProblema} setores na lista` : ""}.
+                        </p>
+                      ) : null}
+                      {s.ppBateria >= 0.5 && <p>Bateria tira {fmtPp(s.ppBateria)} pp — pendente.</p>}
+                      {s.ppPlanejamento >= 0.5 && (
+                        <p>Planejamento ou cadastro tira {fmtPp(s.ppPlanejamento)} pp — pendente.</p>
+                      )}
+                      {s.ppFaltaEnvio >= 0.5 && (
+                        <p>
+                          {fmtPp(s.ppFaltaEnvio)} pp vêm do pedaço encerrado de setores que quase não enviamos.
+                        </p>
+                      )}
+                      {s.ppOperacional >= 0.5 && (
+                        <p>Execução em campo, com bateria ok, tira {fmtPp(s.ppOperacional)} pp.</p>
+                      )}
+                      {s.ppDemais >= 1 && (
+                        <p>O restante, {fmtPp(s.ppDemais)} pp, são setores que executam sem fechar em 100%.</p>
+                      )}
+                      {s.naoEnviados > 0 && (
+                        <p className="font-medium text-amber-700 dark:text-amber-300">
+                          {fmtInt(s.naoEnviados)} previstos não foram enviados. Não entram nessa média.
+                        </p>
+                      )}
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
 
-                <Card className="relative overflow-hidden border-border/70">
-                  <DevWatermark />
-                  <CardHeader className="space-y-0">
-                    <CardTitle className="text-base">Impacto por subprefeitura</CardTitle>
-                    <p className="text-xs text-muted-foreground">Despachos-equivalentes perdidos por SUB</p>
-                  </CardHeader>
-                  <CardContent>
-                    <ResponsiveContainer width="100%" height={280}>
-                      <BarChart data={result.porSub} margin={{ left: 8, right: 16 }}>
-                        <CartesianGrid strokeDasharray="3 3" className="stroke-border/50" vertical={false} />
-                        <XAxis dataKey="chave" tick={{ fontSize: 11 }} />
-                        <YAxis tick={{ fontSize: 11 }} />
-                        <Tooltip
-                          contentStyle={{ borderRadius: 12, border: "1px solid hsl(var(--border))", background: "hsl(var(--card))", fontSize: 12 }}
-                          formatter={(v: number) => [Math.round(v), "Impacto"]}
-                        />
-                        <Bar dataKey="impacto" radius={[6, 6, 0, 0]} fill="#a855f7" />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </CardContent>
-                </Card>
+              {servicosQuietos.length > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  Sem gargalo relevante: {servicosQuietos.map((s) => `${s.tipoServico} (${fmtPct(s.percentual)})`).join(" · ")}
+                </p>
+              )}
+
+              <div className="grid grid-cols-1 gap-4">
+                <ListaGargalos
+                  titulo="Problema operacional"
+                  descricao="Foi despachado, a bateria está ok, e a execução não acompanha."
+                  icon={<Users className="h-4 w-4 text-orange-600" />}
+                  setores={operacionais}
+                  onAbrir={setSelecionado}
+                />
+                <ListaGargalos
+                  titulo="Pendentes"
+                  descricao="Bateria, falta de envio ou cadastro. Dá para agir daqui."
+                  icon={<Wrench className="h-4 w-4 text-amber-600" />}
+                  setores={nossos}
+                  onAbrir={setSelecionado}
+                />
               </div>
             </>
           )}
         </div>
       </div>
 
-      {/* Drawer de detalhe do setor */}
       <Dialog open={selecionado != null} onOpenChange={(o) => !o && setSelecionado(null)}>
         <DialogContent className="max-w-2xl">
           {selecionado && (
@@ -760,18 +504,21 @@ export default function CruzamentoPage() {
                 <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
                   <span>{selecionado.tipoServico}</span>
                   <span>·</span>
-                  <span>{selecionado.frequenciaLabel}</span>
-                  <Badge variant="outline" className={cn("ml-auto text-[10px]", CAUSA_TINT[selecionado.causaRaiz].chip)}>
-                    {ROOT_CAUSE_META[selecionado.causaRaiz].label} → {ROOT_CAUSE_META[selecionado.causaRaiz].responsavel}
+                  <span>{selecionado.frequencia}</span>
+                  <Badge variant="outline" className={cn("ml-auto text-[10px]", MOTIVO_CHIP[selecionado.motivo])}>
+                    {selecionado.grupo === "nosso" ? "Pendentes" : "Problema operacional"} ·{" "}
+                    {MOTIVO_GARGALO_LABEL[selecionado.motivo]}
                   </Badge>
                 </div>
+
+                <p className="text-sm">{fraseLista(selecionado)}</p>
 
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                   {[
                     { l: "Previstos", v: selecionado.previstos },
-                    { l: "Despachados", v: selecionado.despachados },
-                    { l: "% médio", v: selecionado.percentualMedio != null ? `${selecionado.percentualMedio.toFixed(0)}%` : "—" },
-                    { l: "Impacto IPT", v: selecionado.impactoIpt.toFixed(1) },
+                    { l: "Encerrados", v: selecionado.encerrados },
+                    { l: "Não enviados", v: selecionado.naoEnviados },
+                    { l: "% médio", v: fmtPct(selecionado.percentual) },
                   ].map((m) => (
                     <div key={m.l} className="rounded-xl border border-border/70 bg-muted/20 p-3 text-center">
                       <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{m.l}</p>
@@ -780,119 +527,72 @@ export default function CruzamentoPage() {
                   ))}
                 </div>
 
-                <div className="grid grid-cols-2 gap-3 text-xs sm:grid-cols-4">
-                  <div className="rounded-lg border border-border/60 px-3 py-2">
-                    <p className="text-muted-foreground">Não despachados</p>
-                    <p className="mt-0.5 font-mono text-sm font-bold tabular-nums text-rose-600 dark:text-rose-400">{selecionado.naoDespachados}</p>
-                  </div>
-                  <div className="rounded-lg border border-border/60 px-3 py-2">
-                    <p className="text-muted-foreground">Zerados</p>
-                    <p className="mt-0.5 font-mono text-sm font-bold tabular-nums">{selecionado.zerados}</p>
-                  </div>
-                  <div className="rounded-lg border border-border/60 px-3 py-2">
-                    <p className="text-muted-foreground">Bateria média</p>
-                    <p className={cn("mt-0.5 font-mono text-sm font-bold tabular-nums", selecionado.bateriaProblema && "text-rose-600 dark:text-rose-400")}>
-                      {selecionado.temBateria ? (selecionado.bateriaMedia != null ? `${selecionado.bateriaMedia.toFixed(0)}%` : "—") : "s/ módulo"}
-                    </p>
-                  </div>
-                  <div className="rounded-lg border border-border/60 px-3 py-2">
-                    <p className="text-muted-foreground">Divergência</p>
-                    <p className="mt-0.5 font-mono text-sm font-bold tabular-nums">
-                      {selecionado.divergencia != null ? `${selecionado.divergencia.toFixed(0)}pp` : "—"}
-                    </p>
-                  </div>
-                </div>
-
                 <div>
-                  <p className="mb-2 text-xs font-medium text-muted-foreground">Execução diária no período</p>
-                  <div className="flex flex-wrap gap-1">
-                    {selecionado.detalhes.filter((d) => d.esperado).map((d) => {
-                      const est = celulaEstado(d);
-                      return (
-                        <div
-                          key={d.data}
-                          className={cn("flex h-8 w-8 items-center justify-center rounded-md text-[10px] font-semibold text-white/90", est.className)}
-                          title={`${d.data} · ${est.label}${est.pct != null ? ` · ${est.pct}%` : ""}`}
-                        >
-                          {d.data.slice(-2)}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Evidência do diagnóstico (saúde do módulo) */}
-                <div className="rounded-xl border border-border/70 bg-muted/15 p-3">
-                  <p className="mb-2 text-xs font-medium text-muted-foreground">Evidência do diagnóstico</p>
-                  <div className="flex flex-wrap gap-2 text-[11px]">
-                    <span className="inline-flex items-center gap-1 rounded-md border border-border/60 px-2 py-1">
-                      Módulo:{" "}
-                      <strong>
-                        {!selecionado.temBateria ? "sem SELIMP" : selecionado.comSinal ? "com sinal" : "sem sinal"}
-                      </strong>
-                    </span>
-                    <span className="inline-flex items-center gap-1 rounded-md border border-border/60 px-2 py-1">
-                      DDMX: <strong>{selecionado.temDdmx ? "sim" : "não"}</strong>
-                    </span>
-                    <span className="inline-flex items-center gap-1 rounded-md border border-border/60 px-2 py-1">
-                      Trocas: <strong>{selecionado.qtdTrocas}</strong>
-                    </span>
-                    {selecionado.intervencaoSemSucesso && (
-                      <span className="inline-flex items-center gap-1 rounded-md border border-rose-500/40 bg-rose-500/10 px-2 py-1 text-rose-700 dark:text-rose-300">
-                        intervenção sem sucesso
-                      </span>
-                    )}
-                    {selecionado.nuncaTeveSinal && (
-                      <span className="inline-flex items-center gap-1 rounded-md border border-rose-500/40 bg-rose-500/10 px-2 py-1 text-rose-700 dark:text-rose-300">
-                        nunca teve sinal
-                      </span>
-                    )}
-                    {selecionado.trocaSemEfeito && (
-                      <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-amber-700 dark:text-amber-300">
-                        troca sem efeito
-                      </span>
-                    )}
-                    {selecionado.contestavel && (
-                      <span className="inline-flex items-center gap-1 rounded-md border border-cyan-500/40 bg-cyan-500/10 px-2 py-1 text-cyan-700 dark:text-cyan-300">
-                        contestável (DDMX &gt; SELIMP)
-                      </span>
-                    )}
-                  </div>
-                  {selecionado.causaRaiz === "divergencia" && (
-                    <p className="mt-2 text-[11px] text-muted-foreground">
-                      SELIMP <strong>{fmtPct(selecionado.percentualSelimp)}</strong> × DDMX/interno{" "}
-                      <strong>{fmtPct(selecionado.percentualInterno)}</strong> · diferença{" "}
-                      <strong>{selecionado.divergencia != null ? `${selecionado.divergencia.toFixed(0)}pp` : "—"}</strong>
-                    </p>
+                  <p className="mb-2 text-xs font-medium text-muted-foreground">Dias previstos no período</p>
+                  {diasLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                  ) : (
+                    <div className="flex flex-wrap gap-1">
+                      {(dias ?? []).map((d) => {
+                        const est = celula(d);
+                        return (
+                          <div
+                            key={d.data}
+                            className={cn(
+                              "flex h-8 w-8 items-center justify-center rounded-md text-[10px] font-semibold",
+                              est.className,
+                            )}
+                            title={`${d.data} · ${est.label}${d.percentual != null ? ` · ${Math.round(d.percentual)}%` : ""}`}
+                          >
+                            {d.data.slice(-2)}
+                          </div>
+                        );
+                      })}
+                      {!diasLoading && (dias ?? []).length === 0 && (
+                        <p className="text-xs text-muted-foreground">Sem dias previstos neste período.</p>
+                      )}
+                    </div>
                   )}
                 </div>
 
-                {/* Registro de causa → alimenta o relatório */}
+                <div className="flex flex-wrap gap-2 text-[11px]">
+                  <span className="rounded-md border border-border/60 px-2 py-1">
+                    Módulo:{" "}
+                    <strong>{!selecionado.temModulo ? "sem SELIMP" : selecionado.comSinal ? "com sinal" : "sem sinal"}</strong>
+                  </span>
+                  <span className="rounded-md border border-border/60 px-2 py-1">
+                    Bateria:{" "}
+                    <strong>{selecionado.bateriaMedia != null ? fmtPct(selecionado.bateriaMedia) : "—"}</strong>
+                  </span>
+                  <span className="rounded-md border border-border/60 px-2 py-1">
+                    Trocas: <strong>{selecionado.qtdTrocas}</strong>
+                  </span>
+                  {selecionado.divergencia != null && (
+                    <span className="rounded-md border border-border/60 px-2 py-1">
+                      SELIMP {fmtPct(selecionado.percentual)} × DDMX {fmtPct(selecionado.percentualDdmx)}
+                    </span>
+                  )}
+                </div>
+
                 <div className="rounded-xl border border-border/70 bg-muted/15 p-3">
                   <p className="mb-2 text-xs font-medium text-muted-foreground">
-                    Registrar causa (entra na pauta e no relatório)
-                    {selecionado.temObsGlobal && (
-                      <span className="ml-2 text-emerald-600 dark:text-emerald-400">· já registrado: {selecionado.obsGlobalTitulo}</span>
+                    Registrar causa
+                    {selecionado.obsTitulo && (
+                      <span className="ml-2 text-emerald-600 dark:text-emerald-400">· {selecionado.obsTitulo}</span>
                     )}
                   </p>
                   <div className="flex flex-wrap gap-2">
-                    {[
-                      { titulo: "Operação não cumpriu", causa: "operacao" as const },
-                      { titulo: "Hiberna / bateria", causa: "hibernando" as const },
-                      { titulo: "Hardware / fornecedor", causa: "hardware" as const },
-                      { titulo: "Ponto cego / cadastro", causa: "pontos_cegos" as const },
-                      { titulo: "Divergência SELIMP×DDMX", causa: "divergencia" as const },
-                    ].map((opt) => (
+                    {["Bateria", "Falta de envio", "Planejamento / cadastro", "Operação não cumpriu"].map((titulo) => (
                       <Button
-                        key={opt.titulo}
+                        key={titulo}
                         variant="outline"
                         size="sm"
-                        disabled={salvandoCausa}
-                        className={cn("h-8 gap-1.5 text-xs", CAUSA_TINT[opt.causa].chip)}
-                        onClick={() => registrarCausa(selecionado, opt.titulo)}
+                        disabled={salvando}
+                        className="h-8 text-xs"
+                        onClick={() => void registrar(titulo)}
                       >
-                        {salvandoCausa ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-                        {opt.titulo}
+                        {salvando ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
+                        {titulo}
                       </Button>
                     ))}
                   </div>

@@ -1,111 +1,97 @@
 /**
- * Exporta o "Plano de Ação" do Cruzamento Inteligente em XLSX.
- *
- * Uma aba consolidada (todos os setores, ordenados por impacto) + uma aba por
- * causa-raiz (Pontos cegos / Hardware / Hiberna / Divergência / Operação), para
- * mandar a cada área só o que é dela resolver.
+ * Exporta a lista de gargalos: o que puxa o percentual, separado entre
+ * problema operacional e pendentes.
  */
 
 import * as XLSX from "xlsx";
 import { format } from "date-fns";
-import { ROOT_CAUSE_META, type RootCause, type SectorAnalysis } from "@/lib/cruzamento-engine";
+import type { GargaloSetor, GrupoGargalo, MotivoGargalo } from "@/lib/api";
+
+export const MOTIVO_GARGALO_LABEL: Record<MotivoGargalo, string> = {
+  bateria: "Bateria",
+  falta_envio: "Falta de envio",
+  planejamento: "Planejamento / cadastro",
+  nunca: "Nunca ou quase nunca",
+  execucao_baixa: "Execução baixa",
+};
+
+const GRUPO_LABEL: Record<GrupoGargalo, string> = {
+  nosso: "Pendentes",
+  operacional: "Problema operacional",
+};
 
 const HEADERS = [
   "Prioridade",
+  "Grupo",
+  "Motivo",
   "Setor",
   "SUB",
   "Serviço",
   "Frequência",
   "Previstos",
-  "Despachados",
-  "Não despachados",
-  "Zerados",
+  "Encerrados",
+  "Não enviados",
   "% médio",
-  "Cobertura %",
-  "Impacto IPT",
-  "Bateria média %",
-  "Divergência (pp)",
-  "Nº trocas",
-  "Causa provável",
-  "Responsável",
-  "Flags",
-  "Observação registrada",
+  "Pontos (pp)",
+  "O que pesa",
+  "Observação",
 ] as const;
 
-const fmtNum = (v: number | null | undefined, dec = 0) =>
-  v == null || !Number.isFinite(v) ? "" : Number(v.toFixed(dec));
+function fraseLista(s: GargaloSetor): string {
+  const motivo = s.frase.charAt(0).toUpperCase() + s.frase.slice(1);
+  if (s.pp >= 0.05) return `Tira ${s.pp.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} pp deste serviço — ${s.frase}`;
+  return motivo;
+}
 
-function buildRow(s: SectorAnalysis, index: number): (string | number)[] {
+function buildRow(s: GargaloSetor, index: number): (string | number)[] {
   return [
     index + 1,
+    GRUPO_LABEL[s.grupo],
+    MOTIVO_GARGALO_LABEL[s.motivo],
     s.plano,
     s.sub,
     s.tipoServico,
-    s.frequenciaLabel,
+    s.frequencia,
     s.previstos,
-    s.despachados,
-    s.naoDespachados,
-    s.zerados,
-    fmtNum(s.percentualMedio, 1),
-    fmtNum(s.cobertura, 0),
-    fmtNum(s.impactoIpt, 1),
-    fmtNum(s.bateriaMedia, 0),
-    fmtNum(s.divergencia, 0),
-    s.qtdTrocas,
-    ROOT_CAUSE_META[s.causaRaiz].label,
-    ROOT_CAUSE_META[s.causaRaiz].responsavel,
-    [s.trocaSemEfeito ? "Troca sem efeito" : "", s.contestavel ? "Contestável" : ""].filter(Boolean).join(" · "),
-    s.obsGlobalTitulo ?? "",
+    s.encerrados,
+    s.naoEnviados,
+    s.percentual == null ? "" : Number(s.percentual.toFixed(1)),
+    Number(s.pp.toFixed(1)),
+    fraseLista(s),
+    s.obsTitulo ?? "",
   ];
 }
 
-const COL_WIDTHS = [
-  9, 18, 6, 26, 22, 9, 11, 14, 8, 9, 11, 11, 13, 14, 9, 22, 16, 18, 30,
-].map((w) => ({ wch: w }));
+const COL_WIDTHS = [11, 22, 24, 18, 6, 42, 28, 11, 12, 14, 10, 12, 64, 28].map((w) => ({ wch: w }));
 
-export interface CruzamentoExportMeta {
+export interface GargalosExportMeta {
   periodoLabel: string;
   subLabel: string;
   servicoLabel: string;
 }
 
-/** Aplica largura de coluna e devolve a sheet pronta. */
-function sheetFrom(rows: SectorAnalysis[]): XLSX.WorkSheet {
-  const sheet = XLSX.utils.aoa_to_sheet([Array.from(HEADERS), ...rows.map(buildRow)]);
+function sheetFrom(rows: GargaloSetor[], meta: GargalosExportMeta): XLSX.WorkSheet {
+  const cabecalho = [
+    ["Gargalos de execução", meta.periodoLabel],
+    ["Subprefeitura", meta.subLabel],
+    ["Serviço", meta.servicoLabel],
+    [],
+  ];
+  const sheet = XLSX.utils.aoa_to_sheet([
+    ...cabecalho,
+    Array.from(HEADERS),
+    ...rows.map(buildRow),
+  ]);
   sheet["!cols"] = COL_WIDTHS;
   return sheet;
 }
 
-const RESPONSAVEL_ORDER: RootCause[] = ["pontos_cegos", "hardware", "hibernando", "divergencia", "operacao"];
-
-export function exportCruzamentoPlanoAcao(setores: SectorAnalysis[], meta: CruzamentoExportMeta): void {
+export function exportGargalos(setores: GargaloSetor[], meta: GargalosExportMeta) {
   const workbook = XLSX.utils.book_new();
-
-  // Aba 1: consolidado (exclui "ok", que não é pauta).
-  const pauta = setores.filter((s) => s.causaRaiz !== "ok");
-  XLSX.utils.book_append_sheet(workbook, sheetFrom(pauta), "Plano de ação");
-
-  // Abas por responsável.
-  for (const causa of RESPONSAVEL_ORDER) {
-    const grupo = pauta.filter((s) => s.causaRaiz === causa);
-    if (grupo.length === 0) continue;
-    // Nomes de aba não podem conter \ / ? * [ ] : (limite de 31 chars).
-    const nome = ROOT_CAUSE_META[causa].label.replace(/[\\/?*[\]:]/g, "-").slice(0, 28);
-    XLSX.utils.book_append_sheet(workbook, sheetFrom(grupo), nome);
-  }
-
-  // Metadados.
-  const metaSheet = XLSX.utils.aoa_to_sheet([
-    ["Relatório", "Cruzamento Inteligente — Plano de ação"],
-    ["Período", meta.periodoLabel],
-    ["Subprefeitura", meta.subLabel],
-    ["Serviço", meta.servicoLabel],
-    ["Setores na pauta", pauta.length],
-    ["Impacto IPT total (despachos-equiv.)", fmtNum(pauta.reduce((a, s) => a + s.impactoIpt, 0), 1)],
-    ["Gerado em", format(new Date(), "dd/MM/yyyy HH:mm:ss")],
-  ]);
-  metaSheet["!cols"] = [{ wch: 36 }, { wch: 48 }];
-  XLSX.utils.book_append_sheet(workbook, metaSheet, "Metadados");
-
-  XLSX.writeFile(workbook, `plano_acao_cruzamento_${format(new Date(), "yyyy-MM-dd")}.xlsx`);
+  const operacional = setores.filter((s) => s.grupo === "operacional");
+  const pendentes = setores.filter((s) => s.grupo === "nosso");
+  XLSX.utils.book_append_sheet(workbook, sheetFrom([...operacional, ...pendentes], meta), "Todos");
+  XLSX.utils.book_append_sheet(workbook, sheetFrom(operacional, meta), "Problema operacional");
+  XLSX.utils.book_append_sheet(workbook, sheetFrom(pendentes, meta), "Pendentes");
+  XLSX.writeFile(workbook, `gargalos_${format(new Date(), "yyyy-MM-dd")}.xlsx`);
 }

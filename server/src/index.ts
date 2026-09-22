@@ -10,6 +10,7 @@ import { cncRoutes } from "./routes/cnc.js";
 import { acicRoutes } from "./routes/acic.js";
 import { bateriaRoutes } from "./routes/bateria.js";
 import { portateisRoutes } from "./routes/portateis.js";
+import { gargalosRoutes } from "./routes/gargalos.js";
 import { authRoutes } from "./routes/auth.js";
 import { attachAuthToRequest, requireAuth } from "./auth.js";
 
@@ -54,6 +55,7 @@ async function start() {
   await fastify.register(acicRoutes, { prefix: "/api/v1" });
   await fastify.register(bateriaRoutes, { prefix: "/api/v1" });
   await fastify.register(portateisRoutes, { prefix: "/api/v1" });
+  await fastify.register(gargalosRoutes, { prefix: "/api/v1" });
 
   fastify.get("/api/v1/health", async () => ({ ok: true }));
 

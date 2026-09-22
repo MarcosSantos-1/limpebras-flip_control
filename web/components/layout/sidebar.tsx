@@ -84,7 +84,7 @@ const iptNavItems: SidebarNavDotItem[] = [
   },
   {
     href: "/ipt/cruzamento",
-    label: "Cruzamento inteligente",
+    label: "Gargalos",
     icon: Network,
     pageKey: "ipt" as AuthPageKey,
     dotClassName: "bg-violet-500 shadow-violet-500/40",

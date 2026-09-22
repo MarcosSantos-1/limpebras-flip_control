@@ -510,6 +510,66 @@ export interface IptPreviewResponse {
   }>;
 }
 
+export type MotivoGargalo = "bateria" | "falta_envio" | "planejamento" | "nunca" | "execucao_baixa";
+export type GrupoGargalo = "nosso" | "operacional";
+
+export interface GargaloSetor {
+  plano: string;
+  sub: string;
+  tipoServico: string;
+  frequencia: string;
+  previstos: number;
+  encerrados: number;
+  naoEnviados: number;
+  percentual: number | null;
+  pp: number;
+  grupo: GrupoGargalo;
+  motivo: MotivoGargalo;
+  frase: string;
+  temModulo: boolean;
+  comSinal: boolean;
+  bateriaMedia: number | null;
+  qtdTrocas: number;
+  trocaSemSinal: boolean;
+  manutencaoSemSinal: boolean;
+  percentualDdmx: number | null;
+  divergencia: number | null;
+  obsTitulo: string | null;
+}
+
+export interface ServicoGargalo {
+  tipoServico: string;
+  percentual: number | null;
+  gap: number | null;
+  ppBateria: number;
+  ppPlanejamento: number;
+  ppFaltaEnvio: number;
+  ppOperacional: number;
+  ppDemais: number;
+  previstos: number;
+  encerrados: number;
+  naoEnviados: number;
+  setoresProblema: number;
+}
+
+export interface GargalosResponse {
+  periodo: { inicial: string; final: string };
+  servicos: ServicoGargalo[];
+  setores: GargaloSetor[];
+}
+
+export interface GargaloDia {
+  data: string;
+  encerrado: boolean;
+  naoEnviado: boolean;
+  percentual: number | null;
+}
+
+export interface GargaloDetalhe {
+  plano: string;
+  dias: GargaloDia[];
+}
+
 export interface IptModuloBateriaModule {
   id: number;
   subprefeitura: string;
@@ -1483,6 +1543,16 @@ export const apiService = {
       params.subprefeitura = subprefeitura;
     }
     const { data } = await api.get('/dashboard/ipt-preview', { params });
+    return data;
+  },
+
+  getGargalos: async (inicio: string, fim: string): Promise<GargalosResponse> => {
+    const { data } = await api.get('/ipt/gargalos', { params: { inicio, fim }, timeout: 60_000 });
+    return data;
+  },
+
+  getGargaloDetalhe: async (plano: string, inicio: string, fim: string): Promise<GargaloDetalhe> => {
+    const { data } = await api.get(`/ipt/gargalos/${encodeURIComponent(plano)}`, { params: { inicio, fim } });
     return data;
   },
 
