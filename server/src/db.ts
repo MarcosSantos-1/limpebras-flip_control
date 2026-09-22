@@ -674,6 +674,44 @@ export async function runMigrations() {
     ).catch(() => {});
     await preencherVinculosPortateisHistorico(client).catch(() => {});
 
+    // Troca de bateria do portátil: identidade é o nome, não o SELIMP.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS portatil_bateria_trocas (
+        id                         SERIAL PRIMARY KEY,
+        nome                       TEXT NOT NULL UNIQUE,
+        status                     TEXT NOT NULL DEFAULT 'agendada',
+        data_agendada              DATE,
+        data_primeiro_agendamento  DATE,
+        sucesso                    BOOLEAN,
+        percentual_entrada         NUMERIC(5,2),
+        data_troca                 DATE,
+        ultima_comunicacao         DATE,
+        created_at                 TIMESTAMPTZ DEFAULT NOW(),
+        updated_at                 TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client.query("CREATE INDEX IF NOT EXISTS idx_portatil_bateria_trocas_status ON portatil_bateria_trocas(status)").catch(() => {});
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS portatil_bateria_trocas_eventos (
+        id                         SERIAL PRIMARY KEY,
+        nome                       TEXT NOT NULL,
+        status                     TEXT NOT NULL DEFAULT 'agendada',
+        tipo_troca                 TEXT,
+        data_agendada              DATE,
+        data_primeiro_agendamento  DATE,
+        sucesso                    BOOLEAN,
+        percentual_entrada         NUMERIC(5,2),
+        data_troca                 DATE,
+        ultima_comunicacao         DATE,
+        bateria_antes_raw          TEXT,
+        bateria_antes_percentual   NUMERIC(5,2),
+        status_bateria_antes       TEXT,
+        bateria_depois_percentual  NUMERIC(5,2),
+        created_at                 TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client.query("CREATE INDEX IF NOT EXISTS idx_portatil_bateria_trocas_eventos_nome ON portatil_bateria_trocas_eventos(nome)").catch(() => {});
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS modulo_selimp (
         id                         SERIAL PRIMARY KEY,

@@ -717,6 +717,15 @@ export interface PortatilAtribuicao {
   origem: "historico" | "manual";
 }
 
+/** Uma importação de status de bateria do portátil. */
+export interface PortatilHistoricoPonto {
+  dataExportacao: string;
+  comunicacao: "ON" | "OFF";
+  bateriaPercentual: number | null;
+  bateriaDesatualizada: boolean;
+  ultimaComunicacao: string | null;
+}
+
 /** Snapshot mais recente de um módulo PORTATIL em ipt_dados_bateria. */
 export interface PortatilModulo {
   nome: string;
@@ -727,6 +736,24 @@ export interface PortatilModulo {
   bateriaDesatualizada: boolean;
   ultimaComunicacao: string | null;
   atribuicao: PortatilAtribuicao | null;
+  historico: PortatilHistoricoPonto[];
+}
+
+export interface PortatilTroca {
+  nome: string;
+  status: "agendada" | "concluida";
+  dataAgendada: string | null;
+  dataPrimeiroAgendamento: string | null;
+  sucesso: boolean | null;
+  percentualEntrada: number | null;
+  dataTroca: string | null;
+  ultimaComunicacao: string | null;
+}
+
+export interface PortatilTrocaHistorico extends PortatilTroca {
+  id: string;
+  tipoTroca: string | null;
+  statusBateriaAntes: string | null;
 }
 
 export interface PortateisModulosResponse {
@@ -1250,6 +1277,25 @@ export const apiService = {
     atribuicao: { subprefeitura: string; servico: string },
   ): Promise<{ ok: boolean; nome: string; atribuicao: PortatilAtribuicao | null }> => {
     const { data } = await api.put('/portateis/vinculos', { nome, ...atribuicao });
+    return data;
+  },
+  getPortateisTrocas: async (): Promise<{
+    records: Record<string, PortatilTroca>;
+    history: Record<string, PortatilTrocaHistorico[]>;
+  }> => {
+    const { data } = await api.get('/portateis/trocas');
+    return data;
+  },
+  agendarPortatilTrocas: async (items: { nome: string; dataAgendada: string }[]) => {
+    const { data } = await api.post('/portateis/trocas/agendar', { items });
+    return data;
+  },
+  concluirPortatilTrocas: async (items: { nome: string; dataTroca: string }[]) => {
+    const { data } = await api.post('/portateis/trocas/concluir', { items });
+    return data;
+  },
+  cancelarPortatilTroca: async (nome: string) => {
+    const { data } = await api.delete(`/portateis/trocas/${encodeURIComponent(nome)}`);
     return data;
   },
   // ===== Trocas de bateria =====
