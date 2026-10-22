@@ -929,8 +929,8 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
 
   type ManutencaoStatus =
     | "EM_ANALISE" | "PENDENTE" | "RETIRANDO" | "ATIVA" | "REINSTALANDO" | "REALIZADA" | "SINAL_RECUPERADO";
-  type ManutencaoMotivoBadge = "SINAL" | "BATERIA" | "AVARIA" | "PERCENTUAL";
-  const MANUT_MOTIVO_BADGES: ManutencaoMotivoBadge[] = ["SINAL", "BATERIA", "AVARIA", "PERCENTUAL"];
+  type ManutencaoMotivoBadge = "SINAL" | "BATERIA" | "AVARIA" | "PERCENTUAL" | "FURTADO";
+  const MANUT_MOTIVO_BADGES: ManutencaoMotivoBadge[] = ["SINAL", "BATERIA", "AVARIA", "PERCENTUAL", "FURTADO"];
   const MANUT_STATUSES: ManutencaoStatus[] = [
     "EM_ANALISE", "PENDENTE", "RETIRANDO", "ATIVA", "REINSTALANDO", "REALIZADA", "SINAL_RECUPERADO",
   ];
@@ -958,9 +958,11 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
   /** Contestação só quando há datas coerentes com a etapa ou pipeline completo (ordenado → retirada → reinstalação). */
   function isContestationEligibleRow(r: ModuloManutencaoRow): boolean {
     const status = deriveStatus(r);
+    const furtado = String(r.motivo_badge ?? "").trim().toUpperCase() === "FURTADO";
     if (r.data_ordenado && r.data_retirada && r.data_reinstalacao) return true;
     if (status === "PENDENTE" || status === "EM_ANALISE") return false;
     if (status === "RETIRANDO") return Boolean(r.data_ordenado);
+    if (furtado && r.data_ordenado) return true;
     if (status === "ATIVA" || status === "REINSTALANDO") return Boolean(r.data_ordenado && r.data_retirada);
     return false;
   }

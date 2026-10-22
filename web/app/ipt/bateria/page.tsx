@@ -58,6 +58,7 @@ import {
   Upload,
   FileText,
   ImageIcon,
+  Loader2,
   HelpCircle,
   ClipboardPaste,
 } from "lucide-react";
@@ -120,7 +121,7 @@ import {
 import { useTheme } from "next-themes";
 import { toast } from "react-toastify";
 import { apiService } from "@/lib/api";
-import { formatIptDataInstalacaoBr, servicoLabel, mesCorrenteLabel } from "@/lib/ipt-utils";
+import { formatIptDataInstalacaoBr, getFrequenciaDescricao, servicoLabel, mesCorrenteLabel } from "@/lib/ipt-utils";
 import { SetoresTab } from "./setores-tab";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
 import {
@@ -1119,21 +1120,37 @@ function duracoesBateriaAtualizada(m: ModuleData, history: TrocaHistoryRecord[],
   return out;
 }
 
+/** Mesma lista de serviços de bolha do servidor (dia é 0% ou 100%). */
+const SERVICOS_BOLHA_SIGLA = new Set(["LE", "VP", "CA", "CF", "LF", "VF", "LM", "NH"]);
+
 function execucaoSelimpHistoryOf(m: ModuleData, limit = 10, days = 30): ExecucaoSelimpDia[] {
-  const byDate = new Map<string, { sum: number; count: number; fonte: "ddmx" | "selimp" }>();
+  const byDate = new Map<string, { sum: number; count: number; fonte: "ddmx" | "selimp"; bolhaOnly: boolean; max: number }>();
   for (const sd of setoresDiasOf(m)) {
+    const bolha = SERVICOS_BOLHA_SIGLA.has(siglaFromSetor(sd.setor) ?? "");
     for (const item of sd.execucoes ?? []) {
       if (!item.data || item.percentual == null || !Number.isFinite(item.percentual)) continue;
       if (!isDateInPeriod(item.data, `${days}d`)) continue;
-      const cur = byDate.get(item.data) ?? { sum: 0, count: 0, fonte: item.fonte === "selimp" ? "selimp" : "ddmx" };
+      const cur = byDate.get(item.data) ?? {
+        sum: 0,
+        count: 0,
+        fonte: item.fonte === "selimp" ? "selimp" : "ddmx",
+        bolhaOnly: true,
+        max: Number.NEGATIVE_INFINITY,
+      };
       cur.sum += item.percentual;
       cur.count += 1;
+      if (item.percentual > cur.max) cur.max = item.percentual;
+      if (!bolha) cur.bolhaOnly = false;
       if (item.fonte === "ddmx") cur.fonte = "ddmx";
       byDate.set(item.data, cur);
     }
   }
   return Array.from(byDate.entries())
-    .map(([data, v]) => ({ data, percentual: Math.round((v.sum / v.count) * 10) / 10, fonte: v.fonte }))
+    .map(([data, v]) => ({
+      data,
+      percentual: v.bolhaOnly ? Math.round(v.max * 10) / 10 : Math.round((v.sum / v.count) * 10) / 10,
+      fonte: v.fonte,
+    }))
     .sort((a, b) => b.data.localeCompare(a.data))
     .slice(0, limit);
 }
@@ -1298,6 +1315,7 @@ const MANUT_MOTIVO_BADGE_LABEL: Record<ManutencaoMotivoBadge, string> = {
   BATERIA: "BATERIA",
   AVARIA: "AVARIA",
   PERCENTUAL: "PERCENTUAL",
+  FURTADO: "FURTADO",
 };
 
 const MANUT_MOTIVO_BADGE_CLASS: Record<ManutencaoMotivoBadge, string> = {
@@ -1305,9 +1323,10 @@ const MANUT_MOTIVO_BADGE_CLASS: Record<ManutencaoMotivoBadge, string> = {
   BATERIA: "border-purple-500/35 bg-purple-500/15 text-purple-700 dark:text-purple-300",
   AVARIA: "border-zinc-500/35 bg-zinc-500/15 text-zinc-700 dark:text-zinc-300",
   PERCENTUAL: "border-blue-900/35 bg-blue-900/15 text-blue-900 dark:text-blue-300",
+  FURTADO: "border-orange-500/35 bg-orange-500/15 text-orange-800 dark:text-orange-300",
 };
 
-const MANUT_MOTIVO_BADGE_OPTIONS: ManutencaoMotivoBadge[] = ["SINAL", "BATERIA", "AVARIA", "PERCENTUAL"];
+const MANUT_MOTIVO_BADGE_OPTIONS: ManutencaoMotivoBadge[] = ["SINAL", "BATERIA", "AVARIA", "PERCENTUAL", "FURTADO"];
 
 /** Motivo do equipamento na mensagem copiável de contestação (por categoria da manutenção). */
 const CONTESTACAO_MOTIVO_POR_BADGE: Record<ManutencaoMotivoBadge, string> = {
@@ -1315,7 +1334,18 @@ const CONTESTACAO_MOTIVO_POR_BADGE: Record<ManutencaoMotivoBadge, string> = {
   PERCENTUAL: "equipamento pouco tempo online, afetando percentuais de execução",
   AVARIA: "avaria física no equipamento, impossibilitando a operação normal",
   BATERIA: "bateria com baixa autonomia ou desgaste, comprometendo a execução do serviço",
+  FURTADO: "módulo furtado ou extraviado, impossibilitando a execução do serviço",
 };
+
+function textoContestacao(
+  e: { setor: string; selimp: string; dataOrdenado?: string; motivoBadge: ManutencaoMotivoBadge },
+  dia?: string,
+): string {
+  const ordenado = e.dataOrdenado ? fmtIsoBr(e.dataOrdenado) : "—";
+  const diaTxt = dia ? ` referente ao despacho de ${fmtIsoBr(dia)}` : "";
+  const motivo = CONTESTACAO_MOTIVO_POR_BADGE[e.motivoBadge] ?? CONTESTACAO_MOTIVO_POR_BADGE.SINAL;
+  return `Setor ${e.setor} (SELIMP ${e.selimp}) em processo de manutenção${diaTxt}, conforme comunicado à SELIMP via e-mail no dia ${ordenado}. Solicitamos a desconsideração do plano, devido o seguinte problema no equipamento: ${motivo}.`;
+}
 
 const MANUT_OPEN_STATUSES = new Set<ManutencaoModuloStatus>([
   "EM_ANALISE", "PENDENTE", "RETIRANDO", "ATIVA", "REINSTALANDO",
@@ -1339,12 +1369,14 @@ function isInMaintenanceOverview(status: ManutencaoModuloStatus | null): boolean
 
 /** Contestação só quando há datas coerentes com a etapa ou pipeline completo (ordenado → retirada → reinstalação). */
 function isContestationEligible(
-  e: Pick<ManutEntry, "status" | "dataOrdenado" | "dataRetirada" | "dataReinstalacao">,
+  e: Pick<ManutEntry, "status" | "dataOrdenado" | "dataRetirada" | "dataReinstalacao" | "motivoBadge">,
 ): boolean {
-  const { status, dataOrdenado, dataRetirada, dataReinstalacao } = e;
+  const { status, dataOrdenado, dataRetirada, dataReinstalacao, motivoBadge } = e;
+  const furtado = motivoBadge === "FURTADO";
   if (dataOrdenado && dataRetirada && dataReinstalacao) return true;
   if (status === "PENDENTE" || status === "EM_ANALISE") return false;
   if (status === "RETIRANDO") return Boolean(dataOrdenado);
+  if (furtado && dataOrdenado) return true;
   if (status === "ATIVA" || status === "REINSTALANDO") return Boolean(dataOrdenado && dataRetirada);
   return false;
 }
@@ -1454,6 +1486,38 @@ function manutEntryDate(
   e: Pick<ManutEntry, "dataManutencao" | "dataReinstalacao" | "dataRetirada" | "dataOrdenado" | "createdAt">,
 ): string | undefined {
   return e.dataManutencao ?? e.dataReinstalacao ?? e.dataRetirada ?? e.dataOrdenado ?? e.createdAt?.slice(0, 10);
+}
+
+function currentMonthRange(): { periodo_inicial: string; periodo_final: string } {
+  const now = new Date();
+  const ini = new Date(now.getFullYear(), now.getMonth(), 1);
+  const fim = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  const iso = (d: Date) => {
+    const p = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  };
+  return { periodo_inicial: iso(ini), periodo_final: iso(fim) };
+}
+
+function frequenciaTextoSetores(setor: string): string {
+  const desc = new Set<string>();
+  for (const parte of setor.split("/")) {
+    const m = parte.trim().replace(/\s+/g, "").toUpperCase().match(SETOR_RE);
+    if (m?.[2]) desc.add(getFrequenciaDescricao(m[2]));
+  }
+  return desc.size > 0 ? Array.from(desc).join("; ") : "—";
+}
+
+function manutOverlapsPeriod(
+  e: Pick<ManutEntry, "dataOrdenado" | "dataRetirada" | "dataReinstalacao" | "dataManutencao" | "createdAt">,
+  ini: string,
+  fim: string,
+): boolean {
+  const start = e.dataOrdenado || e.dataRetirada || e.dataManutencao || e.createdAt?.slice(0, 10);
+  if (!start || start > fim) return false;
+  const end = e.dataReinstalacao || e.dataManutencao;
+  if (end && end < ini) return false;
+  return true;
 }
 
 function exportManutencoesXlsx(entries: ManutEntry[]) {
@@ -1707,6 +1771,9 @@ export default function BateriaDashboardPage() {
   const [contestRemovingDoc, setContestRemovingDoc] = useState(false);
   const [contestEditConfirm, setContestEditConfirm] = useState<{ entry: ManutEntry; dia: string } | null>(null);
   const [contestEditingDay, setContestEditingDay] = useState<string | null>(null);
+  const [contestacoesOpen, setContestacoesOpen] = useState(false);
+  const [contestacoesLoading, setContestacoesLoading] = useState(false);
+  const [contestacoesPeriodo, setContestacoesPeriodo] = useState(currentMonthRange);
   const [manutEventDelete, setManutEventDelete] = useState<{ selimp: string; id: number; setor: string; status: string } | null>(null);
 
   // Paginação das listagens de Trocas e Manutenções
@@ -2624,6 +2691,7 @@ export default function BateriaDashboardPage() {
           dataOrdenado: ev.dataOrdenado,
           dataRetirada: ev.dataRetirada,
           dataReinstalacao: ev.dataReinstalacao,
+          motivoBadge: ev.motivoBadge ?? "SINAL",
         });
         entries.push({
           key: `ev-${ev.id}`,
@@ -2729,10 +2797,12 @@ export default function BateriaDashboardPage() {
   const manutStats = useMemo(() => {
     const counts: Record<ManutencaoModuloStatus, number> = { EM_ANALISE: 0, PENDENTE: 0, RETIRANDO: 0, ATIVA: 0, REINSTALANDO: 0, REALIZADA: 0, SINAL_RECUPERADO: 0 };
     let total = 0;
+    let furtados = 0;
     for (const events of Object.values(moduloManut.history)) {
       for (const ev of events) {
         if (!manutInPeriod(manutEventDate(ev), manutPeriod)) continue;
         counts[ev.status] += 1;
+        if (ev.motivoBadge === "FURTADO") furtados += 1;
         total += 1;
       }
     }
@@ -2745,7 +2815,7 @@ export default function BateriaDashboardPage() {
         total += 1;
       }
     }
-    return { total, ...counts, realizadasTotal: counts.REALIZADA + counts.SINAL_RECUPERADO };
+    return { total, ...counts, realizadasTotal: counts.REALIZADA + counts.SINAL_RECUPERADO, furtados };
   }, [moduloManut.history, modules, isEnviadoManutencao, manutPeriod, manut.overrides]);
 
   const manutChartData = useMemo(() => {
@@ -2808,7 +2878,7 @@ export default function BateriaDashboardPage() {
       base === "REALIZADA" && manutForm.sinalRecuperado ? "SINAL_RECUPERADO" : base;
     // Datas cumulativas: Retirando (ordenado) → Ativo (+retirada) → Reinstalando (+reinstalação) → Realizado.
     const hasOrdenado = base === "RETIRANDO" || base === "ATIVA" || base === "REINSTALANDO" || base === "REALIZADA";
-    const hasRetirada = base === "ATIVA" || base === "REINSTALANDO" || base === "REALIZADA";
+    const hasRetirada = (base === "ATIVA" || base === "REINSTALANDO" || base === "REALIZADA") && manutForm.motivoBadge !== "FURTADO";
     const hasReinstalacao = (base === "REINSTALANDO" || base === "REALIZADA") && !manutForm.sinalRecuperado;
     const dataOrdenado = hasOrdenado ? manutForm.dataOrdenado || "" : "";
     const dataRetirada = hasRetirada ? manutForm.dataRetirada || "" : "";
@@ -2927,11 +2997,94 @@ export default function BateriaDashboardPage() {
 
   const mensagemContestacao = useCallback((e: ManutEntry | null, dia?: string): string => {
     if (!e) return "";
-    const ordenado = e.dataOrdenado ? fmtIsoBr(e.dataOrdenado) : "—";
-    const diaTxt = dia ? ` referente ao despacho de ${fmtIsoBr(dia)}` : "";
-    const motivo = CONTESTACAO_MOTIVO_POR_BADGE[e.motivoBadge] ?? CONTESTACAO_MOTIVO_POR_BADGE.SINAL;
-    return `Setor ${e.setor} (SELIMP ${e.selimp}) em processo de manutenção${diaTxt}, conforme comunicado à SELIMP via e-mail no dia ${ordenado}. Solicitamos a desconsideração do plano, devido o seguinte problema no equipamento: ${motivo}.`;
+    return textoContestacao(e, dia);
   }, []);
+
+  const handleDownloadContestacoes = useCallback(async () => {
+    const { periodo_inicial, periodo_final } = contestacoesPeriodo;
+    if (!periodo_inicial || !periodo_final || periodo_inicial > periodo_final) {
+      toast.error("Selecione um período válido.");
+      return;
+    }
+    setContestacoesLoading(true);
+    try {
+      const setores: import("@/lib/pdf-relatorio-manutencao").ContestacaoManutencaoSetor[] = [];
+      const diasPdf: import("@/lib/pdf-relatorio-manutencao").ContestacaoManutencaoDia[] = [];
+      for (const [selimp, events] of Object.entries(moduloManut.history)) {
+        const mod = modulesBySelimp.get(selimp) ?? null;
+        for (const ev of events) {
+          const motivoBadge = ev.motivoBadge ?? "SINAL";
+          const eligible = isContestationEligible({
+            status: ev.status,
+            dataOrdenado: ev.dataOrdenado,
+            dataRetirada: ev.dataRetirada,
+            dataReinstalacao: ev.dataReinstalacao,
+            motivoBadge,
+          });
+          const contestacaoDias = eligible ? ev.contestacaoDias ?? [] : [];
+          const setor = mod?.setor ?? ev.setor ?? selimp;
+          const sub = mod?.subprefeitura ?? "";
+          const diasNoPeriodo = contestacaoDias.filter(
+            (d) => d.contestado && Boolean(d.printUrl) && d.data >= periodo_inicial && d.data <= periodo_final,
+          );
+          const janela = {
+            dataOrdenado: ev.dataOrdenado,
+            dataRetirada: ev.dataRetirada,
+            dataReinstalacao: ev.dataReinstalacao,
+            dataManutencao: ev.dataManutencao,
+            createdAt: ev.createdAt,
+          };
+          if (!manutOverlapsPeriod(janela, periodo_inicial, periodo_final) && diasNoPeriodo.length === 0) continue;
+          const datas = [
+            ev.dataOrdenado ? `Ordenado ${fmtIsoBr(ev.dataOrdenado)}` : null,
+            ev.dataRetirada ? `Retirada ${fmtIsoBr(ev.dataRetirada)}` : null,
+            ev.dataReinstalacao ? `Reinstalação ${fmtIsoBr(ev.dataReinstalacao)}` : null,
+          ].filter(Boolean).join(" · ");
+          setores.push({
+            setor,
+            sub,
+            selimp,
+            frequencia: frequenciaTextoSetores(setor),
+            diasDespacho: contestacaoDias.length,
+            motivo: MANUT_MOTIVO_BADGE_LABEL[motivoBadge],
+            detalhes: ev.motivo?.trim() || "—",
+            status: MANUT_STATUS_LABEL[ev.status],
+            datas: datas || "—",
+          });
+          for (const dia of diasNoPeriodo) {
+            diasPdf.push({
+              data: dia.data,
+              setor,
+              selimp,
+              detalhes: textoContestacao({ setor, selimp, dataOrdenado: ev.dataOrdenado, motivoBadge }, dia.data),
+              printUrl: dia.printUrl,
+              printTitulo: dia.printTitulo,
+            });
+          }
+        }
+      }
+      if (setores.length === 0) {
+        toast.error("Nenhuma manutenção no período selecionado.");
+        return;
+      }
+      setores.sort((a, b) => a.sub.localeCompare(b.sub) || a.setor.localeCompare(b.setor) || a.selimp.localeCompare(b.selimp));
+      diasPdf.sort((a, b) => a.data.localeCompare(b.data) || a.setor.localeCompare(b.setor));
+      const { gerarRelatorioManutencaoPDF } = await import("@/lib/pdf-relatorio-manutencao");
+      await gerarRelatorioManutencaoPDF({
+        periodoInicial: periodo_inicial,
+        periodoFinal: periodo_final,
+        setores,
+        dias: diasPdf,
+      });
+      setContestacoesOpen(false);
+      toast.success("PDF de contestações gerado.");
+    } catch (err) {
+      console.error("Erro ao gerar PDF de contestações", err);
+      toast.error("Não foi possível gerar o PDF.");
+    } finally {
+      setContestacoesLoading(false);
+    }
+  }, [contestacoesPeriodo, moduloManut.history, modulesBySelimp]);
 
   /** Upload do documento (PDF ou foto) que atesta a manutenção → Firebase Storage + estado local do modal. */
   const handleManutModalUpload = useCallback(async (files: FileList | File[] | File) => {
@@ -4389,6 +4542,13 @@ export default function BateriaDashboardPage() {
                       </div>
                       <p className="mt-4 font-mono text-3xl font-bold tabular-nums text-white">{manutStats.realizadasTotal}</p>
                     </div>
+                    <div className="flex flex-col justify-between rounded-xl border border-orange-200/30 bg-white/10 p-4 backdrop-blur-sm">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="text-xs font-medium uppercase tracking-wide text-white/80">Furtados</p>
+                        <ShieldAlert className="size-6 shrink-0 text-orange-200/95" aria-hidden />
+                      </div>
+                      <p className="mt-4 font-mono text-3xl font-bold tabular-nums text-white">{manutStats.furtados}</p>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -4447,6 +4607,17 @@ export default function BateriaDashboardPage() {
                       disabled={manutEntries.length === 0}
                     >
                       <Download className="h-4 w-4" /> Baixar XLSX
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-9 gap-1.5"
+                      onClick={() => {
+                        setContestacoesPeriodo(currentMonthRange());
+                        setContestacoesOpen(true);
+                      }}
+                    >
+                      <FileText className="h-4 w-4" /> Gerar contestações
                     </Button>
                     <Button
                       size="sm"
@@ -6206,6 +6377,7 @@ export default function BateriaDashboardPage() {
                     dataOrdenado: rec.dataOrdenado,
                     dataRetirada: rec.dataRetirada,
                     dataReinstalacao: rec.dataReinstalacao,
+                    motivoBadge: rec.motivoBadge ?? "SINAL",
                   })
                 : false;
               const dias = eligible ? (rec?.contestacaoDias ?? []) : [];
@@ -6472,7 +6644,7 @@ export default function BateriaDashboardPage() {
                     />
                   </label>
 
-                  <div className="grid grid-cols-4 gap-2">
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
                     {MANUT_MOTIVO_BADGE_OPTIONS.map((badge) => {
                       const active = manutForm.motivoBadge === badge;
                       return (
@@ -6513,7 +6685,7 @@ export default function BateriaDashboardPage() {
                         />
                       </div>
                       {/* Data de retirada do módulo: a partir de Ativo */}
-                      {(manutForm.status === "ATIVA" || manutForm.status === "REINSTALANDO" || manutForm.status === "REALIZADA") && (
+                      {(manutForm.status === "ATIVA" || manutForm.status === "REINSTALANDO" || manutForm.status === "REALIZADA") && manutForm.motivoBadge !== "FURTADO" && (
                         <div className="space-y-1.5">
                           <label className="text-xs font-medium text-muted-foreground">Data de Retirada</label>
                           <DatePicker
@@ -6759,6 +6931,61 @@ export default function BateriaDashboardPage() {
                 </>
               );
             })()}
+          </DialogContent>
+        </Dialog>
+
+        {/* Modal Gerar contestações do período apurado */}
+        <Dialog open={contestacoesOpen} onOpenChange={setContestacoesOpen}>
+          <DialogContent className="max-w-2xl gap-6 p-6 mx-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <FileText className="h-5 w-5" />
+                Gerar contestações
+              </DialogTitle>
+              <DialogDescription>
+                Selecione o período apurado. O PDF reúne os setores em manutenção e os dias contestados com foto.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <label className="text-sm text-muted-foreground">Período inicial</label>
+                <DatePicker
+                  value={contestacoesPeriodo.periodo_inicial}
+                  onChange={(value) => setContestacoesPeriodo((p) => ({ ...p, periodo_inicial: value }))}
+                  placeholder="Selecionar início"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-sm text-muted-foreground">Período final</label>
+                <DatePicker
+                  value={contestacoesPeriodo.periodo_final}
+                  onChange={(value) => setContestacoesPeriodo((p) => ({ ...p, periodo_final: value }))}
+                  placeholder="Selecionar fim"
+                />
+              </div>
+            </div>
+            <div className="flex flex-wrap justify-end gap-3 pt-2">
+              <Button variant="ghost" onClick={() => setContestacoesOpen(false)} disabled={contestacoesLoading}>
+                Cancelar
+              </Button>
+              <Button
+                onClick={() => void handleDownloadContestacoes()}
+                disabled={contestacoesLoading}
+                className={cn("gap-1.5", BTN_EMERALD)}
+              >
+                {contestacoesLoading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Gerando PDF...
+                  </>
+                ) : (
+                  <>
+                    <Download className="h-4 w-4" />
+                    Baixar PDF
+                  </>
+                )}
+              </Button>
+            </div>
           </DialogContent>
         </Dialog>
 

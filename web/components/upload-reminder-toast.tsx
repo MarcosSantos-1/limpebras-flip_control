@@ -16,7 +16,6 @@ const UPLOAD_REMINDER_DELAY_KEY = "flip_upload_reminder_delay_ms";
 type DashboardImportCheck = {
   data_referencia_ontem_brt?: string | null;
   flip_cobre_ontem?: boolean;
-  ipt_report_cobre_ontem?: boolean;
   precisa_upload?: boolean;
 };
 
@@ -28,8 +27,8 @@ function formatOntemLabel(isoDate: string | null | undefined): string {
 }
 
 /**
- * Toast no topo central ao abrir o Dashboard: avisa se faltam dados FLIP (fiscalização D-1 BRT)
- * e/ou Report SELIMP com período que cubra esse dia. Só é montado em `app/page.tsx`.
+ * Toast no topo central ao abrir o Dashboard: avisa se faltam dados FLIP (fiscalização D-1 BRT).
+ * Só é montado em `app/page.tsx`.
  */
 export function UploadReminderToast() {
   useEffect(() => {
@@ -58,11 +57,7 @@ export function UploadReminderToast() {
               "Base FLIP (SAC, BFS ou CNC) com data de referência em D-1 (BRT): registro SAC, fiscalização/vistoria BFS ou datas de CNC."
             );
           }
-          if (!check.ipt_report_cobre_ontem) {
-            faltas.push(
-              "Report SELIMP: período importado que cubra esse dia, ou linha com data estimada nesse dia."
-            );
-          }
+          if (faltas.length === 0) return;
 
           toast(
             ({ closeToast }) => (
@@ -75,7 +70,7 @@ export function UploadReminderToast() {
                 </div>
                 <div className="min-w-0 flex-1 pt-0.5 ">
                   <p className="text-[15px] font-semibold leading-snug text-zinc-900 dark:text-zinc-50">
-                    Atualize os dados (FLIP + Report)
+                    Atualize os dados do FLIP
                   </p>
                   <p className="mt-1 text-sm leading-relaxed text-zinc-600 dark:text-zinc-300">
                     Ainda faltam importações para a referência de <strong className="text-zinc-800 dark:text-zinc-100">{ontemLabel}</strong>

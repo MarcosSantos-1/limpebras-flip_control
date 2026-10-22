@@ -499,15 +499,19 @@ export async function buildIptPreviewFromConsolidado(
   }
 
   // Janelas de manutenção por módulo: [data_retirada, data_reinstalacao) — módulo fora de campo.
-  // Reinstalação nula = ainda em manutenção (janela aberta). Despachos dentro da janela ⇒ "Manutenção".
+  // FURTADO sem retirada usa data_ordenado. Reinstalação nula = janela aberta.
   const manutWindowsByModulo = new Map<string, Array<{ start: string; end: string | null }>>();
   {
     const wres = await client.query<{ modulo_selimp: string | null; data_retirada: string | null; data_reinstalacao: string | null }>(
       `SELECT TRIM(modulo_selimp) AS modulo_selimp,
-              data_retirada::text     AS data_retirada,
+              COALESCE(
+                data_retirada,
+                CASE WHEN UPPER(TRIM(COALESCE(motivo_badge, ''))) = 'FURTADO' THEN data_ordenado END
+              )::text AS data_retirada,
               data_reinstalacao::text AS data_reinstalacao
          FROM modulo_manutencoes
-        WHERE data_retirada IS NOT NULL`,
+        WHERE data_retirada IS NOT NULL
+           OR (UPPER(TRIM(COALESCE(motivo_badge, ''))) = 'FURTADO' AND data_ordenado IS NOT NULL)`,
     );
     for (const row of wres.rows ?? []) {
       const selimp = String(row.modulo_selimp ?? "").trim();

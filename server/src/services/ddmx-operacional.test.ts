@@ -9,6 +9,7 @@ import {
   escolherPercentualOperacional,
   extrairPercentualDdmx,
   fonteAgregada,
+  isServicoBolha,
   maximosDiariosPorPlano,
   percentualDoDia,
   servicoForaDoDespachoDdmx,
@@ -104,6 +105,19 @@ test("LF com seis veículos usa a linha de 100% e grava 100%", () => {
     { percentual: 0 },
   ];
   assert.equal(percentualDoDia(linhas, true), 100);
+});
+
+test("VP usa a permanência de bolha e VJ fica no maior percentual cru", () => {
+  assert.equal(isServicoBolha("VP"), true);
+  assert.equal(isServicoBolha("VJ"), false);
+  assert.equal(isServicoBolha("VL"), false);
+  const inicio = new Date("2026-09-11T08:00:00.000Z");
+  const linhas = [
+    { percentual: 13.33, inicio, fim: new Date("2026-09-11T08:10:00.000Z") },
+    { percentual: 13.33, inicio, fim: new Date("2026-09-11T08:20:00.000Z") },
+  ];
+  assert.equal(percentualDoDia(linhas, isServicoBolha("VP")), 100);
+  assert.equal(percentualDoDia(linhas, isServicoBolha("VJ")), 13.33);
 });
 
 test("bolha converte a linha vencedora pela permanência", () => {

@@ -171,7 +171,7 @@ function isFirebaseStorageUrl(url: string): boolean {
   }
 }
 
-async function loadImageFromUrlUncached(url: string): Promise<string> {
+export async function loadImageFromUrlUncached(url: string): Promise<string> {
   if (url.startsWith("data:")) return url;
   const isFirebase = url.startsWith("http") && isFirebaseStorageUrl(url);
   const proxyUrl =
@@ -189,7 +189,7 @@ async function loadImageFromUrlUncached(url: string): Promise<string> {
   });
 }
 
-function getImageFormat(dataUrl: string): "PNG" | "JPEG" {
+export function getImageFormat(dataUrl: string): "PNG" | "JPEG" {
   if (dataUrl.startsWith("data:image/png")) return "PNG";
   if (dataUrl.startsWith("data:image/jpeg") || dataUrl.startsWith("data:image/jpg")) return "JPEG";
   if (dataUrl.startsWith("data:image/webp")) return "PNG"; // WEBP convertido para PNG
@@ -197,7 +197,7 @@ function getImageFormat(dataUrl: string): "PNG" | "JPEG" {
 }
 
 /** Converte WEBP para PNG via canvas (jsPDF não suporta WEBP bem) */
-async function ensurePngOrJpeg(dataUrl: string): Promise<string> {
+export async function ensurePngOrJpeg(dataUrl: string): Promise<string> {
   if (
     dataUrl.startsWith("data:image/png") ||
     dataUrl.startsWith("data:image/jpeg") ||
@@ -225,7 +225,7 @@ async function ensurePngOrJpeg(dataUrl: string): Promise<string> {
 }
 
 /** Retorna dimensões da imagem preservando aspect ratio para caber em maxW x maxH */
-function fitImageDimensions(
+export function fitImageDimensions(
   imgW: number,
   imgH: number,
   maxW: number,
@@ -236,7 +236,7 @@ function fitImageDimensions(
   return { w: imgW * ratio, h: imgH * ratio };
 }
 
-async function getImageDimensions(dataUrl: string): Promise<{ w: number; h: number }> {
+export async function getImageDimensions(dataUrl: string): Promise<{ w: number; h: number }> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });

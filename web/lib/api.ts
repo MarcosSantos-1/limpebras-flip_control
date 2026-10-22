@@ -649,7 +649,7 @@ export interface BateriaManutencaoRecord {
 
 export type ManutencaoModuloStatus =
   | "EM_ANALISE" | "PENDENTE" | "RETIRANDO" | "ATIVA" | "REINSTALANDO" | "REALIZADA" | "SINAL_RECUPERADO";
-export type ManutencaoMotivoBadge = "SINAL" | "BATERIA" | "AVARIA" | "PERCENTUAL";
+export type ManutencaoMotivoBadge = "SINAL" | "BATERIA" | "AVARIA" | "PERCENTUAL" | "FURTADO";
 
 export interface ManutencaoArquivo {
   url: string;
@@ -1214,7 +1214,7 @@ export const apiService = {
     return data;
   },
 
-  /** Inclui `dashboard_import_check` (FLIP + Report SELIMP cobrindo “ontem” BRT) para o aviso no Dashboard. */
+  /** Inclui `dashboard_import_check` (FLIP cobrindo “ontem” BRT) para o aviso no Dashboard. */
   getUploadLastUpdates: async () => {
     const { data } = await api.get("/upload/last-updates", {
       params: { _t: Date.now() },

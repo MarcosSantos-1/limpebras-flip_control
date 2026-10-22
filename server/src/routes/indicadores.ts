@@ -39,7 +39,15 @@ import {
 import { config } from "../config.js";
 import { requireHost } from "../auth.js";
 import { buildIptPreviewFromConsolidado } from "../services/ipt-consolidado-preview.js";
-import { chaveDataDdmx, extrairPercentualDdmx, maximosDiariosPorPlano } from "../services/ddmx-operacional.js";
+import {
+  chaveDataDdmx,
+  extrairIntervaloDdmx,
+  extrairPercentualDdmx,
+  isServicoBolha,
+  maximosDiariosPorPlano,
+  percentualDoDia,
+  type LinhaExecucaoDia,
+} from "../services/ddmx-operacional.js";
 import { parseDdmxBateriaFromRaw } from "../services/parseDdmxBateria.js";
 import { listCronogramaSetores } from "../services/cronograma.js";
 import { buildDespachosResponse, colarDespachos, despacharManual } from "../services/despachosDiarios.js";
@@ -716,7 +724,13 @@ function applyAdcOverrideToKpis(payload: Record<string, unknown>, override: AdcO
 
 type ExecFonte = "ddmx" | "selimp";
 type ExecDia = { data: string; percentual: number | null; fonte: ExecFonte };
-type DdmxDiaAcc = { sum: number; count: number };
+type DdmxDiaAcc = {
+  sum: number;
+  count: number;
+  /** Serviços de bolha guardam as linhas do dia para a permanência (0% ou 100%). */
+  bolha?: boolean;
+  linhas?: LinhaExecucaoDia[];
+};
 type DdmxBateriaAcc = {
   data: string;
   sum: number;
@@ -805,10 +819,18 @@ function mesclarExecucaoDdmxSelimp(
     const bucket = ddmxCanon.get(canon) ?? new Map<string, DdmxDiaAcc>();
     for (const [data, acc] of dias) {
       const prev = bucket.get(data);
-      if (!prev) bucket.set(data, { sum: acc.sum, count: acc.count });
-      else {
+      if (!prev) {
+        bucket.set(data, {
+          sum: acc.sum,
+          count: acc.count,
+          bolha: acc.bolha,
+          linhas: acc.linhas ? [...acc.linhas] : undefined,
+        });
+      } else {
         prev.sum += acc.sum;
         prev.count += acc.count;
+        if (acc.bolha) prev.bolha = true;
+        if (acc.linhas?.length) prev.linhas = [...(prev.linhas ?? []), ...acc.linhas];
       }
     }
     ddmxCanon.set(canon, bucket);
@@ -843,11 +865,15 @@ function mesclarExecucaoDdmxSelimp(
   for (const plano of planos) {
     const byDate = new Map<string, ExecDia>();
     for (const [data, acc] of ddmxCanon.get(plano) ?? []) {
-      byDate.set(data, {
-        data,
-        percentual: acc.count > 0 ? Math.round((acc.sum / acc.count) * 100) / 100 : null,
-        fonte: "ddmx",
-      });
+      const bolha = Boolean(acc.bolha) || isServicoBolha(parseSetor(plano)?.servico);
+      let percentual: number | null;
+      if (bolha && acc.linhas && acc.linhas.length > 0) {
+        const pct = percentualDoDia(acc.linhas, true);
+        percentual = pct == null ? 0 : Math.round(pct * 100) / 100;
+      } else {
+        percentual = acc.count > 0 ? Math.round((acc.sum / acc.count) * 100) / 100 : null;
+      }
+      byDate.set(data, { data, percentual, fonte: "ddmx" });
     }
     for (const [data, pct] of selimpCanon.get(plano) ?? []) {
       if (byDate.has(data)) continue;
@@ -2384,9 +2410,15 @@ export const indicadoresRoutes: FastifyPluginAsync = async (fastify) => {
                 if (legado && visto.has(chave)) return;
                 if (!legado) visto.add(chave);
                 const dias = ddmxPorPlano.get(plano) ?? new Map<string, DdmxDiaAcc>();
-                const acc = dias.get(dateKey) ?? { sum: 0, count: 0 };
+                const bolha = isServicoBolha(parseSetor(plano)?.servico);
+                const acc = dias.get(dateKey) ?? { sum: 0, count: 0, bolha };
                 const pct = extrairPercentualDdmx(rawData);
-                if (pct != null) {
+                if (bolha) {
+                  acc.bolha = true;
+                  const intervalo = extrairIntervaloDdmx(rawData);
+                  acc.linhas = acc.linhas ?? [];
+                  acc.linhas.push({ percentual: pct, inicio: intervalo.inicio, fim: intervalo.fim });
+                } else if (pct != null) {
                   acc.sum += pct;
                   acc.count += 1;
                 }

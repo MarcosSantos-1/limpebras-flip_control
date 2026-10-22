@@ -3182,7 +3182,6 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
         .query<{
           ontem_brt: string;
           flip_cobre_ontem: boolean;
-          ipt_report_cobre_ontem: boolean;
         }>(
           `WITH ref AS (
              SELECT (CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo')::date - 1 AS d
@@ -3215,17 +3214,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
                  WHERE s.data_registro IS NOT NULL
                    AND (s.data_registro AT TIME ZONE 'America/Sao_Paulo')::date = ref.d
                )
-             ) AS flip_cobre_ontem,
-             (
-               EXISTS (
-                 SELECT 1 FROM ipt_report_linhas r, ref
-                 WHERE ref.d BETWEEN r.periodo_inicial AND r.periodo_final
-               )
-               OR EXISTS (
-                 SELECT 1 FROM ipt_report_linhas r, ref
-                 WHERE r.data_estimada IS NOT NULL AND r.data_estimada = ref.d
-               )
-             ) AS ipt_report_cobre_ontem
+             ) AS flip_cobre_ontem
            FROM ref`
         )
         .then((r) => r.rows[0]),
@@ -3287,8 +3276,6 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
 
     const ontemBrt = String(dashboardOntemRow?.ontem_brt ?? "").trim();
     const flipCobreOntem = Boolean(dashboardOntemRow?.flip_cobre_ontem);
-    /** Qualquer linha do Report SELIMP cujo período cubra D-1 BRT (não só a última linha por updated_at). */
-    const iptReportCobreOntem = Boolean(dashboardOntemRow?.ipt_report_cobre_ontem);
 
     return {
       sacs,
@@ -3317,8 +3304,7 @@ export const uploadRoutes: FastifyPluginAsync = async (fastify) => {
       dashboard_import_check: {
         data_referencia_ontem_brt: ontemBrt || null,
         flip_cobre_ontem: flipCobreOntem,
-        ipt_report_cobre_ontem: iptReportCobreOntem,
-        precisa_upload: !(flipCobreOntem && iptReportCobreOntem),
+        precisa_upload: !flipCobreOntem,
       },
     };
   });
