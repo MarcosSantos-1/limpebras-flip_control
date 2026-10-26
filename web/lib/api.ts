@@ -506,6 +506,10 @@ export interface IptPreviewResponse {
       data_estimada?: boolean;
       bateria_setor_dia?: IptPreviewBateriaSetorDia | null;
       bateria_ddmx_dia?: IptPreviewBateriaDdmxDia | null;
+      /** Problema de bateria ou de execução no dia. Nulo quando o dia não entra na regra. */
+      classe_auto?: "bateria" | "execucao" | null;
+      /** Módulo do setor contestado neste dia de despacho. Independente de `classe_auto`. */
+      contestado?: boolean;
     }>;
   }>;
 }

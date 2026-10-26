@@ -1,6 +1,6 @@
 import useSWR from "swr";
 import { apiService } from "./api";
-import { format, startOfMonth, endOfMonth, subDays } from "date-fns";
+import { format, startOfMonth, endOfMonth } from "date-fns";
 
 const DEDUP_INTERVAL_MS = 90 * 1000;
 
@@ -23,10 +23,11 @@ export interface ReportDiarioResponse {
 
 export function useIptData(
   selectedMonth: Date,
-  tableScope: "dia_anterior" | "periodo",
+  tableScope: "hoje" | "periodo",
   tablePeriodRange: { inicio: Date; fim: Date } | null,
   subprefeituraFilter: string
 ) {
+  const hoje = format(new Date(), "yyyy-MM-dd");
   const periodoKpisInicio = format(startOfMonth(selectedMonth), "yyyy-MM-dd");
   /**
    * Cards: acumulado do dia 01 do mês até HOJE (cap em endOfMonth para meses passados/futuros).
@@ -46,8 +47,7 @@ export function useIptData(
   if (tableScope === "periodo" && tablePeriodRange) {
     tableKey = `ipt:${format(tablePeriodRange.inicio, "yyyy-MM-dd")}:${format(tablePeriodRange.fim, "yyyy-MM-dd")}:${subprefeituraFilter}`;
   } else {
-    const ontem = subDays(new Date(), 1);
-    tableKey = `ipt:d-1:${format(ontem, "yyyy-MM-dd")}:${subprefeituraFilter}`;
+    tableKey = `ipt:hoje:${hoje}:${subprefeituraFilter}`;
   }
 
   const cardsKey = `ipt:cards:${periodoKpisInicio}:${periodoKpisFim}:${subprefeituraFilter}`;
@@ -61,9 +61,7 @@ export function useIptData(
     obsScopeStart = format(tablePeriodRange.inicio, "yyyy-MM-dd");
     obsScopeEnd = format(tablePeriodRange.fim, "yyyy-MM-dd");
   } else {
-    const ontem = subDays(new Date(), 1);
-    const d = format(ontem, "yyyy-MM-dd");
-    obsScopeStart = obsScopeEnd = d;
+    obsScopeStart = obsScopeEnd = hoje;
   }
   const obsKey = `ipt:obs:${obsScopeStart}:${obsScopeEnd}`;
 
@@ -92,7 +90,7 @@ export function useIptData(
           subprefeituraFilter
         );
       }
-      return apiService.getIptPreview(undefined, undefined, false, subprefeituraFilter);
+      return apiService.getIptPreview(hoje, hoje, false, subprefeituraFilter);
     },
     swrReadOpts
   );

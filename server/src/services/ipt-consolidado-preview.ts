@@ -34,6 +34,7 @@ import {
   type AcumuladorExecucao,
   type LinhaExecucaoDia,
 } from "./ddmx-operacional.js";
+import { classificarExecucaoDia, contestadoNoDia } from "./classificar-execucao-dia.js";
 
 const normalizeText = (value: string): string =>
   String(value ?? "")
@@ -526,6 +527,27 @@ export async function buildIptPreviewFromConsolidado(
   const isEmManutencao = (selimp: string, day: string): boolean =>
     (manutWindowsByModulo.get(selimp) ?? []).some((w) => day >= w.start && (w.end == null || day < w.end));
 
+  const contestacaoKeys = new Set<string>();
+  {
+    const cparams: unknown[] = [];
+    let where = "";
+    if (scopeStart && scopeEnd) {
+      cparams.push(scopeStart, scopeEnd);
+      where = "WHERE data >= $1::date AND data <= $2::date";
+    }
+    const cres = await client.query<{ modulo_selimp: string | null; data: string | null }>(
+      `SELECT TRIM(modulo_selimp) AS modulo_selimp, data::text AS data
+         FROM manutencao_contestacoes
+         ${where}`,
+      cparams,
+    );
+    for (const row of cres.rows ?? []) {
+      const selimp = String(row.modulo_selimp ?? "").trim();
+      const data = String(row.data ?? "").slice(0, 10);
+      if (selimp && data) contestacaoKeys.add(`${selimp}|${data}`);
+    }
+  }
+
   const summarizeModulosBateria = (modulos: ModuloBateriaPreview[]): BateriaResumoSetor => {
     const total = modulos.length;
     const produtividadeVals = modulos
@@ -935,10 +957,38 @@ export async function buildIptPreviewFromConsolidado(
       const isVarricao = isVarricaoPlano(item.plano, parseSetor);
       const detalhesComBateria = detalhes.map((detalhe) => {
         const ddmxItems = isVarricao ? bateriaDdmxByPlanoDate.get(`${item.plano}|${detalhe.data}`) ?? [] : [];
+        const bateriaSetorDia = summarizeBateriaDia(modulosDoSetor, detalhe.data);
+        const bateriaDdmxDia = summarizeDdmxBateriaDia(ddmxItems);
+        const classeAuto = classificarExecucaoDia({
+          percentualDdmx: detalhe.percentual_nosso,
+          despachosDdmx: detalhe.despachos_nosso,
+          varricao: isVarricao,
+          selimp: bateriaSetorDia
+            ? {
+                media_percentual: bateriaSetorDia.media_percentual,
+                desatualizadas: bateriaSetorDia.desatualizadas,
+                troca: Boolean(bateriaSetorDia.troca),
+                em_manutencao: bateriaSetorDia.em_manutencao,
+                manutencao_realizada: bateriaSetorDia.manutencao_realizada,
+              }
+            : null,
+          ddmxBateria: bateriaDdmxDia
+            ? {
+                media_percentual: bateriaDdmxDia.media_percentual,
+                desatualizadas: bateriaDdmxDia.desatualizadas,
+              }
+            : null,
+        });
         return {
           ...detalhe,
-          bateria_setor_dia: summarizeBateriaDia(modulosDoSetor, detalhe.data),
-          bateria_ddmx_dia: summarizeDdmxBateriaDia(ddmxItems),
+          bateria_setor_dia: bateriaSetorDia,
+          bateria_ddmx_dia: bateriaDdmxDia,
+          contestado: contestadoNoDia(
+            modulosDoSetor.map((modulo) => modulo.numero_selimp),
+            detalhe.data,
+            contestacaoKeys,
+          ),
+          classe_auto: classeAuto,
         };
       });
 

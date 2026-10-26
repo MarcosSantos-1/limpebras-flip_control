@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import { format, startOfDay, startOfMonth, subDays } from "date-fns";
+import { format, startOfDay, startOfMonth } from "date-fns";
 import type { DateRange } from "react-day-picker";
 import { ptBR } from "date-fns/locale";
 import {
@@ -250,6 +250,67 @@ const formatDdmxBateriaPercentual = (value: number) =>
   value < 10 ? `${value.toFixed(1)}%` : `${value.toFixed(0)}%`;
 
 const isVarricaoPlanoUi = (plano: string) => /(VP|VJ|VL)\d{4}/i.test(plano.replace(/\s+/g, ""));
+
+type ClasseAutoDia = "bateria" | "execucao";
+type ClasseFiltro = ClasseAutoDia | "contestacao";
+
+const CLASSE_AUTO_UI = {
+  bateria: {
+    label: "Problema de bateria",
+    Icon: BatteryWarning,
+    className: "border-violet-500/50 bg-violet-500/15 text-violet-800 dark:text-violet-200",
+  },
+  execucao: {
+    label: "Problema de execução",
+    Icon: AlertTriangle,
+    className: "border-amber-500/50 bg-amber-500/15 text-amber-800 dark:text-amber-200",
+  },
+  contestacao: {
+    label: "Contestação",
+    Icon: ShieldAlert,
+    className: "border-sky-500/50 bg-sky-500/15 text-sky-800 dark:text-sky-200",
+  },
+} as const;
+
+const ClasseAutoPill = ({ kind, dias }: { kind: ClasseFiltro; dias?: number }) => {
+  const ui = CLASSE_AUTO_UI[kind];
+  const Icon = ui.Icon;
+  const extra = dias != null && dias > 1 ? ` · ${dias}` : "";
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold leading-tight ${ui.className}`}
+      title={ui.label}
+    >
+      <Icon className="h-3 w-3 shrink-0" />
+      {ui.label}
+      {extra}
+    </span>
+  );
+};
+
+const resumoClassesDia = (
+  detalhes: Array<{ classe_auto?: ClasseAutoDia | null; contestado?: boolean }> | undefined
+) => {
+  let bateria = 0;
+  let execucao = 0;
+  let contestacao = 0;
+  for (const detalhe of detalhes ?? []) {
+    if (detalhe.classe_auto === "bateria") bateria += 1;
+    else if (detalhe.classe_auto === "execucao") execucao += 1;
+    if (detalhe.contestado) contestacao += 1;
+  }
+  return { bateria, execucao, contestacao };
+};
+
+const rowMatchesClasse = (
+  detalhes: Array<{ classe_auto?: ClasseAutoDia | null; contestado?: boolean }> | undefined,
+  classe: ClasseFiltro
+) => {
+  const resumo = resumoClassesDia(detalhes);
+  if (classe === "bateria") return resumo.bateria > 0;
+  if (classe === "execucao") return resumo.execucao > 0;
+  return resumo.contestacao > 0;
+};
 
 const BateriaSelimpBadge = ({ bateriaDia }: { bateriaDia?: IptPreviewBateriaSetorDia | null }) => {
   const firstModulo = bateriaDia?.modulos[0];
@@ -560,14 +621,15 @@ const ORIGEM_VALUES = ["ambos", "somente_selimp", "somente_nosso", "sem_despacho
 type OrigemValue = (typeof ORIGEM_VALUES)[number];
 const MIN_COL_WIDTH = 72;
 const MAX_COL_WIDTH = 520;
-type TableScope = "dia_anterior" | "periodo";
+type TableScope = "hoje" | "periodo";
 
 export default function IPTPage() {
   const [selectedMonth, setSelectedMonth] = useState(() => startOfMonth(new Date()));
-  const [tableScope, setTableScope] = useState<TableScope>("dia_anterior");
+  const [tableScope, setTableScope] = useState<TableScope>("hoje");
   const [tablePeriodRange, setTablePeriodRange] = useState<{ inicio: Date; fim: Date } | null>(null);
   const [subprefeituraFilter, setSubprefeituraFilter] = useState("all");
-  const [baseDadosCardFilter, setBaseDadosCardFilter] = useState<"obs_global" | "obs_diaria" | null>(null);
+  const [classeFiltro, setClasseFiltro] = useState<ClasseFiltro | null>(null);
+  const [filtroObsGlobal, setFiltroObsGlobal] = useState(false);
   const [modalDownloadOpen, setModalDownloadOpen] = useState(false);
   const [origemFilter, setOrigemFilter] = useState<"all" | "ambos" | "somente_selimp" | "somente_nosso" | "sem_despacho">("all");
   const [zeroFilter, setZeroFilter] = useState<"all" | "zerados" | "nao_zerados">("all");
@@ -760,6 +822,8 @@ export default function IPTPage() {
           data_estimada?: boolean;
           bateria_setor_dia?: IptPreviewBateriaSetorDia | null;
           bateria_ddmx_dia?: IptPreviewBateriaDdmxDia | null;
+          classe_auto?: ClasseAutoDia | null;
+          contestado?: boolean;
         }>;
       }>,
     [iptPreviewTable]
@@ -797,7 +861,7 @@ export default function IPTPage() {
       .replace(/[\u0300-\u036f]/g, "")
       .trim();
 
-  const filteredComparativo = useMemo(() => {
+  const rowsForDashboard = useMemo(() => {
     const rows = sourceRows;
     const q = normalizeSearch(tableSearchQuery);
     const filtered = rows.filter((row) => {
@@ -821,12 +885,6 @@ export default function IPTPage() {
       const zeradoAmbos = isZeroOrMissing(row.percentual_selimp) && isZeroOrMissing(row.percentual_nosso);
       if (zeroFilter === "zerados" && !zeradoAmbos) return false;
       if (zeroFilter === "nao_zerados" && zeradoAmbos) return false;
-      if (baseDadosCardFilter === "obs_global") {
-        if (!observacoes.globais[row.plano]) return false;
-      }
-      if (baseDadosCardFilter === "obs_diaria") {
-        if (!observacoes.diarias[row.plano] || Object.keys(observacoes.diarias[row.plano]).length === 0) return false;
-      }
       return true;
     });
 
@@ -868,16 +926,93 @@ export default function IPTPage() {
     sourceRows,
     origemFilter,
     origemFilterValues,
-    baseDadosCardFilter,
     subprefeituraFilter,
     tableSort,
     zeroFilter,
     subSiglaFilter,
     serviceFilterValues,
-    observacoes.globais,
-    observacoes.diarias,
     tableSearchQuery,
   ]);
+
+  const filteredComparativo = useMemo(() => {
+    return rowsForDashboard.filter((row) => {
+      if (filtroObsGlobal && !observacoes.globais[row.plano]) return false;
+      if (classeFiltro && !rowMatchesClasse(row.detalhes_diarios, classeFiltro)) return false;
+      return true;
+    });
+  }, [rowsForDashboard, filtroObsGlobal, classeFiltro, observacoes.globais]);
+
+  const dashboardExecucao = useMemo(() => {
+    const varricao = { total: 0, ok: 0, bateria: 0, execucao: 0, contestacao: 0 };
+    const grupos = {
+      bateria: { setores: 0, varricao: 0, sum: 0, peso: 0 },
+      execucao: { setores: 0, varricao: 0, sum: 0, peso: 0 },
+      contestacao: { setores: 0, varricao: 0, sum: 0, peso: 0 },
+    };
+    let despachos = 0;
+    let mediaSum = 0;
+    let mediaPeso = 0;
+    let varricaoDesp = 0;
+    let varricaoSum = 0;
+    let varricaoPeso = 0;
+
+    for (const row of rowsForDashboard) {
+      const desp = row.despachos_nosso ?? 0;
+      const varr = isVarricaoPlanoUi(row.plano);
+      despachos += desp;
+      if (varr) varricaoDesp += desp;
+      if (row.percentual_nosso != null && desp > 0) {
+        mediaSum += row.percentual_nosso * desp;
+        mediaPeso += desp;
+        if (varr) {
+          varricaoSum += row.percentual_nosso * desp;
+          varricaoPeso += desp;
+        }
+      }
+
+      const resumo = resumoClassesDia(row.detalhes_diarios);
+      const temDespacho = desp > 0 || (row.detalhes_diarios ?? []).some((d) => d.despachos_nosso > 0);
+      if (varr && temDespacho) {
+        varricao.total += 1;
+        if (resumo.bateria > 0) varricao.bateria += 1;
+        if (resumo.execucao > 0) varricao.execucao += 1;
+        if (resumo.contestacao > 0) varricao.contestacao += 1;
+        if (resumo.bateria === 0 && resumo.execucao === 0) varricao.ok += 1;
+      }
+
+      const acumular = (key: ClasseFiltro, hit: boolean) => {
+        if (!hit) return;
+        grupos[key].setores += 1;
+        if (varr) grupos[key].varricao += 1;
+        if (row.percentual_nosso != null && desp > 0) {
+          grupos[key].sum += row.percentual_nosso * desp;
+          grupos[key].peso += desp;
+        }
+      };
+      acumular("bateria", resumo.bateria > 0);
+      acumular("execucao", resumo.execucao > 0);
+      acumular("contestacao", resumo.contestacao > 0);
+    }
+
+    const media = (sum: number, peso: number) => (peso > 0 ? sum / peso : null);
+    return {
+      despachos,
+      media: media(mediaSum, mediaPeso),
+      varricaoDesp,
+      varricaoMedia: media(varricaoSum, varricaoPeso),
+      varricao,
+      grupos: {
+        bateria: { setores: grupos.bateria.setores, varricao: grupos.bateria.varricao, media: media(grupos.bateria.sum, grupos.bateria.peso) },
+        execucao: { setores: grupos.execucao.setores, varricao: grupos.execucao.varricao, media: media(grupos.execucao.sum, grupos.execucao.peso) },
+        contestacao: { setores: grupos.contestacao.setores, varricao: grupos.contestacao.varricao, media: media(grupos.contestacao.sum, grupos.contestacao.peso) },
+      },
+    };
+  }, [rowsForDashboard]);
+
+  const obsGlobalVisiveis = useMemo(
+    () => rowsForDashboard.filter((row) => Boolean(observacoes.globais[row.plano])).length,
+    [rowsForDashboard, observacoes.globais]
+  );
 
   const exportLineCount = useMemo(
     () => countIptBaseDadosExportRows(filteredComparativo),
@@ -1077,7 +1212,8 @@ export default function IPTPage() {
   };
 
   const clearAllTableFilters = () => {
-    setBaseDadosCardFilter(null);
+    setClasseFiltro(null);
+    setFiltroObsGlobal(false);
     setOrigemFilter("all");
     setZeroFilter("all");
     setSubprefeituraFilter("all");
@@ -1110,9 +1246,9 @@ export default function IPTPage() {
   }, [selectedMonth]);
 
   const tableRangeCalendarValue = useMemo((): DateRange | undefined => {
-    if (tableScope === "dia_anterior") {
-      const y = startOfDay(subDays(new Date(), 1));
-      return { from: y, to: y };
+    if (tableScope === "hoje") {
+      const hoje = startOfDay(new Date());
+      return { from: hoje, to: hoje };
     }
     if (tableScope === "periodo" && tablePeriodRange) {
       return {
@@ -1123,11 +1259,11 @@ export default function IPTPage() {
     return undefined;
   }, [tableScope, tablePeriodRange]);
 
-  const periodModeLabel = tableScope === "dia_anterior" ? "D-1" : "Período";
+  const periodModeLabel = tableScope === "hoje" ? "Hoje" : "Período";
 
   const exportPeriodoLabel = useMemo(() => {
-    if (tableScope === "dia_anterior") {
-      return format(subDays(new Date(), 1), "yyyy-MM-dd");
+    if (tableScope === "hoje") {
+      return format(new Date(), "yyyy-MM-dd");
     }
     if (tablePeriodRange) {
       const inicio = format(tablePeriodRange.inicio, "yyyy-MM-dd");
@@ -1147,7 +1283,15 @@ export default function IPTPage() {
 
   const handleTableRangeChange = (r: DateRange | undefined) => {
     if (!r?.from || !r?.to) {
-      setTableScope("dia_anterior");
+      setTableScope("hoje");
+      setTablePeriodRange(null);
+      return;
+    }
+    const hoje = startOfDay(new Date());
+    const from = startOfDay(r.from);
+    const to = startOfDay(r.to);
+    if (from.getTime() === hoje.getTime() && to.getTime() === hoje.getTime()) {
+      setTableScope("hoje");
       setTablePeriodRange(null);
       return;
     }
@@ -2070,69 +2214,62 @@ export default function IPTPage() {
           <CardHeader>
             <CardTitle>Base de dados</CardTitle>
             <CardDescription>
-              Conferência por plano para validar divergência percentual e cobertura entre planilhas.
+              Despachos DDMX com classificação automática de bateria, execução e contestação. Clique num card para filtrar a tabela.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <button
                 type="button"
-                onClick={() => setBaseDadosCardFilter(null)}
+                onClick={() => setClasseFiltro(null)}
                 className={`rounded-xl p-4 shadow-lg transition-all text-left text-white ${
-                  !baseDadosCardFilter ? "bg-emerald-600 hover:bg-emerald-500" : "bg-emerald-500 hover:bg-emerald-400"
+                  classeFiltro == null ? "bg-emerald-600 ring-2 ring-white/70" : "bg-emerald-500 hover:bg-emerald-400"
                 }`}
               >
                 <p className="text-xs font-bold opacity-90 flex items-center gap-1.5">
                   <Truck className="h-3.5 w-3.5" />
-                  Total despachos (SELIMP)
+                  Total Despachos (DDMX)
                 </p>
-                <p className="text-2xl font-bold mt-1">{filteredComparativo.reduce((acc, r) => acc + (r.despachos_selimp ?? 0), 0)}</p>
-                <p className="text-xs font-medium opacity-80 mt-1">Conforme filtros</p>
-              </button>
-              <button
-                type="button"
-                onClick={() => setBaseDadosCardFilter((prev) => (prev === "obs_global" ? null : "obs_global"))}
-                className={`rounded-xl p-4 shadow-lg transition-all text-left flex flex-col text-white ${
-                  baseDadosCardFilter === "obs_global" ? "bg-red-600" : "bg-red-500 hover:bg-red-600"
-                }`}
-              >
-                <p className="text-xs font-bold opacity-90 flex items-center gap-1.5">
-                  <AlertTriangle className="h-3.5 w-3.5" />
-                  Com observação global
-                </p>
-                <p className="text-2xl font-bold mt-1">{Object.keys(observacoes.globais).length}</p>
-                <p className="text-xs font-medium opacity-80 mt-1">Clique para filtrar</p>
-              </button>
-              <button
-                type="button"
-                onClick={() => setBaseDadosCardFilter((prev) => (prev === "obs_diaria" ? null : "obs_diaria"))}
-                className={`rounded-xl p-4 shadow-lg transition-all text-left flex flex-col text-white ${
-                  baseDadosCardFilter === "obs_diaria" ? "bg-amber-600" : "bg-amber-500 hover:bg-amber-600"
-                }`}
-              >
-                <p className="text-xs font-bold opacity-90 flex items-center gap-1.5">
-                  <Calendar className="h-3.5 w-3.5" />
-                  Com observação diária
-                </p>
-                <p className="text-2xl font-bold mt-1">
-                  {Object.keys(observacoes.diarias).filter((s) => Object.keys(observacoes.diarias[s] || {}).length > 0).length}
-                </p>
-                <p className="text-xs font-medium opacity-80 mt-1">Clique para filtrar</p>
-              </button>
-              <button
-                type="button"
-                onClick={() => setModalDownloadOpen(true)}
-                className="rounded-xl p-4 shadow-lg transition-all text-left flex flex-col text-white bg-blue-600 hover:bg-blue-500"
-              >
-                <p className="text-xs font-bold opacity-90 flex items-center gap-1.5">
-                  <Download className="h-3.5 w-3.5" />
-                  Baixar visualização
-                </p>
-                <p className="text-2xl font-bold mt-1">{exportLineCount.toLocaleString("pt-BR")} Linhas</p>
-                <p className="text-xs font-medium opacity-80 mt-1">
-                  {exportSelimpSectorCount.toLocaleString("pt-BR")} setores com SELIMP
+                <p className="text-2xl font-bold mt-1 tabular-nums">{dashboardExecucao.despachos.toLocaleString("pt-BR")}</p>
+                <p className="text-xs font-medium opacity-90 mt-1">
+                  Média {pct(dashboardExecucao.media)} · Varrição {dashboardExecucao.varricaoDesp.toLocaleString("pt-BR")} · {pct(dashboardExecucao.varricaoMedia)}
                 </p>
               </button>
+              {([
+                ["bateria", "Problema de bateria", BatteryWarning, "bg-violet-600", "bg-violet-500 hover:bg-violet-400"] as const,
+                ["execucao", "Problema de execução", AlertTriangle, "bg-amber-600", "bg-amber-500 hover:bg-amber-400"] as const,
+                ["contestacao", "Contestações", ShieldAlert, "bg-sky-600", "bg-sky-500 hover:bg-sky-400"] as const,
+              ]).map(([id, label, Icon, activeClass, idleClass]) => {
+                const grupo = dashboardExecucao.grupos[id];
+                const ativo = classeFiltro === id;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setClasseFiltro((prev) => (prev === id ? null : id))}
+                    className={`rounded-xl p-4 shadow-lg transition-all text-left flex flex-col text-white ${
+                      ativo ? `${activeClass} ring-2 ring-white/70` : idleClass
+                    }`}
+                  >
+                    <p className="text-xs font-bold opacity-90 flex items-center gap-1.5">
+                      <Icon className="h-3.5 w-3.5" />
+                      {label}
+                    </p>
+                    <p className="text-2xl font-bold mt-1 tabular-nums">{grupo.setores.toLocaleString("pt-BR")}</p>
+                    <p className="text-xs font-medium opacity-90 mt-1">
+                      Varrição {grupo.varricao.toLocaleString("pt-BR")} · média {pct(grupo.media)}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-border/70 bg-muted/40 px-3 py-2 text-xs">
+              <span className="font-semibold text-foreground">Varrição</span>
+              <span className="text-muted-foreground">{dashboardExecucao.varricao.total.toLocaleString("pt-BR")} setores com despacho</span>
+              <span className="font-medium text-emerald-700 dark:text-emerald-300">Ok {dashboardExecucao.varricao.ok.toLocaleString("pt-BR")}</span>
+              <span className="font-medium text-violet-700 dark:text-violet-300">Bateria {dashboardExecucao.varricao.bateria.toLocaleString("pt-BR")}</span>
+              <span className="font-medium text-amber-700 dark:text-amber-300">Execução {dashboardExecucao.varricao.execucao.toLocaleString("pt-BR")}</span>
+              <span className="font-medium text-sky-700 dark:text-sky-300">Contestação {dashboardExecucao.varricao.contestacao.toLocaleString("pt-BR")}</span>
             </div>
 
             <Dialog open={modalDownloadOpen} onOpenChange={setModalDownloadOpen}>
@@ -2147,8 +2284,8 @@ export default function IPTPage() {
                 <div className="space-y-2 rounded-lg border border-border/60 bg-muted/30 p-3 text-sm">
                   <p>
                     <span className="font-medium text-muted-foreground">Período:</span>{" "}
-                    {tableScope === "dia_anterior"
-                      ? `D-1 (${format(subDays(new Date(), 1), "dd/MM/yyyy")})`
+                    {tableScope === "hoje"
+                      ? `Hoje (${format(new Date(), "dd/MM/yyyy")})`
                       : tablePeriodRange
                       ? `${format(tablePeriodRange.inicio, "dd/MM/yyyy")} — ${format(tablePeriodRange.fim, "dd/MM/yyyy")}`
                       : "—"}
@@ -2212,7 +2349,7 @@ export default function IPTPage() {
                   onChange={handleTableRangeChange}
                   maxDate={new Date()}
                   modeLabel={periodModeLabel}
-                  emptyLabel="D-1"
+                  emptyLabel="Hoje"
                   className="max-w-[min(100vw-8rem,22rem)]"
                   footer={(close) => (
                     <>
@@ -2222,12 +2359,12 @@ export default function IPTPage() {
                         size="sm"
                         className="h-8 text-xs"
                         onClick={() => {
-                          setTableScope("dia_anterior");
+                          setTableScope("hoje");
                           setTablePeriodRange(null);
                           close();
                         }}
                       >
-                        Ontem (D-1)
+                        Hoje
                       </UiButton>
                       <UiButton
                         type="button"
@@ -2249,20 +2386,44 @@ export default function IPTPage() {
                 />
               </div>
 
-              {tableScope !== "dia_anterior" && (
+              {tableScope !== "hoje" && (
                 <button
                   type="button"
                   onClick={() => {
-                    setTableScope("dia_anterior");
+                    setTableScope("hoje");
                     setTablePeriodRange(null);
                   }}
                   className="h-10 px-4 rounded-lg text-sm font-bold bg-amber-500 text-white shadow-lg hover:bg-amber-400 transition-all"
-                  title="Voltar ao dia anterior"
+                  title="Voltar para hoje"
                 >
                   <Calendar className="h-4 w-4 inline mr-1.5 -mt-0.5" />
-                  Dia anterior
+                  Hoje
                 </button>
               )}
+
+              <button
+                type="button"
+                onClick={() => setFiltroObsGlobal((prev) => !prev)}
+                className={`h-10 px-4 rounded-lg text-sm font-bold shadow-lg transition-all inline-flex items-center gap-2 ${
+                  filtroObsGlobal
+                    ? "bg-red-600 text-white ring-2 ring-red-300"
+                    : "bg-red-500/15 text-red-700 hover:bg-red-500/25 dark:text-red-300"
+                }`}
+                title="Filtrar setores com observação global"
+              >
+                <AlertTriangle className="h-4 w-4" />
+                Com observação global ({obsGlobalVisiveis.toLocaleString("pt-BR")})
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setModalDownloadOpen(true)}
+                className="h-10 px-4 rounded-lg text-sm font-bold bg-blue-600 text-white shadow-lg hover:bg-blue-500 transition-all inline-flex items-center gap-2"
+              >
+                <Download className="h-4 w-4" />
+                Baixar visualização
+                <span className="text-xs font-medium opacity-80">{exportLineCount.toLocaleString("pt-BR")} linhas</span>
+              </button>
 
               <button
                 type="button"
@@ -2617,9 +2778,10 @@ export default function IPTPage() {
                                 observacoes.diarias[row.plano] &&
                                 Object.keys(observacoes.diarias[row.plano]).length > 0
                               );
+                              const classesDoPlano = resumoClassesDia(row.detalhes_diarios);
                               return (
                                 <span
-                                  className={`inline-flex items-center gap-1.5 ${
+                                  className={`inline-flex flex-wrap items-center gap-1.5 ${
                                     temObsGlobal
                                       ? "text-red-600 dark:text-red-400 font-semibold"
                                       : temInatividadeLonga
@@ -2628,6 +2790,9 @@ export default function IPTPage() {
                                   }`}
                                 >
                                   {row.plano || "-"}
+                                  {classesDoPlano.bateria > 0 && <ClasseAutoPill kind="bateria" dias={classesDoPlano.bateria} />}
+                                  {classesDoPlano.execucao > 0 && <ClasseAutoPill kind="execucao" dias={classesDoPlano.execucao} />}
+                                  {classesDoPlano.contestacao > 0 && <ClasseAutoPill kind="contestacao" dias={classesDoPlano.contestacao} />}
                                   {temObsGlobal && (
                                     <span
                                       title={obsGlobal.titulo}
@@ -2649,12 +2814,18 @@ export default function IPTPage() {
                                     const anyRecent = allKeys.some((dk) => recentlySavedKeys.has(`diaria::${row.plano}::${dk}`));
                                     const firstObs = observacoes.diarias[row.plano][allKeys[0]];
                                     const dCat = firstObs ? getObsDiariaCategory(firstObs.titulo) : null;
+                                    const labels = new Set(
+                                      allKeys.map((dk) => getObsDiariaCategory(observacoes.diarias[row.plano][dk]?.titulo ?? "").label)
+                                    );
+                                    const obsLabel = labels.size === 1 ? [...labels][0] : "Obs. diária";
+                                    const DIcon = dCat?.Icon ?? Calendar;
                                     return (
                                       <span
                                         title={`${allKeys.length} obs. diária(s) — ex.: ${firstObs?.titulo ?? ""}`}
-                                        className={`inline-flex shrink-0 ${dCat?.tableIconClass ?? "text-amber-500"} ${anyRecent ? "animate-pulse drop-shadow-[0_0_4px_currentColor]" : "opacity-70"}`}
+                                        className={`inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold leading-tight ${dCat?.tableIconClass ?? "text-amber-500"} ${anyRecent ? "animate-pulse drop-shadow-[0_0_4px_currentColor]" : ""}`}
                                       >
-                                        {dCat ? <dCat.Icon className="h-3.5 w-3.5" /> : <Calendar className="h-3.5 w-3.5" />}
+                                        <DIcon className="h-3 w-3 shrink-0" />
+                                        {obsLabel}
                                       </span>
                                     );
                                   })()}
@@ -2958,7 +3129,7 @@ export default function IPTPage() {
                                               <th className="text-left py-2 px-2">
                                                 <span className="flex items-center gap-1"><Truck className="h-3.5 w-3.5" /> Des. DDMX?</span>
                                               </th>
-                                              <th className="text-left py-2 px-2 w-20">Obs</th>
+                                              <th className="text-left py-2 px-2 min-w-[11rem]">Obs</th>
                                             </tr>
                                           </thead>
                                           <tbody>
@@ -3051,6 +3222,9 @@ export default function IPTPage() {
                                                       const diariaActionKey = `${row.plano}::${dateKey}`;
                                                       return (
                                                         <span className="inline-flex items-center gap-1 flex-wrap">
+                                                          {d.classe_auto === "bateria" && <ClasseAutoPill kind="bateria" />}
+                                                          {d.classe_auto === "execucao" && <ClasseAutoPill kind="execucao" />}
+                                                          {d.contestado && <ClasseAutoPill kind="contestacao" />}
                                                           {obsGlobal && (() => {
                                                             const GIcon = globalCategory?.Icon ?? AlertTriangle;
                                                             return (
@@ -3074,11 +3248,14 @@ export default function IPTPage() {
                                                                   <button
                                                                     type="button"
                                                                     onClick={(e) => e.stopPropagation()}
-                                                                    className={`inline-flex rounded-md p-0.5 outline-none transition-colors hover:bg-amber-500/20 focus-visible:ring-2 focus-visible:ring-amber-500/50 ${diariaCategory?.tableIconClass ?? "text-amber-500"} ${isRecentDiaria ? "animate-pulse drop-shadow-[0_0_4px_currentColor]" : ""}`}
+                                                                    className={`inline-flex items-center gap-1 rounded-md px-1 py-0.5 outline-none transition-colors hover:bg-amber-500/20 focus-visible:ring-2 focus-visible:ring-amber-500/50 ${diariaCategory?.tableIconClass ?? "text-amber-500"} ${isRecentDiaria ? "animate-pulse drop-shadow-[0_0_4px_currentColor]" : ""}`}
                                                                     title={obsDiaria.titulo}
                                                                     aria-label={`Observação diária: ${obsDiaria.titulo}. Abrir menu`}
                                                                   >
-                                                                    <DIcon className="h-4 w-4" />
+                                                                    <DIcon className="h-3.5 w-3.5 shrink-0" />
+                                                                    <span className="text-[10px] font-semibold leading-tight">
+                                                                      {diariaCategory?.label ?? "Observação"}
+                                                                    </span>
                                                                   </button>
                                                                 }
                                                                 contentClassName="z-[120]"
