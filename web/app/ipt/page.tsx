@@ -398,26 +398,47 @@ type DetalheClasse = {
   contestado?: boolean;
   bateria_selimp?: boolean;
   bateria_ddmx?: boolean;
+  despachos_nosso?: number;
+  despachos_selimp?: number;
+  bateria_setor_dia?: { desatualizadas?: number } | null;
+  bateria_ddmx_dia?: { desatualizadas?: number } | null;
+};
+
+const selimpDesatualizada = (detalhe: DetalheClasse) => (detalhe.bateria_setor_dia?.desatualizadas ?? 0) > 0;
+const ddmxDesatualizada = (detalhe: DetalheClasse) => (detalhe.bateria_ddmx_dia?.desatualizadas ?? 0) > 0;
+
+/** Despachos do dia. Sem execução DDMX, a bateria SELIMP sozinha ainda conta. */
+const despachosDoDia = (detalhe: DetalheClasse) => {
+  const nosso = detalhe.despachos_nosso ?? 0;
+  if (nosso > 0) return nosso;
+  const selimp = detalhe.despachos_selimp ?? 0;
+  if (selimp > 0) return selimp;
+  return 1;
 };
 
 const resumoClassesDia = (detalhes: DetalheClasse[] | undefined) => {
   let bateriaSelimp = 0;
   let bateriaDdmx = 0;
+  let despachosBateriaSelimp = 0;
+  let despachosBateriaDdmx = 0;
   let execucao = 0;
   let contestacao = 0;
   for (const detalhe of detalhes ?? []) {
     if (detalhe.bateria_selimp) bateriaSelimp += 1;
     if (detalhe.bateria_ddmx) bateriaDdmx += 1;
+    if (selimpDesatualizada(detalhe)) despachosBateriaSelimp += despachosDoDia(detalhe);
+    if (ddmxDesatualizada(detalhe)) despachosBateriaDdmx += despachosDoDia(detalhe);
     if (detalhe.classe_auto === "execucao") execucao += 1;
     if (detalhe.contestado) contestacao += 1;
   }
-  return { bateriaSelimp, bateriaDdmx, execucao, contestacao };
+  return { bateriaSelimp, bateriaDdmx, despachosBateriaSelimp, despachosBateriaDdmx, execucao, contestacao };
 };
 
 const rowMatchesClasse = (detalhes: DetalheClasse[] | undefined, classe: ClasseFiltro) => {
-  const resumo = resumoClassesDia(detalhes);
-  if (classe === "bateria_selimp") return resumo.bateriaSelimp > 0;
-  if (classe === "bateria_ddmx") return resumo.bateriaDdmx > 0;
+  const lista = detalhes ?? [];
+  if (classe === "bateria_selimp") return lista.some(selimpDesatualizada);
+  if (classe === "bateria_ddmx") return lista.some(ddmxDesatualizada);
+  const resumo = resumoClassesDia(lista);
   if (classe === "execucao") return resumo.execucao > 0;
   return resumo.contestacao > 0;
 };
@@ -1071,12 +1092,11 @@ export default function IPTPage() {
   }, [rowsForDashboard, filtroObsGlobal, classeFiltro, observacoes.globais]);
 
   const dashboardExecucao = useMemo(() => {
-    const varricao = { total: 0, ok: 0, bateriaSelimp: 0, bateriaDdmx: 0, execucao: 0, contestacao: 0 };
     const grupos = {
-      bateria_selimp: { setores: 0, varricao: 0, sum: 0, peso: 0 },
-      bateria_ddmx: { setores: 0, varricao: 0, sum: 0, peso: 0 },
-      execucao: { setores: 0, varricao: 0, sum: 0, peso: 0 },
-      contestacao: { setores: 0, varricao: 0, sum: 0, peso: 0 },
+      bateria_selimp: { setores: 0, despachos: 0 },
+      bateria_ddmx: { setores: 0, despachos: 0 },
+      execucao: { setores: 0, despachos: 0 },
+      contestacao: { setores: 0, despachos: 0 },
     };
     let despachos = 0;
     let mediaSum = 0;
@@ -1100,43 +1120,32 @@ export default function IPTPage() {
       }
 
       const resumo = resumoClassesDia(row.detalhes_diarios);
-      const temDespacho = desp > 0 || (row.detalhes_diarios ?? []).some((d) => d.despachos_nosso > 0);
-      if (varr && temDespacho) {
-        varricao.total += 1;
-        if (resumo.bateriaSelimp > 0) varricao.bateriaSelimp += 1;
-        if (resumo.bateriaDdmx > 0) varricao.bateriaDdmx += 1;
-        if (resumo.execucao > 0) varricao.execucao += 1;
-        if (resumo.contestacao > 0) varricao.contestacao += 1;
-        if (resumo.bateriaSelimp === 0 && resumo.bateriaDdmx === 0 && resumo.execucao === 0) varricao.ok += 1;
+      if (resumo.despachosBateriaSelimp > 0) {
+        grupos.bateria_selimp.setores += 1;
+        grupos.bateria_selimp.despachos += resumo.despachosBateriaSelimp;
       }
-
-      const acumular = (key: ClasseFiltro, hit: boolean) => {
-        if (!hit) return;
-        grupos[key].setores += 1;
-        if (varr) grupos[key].varricao += 1;
-        if (row.percentual_nosso != null && desp > 0) {
-          grupos[key].sum += row.percentual_nosso * desp;
-          grupos[key].peso += desp;
-        }
-      };
-      acumular("bateria_selimp", resumo.bateriaSelimp > 0);
-      acumular("bateria_ddmx", resumo.bateriaDdmx > 0);
-      acumular("execucao", resumo.execucao > 0);
-      acumular("contestacao", resumo.contestacao > 0);
+      if (resumo.despachosBateriaDdmx > 0) {
+        grupos.bateria_ddmx.setores += 1;
+        grupos.bateria_ddmx.despachos += resumo.despachosBateriaDdmx;
+      }
+      if (resumo.execucao > 0) grupos.execucao.setores += 1;
+      if (resumo.contestacao > 0) grupos.contestacao.setores += 1;
     }
 
     const media = (sum: number, peso: number) => (peso > 0 ? sum / peso : null);
+    const planos = rowsForDashboard.length;
+    const parcela = (setores: number) => (planos > 0 ? (setores / planos) * 100 : null);
     return {
       despachos,
       media: media(mediaSum, mediaPeso),
       varricaoDesp,
       varricaoMedia: media(varricaoSum, varricaoPeso),
-      varricao,
+      planos,
       grupos: {
-        bateria_selimp: { setores: grupos.bateria_selimp.setores, varricao: grupos.bateria_selimp.varricao, media: media(grupos.bateria_selimp.sum, grupos.bateria_selimp.peso) },
-        bateria_ddmx: { setores: grupos.bateria_ddmx.setores, varricao: grupos.bateria_ddmx.varricao, media: media(grupos.bateria_ddmx.sum, grupos.bateria_ddmx.peso) },
-        execucao: { setores: grupos.execucao.setores, varricao: grupos.execucao.varricao, media: media(grupos.execucao.sum, grupos.execucao.peso) },
-        contestacao: { setores: grupos.contestacao.setores, varricao: grupos.contestacao.varricao, media: media(grupos.contestacao.sum, grupos.contestacao.peso) },
+        bateria_selimp: { setores: grupos.bateria_selimp.setores, despachos: grupos.bateria_selimp.despachos, planosPct: parcela(grupos.bateria_selimp.setores) },
+        bateria_ddmx: { setores: grupos.bateria_ddmx.setores, despachos: grupos.bateria_ddmx.despachos, planosPct: parcela(grupos.bateria_ddmx.setores) },
+        execucao: { setores: grupos.execucao.setores, despachos: grupos.execucao.despachos, planosPct: parcela(grupos.execucao.setores) },
+        contestacao: { setores: grupos.contestacao.setores, despachos: grupos.contestacao.despachos, planosPct: parcela(grupos.contestacao.setores) },
       },
     };
   }, [rowsForDashboard]);
@@ -2376,6 +2385,8 @@ export default function IPTPage() {
               ]).map(([id, label, Icon, activeClass, idleClass]) => {
                 const grupo = dashboardExecucao.grupos[id];
                 const ativo = classeFiltro === id;
+                const contaDespachos = id === "bateria_selimp" || id === "bateria_ddmx";
+                const numero = contaDespachos ? grupo.despachos : grupo.setores;
                 return (
                   <button
                     key={id}
@@ -2389,22 +2400,21 @@ export default function IPTPage() {
                       <Icon className="h-3.5 w-3.5" />
                       {label}
                     </p>
-                    <p className="text-2xl font-bold mt-1 tabular-nums">{grupo.setores.toLocaleString("pt-BR")}</p>
-                    <p className="text-xs font-medium opacity-90 mt-1">
-                      Varrição {grupo.varricao.toLocaleString("pt-BR")} · média {pct(grupo.media)}
+                    <p className="text-2xl font-bold mt-1 tabular-nums">{numero.toLocaleString("pt-BR")}</p>
+                    <p className="text-[10px] font-semibold uppercase tracking-wide opacity-80">
+                      {contaDespachos ? "despachos" : "planos"}
                     </p>
+                    <p className="text-xs font-medium opacity-90 mt-1">{pct(grupo.planosPct)} dos planos</p>
                   </button>
                 );
               })}
             </div>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-border/70 bg-muted/40 px-3 py-2 text-xs">
-              <span className="font-semibold text-foreground">Varrição</span>
-              <span className="text-muted-foreground">{dashboardExecucao.varricao.total.toLocaleString("pt-BR")} setores com despacho</span>
-              <span className="font-medium text-emerald-700 dark:text-emerald-300">Ok {dashboardExecucao.varricao.ok.toLocaleString("pt-BR")}</span>
-              <span className="font-medium text-violet-700 dark:text-violet-300">SELIMP {dashboardExecucao.varricao.bateriaSelimp.toLocaleString("pt-BR")}</span>
-              <span className="font-medium text-fuchsia-700 dark:text-fuchsia-300">DDMX {dashboardExecucao.varricao.bateriaDdmx.toLocaleString("pt-BR")}</span>
-              <span className="font-medium text-amber-700 dark:text-amber-300">Execução {dashboardExecucao.varricao.execucao.toLocaleString("pt-BR")}</span>
-              <span className="font-medium text-sky-700 dark:text-sky-300">Contestação {dashboardExecucao.varricao.contestacao.toLocaleString("pt-BR")}</span>
+              <span className="font-semibold text-foreground">{dashboardExecucao.planos.toLocaleString("pt-BR")} planos apurados</span>
+              <span className="font-medium text-violet-700 dark:text-violet-300">SELIMP {pct(dashboardExecucao.grupos.bateria_selimp.planosPct)} dos planos</span>
+              <span className="font-medium text-fuchsia-700 dark:text-fuchsia-300">DDMX {pct(dashboardExecucao.grupos.bateria_ddmx.planosPct)} dos planos</span>
+              <span className="font-medium text-amber-700 dark:text-amber-300">Execução {pct(dashboardExecucao.grupos.execucao.planosPct)} dos planos</span>
+              <span className="font-medium text-sky-700 dark:text-sky-300">Contestação {pct(dashboardExecucao.grupos.contestacao.planosPct)} dos planos</span>
             </div>
 
             <Dialog open={modalDownloadOpen} onOpenChange={setModalDownloadOpen}>
