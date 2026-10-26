@@ -15,6 +15,14 @@ export const EXECUCAO_DIA_THRESHOLDS = {
 
 export type ClasseAutoDia = "bateria" | "execucao";
 
+export interface ClassificacaoExecucaoDia {
+  classe: ClasseAutoDia | null;
+  /** Percentual baixo com interferência vinda da bateria SELIMP. */
+  bateria_selimp: boolean;
+  /** Percentual baixo com interferência vinda da bateria DDMX (varrição). */
+  bateria_ddmx: boolean;
+}
+
 export interface SinaisBateriaSelimpDia {
   media_percentual: number | null;
   desatualizadas: number;
@@ -57,13 +65,19 @@ function ddmxInterfere(ddmx: SinaisBateriaDdmxDia | null): boolean {
   return ddmx.desatualizadas > 0 || mediaInterfere(ddmx.media_percentual);
 }
 
-export function classificarExecucaoDia(input: ClassificarExecucaoDiaInput): ClasseAutoDia | null {
-  if (input.despachosDdmx <= 0) return null;
-  if (input.percentualDdmx == null || !Number.isFinite(input.percentualDdmx)) return null;
-  if (input.percentualDdmx >= EXECUCAO_DIA_THRESHOLDS.PERCENTUAL_BAIXO) return null;
+const semClasse: ClassificacaoExecucaoDia = { classe: null, bateria_selimp: false, bateria_ddmx: false };
 
-  const interferencia = selimpInterfere(input.selimp) || (input.varricao && ddmxInterfere(input.ddmxBateria));
-  return interferencia ? "bateria" : "execucao";
+export function classificarExecucaoDia(input: ClassificarExecucaoDiaInput): ClassificacaoExecucaoDia {
+  if (input.despachosDdmx <= 0) return semClasse;
+  if (input.percentualDdmx == null || !Number.isFinite(input.percentualDdmx)) return semClasse;
+  if (input.percentualDdmx >= EXECUCAO_DIA_THRESHOLDS.PERCENTUAL_BAIXO) return semClasse;
+
+  const bateriaSelimp = selimpInterfere(input.selimp);
+  const bateriaDdmx = input.varricao && ddmxInterfere(input.ddmxBateria);
+  if (bateriaSelimp || bateriaDdmx) {
+    return { classe: "bateria", bateria_selimp: bateriaSelimp, bateria_ddmx: bateriaDdmx };
+  }
+  return { classe: "execucao", bateria_selimp: false, bateria_ddmx: false };
 }
 
 /** Chave `modulo|YYYY-MM-DD` presente no conjunto de contestações do período. */

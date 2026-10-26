@@ -352,13 +352,18 @@ const bateriaColunaLinha = (
 const isVarricaoPlanoUi = (plano: string) => /(VP|VJ|VL)\d{4}/i.test(plano.replace(/\s+/g, ""));
 
 type ClasseAutoDia = "bateria" | "execucao";
-type ClasseFiltro = ClasseAutoDia | "contestacao";
+type ClasseFiltro = "bateria_selimp" | "bateria_ddmx" | "execucao" | "contestacao";
 
 const CLASSE_AUTO_UI = {
-  bateria: {
-    label: "Problema de bateria",
+  bateria_selimp: {
+    label: "Bateria SELIMP",
     Icon: BatteryWarning,
     className: "border-violet-500/50 bg-violet-500/15 text-violet-800 dark:text-violet-200",
+  },
+  bateria_ddmx: {
+    label: "Bateria DDMX",
+    Icon: Battery,
+    className: "border-fuchsia-500/50 bg-fuchsia-500/15 text-fuchsia-800 dark:text-fuchsia-200",
   },
   execucao: {
     label: "Problema de execução",
@@ -388,26 +393,31 @@ const ClasseAutoPill = ({ kind, dias }: { kind: ClasseFiltro; dias?: number }) =
   );
 };
 
-const resumoClassesDia = (
-  detalhes: Array<{ classe_auto?: ClasseAutoDia | null; contestado?: boolean }> | undefined
-) => {
-  let bateria = 0;
+type DetalheClasse = {
+  classe_auto?: ClasseAutoDia | null;
+  contestado?: boolean;
+  bateria_selimp?: boolean;
+  bateria_ddmx?: boolean;
+};
+
+const resumoClassesDia = (detalhes: DetalheClasse[] | undefined) => {
+  let bateriaSelimp = 0;
+  let bateriaDdmx = 0;
   let execucao = 0;
   let contestacao = 0;
   for (const detalhe of detalhes ?? []) {
-    if (detalhe.classe_auto === "bateria") bateria += 1;
-    else if (detalhe.classe_auto === "execucao") execucao += 1;
+    if (detalhe.bateria_selimp) bateriaSelimp += 1;
+    if (detalhe.bateria_ddmx) bateriaDdmx += 1;
+    if (detalhe.classe_auto === "execucao") execucao += 1;
     if (detalhe.contestado) contestacao += 1;
   }
-  return { bateria, execucao, contestacao };
+  return { bateriaSelimp, bateriaDdmx, execucao, contestacao };
 };
 
-const rowMatchesClasse = (
-  detalhes: Array<{ classe_auto?: ClasseAutoDia | null; contestado?: boolean }> | undefined,
-  classe: ClasseFiltro
-) => {
+const rowMatchesClasse = (detalhes: DetalheClasse[] | undefined, classe: ClasseFiltro) => {
   const resumo = resumoClassesDia(detalhes);
-  if (classe === "bateria") return resumo.bateria > 0;
+  if (classe === "bateria_selimp") return resumo.bateriaSelimp > 0;
+  if (classe === "bateria_ddmx") return resumo.bateriaDdmx > 0;
   if (classe === "execucao") return resumo.execucao > 0;
   return resumo.contestacao > 0;
 };
@@ -729,6 +739,10 @@ export default function IPTPage() {
   const [tablePeriodRange, setTablePeriodRange] = useState<{ inicio: Date; fim: Date } | null>(null);
   const [subprefeituraFilter, setSubprefeituraFilter] = useState("all");
   const [classeFiltro, setClasseFiltro] = useState<ClasseFiltro | null>(null);
+  const [filtroBatDesatualizada, setFiltroBatDesatualizada] = useState<{ bat_selimp: boolean; bat_ddmx: boolean }>({
+    bat_selimp: false,
+    bat_ddmx: false,
+  });
   const [filtroObsGlobal, setFiltroObsGlobal] = useState(false);
   const [modalDownloadOpen, setModalDownloadOpen] = useState(false);
   const [origemFilter, setOrigemFilter] = useState<"all" | "ambos" | "somente_selimp" | "somente_nosso" | "sem_despacho">("all");
@@ -925,6 +939,8 @@ export default function IPTPage() {
           bateria_setor_dia?: IptPreviewBateriaSetorDia | null;
           bateria_ddmx_dia?: IptPreviewBateriaDdmxDia | null;
           classe_auto?: ClasseAutoDia | null;
+          bateria_selimp?: boolean;
+          bateria_ddmx?: boolean;
           contestado?: boolean;
         }>;
       }>,
@@ -987,6 +1003,8 @@ export default function IPTPage() {
       const zeradoAmbos = isZeroOrMissing(row.percentual_selimp) && isZeroOrMissing(row.percentual_nosso);
       if (zeroFilter === "zerados" && !zeradoAmbos) return false;
       if (zeroFilter === "nao_zerados" && zeradoAmbos) return false;
+      if (filtroBatDesatualizada.bat_selimp && !bateriaColunaLinha(row, "bat_selimp").desatualizada) return false;
+      if (filtroBatDesatualizada.bat_ddmx && !bateriaColunaLinha(row, "bat_ddmx").desatualizada) return false;
       return true;
     });
 
@@ -1041,6 +1059,7 @@ export default function IPTPage() {
     subSiglaFilter,
     serviceFilterValues,
     tableSearchQuery,
+    filtroBatDesatualizada,
   ]);
 
   const filteredComparativo = useMemo(() => {
@@ -1052,9 +1071,10 @@ export default function IPTPage() {
   }, [rowsForDashboard, filtroObsGlobal, classeFiltro, observacoes.globais]);
 
   const dashboardExecucao = useMemo(() => {
-    const varricao = { total: 0, ok: 0, bateria: 0, execucao: 0, contestacao: 0 };
+    const varricao = { total: 0, ok: 0, bateriaSelimp: 0, bateriaDdmx: 0, execucao: 0, contestacao: 0 };
     const grupos = {
-      bateria: { setores: 0, varricao: 0, sum: 0, peso: 0 },
+      bateria_selimp: { setores: 0, varricao: 0, sum: 0, peso: 0 },
+      bateria_ddmx: { setores: 0, varricao: 0, sum: 0, peso: 0 },
       execucao: { setores: 0, varricao: 0, sum: 0, peso: 0 },
       contestacao: { setores: 0, varricao: 0, sum: 0, peso: 0 },
     };
@@ -1083,10 +1103,11 @@ export default function IPTPage() {
       const temDespacho = desp > 0 || (row.detalhes_diarios ?? []).some((d) => d.despachos_nosso > 0);
       if (varr && temDespacho) {
         varricao.total += 1;
-        if (resumo.bateria > 0) varricao.bateria += 1;
+        if (resumo.bateriaSelimp > 0) varricao.bateriaSelimp += 1;
+        if (resumo.bateriaDdmx > 0) varricao.bateriaDdmx += 1;
         if (resumo.execucao > 0) varricao.execucao += 1;
         if (resumo.contestacao > 0) varricao.contestacao += 1;
-        if (resumo.bateria === 0 && resumo.execucao === 0) varricao.ok += 1;
+        if (resumo.bateriaSelimp === 0 && resumo.bateriaDdmx === 0 && resumo.execucao === 0) varricao.ok += 1;
       }
 
       const acumular = (key: ClasseFiltro, hit: boolean) => {
@@ -1098,7 +1119,8 @@ export default function IPTPage() {
           grupos[key].peso += desp;
         }
       };
-      acumular("bateria", resumo.bateria > 0);
+      acumular("bateria_selimp", resumo.bateriaSelimp > 0);
+      acumular("bateria_ddmx", resumo.bateriaDdmx > 0);
       acumular("execucao", resumo.execucao > 0);
       acumular("contestacao", resumo.contestacao > 0);
     }
@@ -1111,7 +1133,8 @@ export default function IPTPage() {
       varricaoMedia: media(varricaoSum, varricaoPeso),
       varricao,
       grupos: {
-        bateria: { setores: grupos.bateria.setores, varricao: grupos.bateria.varricao, media: media(grupos.bateria.sum, grupos.bateria.peso) },
+        bateria_selimp: { setores: grupos.bateria_selimp.setores, varricao: grupos.bateria_selimp.varricao, media: media(grupos.bateria_selimp.sum, grupos.bateria_selimp.peso) },
+        bateria_ddmx: { setores: grupos.bateria_ddmx.setores, varricao: grupos.bateria_ddmx.varricao, media: media(grupos.bateria_ddmx.sum, grupos.bateria_ddmx.peso) },
         execucao: { setores: grupos.execucao.setores, varricao: grupos.execucao.varricao, media: media(grupos.execucao.sum, grupos.execucao.peso) },
         contestacao: { setores: grupos.contestacao.setores, varricao: grupos.contestacao.varricao, media: media(grupos.contestacao.sum, grupos.contestacao.peso) },
       },
@@ -1322,6 +1345,7 @@ export default function IPTPage() {
 
   const clearAllTableFilters = () => {
     setClasseFiltro(null);
+    setFiltroBatDesatualizada({ bat_selimp: false, bat_ddmx: false });
     setFiltroObsGlobal(false);
     setOrigemFilter("all");
     setZeroFilter("all");
@@ -2327,7 +2351,7 @@ export default function IPTPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-5">
               <button
                 type="button"
                 onClick={() => setClasseFiltro(null)}
@@ -2345,7 +2369,8 @@ export default function IPTPage() {
                 </p>
               </button>
               {([
-                ["bateria", "Problema de bateria", BatteryWarning, "bg-violet-600", "bg-violet-500 hover:bg-violet-400"] as const,
+                ["bateria_selimp", "Bateria SELIMP", BatteryWarning, "bg-violet-600", "bg-violet-500 hover:bg-violet-400"] as const,
+                ["bateria_ddmx", "Bateria DDMX", Battery, "bg-fuchsia-600", "bg-fuchsia-500 hover:bg-fuchsia-400"] as const,
                 ["execucao", "Problema de execução", AlertTriangle, "bg-amber-600", "bg-amber-500 hover:bg-amber-400"] as const,
                 ["contestacao", "Contestações", ShieldAlert, "bg-sky-600", "bg-sky-500 hover:bg-sky-400"] as const,
               ]).map(([id, label, Icon, activeClass, idleClass]) => {
@@ -2376,7 +2401,8 @@ export default function IPTPage() {
               <span className="font-semibold text-foreground">Varrição</span>
               <span className="text-muted-foreground">{dashboardExecucao.varricao.total.toLocaleString("pt-BR")} setores com despacho</span>
               <span className="font-medium text-emerald-700 dark:text-emerald-300">Ok {dashboardExecucao.varricao.ok.toLocaleString("pt-BR")}</span>
-              <span className="font-medium text-violet-700 dark:text-violet-300">Bateria {dashboardExecucao.varricao.bateria.toLocaleString("pt-BR")}</span>
+              <span className="font-medium text-violet-700 dark:text-violet-300">SELIMP {dashboardExecucao.varricao.bateriaSelimp.toLocaleString("pt-BR")}</span>
+              <span className="font-medium text-fuchsia-700 dark:text-fuchsia-300">DDMX {dashboardExecucao.varricao.bateriaDdmx.toLocaleString("pt-BR")}</span>
               <span className="font-medium text-amber-700 dark:text-amber-300">Execução {dashboardExecucao.varricao.execucao.toLocaleString("pt-BR")}</span>
               <span className="font-medium text-sky-700 dark:text-sky-300">Contestação {dashboardExecucao.varricao.contestacao.toLocaleString("pt-BR")}</span>
             </div>
@@ -2780,7 +2806,9 @@ export default function IPTPage() {
                             <button
                               type="button"
                               onClick={() => setHeaderMenuOpen((prev) => (prev === coluna ? null : coluna))}
-                              className="rounded-lg bg-background/80 px-1.5 py-1 text-left text-[10px] font-bold uppercase shadow-md transition-all duration-200 hover:-translate-y-0.5 hover:bg-background hover:shadow-lg"
+                              className={`rounded-lg bg-background/80 px-1.5 py-1 text-left text-[10px] font-bold uppercase shadow-md transition-all duration-200 hover:-translate-y-0.5 hover:bg-background hover:shadow-lg ${
+                                filtroBatDesatualizada[coluna] ? "ring-2 ring-amber-400" : ""
+                              }`}
                               title={coluna === "bat_selimp" ? "Bateria SELIMP. * = desatualizada. Várias leituras separadas por /" : "Bateria DDMX da varrição. * = desatualizada. Várias leituras separadas por /"}
                             >
                               <span className="inline-flex items-center gap-0.5 whitespace-nowrap">
@@ -2796,6 +2824,17 @@ export default function IPTPage() {
                                 <button onClick={() => setSort(coluna, "desc")} className="w-full rounded px-2 py-1 text-left text-xs hover:bg-slate-600">
                                   Decrescente
                                 </button>
+                                <p className="text-[10px] font-semibold text-slate-400 mt-2 mb-1">Filtro</p>
+                                <label className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-xs hover:bg-slate-600">
+                                  <input
+                                    type="checkbox"
+                                    checked={filtroBatDesatualizada[coluna]}
+                                    onChange={() =>
+                                      setFiltroBatDesatualizada((prev) => ({ ...prev, [coluna]: !prev[coluna] }))
+                                    }
+                                  />
+                                  Só desatualizada
+                                </label>
                                 <p className="text-[10px] font-semibold text-slate-400 mt-2 mb-1">Largura</p>
                                 <div className="flex items-center gap-1">
                                   <button onClick={() => adjustColumnWidth(coluna, -12)} className="rounded px-2 py-1 text-xs bg-slate-600 hover:bg-slate-500">-</button>
@@ -2933,7 +2972,8 @@ export default function IPTPage() {
                                   }`}
                                 >
                                   {row.plano || "-"}
-                                  {classesDoPlano.bateria > 0 && <ClasseAutoPill kind="bateria" dias={classesDoPlano.bateria} />}
+                                  {classesDoPlano.bateriaSelimp > 0 && <ClasseAutoPill kind="bateria_selimp" dias={classesDoPlano.bateriaSelimp} />}
+                                  {classesDoPlano.bateriaDdmx > 0 && <ClasseAutoPill kind="bateria_ddmx" dias={classesDoPlano.bateriaDdmx} />}
                                   {classesDoPlano.execucao > 0 && <ClasseAutoPill kind="execucao" dias={classesDoPlano.execucao} />}
                                   {classesDoPlano.contestacao > 0 && <ClasseAutoPill kind="contestacao" dias={classesDoPlano.contestacao} />}
                                   {temObsGlobal && (
@@ -3380,7 +3420,8 @@ export default function IPTPage() {
                                                       const diariaActionKey = `${row.plano}::${dateKey}`;
                                                       return (
                                                         <span className="inline-flex items-center gap-1 flex-wrap">
-                                                          {d.classe_auto === "bateria" && <ClasseAutoPill kind="bateria" />}
+                                                          {d.bateria_selimp && <ClasseAutoPill kind="bateria_selimp" />}
+                                                          {d.bateria_ddmx && <ClasseAutoPill kind="bateria_ddmx" />}
                                                           {d.classe_auto === "execucao" && <ClasseAutoPill kind="execucao" />}
                                                           {d.contestado && <ClasseAutoPill kind="contestacao" />}
                                                           {obsGlobal && (() => {

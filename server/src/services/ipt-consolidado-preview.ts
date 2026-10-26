@@ -959,7 +959,7 @@ export async function buildIptPreviewFromConsolidado(
         const ddmxItems = isVarricao ? bateriaDdmxByPlanoDate.get(`${item.plano}|${detalhe.data}`) ?? [] : [];
         const bateriaSetorDia = summarizeBateriaDia(modulosDoSetor, detalhe.data);
         const bateriaDdmxDia = summarizeDdmxBateriaDia(ddmxItems);
-        const classeAuto = classificarExecucaoDia({
+        const classificacao = classificarExecucaoDia({
           percentualDdmx: detalhe.percentual_nosso,
           despachosDdmx: detalhe.despachos_nosso,
           varricao: isVarricao,
@@ -988,7 +988,9 @@ export async function buildIptPreviewFromConsolidado(
             detalhe.data,
             contestacaoKeys,
           ),
-          classe_auto: classeAuto,
+          classe_auto: classificacao.classe,
+          bateria_selimp: classificacao.bateria_selimp,
+          bateria_ddmx: classificacao.bateria_ddmx,
         };
       });
 
