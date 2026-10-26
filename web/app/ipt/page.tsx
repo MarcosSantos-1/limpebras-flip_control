@@ -132,7 +132,7 @@ const EXPANDED_ROW =
  * e na tabela de detalhes. A bateria SELIMP continua visível nos dois lugares.
  */
 const SHOW_COLUNA_EXECUCAO_SELIMP = false;
-const COMPARATIVO_COLSPAN = SHOW_COLUNA_EXECUCAO_SELIMP ? 7 : 6;
+const COMPARATIVO_COLSPAN = SHOW_COLUNA_EXECUCAO_SELIMP ? 9 : 8;
 
 /** Subcard NEUTRO (acinzentado tipo cards de Contestação): superfície sólida e
  *  discreta, sem o padrão "tint fraco + borda colorida escura". A cor da categoria
@@ -248,6 +248,91 @@ const getBateriaColorClass = (hasData: boolean, hasDesatualizada: boolean, media
 
 const formatDdmxBateriaPercentual = (value: number) =>
   value < 10 ? `${value.toFixed(1)}%` : `${value.toFixed(0)}%`;
+
+type LeituraBateria = { rotulo: string; valor: number | null; detalhe: string };
+
+const leiturasSelimpDia = (dia?: IptPreviewBateriaSetorDia | null): LeituraBateria[] => {
+  if (!dia) return [];
+  if (dia.modulos.length > 0) {
+    return dia.modulos.map((modulo) => ({
+      rotulo:
+        modulo.bateria_percentual != null && Number.isFinite(modulo.bateria_percentual)
+          ? formatDdmxBateriaPercentual(modulo.bateria_percentual)
+          : modulo.bateria_desatualizada
+            ? "Desatual."
+            : modulo.bateria_raw?.trim() || "--",
+      valor:
+        modulo.bateria_percentual != null && Number.isFinite(modulo.bateria_percentual)
+          ? modulo.bateria_percentual
+          : null,
+      detalhe: modulo.numero_selimp,
+    }));
+  }
+  if (dia.troca) return [{ rotulo: "Troca", valor: null, detalhe: "Troca no dia" }];
+  if (dia.em_manutencao || dia.manutencao_realizada) {
+    return [{ rotulo: "Manutenção", valor: null, detalhe: "Manutenção no dia" }];
+  }
+  if (dia.media_percentual != null) {
+    return [{ rotulo: formatDdmxBateriaPercentual(dia.media_percentual), valor: dia.media_percentual, detalhe: "Média" }];
+  }
+  return [];
+};
+
+const leiturasDdmxDia = (dia?: IptPreviewBateriaDdmxDia | null): LeituraBateria[] => {
+  if (!dia) return [];
+  if (dia.despachos.length > 0) {
+    return dia.despachos.map((despacho) => ({
+      rotulo:
+        despacho.bateria_percentual != null && Number.isFinite(despacho.bateria_percentual)
+          ? formatDdmxBateriaPercentual(despacho.bateria_percentual)
+          : despacho.bateria_desatualizada
+            ? "Desatual."
+            : despacho.bateria_raw?.trim() || "--",
+      valor:
+        despacho.bateria_percentual != null && Number.isFinite(despacho.bateria_percentual)
+          ? despacho.bateria_percentual
+          : null,
+      detalhe: despacho.rota,
+    }));
+  }
+  if (dia.media_percentual != null) {
+    return [{ rotulo: formatDdmxBateriaPercentual(dia.media_percentual), valor: dia.media_percentual, detalhe: "Média" }];
+  }
+  return [];
+};
+
+const bateriaColunaLinha = (
+  row: {
+    plano?: string;
+    detalhes_diarios?: Array<{
+      data: string;
+      bateria_setor_dia?: IptPreviewBateriaSetorDia | null;
+      bateria_ddmx_dia?: IptPreviewBateriaDdmxDia | null;
+    }>;
+  },
+  coluna: "bat_selimp" | "bat_ddmx"
+): { texto: string; title: string; sortKey: number | null } => {
+  if (coluna === "bat_ddmx" && !isVarricaoPlanoUi(row.plano ?? "")) {
+    return { texto: "--", title: "Bateria DDMX vale para varrição", sortKey: null };
+  }
+  const dias = [...(row.detalhes_diarios ?? [])].sort((a, b) => b.data.localeCompare(a.data));
+  for (const dia of dias) {
+    const leituras = coluna === "bat_selimp" ? leiturasSelimpDia(dia.bateria_setor_dia) : leiturasDdmxDia(dia.bateria_ddmx_dia);
+    if (leituras.length === 0) continue;
+    const valores = leituras.map((item) => item.valor).filter((valor): valor is number => valor != null);
+    const dataLabel = dia.data.replace(/^(\d{4})-(\d{2})-(\d{2}).*/, "$3/$2/$1");
+    return {
+      texto: leituras.map((item) => item.rotulo).join(" / "),
+      title: `${dataLabel} · ${leituras.map((item) => `${item.detalhe}: ${item.rotulo}`).join(" · ")}`,
+      sortKey: valores.length > 0 ? Math.min(...valores) : null,
+    };
+  }
+  return {
+    texto: "--",
+    title: coluna === "bat_selimp" ? "Sem leitura de bateria SELIMP no período" : "Sem leitura de bateria DDMX no período",
+    sortKey: null,
+  };
+};
 
 const isVarricaoPlanoUi = (plano: string) => /(VP|VJ|VL)\d{4}/i.test(plano.replace(/\s+/g, ""));
 
@@ -615,7 +700,7 @@ function compareByPlanoStructure(
   return direction === "asc" ? cmp : -cmp;
 }
 
-type TableColumnKey = "plano" | "sub" | "servico" | "selimp" | "nossa" | "origem";
+type TableColumnKey = "plano" | "sub" | "servico" | "selimp" | "nossa" | "bat_selimp" | "bat_ddmx" | "origem";
 const SUB_SIGLAS = ["CV", "JT", "MG", "ST"] as const;
 const ORIGEM_VALUES = ["ambos", "somente_selimp", "somente_nosso", "sem_despacho"] as const;
 type OrigemValue = (typeof ORIGEM_VALUES)[number];
@@ -658,6 +743,8 @@ export default function IPTPage() {
     servico: 350,
     selimp: 130,
     nossa: 120,
+    bat_selimp: 150,
+    bat_ddmx: 140,
     origem: 130,
   });
   const [modalObsGlobalOpen, setModalObsGlobalOpen] = useState(false);
@@ -906,6 +993,13 @@ export default function IPTPage() {
       } else if (tableSort.column === "nossa") {
         const va = toNum(a.percentual_nosso);
         const vb = toNum(b.percentual_nosso);
+        if (va == null && vb == null) sortBase = 0;
+        else if (va == null) sortBase = 1;
+        else if (vb == null) sortBase = -1;
+        else sortBase = byDirection(va - vb);
+      } else if (tableSort.column === "bat_selimp" || tableSort.column === "bat_ddmx") {
+        const va = bateriaColunaLinha(a, tableSort.column).sortKey;
+        const vb = bateriaColunaLinha(b, tableSort.column).sortKey;
         if (va == null && vb == null) sortBase = 0;
         else if (va == null) sortBase = 1;
         else if (vb == null) sortBase = -1;
@@ -2459,6 +2553,8 @@ export default function IPTPage() {
                     <col style={{ width: columnWidths.servico }} />
                     {SHOW_COLUNA_EXECUCAO_SELIMP && <col style={{ width: columnWidths.selimp }} />}
                     <col style={{ width: columnWidths.nossa }} />
+                    <col style={{ width: columnWidths.bat_selimp }} />
+                    <col style={{ width: columnWidths.bat_ddmx }} />
                     <col style={{ width: columnWidths.origem }} />
                   </colgroup>
                   <thead className="bg-muted/50 border-b-2 border-emerald-500/30">
@@ -2663,6 +2759,39 @@ export default function IPTPage() {
                           )}
                         </div>
                       </th>
+                      {(["bat_selimp", "bat_ddmx"] as const).map((coluna) => (
+                        <th key={coluna} className="text-left px-2 py-3.5 align-top">
+                          <div className="relative" data-filter-anchor="true">
+                            <button
+                              type="button"
+                              onClick={() => setHeaderMenuOpen((prev) => (prev === coluna ? null : coluna))}
+                              className="w-full rounded-xl bg-background/80 px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide shadow-md transition-all duration-200 hover:-translate-y-0.5 hover:bg-background hover:shadow-lg"
+                              title={coluna === "bat_selimp" ? "Bateria SELIMP do dia mais recente, módulos separados por /" : "Bateria DDMX da varrição no dia mais recente, separada por /"}
+                            >
+                              <span className="inline-flex items-center gap-1 min-w-0 truncate">
+                                <Battery className="h-3.5 w-3.5 shrink-0" />
+                                {coluna === "bat_selimp" ? "Bat. SELIMP" : "Bat. DDMX"} {getSortLabel(coluna)}
+                              </span>
+                            </button>
+                            {headerMenuOpen === coluna && (
+                              <div className="absolute left-0 top-[calc(100%+8px)] z-30 w-44 rounded-xl p-2 shadow-[0_16px_45px_-20px_rgba(0,0,0,0.6)] transition-all border border-slate-600" style={{ backgroundColor: "#1e293b", color: "#f8fafc" }}>
+                                <p className="text-[10px] font-semibold text-slate-400 mb-1">Ordenação</p>
+                                <button onClick={() => setSort(coluna, "asc")} className="w-full rounded px-2 py-1 text-left text-xs hover:bg-slate-600">
+                                  Crescente
+                                </button>
+                                <button onClick={() => setSort(coluna, "desc")} className="w-full rounded px-2 py-1 text-left text-xs hover:bg-slate-600">
+                                  Decrescente
+                                </button>
+                                <p className="text-[10px] font-semibold text-slate-400 mt-2 mb-1">Largura</p>
+                                <div className="flex items-center gap-1">
+                                  <button onClick={() => adjustColumnWidth(coluna, -12)} className="rounded px-2 py-1 text-xs bg-slate-600 hover:bg-slate-500">-</button>
+                                  <button onClick={() => adjustColumnWidth(coluna, 12)} className="rounded px-2 py-1 text-xs bg-slate-600 hover:bg-slate-500">+</button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </th>
+                      ))}
                       <th className="text-left px-2 py-3.5 align-top">
                         <div className="relative" data-filter-anchor="true">
                           <button
@@ -2849,6 +2978,22 @@ export default function IPTPage() {
                           <td className="px-3 py-2">
                             <PercentualBar value={row.percentual_nosso} compact />
                           </td>
+                          {(["bat_selimp", "bat_ddmx"] as const).map((coluna) => {
+                            const leitura = bateriaColunaLinha(row, coluna);
+                            const cor =
+                              leitura.sortKey != null
+                                ? getBateriaColorClass(true, false, leitura.sortKey)
+                                : leitura.texto.includes("Desatual")
+                                  ? "bg-amber-500/15 text-amber-800 dark:text-amber-200"
+                                  : "bg-slate-500/15 text-muted-foreground";
+                            return (
+                              <td key={coluna} className="px-3 py-2">
+                                <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums ${cor}`} title={leitura.title}>
+                                  {leitura.texto}
+                                </span>
+                              </td>
+                            );
+                          })}
                           <td className="px-3 py-2">
                             {(() => {
                               const origemEfetiva = row.percentual_selimp == null && row.percentual_nosso == null ? "sem_despacho" : row.origem;
