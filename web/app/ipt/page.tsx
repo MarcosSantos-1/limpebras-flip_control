@@ -249,32 +249,41 @@ const getBateriaColorClass = (hasData: boolean, hasDesatualizada: boolean, media
 const formatDdmxBateriaPercentual = (value: number) =>
   value < 10 ? `${value.toFixed(1)}%` : `${value.toFixed(0)}%`;
 
-type LeituraBateria = { rotulo: string; valor: number | null; detalhe: string };
+type LeituraBateria = { rotulo: string; valor: number | null; detalhe: string; desatualizada: boolean };
+
+const rotuloBateria = (percentual: number | null | undefined, desatualizada: boolean, raw?: string | null) => {
+  const temPercentual = percentual != null && Number.isFinite(percentual);
+  const base = temPercentual ? formatDdmxBateriaPercentual(percentual) : desatualizada ? "desat." : raw?.trim() || "--";
+  return temPercentual && desatualizada ? `${base}*` : base;
+};
 
 const leiturasSelimpDia = (dia?: IptPreviewBateriaSetorDia | null): LeituraBateria[] => {
   if (!dia) return [];
   if (dia.modulos.length > 0) {
     return dia.modulos.map((modulo) => ({
-      rotulo:
-        modulo.bateria_percentual != null && Number.isFinite(modulo.bateria_percentual)
-          ? formatDdmxBateriaPercentual(modulo.bateria_percentual)
-          : modulo.bateria_desatualizada
-            ? "Desatual."
-            : modulo.bateria_raw?.trim() || "--",
+      rotulo: rotuloBateria(modulo.bateria_percentual, modulo.bateria_desatualizada, modulo.bateria_raw),
       valor:
         modulo.bateria_percentual != null && Number.isFinite(modulo.bateria_percentual)
           ? modulo.bateria_percentual
           : null,
       detalhe: modulo.numero_selimp,
+      desatualizada: modulo.bateria_desatualizada,
     }));
   }
-  if (dia.troca) return [{ rotulo: "Troca", valor: null, detalhe: "Troca no dia" }];
+  if (dia.troca) return [{ rotulo: "Troca", valor: null, detalhe: "Troca no dia", desatualizada: false }];
   if (dia.em_manutencao || dia.manutencao_realizada) {
-    return [{ rotulo: "Manutenção", valor: null, detalhe: "Manutenção no dia" }];
+    return [{ rotulo: "Manut.", valor: null, detalhe: "Manutenção no dia", desatualizada: false }];
   }
   if (dia.media_percentual != null) {
-    return [{ rotulo: formatDdmxBateriaPercentual(dia.media_percentual), valor: dia.media_percentual, detalhe: "Média" }];
+    const desatualizada = dia.desatualizadas > 0;
+    return [{
+      rotulo: rotuloBateria(dia.media_percentual, desatualizada),
+      valor: dia.media_percentual,
+      detalhe: "Média",
+      desatualizada,
+    }];
   }
+  if (dia.desatualizadas > 0) return [{ rotulo: "desat.", valor: null, detalhe: "Desatualizada", desatualizada: true }];
   return [];
 };
 
@@ -282,22 +291,25 @@ const leiturasDdmxDia = (dia?: IptPreviewBateriaDdmxDia | null): LeituraBateria[
   if (!dia) return [];
   if (dia.despachos.length > 0) {
     return dia.despachos.map((despacho) => ({
-      rotulo:
-        despacho.bateria_percentual != null && Number.isFinite(despacho.bateria_percentual)
-          ? formatDdmxBateriaPercentual(despacho.bateria_percentual)
-          : despacho.bateria_desatualizada
-            ? "Desatual."
-            : despacho.bateria_raw?.trim() || "--",
+      rotulo: rotuloBateria(despacho.bateria_percentual, despacho.bateria_desatualizada, despacho.bateria_raw),
       valor:
         despacho.bateria_percentual != null && Number.isFinite(despacho.bateria_percentual)
           ? despacho.bateria_percentual
           : null,
       detalhe: despacho.rota,
+      desatualizada: despacho.bateria_desatualizada,
     }));
   }
   if (dia.media_percentual != null) {
-    return [{ rotulo: formatDdmxBateriaPercentual(dia.media_percentual), valor: dia.media_percentual, detalhe: "Média" }];
+    const desatualizada = dia.desatualizadas > 0;
+    return [{
+      rotulo: rotuloBateria(dia.media_percentual, desatualizada),
+      valor: dia.media_percentual,
+      detalhe: "Média",
+      desatualizada,
+    }];
   }
+  if (dia.desatualizadas > 0) return [{ rotulo: "desat.", valor: null, detalhe: "Desatualizada", desatualizada: true }];
   return [];
 };
 
@@ -311,9 +323,9 @@ const bateriaColunaLinha = (
     }>;
   },
   coluna: "bat_selimp" | "bat_ddmx"
-): { texto: string; title: string; sortKey: number | null } => {
+): { texto: string; title: string; sortKey: number | null; desatualizada: boolean } => {
   if (coluna === "bat_ddmx" && !isVarricaoPlanoUi(row.plano ?? "")) {
-    return { texto: "--", title: "Bateria DDMX vale para varrição", sortKey: null };
+    return { texto: "--", title: "Bateria DDMX vale para varrição", sortKey: null, desatualizada: false };
   }
   const dias = [...(row.detalhes_diarios ?? [])].sort((a, b) => b.data.localeCompare(a.data));
   for (const dia of dias) {
@@ -321,16 +333,19 @@ const bateriaColunaLinha = (
     if (leituras.length === 0) continue;
     const valores = leituras.map((item) => item.valor).filter((valor): valor is number => valor != null);
     const dataLabel = dia.data.replace(/^(\d{4})-(\d{2})-(\d{2}).*/, "$3/$2/$1");
+    const desatualizada = leituras.some((item) => item.desatualizada);
     return {
-      texto: leituras.map((item) => item.rotulo).join(" / "),
-      title: `${dataLabel} · ${leituras.map((item) => `${item.detalhe}: ${item.rotulo}`).join(" · ")}`,
+      texto: leituras.map((item) => item.rotulo).join("/"),
+      title: `${dataLabel} · ${leituras.map((item) => `${item.detalhe}: ${item.rotulo}${item.desatualizada ? " desatualizada" : ""}`).join(" · ")}`,
       sortKey: valores.length > 0 ? Math.min(...valores) : null,
+      desatualizada,
     };
   }
   return {
     texto: "--",
     title: coluna === "bat_selimp" ? "Sem leitura de bateria SELIMP no período" : "Sem leitura de bateria DDMX no período",
     sortKey: null,
+    desatualizada: false,
   };
 };
 
@@ -743,8 +758,8 @@ export default function IPTPage() {
     servico: 350,
     selimp: 130,
     nossa: 120,
-    bat_selimp: 150,
-    bat_ddmx: 140,
+    bat_selimp: 72,
+    bat_ddmx: 72,
     origem: 130,
   });
   const [modalObsGlobalOpen, setModalObsGlobalOpen] = useState(false);
@@ -2760,17 +2775,16 @@ export default function IPTPage() {
                         </div>
                       </th>
                       {(["bat_selimp", "bat_ddmx"] as const).map((coluna) => (
-                        <th key={coluna} className="text-left px-2 py-3.5 align-top">
+                        <th key={coluna} className="px-0.5 py-3.5 align-top text-left">
                           <div className="relative" data-filter-anchor="true">
                             <button
                               type="button"
                               onClick={() => setHeaderMenuOpen((prev) => (prev === coluna ? null : coluna))}
-                              className="w-full rounded-xl bg-background/80 px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide shadow-md transition-all duration-200 hover:-translate-y-0.5 hover:bg-background hover:shadow-lg"
-                              title={coluna === "bat_selimp" ? "Bateria SELIMP do dia mais recente, módulos separados por /" : "Bateria DDMX da varrição no dia mais recente, separada por /"}
+                              className="rounded-lg bg-background/80 px-1.5 py-1 text-left text-[10px] font-bold uppercase shadow-md transition-all duration-200 hover:-translate-y-0.5 hover:bg-background hover:shadow-lg"
+                              title={coluna === "bat_selimp" ? "Bateria SELIMP. * = desatualizada. Várias leituras separadas por /" : "Bateria DDMX da varrição. * = desatualizada. Várias leituras separadas por /"}
                             >
-                              <span className="inline-flex items-center gap-1 min-w-0 truncate">
-                                <Battery className="h-3.5 w-3.5 shrink-0" />
-                                {coluna === "bat_selimp" ? "Bat. SELIMP" : "Bat. DDMX"} {getSortLabel(coluna)}
+                              <span className="inline-flex items-center gap-0.5 whitespace-nowrap">
+                                {coluna === "bat_selimp" ? "B.SEL" : "B.DDM"} {getSortLabel(coluna)}
                               </span>
                             </button>
                             {headerMenuOpen === coluna && (
@@ -2980,15 +2994,14 @@ export default function IPTPage() {
                           </td>
                           {(["bat_selimp", "bat_ddmx"] as const).map((coluna) => {
                             const leitura = bateriaColunaLinha(row, coluna);
-                            const cor =
-                              leitura.sortKey != null
+                            const cor = leitura.desatualizada
+                              ? "bg-amber-500/15 text-amber-800 dark:text-amber-200"
+                              : leitura.sortKey != null
                                 ? getBateriaColorClass(true, false, leitura.sortKey)
-                                : leitura.texto.includes("Desatual")
-                                  ? "bg-amber-500/15 text-amber-800 dark:text-amber-200"
-                                  : "bg-slate-500/15 text-muted-foreground";
+                                : "bg-slate-500/15 text-muted-foreground";
                             return (
-                              <td key={coluna} className="px-3 py-2">
-                                <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums ${cor}`} title={leitura.title}>
+                              <td key={coluna} className="px-0.5 py-2">
+                                <span className={`inline-flex whitespace-nowrap rounded-full px-1.5 py-0.5 text-[11px] font-semibold tabular-nums ${cor}`} title={leitura.title}>
                                   {leitura.texto}
                                 </span>
                               </td>
