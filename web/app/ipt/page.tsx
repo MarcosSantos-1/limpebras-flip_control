@@ -356,12 +356,12 @@ type ClasseFiltro = "bateria_selimp" | "bateria_ddmx" | "execucao" | "contestaca
 
 const CLASSE_AUTO_UI = {
   bateria_selimp: {
-    label: "Bateria SELIMP",
+    label: "Problemas Bateria SELIMP",
     Icon: BatteryWarning,
     className: "border-violet-500/50 bg-violet-500/15 text-violet-800 dark:text-violet-200",
   },
   bateria_ddmx: {
-    label: "Bateria DDMX",
+    label: "Problemas Bateria DDMX",
     Icon: Battery,
     className: "border-fuchsia-500/50 bg-fuchsia-500/15 text-fuchsia-800 dark:text-fuchsia-200",
   },
@@ -2369,8 +2369,8 @@ export default function IPTPage() {
                 </p>
               </button>
               {([
-                ["bateria_selimp", "Bateria SELIMP", BatteryWarning, "bg-violet-600", "bg-violet-500 hover:bg-violet-400"] as const,
-                ["bateria_ddmx", "Bateria DDMX", Battery, "bg-fuchsia-600", "bg-fuchsia-500 hover:bg-fuchsia-400"] as const,
+                ["bateria_selimp", "Problemas Bateria SELIMP", BatteryWarning, "bg-violet-600", "bg-violet-500 hover:bg-violet-400"] as const,
+                ["bateria_ddmx", "Problemas Bateria DDMX", Battery, "bg-fuchsia-600", "bg-fuchsia-500 hover:bg-fuchsia-400"] as const,
                 ["execucao", "Problema de execução", AlertTriangle, "bg-amber-600", "bg-amber-500 hover:bg-amber-400"] as const,
                 ["contestacao", "Contestações", ShieldAlert, "bg-sky-600", "bg-sky-500 hover:bg-sky-400"] as const,
               ]).map(([id, label, Icon, activeClass, idleClass]) => {

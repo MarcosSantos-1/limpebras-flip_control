@@ -508,9 +508,9 @@ export interface IptPreviewResponse {
       bateria_ddmx_dia?: IptPreviewBateriaDdmxDia | null;
       /** Problema de bateria ou de execução no dia. Nulo quando o dia não entra na regra. */
       classe_auto?: "bateria" | "execucao" | null;
-      /** Percentual baixo com interferência da bateria SELIMP. */
+      /** Interferência da bateria SELIMP no dia, mesmo com execução alta. */
       bateria_selimp?: boolean;
-      /** Percentual baixo com interferência da bateria DDMX. */
+      /** Interferência da bateria DDMX no dia, mesmo com execução alta. */
       bateria_ddmx?: boolean;
       /** Módulo do setor contestado neste dia de despacho. Independente de `classe_auto`. */
       contestado?: boolean;

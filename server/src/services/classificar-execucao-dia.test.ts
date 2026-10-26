@@ -85,6 +85,24 @@ test("as duas fontes podem marcar o mesmo dia", () => {
   assert.equal(r.bateria_ddmx, true);
 });
 
+test("bateria ruim conta mesmo com execução alta", () => {
+  const selimp = classificarExecucaoDia(dia({
+    percentualDdmx: 97.74,
+    selimp: { media_percentual: 74, desatualizadas: 1, troca: false, em_manutencao: false, manutencao_realizada: false },
+  }));
+  assert.equal(selimp.classe, null);
+  assert.equal(selimp.bateria_selimp, true);
+  assert.equal(selimp.bateria_ddmx, false);
+
+  const ddmx = classificarExecucaoDia(dia({
+    percentualDdmx: 100,
+    varricao: true,
+    ddmxBateria: { media_percentual: 90, min_percentual: 9.9, desatualizadas: 0 },
+  }));
+  assert.equal(ddmx.classe, null);
+  assert.equal(ddmx.bateria_ddmx, true);
+});
+
 test("contestação não muda a classe automática", () => {
   const contestacoes = new Set(["MOD-1|2026-10-26"]);
   assert.equal(contestadoNoDia(["MOD-1"], "2026-10-26", contestacoes), true);

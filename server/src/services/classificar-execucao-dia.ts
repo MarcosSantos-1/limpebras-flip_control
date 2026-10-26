@@ -1,9 +1,10 @@
 /**
  * Classificação automática de um dia de despacho DDMX.
  *
- * Percentual abaixo de 75 sem troca e sem interferência de bateria é problema
- * de execução. Troca ou interferência no mesmo dia vira problema de bateria.
- * Contestação é um sinal à parte e não muda esta classe.
+ * Problema de bateria é a interferência da fonte (SELIMP ou DDMX): leitura em
+ * 30% ou menos, desatualizada, troca ou manutenção. Isso vale mesmo quando o
+ * percentual de execução está alto. Percentual abaixo de 75 sem essa
+ * interferência é problema de execução. Contestação não muda a classe.
  */
 
 export const EXECUCAO_DIA_THRESHOLDS = {
@@ -25,6 +26,8 @@ export interface ClassificacaoExecucaoDia {
 
 export interface SinaisBateriaSelimpDia {
   media_percentual: number | null;
+  /** Pior leitura do dia. Uma bateria baixa no meio de várias já interfere. */
+  min_percentual?: number | null;
   desatualizadas: number;
   troca: boolean;
   em_manutencao: boolean;
@@ -33,6 +36,8 @@ export interface SinaisBateriaSelimpDia {
 
 export interface SinaisBateriaDdmxDia {
   media_percentual: number | null;
+  /** Pior leitura do dia. Uma bateria baixa no meio de várias já interfere. */
+  min_percentual?: number | null;
   desatualizadas: number;
 }
 
@@ -45,8 +50,9 @@ export interface ClassificarExecucaoDiaInput {
   ddmxBateria: SinaisBateriaDdmxDia | null;
 }
 
-function mediaInterfere(media: number | null): boolean {
-  return media != null && Number.isFinite(media) && media <= EXECUCAO_DIA_THRESHOLDS.BATERIA_INTERFERENCIA;
+function leituraInterfere(media: number | null, minima?: number | null): boolean {
+  const valor = minima != null && Number.isFinite(minima) ? minima : media;
+  return valor != null && Number.isFinite(valor) && valor <= EXECUCAO_DIA_THRESHOLDS.BATERIA_INTERFERENCIA;
 }
 
 function selimpInterfere(selimp: SinaisBateriaSelimpDia | null): boolean {
@@ -56,24 +62,27 @@ function selimpInterfere(selimp: SinaisBateriaSelimpDia | null): boolean {
     selimp.em_manutencao ||
     selimp.manutencao_realizada ||
     selimp.desatualizadas > 0 ||
-    mediaInterfere(selimp.media_percentual)
+    leituraInterfere(selimp.media_percentual, selimp.min_percentual)
   );
 }
 
 function ddmxInterfere(ddmx: SinaisBateriaDdmxDia | null): boolean {
   if (!ddmx) return false;
-  return ddmx.desatualizadas > 0 || mediaInterfere(ddmx.media_percentual);
+  return ddmx.desatualizadas > 0 || leituraInterfere(ddmx.media_percentual, ddmx.min_percentual);
 }
 
-const semClasse: ClassificacaoExecucaoDia = { classe: null, bateria_selimp: false, bateria_ddmx: false };
-
 export function classificarExecucaoDia(input: ClassificarExecucaoDiaInput): ClassificacaoExecucaoDia {
-  if (input.despachosDdmx <= 0) return semClasse;
-  if (input.percentualDdmx == null || !Number.isFinite(input.percentualDdmx)) return semClasse;
-  if (input.percentualDdmx >= EXECUCAO_DIA_THRESHOLDS.PERCENTUAL_BAIXO) return semClasse;
-
   const bateriaSelimp = selimpInterfere(input.selimp);
   const bateriaDdmx = input.varricao && ddmxInterfere(input.ddmxBateria);
+  const percentualBaixo =
+    input.despachosDdmx > 0 &&
+    input.percentualDdmx != null &&
+    Number.isFinite(input.percentualDdmx) &&
+    input.percentualDdmx < EXECUCAO_DIA_THRESHOLDS.PERCENTUAL_BAIXO;
+
+  if (!percentualBaixo) {
+    return { classe: null, bateria_selimp: bateriaSelimp, bateria_ddmx: bateriaDdmx };
+  }
   if (bateriaSelimp || bateriaDdmx) {
     return { classe: "bateria", bateria_selimp: bateriaSelimp, bateria_ddmx: bateriaDdmx };
   }

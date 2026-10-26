@@ -60,6 +60,11 @@ function percentualConsolidado(raw: Record<string, unknown>): number | null {
   return null;
 }
 
+function menorPercentual(valores: Array<number | null | undefined>): number | null {
+  const numeros = valores.filter((valor): valor is number => typeof valor === "number" && Number.isFinite(valor));
+  return numeros.length > 0 ? Math.min(...numeros) : null;
+}
+
 function toDateKey(value: string | Date | null | undefined): string | null {
   if (value == null) return null;
   if (value instanceof Date) {
@@ -966,6 +971,7 @@ export async function buildIptPreviewFromConsolidado(
           selimp: bateriaSetorDia
             ? {
                 media_percentual: bateriaSetorDia.media_percentual,
+                min_percentual: menorPercentual(bateriaSetorDia.modulos.map((modulo) => modulo.bateria_percentual)),
                 desatualizadas: bateriaSetorDia.desatualizadas,
                 troca: Boolean(bateriaSetorDia.troca),
                 em_manutencao: bateriaSetorDia.em_manutencao,
@@ -975,6 +981,7 @@ export async function buildIptPreviewFromConsolidado(
           ddmxBateria: bateriaDdmxDia
             ? {
                 media_percentual: bateriaDdmxDia.media_percentual,
+                min_percentual: menorPercentual(bateriaDdmxDia.despachos.map((despacho) => despacho.bateria_percentual)),
                 desatualizadas: bateriaDdmxDia.desatualizadas,
               }
             : null,
