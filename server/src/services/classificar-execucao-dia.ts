@@ -2,13 +2,13 @@
  * Classificação automática de um dia de despacho DDMX.
  *
  * Problema de bateria é leitura desatualizada ou zerada (0%). Percentual baixo
- * de bateria, troca e manutenção não entram. Execução abaixo de 75% é problema
- * de execução, mesmo quando a bateria também está desatualizada ou zerada.
- * Contestação não muda a classe.
+ * de bateria, troca e manutenção não entram. Execução abaixo de 75% só é
+ * problema de execução quando o dia tem bateria no DDMX. Contestação não muda
+ * a classe.
  */
 
 export const EXECUCAO_DIA_THRESHOLDS = {
-  /** DDMX abaixo disso, com despacho no dia, é problema de execução. */
+  /** DDMX abaixo disso, com despacho e com bateria DDMX no dia, é problema de execução. */
   PERCENTUAL_BAIXO: 75,
 } as const;
 
@@ -63,6 +63,7 @@ export function classificarExecucaoDia(input: ClassificarExecucaoDiaInput): Clas
   const bateriaDdmx = input.varricao && problemaBateria(input.ddmxBateria);
   const percentualBaixo =
     input.despachosDdmx > 0 &&
+    input.ddmxBateria != null &&
     input.percentualDdmx != null &&
     Number.isFinite(input.percentualDdmx) &&
     input.percentualDdmx < EXECUCAO_DIA_THRESHOLDS.PERCENTUAL_BAIXO;

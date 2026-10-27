@@ -30,11 +30,19 @@ test("percentual em 75% ou sem despacho DDMX não classifica", () => {
   assert.equal(classificarExecucaoDia(dia({ percentualDdmx: null })).classe, null);
 });
 
-test("percentual baixo sem bateria desatualizada ou zerada é execução", () => {
-  assert.equal(classificarExecucaoDia(dia()).classe, "execucao");
-  assert.equal(classificarExecucaoDia(dia({ percentualDdmx: 74.9 })).classe, "execucao");
-  assert.equal(classificarExecucaoDia(dia({ selimp: null })).classe, "execucao");
+test("percentual baixo sem bateria DDMX não é execução", () => {
+  assert.equal(classificarExecucaoDia(dia()).classe, null);
+  assert.equal(classificarExecucaoDia(dia({ percentualDdmx: 74.9 })).classe, null);
+  assert.equal(classificarExecucaoDia(dia({ selimp: null })).classe, null);
+});
+
+test("percentual baixo com bateria DDMX e sem leitura zerada ou desatualizada é execução", () => {
+  const bateriaDdmx = { media_percentual: 80, desatualizadas: 0 };
+  assert.equal(classificarExecucaoDia(dia({ varricao: true, ddmxBateria: bateriaDdmx })).classe, "execucao");
+  assert.equal(classificarExecucaoDia(dia({ percentualDdmx: 74.9, varricao: true, ddmxBateria: bateriaDdmx })).classe, "execucao");
   const baixa = classificarExecucaoDia(dia({
+    varricao: true,
+    ddmxBateria: bateriaDdmx,
     selimp: { media_percentual: 12, desatualizadas: 0, troca: true, em_manutencao: true, manutencao_realizada: true },
   }));
   assert.equal(baixa.classe, "execucao");
@@ -45,7 +53,7 @@ test("bateria desatualizada ou zerada é problema de bateria SELIMP", () => {
   const desatualizada = classificarExecucaoDia(dia({
     selimp: { media_percentual: 64, desatualizadas: 1, troca: false, em_manutencao: false, manutencao_realizada: false },
   }));
-  assert.equal(desatualizada.classe, "execucao");
+  assert.equal(desatualizada.classe, null);
   assert.equal(desatualizada.bateria_selimp, true);
 
   const zerada = classificarExecucaoDia(dia({
@@ -114,6 +122,7 @@ test("contestação não muda a classe automática", () => {
   const contestacoes = new Set(["MOD-1|2026-10-26"]);
   assert.equal(contestadoNoDia(["MOD-1"], "2026-10-26", contestacoes), true);
   assert.equal(contestadoNoDia(["MOD-2"], "2026-10-26", contestacoes), false);
-  assert.equal(classificarExecucaoDia(dia({ percentualDdmx: 20 })).classe, "execucao");
+  assert.equal(classificarExecucaoDia(dia({ percentualDdmx: 20, varricao: true, ddmxBateria: { media_percentual: 80, desatualizadas: 0 } })).classe, "execucao");
+  assert.equal(classificarExecucaoDia(dia({ percentualDdmx: 20 })).classe, null);
   assert.equal(classificarExecucaoDia(dia({ percentualDdmx: 90 })).classe, null);
 });
