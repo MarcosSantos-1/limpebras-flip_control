@@ -400,12 +400,17 @@ type DetalheClasse = {
   bateria_ddmx?: boolean;
   despachos_nosso?: number;
   despachos_selimp?: number;
-  bateria_setor_dia?: { desatualizadas?: number } | null;
-  bateria_ddmx_dia?: { desatualizadas?: number } | null;
+  bateria_setor_dia?: { desatualizadas?: number; modulos?: Array<{ bateria_percentual?: number | null }> } | null;
+  bateria_ddmx_dia?: { desatualizadas?: number; despachos?: Array<{ bateria_percentual?: number | null }> } | null;
 };
 
-const selimpDesatualizada = (detalhe: DetalheClasse) => (detalhe.bateria_setor_dia?.desatualizadas ?? 0) > 0;
-const ddmxDesatualizada = (detalhe: DetalheClasse) => (detalhe.bateria_ddmx_dia?.desatualizadas ?? 0) > 0;
+const leituraZerada = (valor: number | null | undefined) => valor === 0;
+const selimpProblemaBateria = (detalhe: DetalheClasse) =>
+  (detalhe.bateria_setor_dia?.desatualizadas ?? 0) > 0 ||
+  (detalhe.bateria_setor_dia?.modulos ?? []).some((modulo) => leituraZerada(modulo.bateria_percentual));
+const ddmxProblemaBateria = (detalhe: DetalheClasse) =>
+  (detalhe.bateria_ddmx_dia?.desatualizadas ?? 0) > 0 ||
+  (detalhe.bateria_ddmx_dia?.despachos ?? []).some((despacho) => leituraZerada(despacho.bateria_percentual));
 
 /** Despachos do dia. Sem execução DDMX, a bateria SELIMP sozinha ainda conta. */
 const despachosDoDia = (detalhe: DetalheClasse) => {
@@ -426,8 +431,8 @@ const resumoClassesDia = (detalhes: DetalheClasse[] | undefined) => {
   for (const detalhe of detalhes ?? []) {
     if (detalhe.bateria_selimp) bateriaSelimp += 1;
     if (detalhe.bateria_ddmx) bateriaDdmx += 1;
-    if (selimpDesatualizada(detalhe)) despachosBateriaSelimp += despachosDoDia(detalhe);
-    if (ddmxDesatualizada(detalhe)) despachosBateriaDdmx += despachosDoDia(detalhe);
+    if (selimpProblemaBateria(detalhe)) despachosBateriaSelimp += despachosDoDia(detalhe);
+    if (ddmxProblemaBateria(detalhe)) despachosBateriaDdmx += despachosDoDia(detalhe);
     if (detalhe.classe_auto === "execucao") execucao += 1;
     if (detalhe.contestado) contestacao += 1;
   }
@@ -436,8 +441,8 @@ const resumoClassesDia = (detalhes: DetalheClasse[] | undefined) => {
 
 const rowMatchesClasse = (detalhes: DetalheClasse[] | undefined, classe: ClasseFiltro) => {
   const lista = detalhes ?? [];
-  if (classe === "bateria_selimp") return lista.some(selimpDesatualizada);
-  if (classe === "bateria_ddmx") return lista.some(ddmxDesatualizada);
+  if (classe === "bateria_selimp") return lista.some(selimpProblemaBateria);
+  if (classe === "bateria_ddmx") return lista.some(ddmxProblemaBateria);
   const resumo = resumoClassesDia(lista);
   if (classe === "execucao") return resumo.execucao > 0;
   return resumo.contestacao > 0;
