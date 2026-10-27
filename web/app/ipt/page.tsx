@@ -404,13 +404,10 @@ type DetalheClasse = {
   bateria_ddmx_dia?: { desatualizadas?: number; despachos?: Array<{ bateria_percentual?: number | null }> } | null;
 };
 
-const leituraZerada = (valor: number | null | undefined) => valor === 0;
 const selimpProblemaBateria = (detalhe: DetalheClasse) =>
-  (detalhe.bateria_setor_dia?.desatualizadas ?? 0) > 0 ||
-  (detalhe.bateria_setor_dia?.modulos ?? []).some((modulo) => leituraZerada(modulo.bateria_percentual));
+  (detalhe.bateria_setor_dia?.desatualizadas ?? 0) > 0;
 const ddmxProblemaBateria = (detalhe: DetalheClasse) =>
-  (detalhe.bateria_ddmx_dia?.desatualizadas ?? 0) > 0 ||
-  (detalhe.bateria_ddmx_dia?.despachos ?? []).some((despacho) => leituraZerada(despacho.bateria_percentual));
+  (detalhe.bateria_ddmx_dia?.desatualizadas ?? 0) > 0;
 
 /** Despachos do dia. Sem execução DDMX, a bateria SELIMP sozinha ainda conta. */
 const despachosDoDia = (detalhe: DetalheClasse) => {

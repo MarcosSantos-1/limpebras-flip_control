@@ -23,33 +23,49 @@ function dia(partial: Partial<ClassificarExecucaoDiaInput> = {}): ClassificarExe
   };
 }
 
+const bateriaValida = { media_percentual: 80, desatualizadas: 0, com_sinal_e_bateria: true };
+
 test("percentual em 75% ou sem despacho DDMX não classifica", () => {
-  assert.equal(classificarExecucaoDia(dia({ percentualDdmx: 75 })).classe, null);
-  assert.equal(classificarExecucaoDia(dia({ percentualDdmx: 90 })).classe, null);
-  assert.equal(classificarExecucaoDia(dia({ despachosDdmx: 0, percentualDdmx: 10 })).classe, null);
-  assert.equal(classificarExecucaoDia(dia({ percentualDdmx: null })).classe, null);
+  assert.equal(classificarExecucaoDia(dia({ percentualDdmx: 75, ddmxBateria: bateriaValida })).classe, null);
+  assert.equal(classificarExecucaoDia(dia({ percentualDdmx: 90, ddmxBateria: bateriaValida })).classe, null);
+  assert.equal(classificarExecucaoDia(dia({ despachosDdmx: 0, percentualDdmx: 10, ddmxBateria: bateriaValida })).classe, null);
+  assert.equal(classificarExecucaoDia(dia({ percentualDdmx: null, ddmxBateria: bateriaValida })).classe, null);
 });
 
-test("percentual baixo sem bateria DDMX não é execução", () => {
+test("percentual baixo sem bateria DDMX com sinal não é execução", () => {
   assert.equal(classificarExecucaoDia(dia()).classe, null);
   assert.equal(classificarExecucaoDia(dia({ percentualDdmx: 74.9 })).classe, null);
   assert.equal(classificarExecucaoDia(dia({ selimp: null })).classe, null);
+  assert.equal(
+    classificarExecucaoDia(dia({ ddmxBateria: { media_percentual: 80, desatualizadas: 0, com_sinal_e_bateria: false } })).classe,
+    null,
+  );
+  assert.equal(
+    classificarExecucaoDia(dia({ ddmxBateria: { media_percentual: 5, desatualizadas: 2, com_sinal_e_bateria: false } })).classe,
+    null,
+  );
 });
 
-test("percentual baixo com bateria DDMX e sem leitura zerada ou desatualizada é execução", () => {
-  const bateriaDdmx = { media_percentual: 80, desatualizadas: 0 };
-  assert.equal(classificarExecucaoDia(dia({ varricao: true, ddmxBateria: bateriaDdmx })).classe, "execucao");
-  assert.equal(classificarExecucaoDia(dia({ percentualDdmx: 74.9, varricao: true, ddmxBateria: bateriaDdmx })).classe, "execucao");
+test("percentual baixo com bateria DDMX não desatualizada e com sinal é execução, mesmo a 5%", () => {
+  assert.equal(classificarExecucaoDia(dia({ varricao: true, ddmxBateria: bateriaValida })).classe, "execucao");
+  assert.equal(
+    classificarExecucaoDia(dia({
+      percentualDdmx: 74.9,
+      varricao: true,
+      ddmxBateria: { media_percentual: 5, min_percentual: 5, desatualizadas: 0, com_sinal_e_bateria: true },
+    })).classe,
+    "execucao",
+  );
   const baixa = classificarExecucaoDia(dia({
     varricao: true,
-    ddmxBateria: bateriaDdmx,
+    ddmxBateria: bateriaValida,
     selimp: { media_percentual: 12, desatualizadas: 0, troca: true, em_manutencao: true, manutencao_realizada: true },
   }));
   assert.equal(baixa.classe, "execucao");
   assert.equal(baixa.bateria_selimp, false);
 });
 
-test("bateria desatualizada ou zerada é problema de bateria SELIMP", () => {
+test("só bateria desatualizada é problema de bateria SELIMP", () => {
   const desatualizada = classificarExecucaoDia(dia({
     selimp: { media_percentual: 64, desatualizadas: 1, troca: false, em_manutencao: false, manutencao_realizada: false },
   }));
@@ -61,48 +77,52 @@ test("bateria desatualizada ou zerada é problema de bateria SELIMP", () => {
     selimp: { media_percentual: 40, min_percentual: 0, desatualizadas: 0, troca: false, em_manutencao: false, manutencao_realizada: false },
   }));
   assert.equal(zerada.classe, null);
-  assert.equal(zerada.bateria_selimp, true);
+  assert.equal(zerada.bateria_selimp, false);
   assert.equal(zerada.bateria_ddmx, false);
 });
 
-test("bateria DDMX zerada ou desatualizada só conta na varrição", () => {
-  const zerada = { media_percentual: 0, desatualizadas: 0 };
+test("bateria DDMX desatualizada só conta na varrição e não vira execução", () => {
+  const zerada = { media_percentual: 0, desatualizadas: 0, com_sinal_e_bateria: true };
   const fora = classificarExecucaoDia(dia({ varricao: false, ddmxBateria: zerada }));
   assert.equal(fora.classe, "execucao");
   assert.equal(fora.bateria_ddmx, false);
 
   const dentro = classificarExecucaoDia(dia({ varricao: true, ddmxBateria: zerada }));
   assert.equal(dentro.classe, "execucao");
-  assert.equal(dentro.bateria_ddmx, true);
+  assert.equal(dentro.bateria_ddmx, false);
   assert.equal(dentro.bateria_selimp, false);
 
   const desatualizada = classificarExecucaoDia(dia({
-    percentualDdmx: 90,
+    percentualDdmx: 40,
     varricao: true,
-    ddmxBateria: { media_percentual: 80, desatualizadas: 2 },
+    ddmxBateria: { media_percentual: 80, desatualizadas: 2, com_sinal_e_bateria: false },
   }));
   assert.equal(desatualizada.classe, null);
   assert.equal(desatualizada.bateria_ddmx, true);
 
-  const baixa = classificarExecucaoDia(dia({ varricao: true, ddmxBateria: { media_percentual: 12, desatualizadas: 0 } }));
+  const baixa = classificarExecucaoDia(dia({
+    varricao: true,
+    ddmxBateria: { media_percentual: 12, desatualizadas: 0, com_sinal_e_bateria: true },
+  }));
   assert.equal(baixa.classe, "execucao");
   assert.equal(baixa.bateria_ddmx, false);
 });
 
-test("as duas fontes podem marcar o mesmo dia", () => {
+test("desatualizada e execução podem marcar o mesmo dia", () => {
   const r = classificarExecucaoDia(dia({
     varricao: true,
-    selimp: { media_percentual: 0, desatualizadas: 0, troca: false, em_manutencao: false, manutencao_realizada: false },
-    ddmxBateria: { media_percentual: 50, desatualizadas: 1 },
+    selimp: { media_percentual: 40, desatualizadas: 1, troca: false, em_manutencao: false, manutencao_realizada: false },
+    ddmxBateria: { media_percentual: 5, desatualizadas: 1, com_sinal_e_bateria: true },
   }));
   assert.equal(r.classe, "execucao");
   assert.equal(r.bateria_selimp, true);
   assert.equal(r.bateria_ddmx, true);
 });
 
-test("bateria desatualizada ou zerada conta mesmo com execução alta", () => {
+test("bateria desatualizada conta mesmo com execução alta; percentual baixo não", () => {
   const selimp = classificarExecucaoDia(dia({
     percentualDdmx: 97.74,
+    ddmxBateria: bateriaValida,
     selimp: { media_percentual: 74, desatualizadas: 1, troca: false, em_manutencao: false, manutencao_realizada: false },
   }));
   assert.equal(selimp.classe, null);
@@ -112,7 +132,7 @@ test("bateria desatualizada ou zerada conta mesmo com execução alta", () => {
   const ddmx = classificarExecucaoDia(dia({
     percentualDdmx: 100,
     varricao: true,
-    ddmxBateria: { media_percentual: 90, min_percentual: 9.9, desatualizadas: 0 },
+    ddmxBateria: { media_percentual: 90, min_percentual: 9.9, desatualizadas: 0, com_sinal_e_bateria: true },
   }));
   assert.equal(ddmx.classe, null);
   assert.equal(ddmx.bateria_ddmx, false);
@@ -122,7 +142,7 @@ test("contestação não muda a classe automática", () => {
   const contestacoes = new Set(["MOD-1|2026-10-26"]);
   assert.equal(contestadoNoDia(["MOD-1"], "2026-10-26", contestacoes), true);
   assert.equal(contestadoNoDia(["MOD-2"], "2026-10-26", contestacoes), false);
-  assert.equal(classificarExecucaoDia(dia({ percentualDdmx: 20, varricao: true, ddmxBateria: { media_percentual: 80, desatualizadas: 0 } })).classe, "execucao");
+  assert.equal(classificarExecucaoDia(dia({ percentualDdmx: 20, varricao: true, ddmxBateria: bateriaValida })).classe, "execucao");
   assert.equal(classificarExecucaoDia(dia({ percentualDdmx: 20 })).classe, null);
-  assert.equal(classificarExecucaoDia(dia({ percentualDdmx: 90 })).classe, null);
+  assert.equal(classificarExecucaoDia(dia({ percentualDdmx: 90, ddmxBateria: bateriaValida })).classe, null);
 });

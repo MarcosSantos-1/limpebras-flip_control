@@ -1,5 +1,6 @@
 import {
   isEmptyDispatchDate,
+  leituraDdmxComSinalEBateria,
   parseDdmxBateriaFromRaw,
   parseDdmxBateriaVolts,
   summarizeDdmxBateriaDia,
@@ -50,6 +51,31 @@ const okDates = parseDdmxBateriaFromRaw({
 check("datas ok → não desatualizada", okDates.bateria_desatualizada, false);
 check("11.9v percentual", okDates.bateria_percentual, 90);
 
+console.log("\n— leitura com sinal e bateria");
+const cincoPorcento = {
+  rota: "CV10302VJ0012",
+  bateria_raw: "1.55v",
+  bateria_percentual: 5,
+  bateria_desatualizada: false,
+  ultima_comunicacao: "27/10/2026 08:00:00",
+};
+check("5% com sinal e datas vale", leituraDdmxComSinalEBateria(cincoPorcento), true);
+check(
+  "desatualizada não vale",
+  leituraDdmxComSinalEBateria({ ...cincoPorcento, bateria_desatualizada: true }),
+  false,
+);
+check(
+  "sem última comunicação não vale",
+  leituraDdmxComSinalEBateria({ ...cincoPorcento, ultima_comunicacao: null }),
+  false,
+);
+check(
+  "sem percentual não vale",
+  leituraDdmxComSinalEBateria({ ...cincoPorcento, bateria_percentual: null }),
+  false,
+);
+
 console.log("\n— summarizeDdmxBateriaDia");
 const summary = summarizeDdmxBateriaDia([
   {
@@ -59,17 +85,12 @@ const summary = summarizeDdmxBateriaDia([
     bateria_desatualizada: true,
     ultima_comunicacao: null,
   },
-  {
-    rota: "CV10302VJ0012",
-    bateria_raw: "11.8v",
-    bateria_percentual: 90,
-    bateria_desatualizada: false,
-    ultima_comunicacao: null,
-  },
+  cincoPorcento,
 ]);
 check("total despachos", summary?.total, 2);
 check("desatualizadas", summary?.desatualizadas, 1);
-check("media percentual", summary?.media_percentual, 45.8, 0.05);
+check("media percentual", summary?.media_percentual, 3.3, 0.05);
+check("com sinal e bateria", summary?.com_sinal_e_bateria, true);
 
 console.log(`\n${ok} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);

@@ -983,6 +983,7 @@ export async function buildIptPreviewFromConsolidado(
                 media_percentual: bateriaDdmxDia.media_percentual,
                 min_percentual: menorPercentual(bateriaDdmxDia.despachos.map((despacho) => despacho.bateria_percentual)),
                 desatualizadas: bateriaDdmxDia.desatualizadas,
+                com_sinal_e_bateria: bateriaDdmxDia.com_sinal_e_bateria,
               }
             : null,
         });

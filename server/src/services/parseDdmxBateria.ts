@@ -69,8 +69,17 @@ export type BateriaDdmxDia = {
   total: number;
   desatualizadas: number;
   media_percentual: number | null;
+  /** Leitura não desatualizada, com última comunicação e com percentual (mesmo 5%). */
+  com_sinal_e_bateria: boolean;
   despachos: DdmxBateriaDispatchItem[];
 };
+
+/** Bateria do despacho que ainda comunica e tem percentual, mesmo baixo. */
+export function leituraDdmxComSinalEBateria(item: DdmxBateriaDispatchItem): boolean {
+  if (item.bateria_desatualizada) return false;
+  if (item.bateria_percentual == null || !Number.isFinite(item.bateria_percentual)) return false;
+  return !isEmptyDispatchDate(item.ultima_comunicacao);
+}
 
 export function summarizeDdmxBateriaDia(items: DdmxBateriaDispatchItem[]): BateriaDdmxDia | null {
   if (items.length === 0) return null;
@@ -86,6 +95,7 @@ export function summarizeDdmxBateriaDia(items: DdmxBateriaDispatchItem[]): Bater
       percentuais.length > 0
         ? Number((percentuais.reduce((sum, value) => sum + value, 0) / percentuais.length).toFixed(2))
         : null,
+    com_sinal_e_bateria: items.some(leituraDdmxComSinalEBateria),
     despachos: items,
   };
 }

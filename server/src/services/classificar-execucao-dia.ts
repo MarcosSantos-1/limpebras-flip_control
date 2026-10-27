@@ -1,10 +1,10 @@
 /**
  * Classificação automática de um dia de despacho DDMX.
  *
- * Problema de bateria é leitura desatualizada ou zerada (0%). Percentual baixo
- * de bateria, troca e manutenção não entram. Execução abaixo de 75% só é
- * problema de execução quando o dia tem bateria no DDMX. Contestação não muda
- * a classe.
+ * Problema de bateria é só leitura desatualizada do despacho. Percentual baixo,
+ * bateria zerada, troca e manutenção não entram. Execução abaixo de 75% só é
+ * problema de execução quando o dia tem bateria DDMX não desatualizada, com
+ * sinal e com percentual (mesmo 5%). Contestação não muda a classe.
  */
 
 export const EXECUCAO_DIA_THRESHOLDS = {
@@ -16,9 +16,9 @@ export type ClasseAutoDia = "bateria" | "execucao";
 
 export interface ClassificacaoExecucaoDia {
   classe: ClasseAutoDia | null;
-  /** Bateria SELIMP desatualizada ou zerada. */
+  /** Bateria SELIMP desatualizada no despacho. */
   bateria_selimp: boolean;
-  /** Bateria DDMX desatualizada ou zerada (varrição). */
+  /** Bateria DDMX desatualizada no despacho (varrição). */
   bateria_ddmx: boolean;
 }
 
@@ -37,6 +37,11 @@ export interface SinaisBateriaDdmxDia {
   /** Pior leitura do dia. Uma bateria baixa no meio de várias já interfere. */
   min_percentual?: number | null;
   desatualizadas: number;
+  /**
+   * Há ao menos uma leitura do despacho não desatualizada, com sinal
+   * (última comunicação) e com percentual de bateria, mesmo 5%.
+   */
+  com_sinal_e_bateria: boolean;
 }
 
 export interface ClassificarExecucaoDiaInput {
@@ -48,14 +53,9 @@ export interface ClassificarExecucaoDiaInput {
   ddmxBateria: SinaisBateriaDdmxDia | null;
 }
 
-function leituraZerada(media: number | null, minima?: number | null): boolean {
-  const pior = minima != null && Number.isFinite(minima) ? minima : media;
-  return pior === 0;
-}
-
-function problemaBateria(sinais: { desatualizadas: number; media_percentual: number | null; min_percentual?: number | null } | null): boolean {
+function problemaBateria(sinais: { desatualizadas: number } | null): boolean {
   if (!sinais) return false;
-  return sinais.desatualizadas > 0 || leituraZerada(sinais.media_percentual, sinais.min_percentual);
+  return sinais.desatualizadas > 0;
 }
 
 export function classificarExecucaoDia(input: ClassificarExecucaoDiaInput): ClassificacaoExecucaoDia {
@@ -63,7 +63,7 @@ export function classificarExecucaoDia(input: ClassificarExecucaoDiaInput): Clas
   const bateriaDdmx = input.varricao && problemaBateria(input.ddmxBateria);
   const percentualBaixo =
     input.despachosDdmx > 0 &&
-    input.ddmxBateria != null &&
+    input.ddmxBateria?.com_sinal_e_bateria === true &&
     input.percentualDdmx != null &&
     Number.isFinite(input.percentualDdmx) &&
     input.percentualDdmx < EXECUCAO_DIA_THRESHOLDS.PERCENTUAL_BAIXO;
