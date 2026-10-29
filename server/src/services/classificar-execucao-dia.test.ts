@@ -25,8 +25,9 @@ function dia(partial: Partial<ClassificarExecucaoDiaInput> = {}): ClassificarExe
 
 const bateriaValida = { media_percentual: 80, desatualizadas: 0, com_sinal_e_bateria: true };
 
-test("percentual em 75% ou sem despacho DDMX não classifica", () => {
-  assert.equal(classificarExecucaoDia(dia({ percentualDdmx: 75, ddmxBateria: bateriaValida })).classe, null);
+test("percentual acima de 80% ou sem despacho DDMX não classifica", () => {
+  assert.equal(classificarExecucaoDia(dia({ percentualDdmx: 80, ddmxBateria: bateriaValida })).classe, "execucao");
+  assert.equal(classificarExecucaoDia(dia({ percentualDdmx: 80.01, ddmxBateria: bateriaValida })).classe, null);
   assert.equal(classificarExecucaoDia(dia({ percentualDdmx: 90, ddmxBateria: bateriaValida })).classe, null);
   assert.equal(classificarExecucaoDia(dia({ despachosDdmx: 0, percentualDdmx: 10, ddmxBateria: bateriaValida })).classe, null);
   assert.equal(classificarExecucaoDia(dia({ percentualDdmx: null, ddmxBateria: bateriaValida })).classe, null);

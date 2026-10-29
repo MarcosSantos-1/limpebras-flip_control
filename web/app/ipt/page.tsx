@@ -394,6 +394,7 @@ const ClasseAutoPill = ({ kind, dias }: { kind: ClasseFiltro; dias?: number }) =
 };
 
 type DetalheClasse = {
+  data?: string;
   classe_auto?: ClasseAutoDia | null;
   contestado?: boolean;
   bateria_selimp?: boolean;
@@ -402,6 +403,16 @@ type DetalheClasse = {
   despachos_selimp?: number;
   bateria_setor_dia?: { desatualizadas?: number; modulos?: Array<{ bateria_percentual?: number | null }> } | null;
   bateria_ddmx_dia?: { desatualizadas?: number; despachos?: Array<{ bateria_percentual?: number | null }> } | null;
+};
+
+type ObsDiariasPlano = Record<string, { id: number; titulo: string; descricao: string | null }> | undefined;
+
+const chaveDataObs = (data: string | undefined) => (data ?? "").replace(/T.*/, "").slice(0, 10);
+
+/** Observação diária no despacho entra sempre como problema de execução. */
+const diaTemObsDiaria = (data: string | undefined, diarias: ObsDiariasPlano) => {
+  const chave = chaveDataObs(data);
+  return chave.length > 0 && Boolean(diarias?.[chave]);
 };
 
 const selimpProblemaBateria = (detalhe: DetalheClasse) =>
@@ -418,7 +429,7 @@ const despachosDoDia = (detalhe: DetalheClasse) => {
   return 1;
 };
 
-const resumoClassesDia = (detalhes: DetalheClasse[] | undefined) => {
+const resumoClassesDia = (detalhes: DetalheClasse[] | undefined, diarias?: ObsDiariasPlano) => {
   let bateriaSelimp = 0;
   let bateriaDdmx = 0;
   let despachosBateriaSelimp = 0;
@@ -430,17 +441,17 @@ const resumoClassesDia = (detalhes: DetalheClasse[] | undefined) => {
     if (detalhe.bateria_ddmx) bateriaDdmx += 1;
     if (selimpProblemaBateria(detalhe)) despachosBateriaSelimp += despachosDoDia(detalhe);
     if (ddmxProblemaBateria(detalhe)) despachosBateriaDdmx += despachosDoDia(detalhe);
-    if (detalhe.classe_auto === "execucao") execucao += 1;
+    if (detalhe.classe_auto === "execucao" || diaTemObsDiaria(detalhe.data, diarias)) execucao += 1;
     if (detalhe.contestado) contestacao += 1;
   }
   return { bateriaSelimp, bateriaDdmx, despachosBateriaSelimp, despachosBateriaDdmx, execucao, contestacao };
 };
 
-const rowMatchesClasse = (detalhes: DetalheClasse[] | undefined, classe: ClasseFiltro) => {
+const rowMatchesClasse = (detalhes: DetalheClasse[] | undefined, classe: ClasseFiltro, diarias?: ObsDiariasPlano) => {
   const lista = detalhes ?? [];
   if (classe === "bateria_selimp") return lista.some(selimpProblemaBateria);
   if (classe === "bateria_ddmx") return lista.some(ddmxProblemaBateria);
-  const resumo = resumoClassesDia(lista);
+  const resumo = resumoClassesDia(lista, diarias);
   if (classe === "execucao") return resumo.execucao > 0;
   return resumo.contestacao > 0;
 };
@@ -1088,10 +1099,10 @@ export default function IPTPage() {
   const filteredComparativo = useMemo(() => {
     return rowsForDashboard.filter((row) => {
       if (filtroObsGlobal && !observacoes.globais[row.plano]) return false;
-      if (classeFiltro && !rowMatchesClasse(row.detalhes_diarios, classeFiltro)) return false;
+      if (classeFiltro && !rowMatchesClasse(row.detalhes_diarios, classeFiltro, observacoes.diarias[row.plano])) return false;
       return true;
     });
-  }, [rowsForDashboard, filtroObsGlobal, classeFiltro, observacoes.globais]);
+  }, [rowsForDashboard, filtroObsGlobal, classeFiltro, observacoes.globais, observacoes.diarias]);
 
   const dashboardExecucao = useMemo(() => {
     const grupos = {
@@ -1121,7 +1132,7 @@ export default function IPTPage() {
         }
       }
 
-      const resumo = resumoClassesDia(row.detalhes_diarios);
+      const resumo = resumoClassesDia(row.detalhes_diarios, observacoes.diarias[row.plano]);
       if (resumo.despachosBateriaSelimp > 0) {
         grupos.bateria_selimp.setores += 1;
         grupos.bateria_selimp.despachos += resumo.despachosBateriaSelimp;
@@ -1150,7 +1161,7 @@ export default function IPTPage() {
         contestacao: { setores: grupos.contestacao.setores, despachos: grupos.contestacao.despachos, planosPct: parcela(grupos.contestacao.setores) },
       },
     };
-  }, [rowsForDashboard]);
+  }, [rowsForDashboard, observacoes.diarias]);
 
   const obsGlobalVisiveis = useMemo(
     () => rowsForDashboard.filter((row) => Boolean(observacoes.globais[row.plano])).length,
@@ -2972,7 +2983,7 @@ export default function IPTPage() {
                                 observacoes.diarias[row.plano] &&
                                 Object.keys(observacoes.diarias[row.plano]).length > 0
                               );
-                              const classesDoPlano = resumoClassesDia(row.detalhes_diarios);
+                              const classesDoPlano = resumoClassesDia(row.detalhes_diarios, observacoes.diarias[row.plano]);
                               return (
                                 <span
                                   className={`inline-flex flex-wrap items-center gap-1.5 ${
@@ -3434,7 +3445,7 @@ export default function IPTPage() {
                                                         <span className="inline-flex items-center gap-1 flex-wrap">
                                                           {d.bateria_selimp && <ClasseAutoPill kind="bateria_selimp" />}
                                                           {d.bateria_ddmx && <ClasseAutoPill kind="bateria_ddmx" />}
-                                                          {d.classe_auto === "execucao" && <ClasseAutoPill kind="execucao" />}
+                                                          {(d.classe_auto === "execucao" || Boolean(obsDiaria)) && <ClasseAutoPill kind="execucao" />}
                                                           {d.contestado && <ClasseAutoPill kind="contestacao" />}
                                                           {obsGlobal && (() => {
                                                             const GIcon = globalCategory?.Icon ?? AlertTriangle;
