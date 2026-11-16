@@ -75,6 +75,7 @@ import {
   type IptPreviewModuloBateria,
   type FonteAgregadaOperacional,
   type DdmxSerieResponse,
+  type TrocaPorDia,
 } from "@/lib/api";
 import { useIptData } from "@/lib/use-ipt-data";
 import { ManualIndicatorBadge } from "@/components/manual-indicator-badge";
@@ -390,6 +391,35 @@ const ClasseAutoPill = ({ kind, dias }: { kind: ClasseFiltro; dias?: number }) =
       <Icon className="h-3 w-3 shrink-0" />
       {ui.label}
       {extra}
+    </span>
+  );
+};
+
+const TROCA_RESULTADO_UI: Record<TrocaPorDia["resultado"], { emoji: string; label: string; className: string }> = {
+  sucesso: { emoji: "✅", label: "com sucesso", className: "border-emerald-500/50 bg-emerald-500/15 text-emerald-800 dark:text-emerald-200" },
+  sem_sucesso: { emoji: "❌", label: "sem sucesso", className: "border-red-500/50 bg-red-500/15 text-red-800 dark:text-red-200" },
+  aguardando: { emoji: "⏳", label: "aguardando leitura", className: "border-amber-500/50 bg-amber-500/15 text-amber-800 dark:text-amber-200" },
+};
+
+/** Troca de bateria no dia do despacho (CLIMP e/ou DDMX) com o resultado. */
+const TrocaDiaPills = ({ trocas }: { trocas?: TrocaPorDia[] }) => {
+  if (!trocas?.length) return <span className="text-muted-foreground">—</span>;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1">
+      {trocas.map((t) => {
+        const ui = TROCA_RESULTADO_UI[t.resultado];
+        const origem = t.origem === "climp" ? "CLIMP" : "DDMX";
+        return (
+          <span
+            key={`${t.origem}-${t.modulo}`}
+            className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold leading-tight ${ui.className}`}
+            title={`Troca de bateria ${origem} (módulo ${t.modulo}) ${ui.label}${t.tipo ? ` · ${t.tipo}` : ""}`}
+          >
+            <Repeat className="h-3 w-3 shrink-0" />
+            {origem} {ui.emoji}
+          </span>
+        );
+      })}
     </span>
   );
 };
@@ -879,6 +909,35 @@ export default function IPTPage() {
       cancel = true;
     };
   }, [selectedMonth, ddmxChave]);
+
+  /** Trocas de bateria (CLIMP e DDMX) por plano/dia — marcadas no despacho do dia. */
+  const [trocasDia, setTrocasDia] = useState<Map<string, TrocaPorDia[]>>(() => new Map());
+  useEffect(() => {
+    let cancel = false;
+    // Um mês antes cobre tabelas que mostram dias do fim do mês anterior.
+    const inicio = format(new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() - 1, 1), "yyyy-MM-dd");
+    const fim = format(new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 0), "yyyy-MM-dd");
+    apiService
+      .getTrocasPorDia(inicio, fim)
+      .then((r) => {
+        if (cancel) return;
+        const map = new Map<string, TrocaPorDia[]>();
+        for (const it of r.itens) {
+          const key = `${it.plano.trim().toUpperCase()}|${it.data.slice(0, 10)}`;
+          const arr = map.get(key) ?? [];
+          // Mesmo módulo/origem repetido (ex.: setor listado 2x) aparece uma vez só.
+          if (!arr.some((x) => x.origem === it.origem && x.modulo === it.modulo)) arr.push(it);
+          map.set(key, arr);
+        }
+        setTrocasDia(map);
+      })
+      .catch(() => {
+        /* marcação é opcional */
+      });
+    return () => {
+      cancel = true;
+    };
+  }, [selectedMonth]);
   const ddmxResumo = useMemo(() => {
     if (ddmxMes?.chave !== ddmxChave || !ddmxMes.data) return null;
     const serie = ddmxMes.data.serie;
@@ -3468,6 +3527,14 @@ export default function IPTPage() {
                                                 <span className="flex items-center gap-1"><Battery className="h-3.5 w-3.5" /> Bat. DDMX</span>
                                               </th>
                                               <th className="text-left py-2 px-2">
+                                                <span
+                                                  className="flex items-center gap-1"
+                                                  title="Troca de bateria CLIMP/DDMX registrada no dia e o resultado (✅ sucesso · ❌ sem sucesso · ⏳ aguardando leitura)"
+                                                >
+                                                  <Repeat className="h-3.5 w-3.5" /> Troca bat.
+                                                </span>
+                                              </th>
+                                              <th className="text-left py-2 px-2">
                                                 <span className="flex items-center gap-1"><Truck className="h-3.5 w-3.5" /> Des. Selimp?</span>
                                               </th>
                                               <th className="text-left py-2 px-2">
@@ -3524,6 +3591,9 @@ export default function IPTPage() {
                                                       bateriaDia={d.bateria_ddmx_dia}
                                                       applicable={isVarricaoPlanoUi(row.plano)}
                                                     />
+                                                  </td>
+                                                  <td className="py-2 px-2">
+                                                    <TrocaDiaPills trocas={trocasDia.get(`${row.plano.trim().toUpperCase()}|${d.data.slice(0, 10)}`)} />
                                                   </td>
                                                   <td className="py-2 px-2">
                                                     {d.despachos_selimp > 0 ? (

@@ -5,6 +5,7 @@ import {
   extrairIntervaloDdmx,
   extrairPercentualDdmx,
   isServicoBolha,
+  parseDataDdmx,
   percentualDoDia,
   servicoForaDoDespachoDdmx,
   type LinhaExecucaoDia,
@@ -24,13 +25,30 @@ export type DdmxDespacho = {
   data: string;
   percentual: number | null;
   bateriaPercentual: number | null;
+  /** Leitura bruta do módulo (ex.: "11.2v") correspondente ao percentual. */
+  bateriaRaw: string | null;
+  /** Só desatualizada quando nenhuma linha do dia trouxe leitura válida. */
   bateriaDesatualizada: boolean;
+  /** Maior "data última comunicação do módulo" vista no dia (texto DDMX). */
+  ultimaComunicacao: string | null;
 };
 
 export type DdmxLinha = { setor: string | null; data_referencia: unknown; raw: Record<string, unknown> | null };
 
 export function agruparDespachosDdmx(linhas: DdmxLinha[], inicio: string, fim: string): DdmxDespacho[] {
-  const acc = new Map<string, { plano: string; data: string; bolha: boolean; linhas: LinhaExecucaoDia[]; bat: number | null; desat: boolean }>();
+  type Acc = {
+    plano: string;
+    data: string;
+    bolha: boolean;
+    linhas: LinhaExecucaoDia[];
+    bat: number | null;
+    batRaw: string | null;
+    valida: boolean;
+    desat: boolean;
+    ultima: string | null;
+    ultimaTs: number;
+  };
+  const acc = new Map<string, Acc>();
   for (const row of linhas) {
     const raw = (row.raw ?? {}) as Record<string, unknown>;
     const rota = String(raw.rota ?? raw.plano ?? raw.setor ?? row.setor ?? "").trim();
@@ -41,13 +59,43 @@ export function agruparDespachosDdmx(linhas: DdmxLinha[], inicio: string, fim: s
     const data = chaveDataDdmx(row.data_referencia, raw);
     if (!data || data < inicio || data > fim) continue;
     const key = `${plano}|${data}`;
-    const cur = acc.get(key) ?? { plano, data, bolha: isServicoBolha(sigla), linhas: [], bat: null, desat: false };
+    const cur: Acc = acc.get(key) ?? {
+      plano,
+      data,
+      bolha: isServicoBolha(sigla),
+      linhas: [],
+      bat: null,
+      batRaw: null,
+      valida: false,
+      desat: false,
+      ultima: null,
+      ultimaTs: -Infinity,
+    };
     const pct = extrairPercentualDdmx(raw);
     const intervalo = extrairIntervaloDdmx(raw);
     cur.linhas.push({ percentual: pct != null ? Math.min(100, Math.max(0, pct)) : null, inicio: intervalo.inicio, fim: intervalo.fim });
     const bat = parseDdmxBateriaFromRaw(raw);
-    if (bat.bateria_percentual != null) cur.bat = Math.max(cur.bat ?? 0, bat.bateria_percentual);
-    if (bat.bateria_desatualizada) cur.desat = true;
+    if (bat.bateria_desatualizada) {
+      cur.desat = true;
+      // Linhas "fantasma" (início ---) não sobrescrevem uma leitura válida do dia.
+      if (!cur.valida && bat.bateria_percentual != null && (cur.bat == null || bat.bateria_percentual > cur.bat)) {
+        cur.bat = bat.bateria_percentual;
+        cur.batRaw = bat.bateria_raw || null;
+      }
+    } else if (bat.bateria_percentual != null) {
+      if (!cur.valida || cur.bat == null || bat.bateria_percentual > cur.bat) {
+        cur.bat = bat.bateria_percentual;
+        cur.batRaw = bat.bateria_raw || null;
+      }
+      cur.valida = true;
+    }
+    if (bat.ultima_comunicacao) {
+      const ts = parseDataDdmx(bat.ultima_comunicacao)?.getTime() ?? -Infinity;
+      if (ts >= cur.ultimaTs) {
+        cur.ultimaTs = ts;
+        cur.ultima = bat.ultima_comunicacao;
+      }
+    }
     acc.set(key, cur);
   }
   return [...acc.values()].map((a) => ({
@@ -58,19 +106,29 @@ export function agruparDespachosDdmx(linhas: DdmxLinha[], inicio: string, fim: s
     // Mesma regra do IPT Geral: maior linha do plano no dia; bolha aplica permanência.
     percentual: percentualDoDia(a.linhas, a.bolha),
     bateriaPercentual: a.bat,
-    bateriaDesatualizada: a.desat,
+    bateriaRaw: a.batRaw,
+    bateriaDesatualizada: a.desat && !a.valida,
+    ultimaComunicacao: a.ultima,
   }));
 }
 
-export async function carregarDespachosDdmx(inicio: string, fim: string): Promise<DdmxDespacho[]> {
+/**
+ * Carrega os despachos DDMX do período. `planos` restringe às rotas informadas
+ * (ex.: setores de módulos DDMX) — reduz bastante o volume lido.
+ */
+export async function carregarDespachosDdmx(inicio: string, fim: string, planos?: string[]): Promise<DdmxDespacho[]> {
   // Margem de 1 dia: data_referencia pode divergir da data de execução no raw.
+  const filtroPlano = planos ? "AND UPPER(TRIM(raw->>'rota')) = ANY($3::text[])" : "";
   const sql = (t: string) =>
     `SELECT setor, data_referencia, raw FROM ${t}
-      WHERE data_referencia IS NULL OR (data_referencia >= $1::date - 1 AND data_referencia <= $2::date + 1)`;
+      WHERE (data_referencia IS NULL OR (data_referencia >= $1::date - 1 AND data_referencia <= $2::date + 1))
+      ${filtroPlano}`;
+  const params: unknown[] = planos ? [inicio, fim, planos.map((p) => p.trim().toUpperCase())] : [inicio, fim];
+  if (planos && planos.length === 0) return [];
   const linhas: DdmxLinha[] = [];
   for (const t of ["ipt_ddmx_varricao", "ipt_ddmx_veiculos"]) {
     try {
-      const r = await pool.query<DdmxLinha>(sql(t), [inicio, fim]);
+      const r = await pool.query<DdmxLinha>(sql(t), params);
       linhas.push(...r.rows);
     } catch {
       /* tabela ainda não criada */

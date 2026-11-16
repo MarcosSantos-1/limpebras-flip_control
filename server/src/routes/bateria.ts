@@ -687,6 +687,7 @@ export const bateriaRoutes: FastifyPluginAsync = async (fastify) => {
     } finally {
       client.release();
     }
+    invalidatePrefix("ddmx_trocas");
     return { ok: true, concluidas: valid.length };
   });
 

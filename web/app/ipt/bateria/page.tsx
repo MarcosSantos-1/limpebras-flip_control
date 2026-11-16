@@ -1,15 +1,12 @@
 "use client";
 
-import type { ClipboardEvent, CSSProperties, ReactNode } from "react";
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import type { ClipboardEvent, CSSProperties } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import {
   Activity,
   AlertTriangle,
   ArrowUpDown,
-  ArrowUp,
-  ArrowDown,
   Battery,
   BatteryCharging,
   Bell,
@@ -30,7 +27,6 @@ import {
   Gauge,
   Hash,
   History,
-  Info,
   LayoutDashboard,
   MapPin,
   Moon,
@@ -125,6 +121,33 @@ import { apiService } from "@/lib/api";
 import { formatIptDataInstalacaoBr, getFrequenciaDescricao, servicoLabel, mesCorrenteLabel } from "@/lib/ipt-utils";
 import { SetoresTab } from "./setores-tab";
 import { DdmxTab } from "./ddmx-tab";
+import { ddmxDoModuloClimp, useDdmxState } from "./ddmx-state";
+import { DdmxJuntoCheckbox, DdmxTrocadaDialog, ddmxPedeTroca, type DdmxPendente } from "./ddmx-climp";
+import {
+  BTN_AMBER,
+  BTN_CYAN,
+  BTN_EMERALD,
+  BTN_RED,
+  BTN_SECONDARY,
+  BTN_SKY,
+  EXPANDED_ROW,
+  GLASS_CARD,
+  InfoTooltip,
+  SetorCell,
+  SortToggle,
+  STATUS_BAT_OPTIONS,
+  SUCESSO_MIN_PCT_DEPOIS,
+  fmtDisplayDate,
+  fmtIsoBr,
+  getStatusColorClass,
+  isoToday,
+  pctBatteryLabel,
+  renderBatteryStatus,
+  statusBateriaFromPct,
+  trocaStatusBadgeClass,
+  trocaStatusEmoji,
+  trocaStatusLabel,
+} from "./bateria-ui";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
 import {
   deleteManutencaoArquivo,
@@ -153,35 +176,17 @@ import {
   type ModuloManutencaoEvento,
 } from "./modulo-manutencao-state";
 
-// --- Design Constants ---
-const GLASS_CARD =
-  "border border-border bg-card shadow-lg shadow-zinc-900/[0.06] dark:border-white/10 dark:bg-muted/60 dark:shadow-black/40";
 
 const GLASS_BAR =
   "border border-border bg-card shadow-md shadow-zinc-900/[0.05] dark:border-white/10 dark:bg-muted/50";
 
-const BTN_EMERALD =
-  "bg-linear-to-r from-emerald-600 to-teal-600 text-white hover:from-emerald-500 hover:to-teal-500 shadow-md shadow-emerald-950/10 border-0 font-semibold transition-all hover:scale-[1.01] active:scale-[0.99]";
 
-const BTN_SKY =
-  "bg-linear-to-r from-sky-600 to-blue-600 text-white hover:from-sky-500 hover:to-blue-500 shadow-md shadow-blue-950/10 border-0 font-semibold transition-all hover:scale-[1.01] active:scale-[0.99]";
 
-const BTN_AMBER =
-  "bg-linear-to-r from-amber-500 to-orange-600 text-white hover:from-amber-400 hover:to-orange-500 shadow-md shadow-orange-950/10 border-0 font-semibold transition-all hover:scale-[1.01] active:scale-[0.99]";
 
-const BTN_RED =
-  "bg-linear-to-r from-red-600 to-rose-600 text-white hover:from-red-500 hover:to-rose-500 shadow-md shadow-rose-950/10 border-0 font-semibold transition-all hover:scale-[1.01] active:scale-[0.99]";
 
-const BTN_CYAN =
-  "bg-linear-to-r from-cyan-500 to-sky-600 text-white hover:from-cyan-400 hover:to-sky-500 shadow-md shadow-cyan-950/10 border-0 font-semibold transition-all hover:scale-[1.01] active:scale-[0.99]";
 
-const BTN_SECONDARY =
-  "bg-linear-to-r from-zinc-200 to-slate-300 dark:from-zinc-800 dark:to-slate-700 text-zinc-800 dark:text-zinc-200 hover:from-zinc-300 hover:to-slate-400 dark:hover:from-zinc-700/80 dark:hover:to-slate-600/80 shadow-sm border-0 font-semibold transition-all hover:scale-[1.01] active:scale-[0.99]";
 
-const EXPANDED_ROW =
-  "bg-linear-to-r from-emerald-600 via-emerald-600 to-teal-700 text-zinc-100 shadow-[0_8px_24px_-12px_rgba(16,185,129,0.85)] [&_*]:!text-zinc-100";
 
-const SUCESSO_MIN_PCT_DEPOIS = 60;
 
 // --- Types ---
 
@@ -383,97 +388,8 @@ function getProductivityColor(value: number) {
   return "text-red-500";
 }
 
-/** Cabeçalho clicável com toggle de ordenação (desc → asc → nenhum). */
-function SortToggle({ label, dir, onClick }: { label: string; dir: "asc" | "desc" | null; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "inline-flex items-center gap-1 whitespace-pre-line text-left leading-tight transition-colors hover:text-foreground",
-        dir ? "font-semibold text-emerald-600 dark:text-emerald-400" : "text-muted-foreground",
-      )}
-      title="Ordenar"
-    >
-      {label}
-      {dir === "desc" ? (
-        <ArrowDown className="h-3.5 w-3.5" />
-      ) : dir === "asc" ? (
-        <ArrowUp className="h-3.5 w-3.5" />
-      ) : (
-        <ArrowUpDown className="h-3 w-3 opacity-40" />
-      )}
-    </button>
-  );
-}
 
-function SetorCell({ value }: { value: string }) {
-  const parts = value.split("/").map((p) => p.trim()).filter(Boolean);
-  if (parts.length <= 1) {
-    return <span className="max-w-[220px] font-mono text-xs leading-snug sm:text-sm">{value}</span>;
-  }
-  return (
-    <div className="max-w-[220px] font-mono text-xs leading-snug sm:text-sm">
-      {parts.map((part, i) => (
-        <span key={i}>
-          {i > 0 ? <br /> : null}
-          {part}
-        </span>
-      ))}
-    </div>
-  );
-}
 
-/** Tooltip discreto fixo no viewport; suporta quebras de linha com \n. */
-function InfoTooltip({ text, children }: { text: string; children?: ReactNode }) {
-  const triggerRef = useRef<HTMLSpanElement>(null);
-  const [position, setPosition] = useState<{ left: number; top: number; placement: "top" | "bottom" } | null>(null);
-
-  const show = useCallback(() => {
-    const el = triggerRef.current;
-    if (!el || typeof window === "undefined") return;
-    const rect = el.getBoundingClientRect();
-    const tooltipHalfWidth = 130;
-    const left = Math.min(window.innerWidth - tooltipHalfWidth - 12, Math.max(tooltipHalfWidth + 12, rect.left + rect.width / 2));
-    const placement = rect.top > 96 ? "top" : "bottom";
-    const top = placement === "top" ? rect.top - 8 : rect.bottom + 8;
-    setPosition({ left, top, placement });
-  }, []);
-
-  const hide = useCallback(() => setPosition(null), []);
-
-  return (
-    <span
-      ref={triggerRef}
-      className="relative inline-flex items-center"
-      onMouseEnter={show}
-      onMouseMove={show}
-      onMouseLeave={hide}
-      onFocus={show}
-      onBlur={hide}
-    >
-      {children ?? (
-        <Info className="h-3.5 w-3.5 cursor-help text-muted-foreground/70 transition-colors hover:text-foreground" />
-      )}
-      {position && typeof document !== "undefined"
-        ? createPortal(
-            <span
-              role="tooltip"
-              className="pointer-events-none fixed z-[9999] w-max max-w-[260px] -translate-x-1/2 whitespace-pre-line rounded-xl border border-border/70 bg-popover px-3 py-2 text-left text-xs font-normal leading-snug text-popover-foreground shadow-2xl ring-1 ring-black/5"
-              style={{
-                left: position.left,
-                top: position.top,
-                transform: position.placement === "top" ? "translate(-50%, -100%)" : "translate(-50%, 0)",
-              }}
-            >
-              {text}
-            </span>,
-            document.body,
-          )
-        : null}
-    </span>
-  );
-}
 
 type TooltipPayloadItem = {
   name?: string;
@@ -802,7 +718,6 @@ function motivoFromModule(m: ModuleData): string {
 
 const MOTIVO_OPTIONS = ["Manutenção", "Corretiva", "Preventiva", "Desnecessária"];
 
-const STATUS_BAT_OPTIONS = ["ALTA", "REGULAR", "BAIXA", "CRÍTICA", "DESATUALIZADA"];
 
 /** Ranking de qualidade da bateria (maior = melhor) para ordenação. */
 const STATUS_BAT_RANK: Record<string, number> = {
@@ -813,23 +728,11 @@ const STATUS_BAT_RANK: Record<string, number> = {
   DESATUALIZADA: 0,
 };
 
-/** Data de hoje em yyyy-MM-dd (horário local). */
-function isoToday(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
 
 function dateToIsoKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
-/** yyyy-MM-dd → dd/MM/yyyy. */
-function fmtIsoBr(iso?: string): string {
-  if (!iso) return "—";
-  const [y, m, d] = iso.split("-");
-  if (!y || !m || !d) return iso;
-  return `${d}/${m}/${y}`;
-}
 
 const CLIPBOARD_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
 
@@ -866,11 +769,6 @@ async function readClipboardImageFile(dia: string): Promise<File | null> {
   return null;
 }
 
-function fmtDisplayDate(value?: string): string {
-  if (!value) return "—";
-  const normalized = value.slice(0, 10);
-  return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? fmtIsoBr(normalized) : value;
-}
 
 function parseDateOnly(value?: string): Date | null {
   if (!value) return null;
@@ -923,56 +821,10 @@ function batteryLabel(raw?: string, percent?: number | null): string {
   return percent != null && Number.isFinite(Number(percent)) ? `${Number(percent)}%` : "—";
 }
 
-/** Normaliza um percentual de bateria para o rótulo "XX%".
- * Aceita escala 0–100 (82 → "82%") ou decimal 0–1 (0.82 → "82%"); cai para o raw quando não há percentual. */
-function pctBatteryLabel(percent?: number | null, raw?: string): string {
-  if (percent != null && Number.isFinite(Number(percent))) {
-    const n = Number(percent);
-    const v = n > 0 && n <= 1 ? Math.round(n * 100) : Math.round(n);
-    return `${v}%`;
-  }
-  const s = String(raw ?? "").trim();
-  if (!s) return "—";
-  const num = parseFloat(s.replace(",", "."));
-  if (!Number.isNaN(num)) {
-    const v = num > 0 && num <= 1 ? Math.round(num * 100) : Math.round(num);
-    return `${v}%`;
-  }
-  return s;
-}
 
-/** Deriva o status da bateria a partir do percentual (mesmos limiares do backend:
- * >70 ALTA · >30 REGULAR · >15 BAIXA · senão CRÍTICA). */
-function statusBateriaFromPct(percent?: number | null): string | null {
-  if (percent == null || !Number.isFinite(Number(percent))) return null;
-  const n = Number(percent) > 0 && Number(percent) <= 1 ? Number(percent) * 100 : Number(percent);
-  if (n > 70) return "ALTA";
-  if (n > 30) return "REGULAR";
-  if (n > 15) return "BAIXA";
-  return "CRÍTICA";
-}
 
-function trocaStatusLabel(item: Pick<TrocaRecord, "status" | "sucesso">): string {
-  if (item.status === "agendada") return "📅 Agendada";
-  // sucesso é automático e tem 3 estados: indefinido = ainda sem leitura pós-troca.
-  if (item.sucesso == null) return "⏳ Aguardando avaliação";
-  return item.sucesso ? "✅ Concluída com sucesso" : "❌ Concluída sem sucesso";
-}
 
-/** Emoji correspondente ao estado da troca (para destacar na linha do histórico). */
-function trocaStatusEmoji(item: Pick<TrocaRecord, "status" | "sucesso">): string {
-  if (item.status === "agendada") return "📅";
-  if (item.sucesso == null) return "⏳";
-  return item.sucesso ? "✅" : "❌";
-}
 
-function trocaStatusBadgeClass(item: Pick<TrocaRecord, "status" | "sucesso">): string {
-  if (item.status === "agendada") return "bg-amber-500/15 text-amber-600 border-amber-500/30 dark:text-amber-400";
-  if (item.sucesso == null) return "bg-amber-500/15 text-amber-700 border-amber-500/30 dark:text-amber-300";
-  return item.sucesso
-    ? "bg-emerald-500/15 text-emerald-600 border-emerald-500/30 dark:text-emerald-400"
-    : "bg-red-500/15 text-red-600 border-red-500/30 dark:text-red-400";
-}
 
 function trocaHistoryOf(m: ModuleData, rec?: TrocaRecord, history: TrocaHistoryRecord[] = []): TrocaHistoryRecord[] {
   if (history.length > 0) return history;
@@ -1235,50 +1087,8 @@ function bateriaDiaColor(b: BateriaDia): string {
   return "text-red-600 dark:text-red-400";
 }
 
-const STATUS_BAT_BADGE: Record<string, string> = {
-  ALTA: "bg-emerald-500/15 text-emerald-600 border-emerald-500/30 dark:text-emerald-400",
-  REGULAR: "bg-orange-500/15 text-orange-600 border-orange-500/30 dark:text-orange-400",
-  BAIXA: "bg-blue-500/15 text-blue-600 border-blue-500/30 dark:text-blue-400",
-  CRÍTICA: "bg-red-500/15 text-red-600 border-red-500/30 dark:text-red-400",
-  DESATUALIZADA: "bg-purple-500/15 text-purple-600 border-purple-500/30 dark:text-purple-400",
-};
-function statusBatBadge(status: string): string {
-  return STATUS_BAT_BADGE[status] ?? "bg-zinc-500/15 text-zinc-600 border-zinc-500/30 dark:text-zinc-300";
-}
 
-function getStatusColorClass(status: string | null | undefined): string {
-  if (!status) return "text-foreground font-bold";
-  const s = status.toUpperCase();
-  if (s.includes("ALTA")) return "text-emerald-600 dark:text-emerald-400 font-bold";
-  if (s.includes("REGULAR")) return "text-orange-600 dark:text-orange-400 font-bold";
-  if (s.includes("BAIXA")) return "text-blue-600 dark:text-blue-400 font-bold";
-  if (s.includes("CRÍTICA") || s.includes("CRITICA")) return "text-red-600 dark:text-red-400 font-bold";
-  if (s.includes("DESATUALIZADA")) return "text-orange-500 dark:text-orange-400 font-bold";
-  return "text-foreground font-bold";
-}
 
-function renderBatteryStatus(status: string | null | undefined, showEmoji = true) {
-  if (!status) return <span className="text-muted-foreground">—</span>;
-  const cls = statusBatBadge(status);
-  if (!showEmoji) {
-    return (
-      <Badge className={cn("font-semibold", cls)}>
-        {status}
-      </Badge>
-    );
-  }
-  let emoji = "🔋";
-  if (status === "REGULAR") emoji = "⚡";
-  else if (status === "BAIXA") emoji = "⚠️";
-  else if (status === "CRÍTICA") emoji = "🚨";
-  else if (status === "DESATUALIZADA") emoji = "📴";
-  return (
-    <Badge className={cn("gap-1.5 font-semibold", cls)}>
-      <span>{emoji}</span>
-      <span>{status}</span>
-    </Badge>
-  );
-}
 
 /** Prévia do resultado da troca a partir do status atual (resultado real usa snapshot pós-troca).
  * A classificação final é automática (snapshot pós-troca); isto é só uma indicação visual. */
@@ -1748,6 +1558,7 @@ export default function BateriaDashboardPage() {
   const [activeTab, setActiveTab] = useState("overview");
   // Filtros da aba "Trocas de Bateria"
   const [trocasPeriod, setTrocasPeriod] = useState("30d");
+  const [ddmxPeriod, setDdmxPeriod] = useState("30d");
   const [trocasSearch, setTrocasSearch] = useState("");
   const [trocasSubFilter, setTrocasSubFilter] = useState<string[]>([]);
   const [trocasDaysFilter, setTrocasDaysFilter] = useState<string[]>([]);
@@ -1804,6 +1615,11 @@ export default function BateriaDashboardPage() {
 
   // Estado mock (localStorage) de agendamentos/conclusões de troca
   const troca = useTrocaState();
+  // Trocas DDMX vinculadas à CLIMP: checkbox no agendamento + confirmação na conclusão.
+  const ddmx = useDdmxState();
+  const [agendarComDdmx, setAgendarComDdmx] = useState(false);
+  const [bulkAgendarComDdmx, setBulkAgendarComDdmx] = useState(false);
+  const [ddmxTrocada, setDdmxTrocada] = useState<{ dataTroca: string; pendentes: DdmxPendente[] } | null>(null);
   // Estado mock (localStorage) de manutenções (data / "não houve")
   const manut = useManutencaoState();
   // Histórico de manutenção do MÓDULO (persistido no servidor)
@@ -2549,6 +2365,84 @@ export default function BateriaDashboardPage() {
     }
   }
 
+  /** Módulo(s) DDMX dos mesmos setores do módulo CLIMP. */
+  function ddmxDe(m: ModuleData) {
+    return ddmxDoModuloClimp(ddmx.modulos, m.numeroSelimp, setoresOf(m));
+  }
+
+  /** Agendamentos DDMX em aberto que foram criados junto com a troca CLIMP deste módulo. */
+  function ddmxPendentesDe(m: ModuleData) {
+    return ddmx.modulos.filter((d) => d.agendamento?.selimpVinculo === m.numeroSelimp);
+  }
+
+  function agendarDdmxJunto(mods: ModuleData[], dataAgendada: string) {
+    void ddmx.agendar(
+      mods.flatMap((m) =>
+        ddmxDe(m).map((d) => ({
+          ddmxCodigo: d.ddmxCodigo,
+          setor: d.setores[0] ?? null,
+          dataAgendada,
+          tipoTroca: d.motivoSugerido,
+          selimpVinculo: m.numeroSelimp,
+          juntoClimp: true,
+        })),
+      ),
+    );
+  }
+
+  /** Reagenda/cancela também a DDMX que estava agendada junto com a CLIMP. */
+  function reagendarDdmxVinculada(mods: ModuleData[], dataAgendada: string) {
+    void ddmx.agendar(
+      mods.flatMap((m) =>
+        ddmxPendentesDe(m).map((d) => ({
+          ddmxCodigo: d.ddmxCodigo,
+          setor: d.setores[0] ?? null,
+          dataAgendada,
+          tipoTroca: d.agendamento?.tipoTroca ?? d.motivoSugerido,
+          selimpVinculo: m.numeroSelimp,
+          juntoClimp: true,
+        })),
+      ),
+    );
+  }
+
+  function cancelarDdmxVinculada(mods: ModuleData[]) {
+    void ddmx.cancelar(mods.flatMap((m) => ddmxPendentesDe(m).map((d) => d.ddmxCodigo)));
+  }
+
+  /** Após concluir a CLIMP: se havia DDMX agendada junto, pergunta se foi trocada. */
+  function perguntarDdmxTrocada(mods: ModuleData[], dataTroca: string) {
+    const pendentes: DdmxPendente[] = mods.flatMap((m) =>
+      ddmxPendentesDe(m).map((d) => ({ selimp: m.numeroSelimp, setor: m.setor, modulo: d })),
+    );
+    if (pendentes.length) setDdmxTrocada({ dataTroca, pendentes });
+  }
+
+  function confirmDdmxTrocada(trocados: DdmxPendente[]) {
+    if (!ddmxTrocada) return;
+    void ddmx.concluir(
+      trocados.map((p) => ({
+        ddmxCodigo: p.modulo.ddmxCodigo,
+        setor: p.modulo.setores[0] ?? null,
+        dataTroca: ddmxTrocada.dataTroca,
+        tipoTroca: p.modulo.agendamento?.tipoTroca ?? p.modulo.motivoSugerido,
+        bateriaAntes: p.modulo.leitura?.bateria ?? null,
+        bateriaAntesRaw: p.modulo.leitura?.bateriaRaw ?? null,
+        statusBateriaAntes: p.modulo.statusBateria,
+        selimpVinculo: p.selimp,
+        juntoClimp: true,
+      })),
+    );
+    setDdmxTrocada(null);
+  }
+
+  function openAgendar(m: ModuleData) {
+    setAgendarModule(m);
+    setAgendarDate(isoToday());
+    // Sugestão: marcar quando a DDMX também está ruim (desatualizada, sem leitura, crítica ou baixa).
+    setAgendarComDdmx(ddmxDe(m).some((d) => ddmxPedeTroca(d.statusBateria)));
+  }
+
   function confirmAgendar() {
     if (!agendarModule || !agendarDate) return;
     troca.agendar({
@@ -2557,6 +2451,7 @@ export default function BateriaDashboardPage() {
       dataAgendada: agendarDate,
       tipoTroca: motivoFromModule(agendarModule),
     });
+    if (agendarComDdmx) agendarDdmxJunto([agendarModule], agendarDate);
     removerAnaliseAposAgendamento([agendarModule]);
     setAgendarModule(null);
   }
@@ -2570,6 +2465,7 @@ export default function BateriaDashboardPage() {
       dataAgendada: agendadoDate,
       tipoTroca: motivoFromModule(agendadoModule),
     });
+    reagendarDdmxVinculada([agendadoModule], agendadoDate);
     setAgendadoReagendarOpen(false);
     setAgendadoModule(null);
   }
@@ -2577,6 +2473,7 @@ export default function BateriaDashboardPage() {
   function confirmCancelarTroca() {
     if (!agendadoModule) return;
     troca.remover(agendadoModule.numeroSelimp);
+    cancelarDdmxVinculada([agendadoModule]);
     setAgendadoReagendarOpen(false);
     setAgendadoModule(null);
   }
@@ -2584,6 +2481,7 @@ export default function BateriaDashboardPage() {
   function confirmBulkCancelarTroca() {
     if (selectedAgendadas.length === 0) return;
     for (const m of selectedAgendadas) troca.remover(m.numeroSelimp);
+    cancelarDdmxVinculada(selectedAgendadas);
     setBulkCancelarTrocaOpen(false);
     toggleSelMode();
   }
@@ -2602,6 +2500,7 @@ export default function BateriaDashboardPage() {
       bateriaAntesPercentual: concluirModule.bateriaPercentual,
       statusBateriaAntes: concluirModule.statusBateria,
     });
+    perguntarDdmxTrocada([concluirModule], concluirDate);
     setConcluirModule(null);
   }
 
@@ -2615,6 +2514,8 @@ export default function BateriaDashboardPage() {
         tipoTroca: motivoFromModule(m),
       })),
     );
+    if (bulkAgendarMode === "reagendar") reagendarDdmxVinculada(selectedModules, bulkAgendarDate);
+    else if (bulkAgendarComDdmx) agendarDdmxJunto(selectedModules, bulkAgendarDate);
     removerAnaliseAposAgendamento(selectedModules);
     setBulkAgendarOpen(false);
     toggleSelMode();
@@ -2670,6 +2571,7 @@ export default function BateriaDashboardPage() {
         statusBateriaAntes: m.statusBateria,
       })),
     );
+    perguntarDdmxTrocada(selectedModules, bulkConcluirDate);
     setBulkConcluirOpen(false);
     toggleSelMode();
   }
@@ -3309,12 +3211,12 @@ export default function BateriaDashboardPage() {
                   <MapPin className="mr-2 h-4 w-4" /> Setores
                 </TabsTrigger>
               </TabsList>
-              {(activeTab === "trocas" || activeTab === "maintenance") && (
+              {(activeTab === "trocas" || activeTab === "maintenance" || activeTab === "ddmx") && (
                 <div className="flex items-center gap-2 rounded-lg border border-border/50 bg-card/50 px-3 py-1.5">
                   <Calendar className="h-4 w-4 text-muted-foreground" />
                   <Select
-                    value={activeTab === "trocas" ? trocasPeriod : manutPeriod}
-                    onValueChange={activeTab === "trocas" ? setTrocasPeriod : setManutPeriod}
+                    value={activeTab === "trocas" ? trocasPeriod : activeTab === "ddmx" ? ddmxPeriod : manutPeriod}
+                    onValueChange={activeTab === "trocas" ? setTrocasPeriod : activeTab === "ddmx" ? setDdmxPeriod : setManutPeriod}
                   >
                     <SelectTrigger className="h-8 w-[150px] border-border/60 bg-background/60">
                       <SelectValue placeholder="Período" />
@@ -3846,7 +3748,12 @@ export default function BateriaDashboardPage() {
                               size="sm"
                               className={cn("h-9 gap-1.5", BTN_EMERALD)}
                               disabled={selectedTrocaBlockedManutModules.length > 0}
-                              onClick={() => { setBulkAgendarMode("agendar"); setBulkAgendarDate(isoToday()); setBulkAgendarOpen(true); }}
+                              onClick={() => {
+                                setBulkAgendarMode("agendar");
+                                setBulkAgendarDate(isoToday());
+                                setBulkAgendarComDdmx(selectedModules.some((m) => ddmxDe(m).some((d) => ddmxPedeTroca(d.statusBateria))));
+                                setBulkAgendarOpen(true);
+                              }}
                             >
                               <CalendarPlus className="h-4 w-4" /> Agendar ({selected.size})
                             </Button>
@@ -4137,6 +4044,11 @@ export default function BateriaDashboardPage() {
                                     onClick={() => openAgendado(m)}
                                   >
                                     <Clock className="h-3.5 w-3.5" /> Agendado · {fmtIsoBr(rec.dataAgendada)}
+                                    {ddmxPendentesDe(m).length > 0 && (
+                                      <span className="ml-0.5 rounded bg-white/25 px-1 text-[10px] font-bold" title="Bateria DDMX agendada junto">
+                                        +DDMX
+                                      </span>
+                                    )}
                                   </Button>
                                 ) : (
                                   // Default (sem troca em aberto, incluindo concluídas/sem sucesso): permite agendar.
@@ -4144,7 +4056,7 @@ export default function BateriaDashboardPage() {
                                     size="sm"
                                     disabled={selMode}
                                     className={cn("h-7 gap-1", BTN_EMERALD)}
-                                    onClick={() => { setAgendarModule(m); setAgendarDate(isoToday()); }}
+                                    onClick={() => openAgendar(m)}
                                   >
                                     <CalendarPlus className="h-3.5 w-3.5" /> Agendar
                                   </Button>
@@ -5339,7 +5251,7 @@ export default function BateriaDashboardPage() {
 
             {/* ===== TROCAS DDMX TAB ===== */}
             <TabsContent value="ddmx" className="space-y-6">
-              <DdmxTab />
+              <DdmxTab period={ddmxPeriod} />
             </TabsContent>
 
             {/* ===== SETORES TAB ===== */}
@@ -5590,6 +5502,7 @@ export default function BateriaDashboardPage() {
                   </div>
                   <SetoresAgendaInfo m={agendarModule} />
                 </div>
+                <DdmxJuntoCheckbox modulos={ddmxDe(agendarModule)} checked={agendarComDdmx} onCheckedChange={setAgendarComDdmx} />
                 <div>
                   <label className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-foreground">
                     <CalendarPlus className="h-4 w-4 text-emerald-500" /> Data Agendamento
@@ -5631,6 +5544,12 @@ export default function BateriaDashboardPage() {
                 <div className="min-w-0 break-words rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2.5 text-sm">
                   Agendada para <strong className="tabular-nums">{fmtIsoBr(troca.records[agendadoModule.numeroSelimp]?.dataAgendada)}</strong>. Conclua, reagende ou cancele esta troca.
                 </div>
+                {ddmxPendentesDe(agendadoModule).length > 0 && (
+                  <div className="min-w-0 break-words rounded-lg border border-violet-500/30 bg-violet-500/5 px-3 py-2.5 text-sm">
+                    Bateria DDMX agendada junto: <strong>{ddmxPendentesDe(agendadoModule).map((d) => d.ddmxCodigo).join(", ")}</strong>.
+                    Reagendar ou cancelar aplica também à DDMX; ao concluir você confirma se ela foi trocada.
+                  </div>
+                )}
                 {agendadoReagendarOpen && (
                   <div className="min-w-0">
                     <label className="mb-1.5 block text-sm font-medium text-foreground">Nova data de agendamento</label>
@@ -5793,6 +5712,19 @@ export default function BateriaDashboardPage() {
                 </label>
                 <DatePicker value={bulkAgendarDate} onChange={setBulkAgendarDate} />
               </div>
+              {bulkAgendarMode === "agendar" ? (
+                <DdmxJuntoCheckbox
+                  modulos={selectedModules.flatMap((m) => ddmxDe(m))}
+                  checked={bulkAgendarComDdmx}
+                  onCheckedChange={setBulkAgendarComDdmx}
+                />
+              ) : (
+                selectedModules.some((m) => ddmxPendentesDe(m).length > 0) && (
+                  <p className="rounded-lg border border-violet-500/30 bg-violet-500/5 px-3 py-2 text-xs text-foreground">
+                    As baterias DDMX agendadas junto com estas trocas também serão reagendadas.
+                  </p>
+                )
+              )}
             </div>
             <DialogFooter className="gap-2">
               <Button className={cn(BTN_SECONDARY)} onClick={() => setBulkAgendarOpen(false)}>Cancelar</Button>
@@ -5852,6 +5784,17 @@ export default function BateriaDashboardPage() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        {/* ===== Confirmação: bateria DDMX trocada junto com a CLIMP? ===== */}
+        {ddmxTrocada && (
+          <DdmxTrocadaDialog
+            key={ddmxTrocada.pendentes.map((p) => p.modulo.ddmxCodigo).join("|") + ddmxTrocada.dataTroca}
+            pendentes={ddmxTrocada.pendentes}
+            dataTroca={ddmxTrocada.dataTroca}
+            onConfirm={confirmDdmxTrocada}
+            onClose={() => setDdmxTrocada(null)}
+          />
+        )}
 
         {/* ===== Modal de Conclusão em lote ===== */}
         <Dialog open={bulkConcluirOpen} onOpenChange={setBulkConcluirOpen}>

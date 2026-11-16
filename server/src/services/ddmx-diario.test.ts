@@ -46,3 +46,17 @@ test("serviço bolha aplica regra de permanência (>15 min vira 100%)", () => {
   const pcts = desp.map((d) => d.percentual).sort();
   assert.deepEqual(pcts, [0, 100]);
 });
+
+test("linha fantasma desatualizada não esconde a leitura válida de bateria do dia", () => {
+  const [d] = agruparDespachosDdmx(
+    [
+      { setor: "CV10101VJ0003", data_referencia: "2026-10-05", raw: { rota: "CV10101VJ0003", percentual_execucao: 0, bateria: "3.6v", data_inicio: "---", data_final: "05/10/2026 23:30:01" } },
+      { setor: "CV10101VJ0003", data_referencia: "2026-10-05", raw: { rota: "CV10101VJ0003", percentual_execucao: 100, bateria: "11.2v", data_inicio: "05/10/2026 06:00", data_final: "05/10/2026 10:00", data_ultima_comunicacao_do_modulo: "06/10/2026 08:00:00" } },
+    ],
+    "2026-10-01",
+    "2026-10-31",
+  );
+  assert.equal(d.bateriaDesatualizada, false);
+  assert.equal(d.bateriaRaw, "11.2v");
+  assert.equal(d.ultimaComunicacao, "06/10/2026 08:00:00");
+});

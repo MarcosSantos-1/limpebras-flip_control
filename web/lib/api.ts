@@ -169,37 +169,87 @@ export interface DdmxSerieResponse {
   servicos: DdmxResumoServico[];
 }
 
+export type StatusBateriaDdmx = "ALTA" | "REGULAR" | "BAIXA" | "CRÍTICA" | "DESATUALIZADA" | "SEM LEITURA";
+
 export interface DdmxTroca {
   id: number;
   ddmxCodigo: string;
   setor: string | null;
   status: "agendada" | "concluida";
+  tipoTroca: string | null;
   dataAgendada: string | null;
+  dataPrimeiroAgendamento: string | null;
   dataTroca: string | null;
+  /** Automático pela 1ª leitura DDMX após a troca; null = aguardando. */
   sucesso: boolean | null;
+  sucessoManual: boolean;
   bateriaAntes: number | null;
+  bateriaAntesRaw: string | null;
+  statusBateriaAntes: string | null;
+  bateriaDepois: number | null;
+  bateriaDepoisRaw: string | null;
+  statusBateriaDepois: string | null;
+  dataLeituraDepois: string | null;
+  ultimaComunicacaoDepois: string | null;
   juntoClimp: boolean;
+  /** Módulo CLIMP cuja troca originou este agendamento DDMX. */
+  selimpVinculo: string | null;
   observacao: string | null;
   createdAt: string;
+}
+
+export interface DdmxLeitura {
+  data: string;
+  plano: string;
+  bateria: number | null;
+  bateriaRaw: string | null;
+  desatualizada: boolean;
+  ultimaComunicacao: string | null;
+  percentualExecucao: number | null;
 }
 
 export interface DdmxModulo {
   ddmxCodigo: string;
   instalacao: string | null;
-  selimpCodigo: string | null;
   subprefeitura: string | null;
   setores: string[];
+  setoresDias: Array<{ setor: string; dias: string; servico: string | null }>;
+  selimpCodigos: string[];
   servicos: string[];
-  ultimaLeitura: {
-    data: string;
-    plano: string;
-    bateria: number | null;
-    desatualizada: boolean;
-    percentualExecucao: number | null;
-  } | null;
+  leitura: DdmxLeitura | null;
+  statusBateria: StatusBateriaDdmx;
+  motivoSugerido: string;
+  execucaoMedia30: number | null;
+  diasComLeitura30: number;
+  diasDesatualizados30: number;
+  execucoes: Array<{ data: string; percentual: number | null; bateria: number | null; bateriaRaw: string | null; desatualizada: boolean }>;
   agendamento: DdmxTroca | null;
   ultimaTroca: DdmxTroca | null;
   historico: DdmxTroca[];
+}
+
+export interface DdmxTrocaInput {
+  ddmxCodigo: string;
+  setor?: string | null;
+  status: "agendada" | "concluida";
+  tipoTroca?: string | null;
+  dataAgendada?: string;
+  dataTroca?: string;
+  bateriaAntes?: number | null;
+  bateriaAntesRaw?: string | null;
+  statusBateriaAntes?: string | null;
+  juntoClimp?: boolean;
+  selimpVinculo?: string | null;
+  observacao?: string | null;
+}
+
+export interface TrocaPorDia {
+  plano: string;
+  data: string;
+  origem: "climp" | "ddmx";
+  modulo: string;
+  resultado: "sucesso" | "sem_sucesso" | "aguardando";
+  tipo: string | null;
 }
 
 export interface IptServiceSnapshotPoint {
@@ -1560,18 +1610,16 @@ export const apiService = {
     const { data } = await api.get('/bateria/ddmx/modulos', { timeout: 60_000 });
     return data;
   },
-  salvarDdmxTrocas: async (items: Array<{
-    ddmxCodigo: string;
-    setor?: string | null;
-    status: "agendada" | "concluida";
-    dataAgendada?: string;
-    dataTroca?: string;
-    sucesso?: boolean;
-    bateriaAntes?: number | null;
-    juntoClimp?: boolean;
-    observacao?: string;
-  }>) => {
+  salvarDdmxTrocas: async (items: DdmxTrocaInput[]) => {
     const { data } = await api.post('/bateria/ddmx/trocas', { items });
+    return data;
+  },
+  cancelarDdmxAgendamentos: async (codigos: string[]) => {
+    const { data } = await api.post('/bateria/ddmx/agendamentos/cancelar', { codigos });
+    return data;
+  },
+  getTrocasPorDia: async (inicio: string, fim: string): Promise<{ periodo: { inicio: string; fim: string }; itens: TrocaPorDia[] }> => {
+    const { data } = await api.get('/ipt/trocas-por-dia', { params: { inicio, fim }, timeout: 60_000 });
     return data;
   },
   excluirDdmxTroca: async (id: number) => {

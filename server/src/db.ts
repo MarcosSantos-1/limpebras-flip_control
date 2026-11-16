@@ -768,6 +768,17 @@ export async function runMigrations() {
       );
     `);
     await client.query("CREATE INDEX IF NOT EXISTS idx_ddmx_trocas_codigo ON ddmx_bateria_trocas(ddmx_codigo)").catch(() => {});
+    // Motivo, estado antes da troca e vínculo com a troca CLIMP que originou o agendamento.
+    for (const col of [
+      "tipo_troca TEXT",
+      "selimp_vinculo TEXT",
+      "bateria_antes_raw TEXT",
+      "status_bateria_antes TEXT",
+      "data_primeiro_agendamento DATE",
+    ]) {
+      await client.query(`ALTER TABLE ddmx_bateria_trocas ADD COLUMN IF NOT EXISTS ${col}`).catch(() => {});
+    }
+    await client.query("CREATE INDEX IF NOT EXISTS idx_ddmx_trocas_data ON ddmx_bateria_trocas(data_troca)").catch(() => {});
 
     // Agendamento/conclusão de trocas de bateria — 1 registro corrente por módulo
     await client.query(`
