@@ -212,21 +212,18 @@ export function EvolutionChartModal({
                 <Line data={chartData} options={options} />
               </div>
               {showPointDetails && (
-                <div className="mt-5 overflow-hidden rounded-xl border border-border/70 shadow-sm">
-                  <table className="w-full table-fixed text-xs">
-                    <thead className="sticky top-0 z-10 bg-muted/95 text-[11px] uppercase tracking-wide text-muted-foreground backdrop-blur">
+                <div className="mt-5 overflow-x-auto rounded-xl border border-border/70 shadow-sm">
+                  <table className="w-full min-w-[640px] text-sm">
+                    <thead className="sticky top-0 z-10 bg-muted/95 text-xs uppercase tracking-wide text-muted-foreground backdrop-blur">
                       <tr>
-                        <th className="px-2.5 py-2.5 text-left font-semibold">Data</th>
-                        <th className="px-2.5 py-2.5 text-right font-semibold">% dia</th>
-                        <th className="px-2.5 py-2.5 text-right font-semibold">% acum. c/ zeros</th>
-                        <th className="px-2.5 py-2.5 text-right font-semibold">% acum. s/ zeros</th>
-                        <th className="px-2.5 py-2.5 text-right font-semibold">% desp.</th>
-                        <th className="px-2.5 py-2.5 text-right font-semibold">Prev. dia</th>
-                        <th className="px-2.5 py-2.5 text-right font-semibold">Prev. acum.</th>
-                        <th className="px-2.5 py-2.5 text-right font-semibold">Desp. dia</th>
-                        <th className="px-2.5 py-2.5 text-right font-semibold">Desp. acum.</th>
-                        <th className="px-2.5 py-2.5 text-right font-semibold">Nao desp.</th>
-                        <th className="px-2.5 py-2.5 text-right font-semibold">Zerados acum.</th>
+                        <th className="px-3 py-3 text-left font-semibold">Data</th>
+                        <th className="px-3 py-3 text-right font-semibold">% dia</th>
+                        <th className="px-3 py-3 text-right font-semibold">% acum. c/ zeros</th>
+                        <th className="px-3 py-3 text-right font-semibold">% acum. s/ zeros</th>
+                        <th className="px-3 py-3 text-right font-semibold">Desp. dia</th>
+                        <th className="px-3 py-3 text-right font-semibold">Desp. acum.</th>
+                        <th className="px-3 py-3 text-right font-semibold">Nao desp.</th>
+                        <th className="px-3 py-3 text-right font-semibold">Zerados acum.</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border/50">
@@ -235,17 +232,14 @@ export function EvolutionChartModal({
                           key={`${point.date}-${point.count ?? 0}`}
                           className="odd:bg-background/60 even:bg-muted/15 transition-colors hover:bg-emerald-500/5"
                         >
-                          <td className="whitespace-nowrap px-2.5 py-2 font-medium text-foreground">{formatDateLabel(point.date)}</td>
-                          <td className="px-2.5 py-2 text-right tabular-nums">{formatValue(point.dayValue)}</td>
-                          <td className="px-2.5 py-2 text-right tabular-nums">{formatValue(point.value)}</td>
-                          <td className="px-2.5 py-2 text-right tabular-nums">{formatValue(point.secondaryValue)}</td>
-                          <td className="px-2.5 py-2 text-right tabular-nums">{formatValue(point.coverageValue)}</td>
-                          <td className="px-2.5 py-2 text-right tabular-nums">{point.plannedDayCount ?? "--"}</td>
-                          <td className="px-2.5 py-2 text-right tabular-nums">{point.plannedCount ?? "--"}</td>
-                          <td className="px-2.5 py-2 text-right tabular-nums">{point.dayCount ?? "--"}</td>
-                          <td className="px-2.5 py-2 text-right tabular-nums">{point.count ?? "--"}</td>
-                          <td className="px-2.5 py-2 text-right tabular-nums">{point.notDispatchedCount ?? "--"}</td>
-                          <td className="px-2.5 py-2 text-right tabular-nums">{point.zeroCount ?? "--"}</td>
+                          <td className="whitespace-nowrap px-3 py-2.5 font-medium text-foreground">{formatDateLabel(point.date)}</td>
+                          <td className="px-3 py-2.5 text-right tabular-nums">{formatValue(point.dayValue)}</td>
+                          <td className="px-3 py-2.5 text-right tabular-nums">{formatValue(point.value)}</td>
+                          <td className="px-3 py-2.5 text-right tabular-nums">{formatValue(point.secondaryValue)}</td>
+                          <td className="px-3 py-2.5 text-right tabular-nums">{point.dayCount ?? "--"}</td>
+                          <td className="px-3 py-2.5 text-right tabular-nums">{point.count ?? "--"}</td>
+                          <td className="px-3 py-2.5 text-right tabular-nums">{point.notDispatchedCount ?? "--"}</td>
+                          <td className="px-3 py-2.5 text-right tabular-nums">{point.zeroCount ?? "--"}</td>
                         </tr>
                       ))}
                     </tbody>

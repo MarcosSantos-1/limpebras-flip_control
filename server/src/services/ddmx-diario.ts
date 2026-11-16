@@ -1,12 +1,20 @@
 import { pool } from "../db.js";
 import { normalizarSetor, parseSetor, resolveTipoServicoExibicao } from "../constants/ipt.js";
-import { chaveDataDdmx, extrairPercentualDdmx, servicoForaDoDespachoDdmx } from "./ddmx-operacional.js";
+import {
+  chaveDataDdmx,
+  extrairIntervaloDdmx,
+  extrairPercentualDdmx,
+  isServicoBolha,
+  percentualDoDia,
+  servicoForaDoDespachoDdmx,
+  type LinhaExecucaoDia,
+} from "./ddmx-operacional.js";
 import { parseDdmxBateriaFromRaw } from "./parseDdmxBateria.js";
 
 /**
  * Agregação diária a partir só do DDMX (rastreador secundário).
  * Sem o report CLIMP, é a única fonte de % de execução por despacho:
- * 1 despacho = 1 plano num dia (média das linhas DDMX daquele plano/dia).
+ * 1 despacho = 1 plano num dia (maior linha DDMX do dia; bolha com regra de permanência).
  */
 
 export type DdmxDespacho = {
@@ -22,22 +30,21 @@ export type DdmxDespacho = {
 export type DdmxLinha = { setor: string | null; data_referencia: unknown; raw: Record<string, unknown> | null };
 
 export function agruparDespachosDdmx(linhas: DdmxLinha[], inicio: string, fim: string): DdmxDespacho[] {
-  const acc = new Map<string, { plano: string; data: string; sum: number; count: number; bat: number | null; desat: boolean }>();
+  const acc = new Map<string, { plano: string; data: string; bolha: boolean; linhas: LinhaExecucaoDia[]; bat: number | null; desat: boolean }>();
   for (const row of linhas) {
     const raw = (row.raw ?? {}) as Record<string, unknown>;
     const rota = String(raw.rota ?? raw.plano ?? raw.setor ?? row.setor ?? "").trim();
     const plano = normalizarSetor(rota);
     if (!plano) continue;
-    if (servicoForaDoDespachoDdmx(parseSetor(plano)?.servico)) continue;
+    const sigla = parseSetor(plano)?.servico;
+    if (servicoForaDoDespachoDdmx(sigla)) continue;
     const data = chaveDataDdmx(row.data_referencia, raw);
     if (!data || data < inicio || data > fim) continue;
     const key = `${plano}|${data}`;
-    const cur = acc.get(key) ?? { plano, data, sum: 0, count: 0, bat: null, desat: false };
+    const cur = acc.get(key) ?? { plano, data, bolha: isServicoBolha(sigla), linhas: [], bat: null, desat: false };
     const pct = extrairPercentualDdmx(raw);
-    if (pct != null) {
-      cur.sum += Math.min(100, Math.max(0, pct));
-      cur.count += 1;
-    }
+    const intervalo = extrairIntervaloDdmx(raw);
+    cur.linhas.push({ percentual: pct != null ? Math.min(100, Math.max(0, pct)) : null, inicio: intervalo.inicio, fim: intervalo.fim });
     const bat = parseDdmxBateriaFromRaw(raw);
     if (bat.bateria_percentual != null) cur.bat = Math.max(cur.bat ?? 0, bat.bateria_percentual);
     if (bat.bateria_desatualizada) cur.desat = true;
@@ -48,7 +55,8 @@ export function agruparDespachosDdmx(linhas: DdmxLinha[], inicio: string, fim: s
     servico: servicoLabel(a.plano),
     subprefeitura: parseSetor(a.plano)?.sub ?? null,
     data: a.data,
-    percentual: a.count > 0 ? a.sum / a.count : null,
+    // Mesma regra do IPT Geral: maior linha do plano no dia; bolha aplica permanência.
+    percentual: percentualDoDia(a.linhas, a.bolha),
     bateriaPercentual: a.bat,
     bateriaDesatualizada: a.desat,
   }));
