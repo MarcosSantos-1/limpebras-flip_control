@@ -137,6 +137,71 @@ export interface IndicatorHistoryPoint {
   metadata?: Record<string, unknown>;
 }
 
+export interface DdmxPontoDia {
+  data: string;
+  despachos: number;
+  despachosComPercentual: number;
+  zerados: number;
+  percentualDia: number | null;
+  percentualDiaSemZerados: number | null;
+  percentualAcumulado: number | null;
+  percentualAcumuladoSemZerados: number | null;
+  despachosAcumulados: number;
+  zeradosAcumulados: number;
+  bateriaDesatualizada: number;
+  planos: number;
+}
+
+export interface DdmxResumoServico {
+  servico: string;
+  despachos: number;
+  planos: number;
+  percentual: number | null;
+  percentualSemZerados: number | null;
+  zerados: number;
+  abaixo80: number;
+}
+
+export interface DdmxSerieResponse {
+  periodo: { inicio: string; fim: string };
+  servico: string | null;
+  serie: DdmxPontoDia[];
+  servicos: DdmxResumoServico[];
+}
+
+export interface DdmxTroca {
+  id: number;
+  ddmxCodigo: string;
+  setor: string | null;
+  status: "agendada" | "concluida";
+  dataAgendada: string | null;
+  dataTroca: string | null;
+  sucesso: boolean | null;
+  bateriaAntes: number | null;
+  juntoClimp: boolean;
+  observacao: string | null;
+  createdAt: string;
+}
+
+export interface DdmxModulo {
+  ddmxCodigo: string;
+  instalacao: string | null;
+  selimpCodigo: string | null;
+  subprefeitura: string | null;
+  setores: string[];
+  servicos: string[];
+  ultimaLeitura: {
+    data: string;
+    plano: string;
+    bateria: number | null;
+    desatualizada: boolean;
+    percentualExecucao: number | null;
+  } | null;
+  agendamento: DdmxTroca | null;
+  ultimaTroca: DdmxTroca | null;
+  historico: DdmxTroca[];
+}
+
 export interface IptServiceSnapshotPoint {
   id: number;
   snapshot_at: string;
@@ -1484,6 +1549,33 @@ export const apiService = {
   /** IPT Report diário: percentual por dia estimado a partir do report SELIMP. */
   getIptReportDiario: async (inicio: string, fim: string) => {
     const { data } = await api.get('/ipt/report-diario', { params: { inicio, fim } });
+    return data;
+  },
+  /** Série diária de execução só com DDMX (sem report CLIMP). */
+  getDdmxSerie: async (inicio: string, fim: string, servico?: string): Promise<DdmxSerieResponse> => {
+    const { data } = await api.get('/ipt/ddmx/serie', { params: { inicio, fim, servico }, timeout: 60_000 });
+    return data;
+  },
+  getDdmxModulos: async (): Promise<{ atualizadoAte: string; modulos: DdmxModulo[] }> => {
+    const { data } = await api.get('/bateria/ddmx/modulos', { timeout: 60_000 });
+    return data;
+  },
+  salvarDdmxTrocas: async (items: Array<{
+    ddmxCodigo: string;
+    setor?: string | null;
+    status: "agendada" | "concluida";
+    dataAgendada?: string;
+    dataTroca?: string;
+    sucesso?: boolean;
+    bateriaAntes?: number | null;
+    juntoClimp?: boolean;
+    observacao?: string;
+  }>) => {
+    const { data } = await api.post('/bateria/ddmx/trocas', { items });
+    return data;
+  },
+  excluirDdmxTroca: async (id: number) => {
+    const { data } = await api.delete(`/bateria/ddmx/trocas/${id}`);
     return data;
   },
   getIptServiceSnapshots: async (

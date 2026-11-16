@@ -749,6 +749,26 @@ export async function runMigrations() {
       "CREATE INDEX IF NOT EXISTS idx_modulo_selimp_status_sinal ON modulo_selimp((COALESCE(status_sinal_manual, status_sinal_calculado)))"
     ).catch(() => {});
 
+    // Trocas de bateria dos módulos DDMX (rastreador secundário) — log append-only,
+    // independente das trocas CLIMP. status: agendada | concluida.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS ddmx_bateria_trocas (
+        id                 SERIAL PRIMARY KEY,
+        ddmx_codigo        TEXT NOT NULL,
+        setor              TEXT,
+        status             TEXT NOT NULL DEFAULT 'concluida',
+        data_agendada      DATE,
+        data_troca         DATE,
+        sucesso            BOOLEAN,
+        bateria_antes      NUMERIC(5,2),
+        junto_climp        BOOLEAN DEFAULT FALSE,
+        observacao         TEXT,
+        created_at         TIMESTAMPTZ DEFAULT NOW(),
+        updated_at         TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client.query("CREATE INDEX IF NOT EXISTS idx_ddmx_trocas_codigo ON ddmx_bateria_trocas(ddmx_codigo)").catch(() => {});
+
     // Agendamento/conclusão de trocas de bateria — 1 registro corrente por módulo
     await client.query(`
       CREATE TABLE IF NOT EXISTS bateria_trocas (

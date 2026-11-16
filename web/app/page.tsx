@@ -25,9 +25,8 @@ import loadingAnimation from "@/public/Loading.json";
 import { SACsChart } from "@/components/sacs-chart";
 import { SACsBySubChart, type SACsBySubDatum } from "@/components/sacs-by-sub-chart";
 import { CNCsBySubChart, type CNCsBySubDatum } from "@/components/cncs-by-sub-chart";
-import { SACsTopServicesChart, type SACsTopServiceDatum } from "@/components/sacs-top-services-chart";
-import { CNCsTopServicesChart, type CNCsTopServiceDatum } from "@/components/cncs-top-services-chart";
 import { SACsOverdueBySubChart, type SACOverdueBySubDatum } from "@/components/sacs-overdue-by-sub-chart";
+import { IptDdmxCharts } from "@/components/ipt-ddmx-charts";
 import { SUBPREFEITURAS } from "@/constants/sacs";
 import { useDashboardData } from "@/lib/use-dashboard-data";
 import { LayoutDashboard } from "lucide-react";
@@ -216,16 +215,6 @@ function computeSacsOverdueBySub(items: SAC[]): SACOverdueBySubDatum[] {
   return SUBPREFEITURAS.map((sub) => map[sub.code]);
 }
 
-function computeTopServices(items: SAC[]): SACsTopServiceDatum[] {
-  const counter = new Map<string, number>();
-  items.forEach((sac) => {
-    const key = (sac.tipo_servico || "").trim();
-    if (!key) return;
-    counter.set(key, (counter.get(key) || 0) + 1);
-  });
-  return Array.from(counter.entries()).map(([tipoServico, quantidade]) => ({ tipoServico, quantidade }));
-}
-
 function computeTopSacLocations(items: SAC[]) {
   type Bucket = { quantidade: number; tipos: Map<string, number> };
 
@@ -324,26 +313,6 @@ function computeCncsBySub(items: CNC[], periodStart: Date, periodEnd: Date): CNC
   return SUBPREFEITURAS.map((sub) => baseMap[sub.code]);
 }
 
-function computeTopBfsServices(items: CNC[], periodStart: Date, periodEnd: Date): CNCsTopServiceDatum[] {
-  const startBoundary = normalizeDateForComparison(startOfDay(periodStart));
-  const endBoundary = normalizeDateForComparison(endOfDay(periodEnd));
-  const counter = new Map<string, number>();
-
-  items.forEach((cnc) => {
-    try {
-      const abertura = normalizeDateForComparison(new Date(cnc.data_abertura));
-      if (isNaN(abertura.getTime()) || abertura < startBoundary || abertura > endBoundary) return;
-      const key = (cnc.tipo_servico || "").trim();
-      if (!key) return;
-      counter.set(key, (counter.get(key) || 0) + 1);
-    } catch {
-      // ignorar
-    }
-  });
-
-  return Array.from(counter.entries()).map(([tipoServico, quantidade]) => ({ tipoServico, quantidade }));
-}
-
 function DashboardContent() {
   const [selectedMonth, setSelectedMonth] = useState(() => startOfMonth(new Date()));
   const [adcOverrideOpen, setAdcOverrideOpen] = useState(false);
@@ -403,14 +372,9 @@ function DashboardContent() {
   );
   const sacsBySub = useMemo(() => computeSacsBySub(sacItems), [sacItems]);
   const sacsOverdueBySub = useMemo(() => computeSacsOverdueBySub(sacItems), [sacItems]);
-  const sacsTopServices = useMemo(() => computeTopServices(sacItems), [sacItems]);
   const topLocations = useMemo(() => computeTopSacLocations(sacItems), [sacItems]);
   const cncsBySub = useMemo(
     () => computeCncsBySub(cncItems, periodStart, periodEnd),
-    [cncItems, periodStart, periodEnd]
-  );
-  const cncsTopServices = useMemo(
-    () => computeTopBfsServices(cncItems, periodStart, periodEnd),
     [cncItems, periodStart, periodEnd]
   );
 
@@ -728,25 +692,14 @@ function DashboardContent() {
           />
         </div>
 
-        <div className="grid grid-cols-1 gap-4">
-          <SACsTopServicesChart
-            data={sacsTopServices}
-            monthLabel={monthLabel}
-            onPrevMonth={handlePrevMonth}
-            onNextMonth={handleNextMonth}
-            disableNextMonth={disableNextMonth}
-          />
-        </div>
-
-        <div className="grid grid-cols-1 gap-4">
-          <CNCsTopServicesChart
-            data={cncsTopServices}
-            monthLabel={monthLabel}
-            onPrevMonth={handlePrevMonth}
-            onNextMonth={handleNextMonth}
-            disableNextMonth={disableNextMonth}
-          />
-        </div>
+        <IptDdmxCharts
+          inicio={format(periodStart, "yyyy-MM-dd")}
+          fim={format(periodEnd, "yyyy-MM-dd")}
+          monthLabel={monthLabel}
+          onPrevMonth={handlePrevMonth}
+          onNextMonth={handleNextMonth}
+          disableNextMonth={disableNextMonth}
+        />
 
         <div className="grid grid-cols-1 gap-4">
           <Card className="border-0 bg-linear-to-br from-background to-muted/25 shadow-xl shadow-zinc-900/10">

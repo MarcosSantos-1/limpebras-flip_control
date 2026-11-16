@@ -36,6 +36,7 @@ import {
   Moon,
   Percent,
   Repeat,
+  Radio,
   Search,
   ShieldAlert,
   ShieldCheck,
@@ -123,6 +124,7 @@ import { toast } from "react-toastify";
 import { apiService } from "@/lib/api";
 import { formatIptDataInstalacaoBr, getFrequenciaDescricao, servicoLabel, mesCorrenteLabel } from "@/lib/ipt-utils";
 import { SetoresTab } from "./setores-tab";
+import { DdmxTab } from "./ddmx-tab";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
 import {
   deleteManutencaoArquivo,
@@ -3294,6 +3296,9 @@ export default function BateriaDashboardPage() {
                 <TabsTrigger value="trocas" className="text-muted-foreground data-[state=active]:bg-transparent data-[state=active]:text-white">
                   <Repeat className="mr-2 h-4 w-4" /> Trocas de Bateria
                 </TabsTrigger>
+                <TabsTrigger value="ddmx" className="text-muted-foreground data-[state=active]:bg-transparent data-[state=active]:text-white">
+                  <Radio className="mr-2 h-4 w-4" /> Trocas DDMX
+                </TabsTrigger>
                 <TabsTrigger value="maintenance" className="text-muted-foreground data-[state=active]:bg-transparent data-[state=active]:text-white">
                   <Wrench className="mr-2 h-4 w-4" /> Manutenções
                 </TabsTrigger>
@@ -5330,6 +5335,11 @@ export default function BateriaDashboardPage() {
                   </div>
                 </CardContent>
               </Card>
+            </TabsContent>
+
+            {/* ===== TROCAS DDMX TAB ===== */}
+            <TabsContent value="ddmx" className="space-y-6">
+              <DdmxTab />
             </TabsContent>
 
             {/* ===== SETORES TAB ===== */}

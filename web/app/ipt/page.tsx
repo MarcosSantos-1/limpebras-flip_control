@@ -74,6 +74,7 @@ import {
   type IptPreviewBateriaDdmxDia,
   type IptPreviewModuloBateria,
   type FonteAgregadaOperacional,
+  type DdmxSerieResponse,
 } from "@/lib/api";
 import { useIptData } from "@/lib/use-ipt-data";
 import { ManualIndicatorBadge } from "@/components/manual-indicator-badge";
@@ -863,6 +864,52 @@ export default function IPTPage() {
     return "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
   }, [iptCard.cenarios]);
 
+  /** Execução do mês só pelo DDMX — base do card "IPT - Realidade" sem report CLIMP. */
+  const ddmxChave = format(startOfMonth(selectedMonth), "yyyy-MM");
+  const [ddmxMes, setDdmxMes] = useState<{ chave: string; data: DdmxSerieResponse | null } | null>(null);
+  useEffect(() => {
+    let cancel = false;
+    const inicio = format(startOfMonth(selectedMonth), "yyyy-MM-dd");
+    const fim = format(new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 0), "yyyy-MM-dd");
+    apiService
+      .getDdmxSerie(inicio, fim)
+      .then((r) => !cancel && setDdmxMes({ chave: ddmxChave, data: r }))
+      .catch(() => !cancel && setDdmxMes({ chave: ddmxChave, data: null }));
+    return () => {
+      cancel = true;
+    };
+  }, [selectedMonth, ddmxChave]);
+  const ddmxResumo = useMemo(() => {
+    if (ddmxMes?.chave !== ddmxChave || !ddmxMes.data) return null;
+    const serie = ddmxMes.data.serie;
+    const ultimo = serie[serie.length - 1];
+    const servicos = ddmxMes.data.servicos;
+    const abaixo80 = servicos.reduce((a, s) => a + s.abaixo80, 0);
+    const piores = [...servicos]
+      .filter((s) => s.percentual != null && s.despachos >= 5)
+      .sort((a, b) => (a.percentual ?? 0) - (b.percentual ?? 0))
+      .slice(0, 3);
+    const ult7 = serie.slice(-7);
+    const ant7 = serie.slice(-14, -7);
+    const mediaDia = (arr: typeof serie) => {
+      const v = arr.map((p) => p.percentualDia).filter((x): x is number => x != null);
+      return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
+    };
+    return {
+      acumulado: ultimo?.percentualAcumulado ?? null,
+      semZerados: ultimo?.percentualAcumuladoSemZerados ?? null,
+      despachos: ultimo?.despachosAcumulados ?? 0,
+      zerados: ultimo?.zeradosAcumulados ?? 0,
+      abaixo80,
+      batDesatualizada: serie.reduce((a, p) => a + p.bateriaDesatualizada, 0),
+      ultimaData: ultimo?.data ?? null,
+      tendencia7: mediaDia(ult7),
+      tendenciaAnt7: mediaDia(ant7),
+      piores,
+      sparkline: serie.map((p) => p.percentualDia),
+    };
+  }, [ddmxMes, ddmxChave]);
+
   const handleServiceEvolutionClick = async (tipoServico: string) => {
     const label = tipoServico || "Não informado";
     const year = selectedMonth.getFullYear();
@@ -875,6 +922,24 @@ export default function IPTPage() {
     setServiceEvolutionLoading(true);
     setServiceEvolutionPoints([]);
     try {
+      // Sem report CLIMP: snapshots diários reconstruídos do DDMX (1 despacho = plano/dia).
+      const ddmx = await apiService.getDdmxSerie(inicio, fim, label);
+      if (ddmx.serie.length > 0) {
+        setServiceEvolutionPoints(
+          ddmx.serie.map((p) => ({
+            date: p.data,
+            value: p.percentualAcumulado,
+            secondaryValue: p.percentualAcumuladoSemZerados,
+            dayValue: p.percentualDia,
+            count: p.despachosAcumulados,
+            dayCount: p.despachos,
+            zeroCount: p.zeradosAcumulados,
+            dayZeroCount: p.zerados,
+            meta: `${p.planos} planos | ${p.zeradosAcumulados} zerados acumulados | ${p.bateriaDesatualizada} c/ bateria desatualizada no dia`,
+          }))
+        );
+        return;
+      }
       const response = await apiService.getIptServiceSnapshots(label, inicio, fim);
       setServiceEvolutionPoints(
         response.pontos.map((point) => ({
@@ -1727,62 +1792,120 @@ export default function IPTPage() {
 
           <Card className={cn("xl:col-span-2", FEATURE_CARD)}>
             <CardHeader>
-              <CardTitle className="text-base">IPT - Realidade</CardTitle>
-              <CardDescription>Indicadores operacionais gerados automaticamente da base consolidada.</CardDescription>
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <CardTitle className="text-base">IPT - Realidade (DDMX)</CardTitle>
+                  <CardDescription>
+                    Sem o report da CLIMP, a execução real vem do rastreador DDMX. Estimativa — o ADC oficial da CLIMP chega por volta do dia 22 do mês seguinte.
+                  </CardDescription>
+                </div>
+                {ddmxResumo?.ultimaData && (
+                  <span className="rounded-full bg-muted/60 px-2 py-1 text-[10px] font-medium text-muted-foreground">
+                    DDMX até {ddmxResumo.ultimaData.slice(8, 10)}/{ddmxResumo.ultimaData.slice(5, 7)}
+                  </span>
+                )}
+              </div>
             </CardHeader>
-            <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="flex flex-col gap-3">
-                <div className="rounded-xl bg-indigo-500/10 p-3 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg">
-                  <p className="text-xs text-muted-foreground">Planos Despachados (SELIMP)</p>
-                  <p className="text-xl pt-2 font-bold">{iptPreviewCards?.resumo.total_planos_despachados ?? iptPreviewCards?.resumo.total_planos ?? 0}</p>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">Planos encerrados na planilha</p>
-                </div>
-                <div className="rounded-xl bg-cyan-500/10 p-3 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg">
-                  <p className="text-xs text-muted-foreground">Total despachos no mês</p>
-                  <p className="text-xl pt-2 font-bold text-cyan-700 dark:text-cyan-300 tabular-nums">
-                    {iptPreviewCards?.resumo.total_despachos_selimp ?? 0}
-                  </p>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">SELIMP · período apurado</p>
-                </div>
-              </div>
-              <div className="md:col-span-2 grid grid-cols-2 gap-4">
-                <div className="rounded-xl bg-emerald-500/10 dark:bg-emerald-500/15 p-4 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg border border-emerald-500/20 hover:border-emerald-500/40">
-                  <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400 mb-2 uppercase tracking-wider">
-                    Média exec. (sem zerados)
-                  </p>
-                  <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-300 tabular-nums">
-                    {globalInsights.mediaSemZerados != null
-                      ? `${globalInsights.mediaSemZerados.toFixed(1)}%`
-                      : "--"}
-                  </p>
-                </div>
-                <div className="rounded-xl bg-teal-500/10 dark:bg-teal-500/15 p-4 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg border border-teal-500/20 hover:border-teal-500/40">
-                  <p className="text-xs font-medium text-teal-700 dark:text-teal-400 mb-2 uppercase tracking-wider">
-                    Média exec. (com zerados)
-                  </p>
-                  <p className="text-2xl font-bold text-teal-700 dark:text-teal-300 tabular-nums">
-                    {globalInsights.mediaComZerados != null
-                      ? `${globalInsights.mediaComZerados.toFixed(1)}%`
-                      : "--"}
-                  </p>
-                </div>
-                <div className="rounded-xl bg-rose-500/10 dark:bg-rose-500/15 p-4 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg border border-rose-500/20 hover:border-rose-500/40">
-                  <p className="text-xs font-medium text-rose-700 dark:text-rose-400 mb-2 uppercase tracking-wider">
-                    Despachos zerados
-                  </p>
-                  <p className="text-2xl font-bold text-rose-700 dark:text-rose-300 tabular-nums">
-                    {globalInsights.zerados}
-                  </p>
-                </div>
-                <div className="rounded-xl bg-slate-500/10 dark:bg-slate-500/15 p-4 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg border border-slate-500/20 hover:border-slate-500/40">
-                  <p className="text-xs font-medium text-slate-700 dark:text-slate-400 mb-2 uppercase tracking-wider">
-                    Total planos
-                  </p>
-                  <p className="text-2xl font-bold text-slate-700 dark:text-slate-300 tabular-nums">
-                    {globalInsights.totalPlanos}
-                  </p>
-                </div>
-              </div>
+            <CardContent className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              {!ddmxResumo ? (
+                <p className="md:col-span-3 py-6 text-center text-sm text-muted-foreground">
+                  {ddmxMes?.chave === ddmxChave ? "Sem despachos DDMX no mês." : "Carregando execução DDMX..."}
+                </p>
+              ) : (
+                <>
+                  <div className="flex flex-col gap-3">
+                    <div className="rounded-xl bg-violet-500/10 p-4 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg">
+                      <p className="text-xs text-muted-foreground">Execução acumulada (com zerados)</p>
+                      <p
+                        className={cn(
+                          "pt-1 text-3xl font-bold tabular-nums",
+                          (ddmxResumo.acumulado ?? 0) >= 80 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400",
+                        )}
+                      >
+                        {pct(ddmxResumo.acumulado)}
+                      </p>
+                      <p className="mt-0.5 text-[10px] text-muted-foreground">
+                        Sem zerados: <span className="font-semibold text-foreground">{pct(ddmxResumo.semZerados)}</span> · corte 80%
+                      </p>
+                      {ddmxResumo.sparkline.length > 1 && (
+                        <svg viewBox={`0 0 ${ddmxResumo.sparkline.length - 1} 100`} preserveAspectRatio="none" className="mt-2 h-8 w-full">
+                          <line x1="0" x2={ddmxResumo.sparkline.length - 1} y1="20" y2="20" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="2 2" vectorEffect="non-scaling-stroke" />
+                          <polyline
+                            fill="none"
+                            stroke="rgb(139,92,246)"
+                            strokeWidth="1.5"
+                            vectorEffect="non-scaling-stroke"
+                            points={ddmxResumo.sparkline.map((v, i) => `${i},${100 - (v ?? 0)}`).join(" ")}
+                          />
+                        </svg>
+                      )}
+                    </div>
+                    <div className="rounded-xl bg-cyan-500/10 p-3 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg">
+                      <p className="text-xs text-muted-foreground">Tendência (média diária)</p>
+                      <p className="pt-1 text-xl font-bold tabular-nums text-cyan-700 dark:text-cyan-300">
+                        {pct(ddmxResumo.tendencia7)}
+                        {ddmxResumo.tendencia7 != null && ddmxResumo.tendenciaAnt7 != null && (
+                          <span
+                            className={cn(
+                              "ml-2 text-xs font-semibold",
+                              ddmxResumo.tendencia7 >= ddmxResumo.tendenciaAnt7 ? "text-emerald-600" : "text-rose-600",
+                            )}
+                          >
+                            {ddmxResumo.tendencia7 >= ddmxResumo.tendenciaAnt7 ? "▲" : "▼"}{" "}
+                            {Math.abs(ddmxResumo.tendencia7 - ddmxResumo.tendenciaAnt7).toFixed(1)} p.p.
+                          </span>
+                        )}
+                      </p>
+                      <p className="mt-0.5 text-[10px] text-muted-foreground">Últimos 7 dias com despacho vs. 7 anteriores</p>
+                    </div>
+                  </div>
+                  <div className="md:col-span-2 grid grid-cols-2 gap-4">
+                    <div className="rounded-xl border border-slate-500/20 bg-slate-500/10 p-4 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg">
+                      <p className="mb-2 text-xs font-medium uppercase tracking-wider text-slate-700 dark:text-slate-400">Despachos DDMX</p>
+                      <p className="text-2xl font-bold tabular-nums">{ddmxResumo.despachos}</p>
+                      <p className="mt-0.5 text-[10px] text-muted-foreground">1 despacho = 1 plano no dia</p>
+                    </div>
+                    <div className="rounded-xl border border-rose-500/20 bg-rose-500/10 p-4 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg">
+                      <p className="mb-2 text-xs font-medium uppercase tracking-wider text-rose-700 dark:text-rose-400">Abaixo de 80%</p>
+                      <p className="text-2xl font-bold tabular-nums text-rose-700 dark:text-rose-300">
+                        {ddmxResumo.abaixo80}
+                        {ddmxResumo.despachos > 0 && (
+                          <span className="ml-1.5 text-sm font-semibold text-rose-500/80">
+                            ({((ddmxResumo.abaixo80 / ddmxResumo.despachos) * 100).toFixed(0)}%)
+                          </span>
+                        )}
+                      </p>
+                      <p className="mt-0.5 text-[10px] text-muted-foreground">{ddmxResumo.zerados} zerados</p>
+                    </div>
+                    <div className="rounded-xl border border-orange-500/20 bg-orange-500/10 p-4 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg">
+                      <p className="mb-2 text-xs font-medium uppercase tracking-wider text-orange-700 dark:text-orange-400">Bateria DDMX desatualizada</p>
+                      <p className="text-2xl font-bold tabular-nums text-orange-700 dark:text-orange-300">{ddmxResumo.batDesatualizada}</p>
+                      <p className="mt-0.5 text-[10px] text-muted-foreground">Despachos sem leitura válida do módulo</p>
+                    </div>
+                    <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-4 shadow transition-all hover:-translate-y-0.5 hover:shadow-lg">
+                      <p className="mb-2 text-xs font-medium uppercase tracking-wider text-amber-700 dark:text-amber-400">Serviços mais críticos</p>
+                      {ddmxResumo.piores.length ? (
+                        <ul className="space-y-1 text-xs">
+                          {ddmxResumo.piores.map((s) => (
+                            <li key={s.servico} className="flex justify-between gap-2">
+                              <button
+                                type="button"
+                                className="truncate text-left hover:underline"
+                                onClick={() => handleServiceEvolutionClick(s.servico)}
+                              >
+                                {s.servico}
+                              </button>
+                              <span className="font-semibold tabular-nums text-amber-700 dark:text-amber-300">{pct(s.percentual)}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">—</p>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
             </CardContent>
           </Card>
 
@@ -2356,7 +2479,7 @@ export default function IPTPage() {
           open={serviceEvolutionOpen}
           onOpenChange={setServiceEvolutionOpen}
           title={`Evolução do serviço - ${serviceEvolutionTitle}`}
-          description="Percentual acumulado do Report SELIMP, com previstos, despachados e cobertura ate cada data."
+          description="Snapshots diários reconstruídos do rastreador DDMX (sem report CLIMP): % acumulado e do dia, despachos e zerados até cada data."
           primaryLabel="% acumulado com zerados"
           secondaryLabel="% acumulado sem zerados"
           points={serviceEvolutionPoints}

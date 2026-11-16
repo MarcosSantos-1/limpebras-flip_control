@@ -5,6 +5,7 @@ import { config } from "./config.js";
 import { runMigrations } from "./db.js";
 import { uploadRoutes } from "./routes/upload.js";
 import { indicadoresRoutes } from "./routes/indicadores.js";
+import { ddmxRoutes } from "./routes/ddmx.js";
 import { sacsRoutes } from "./routes/sacs.js";
 import { cncRoutes } from "./routes/cnc.js";
 import { acicRoutes } from "./routes/acic.js";
@@ -54,6 +55,7 @@ async function start() {
   await fastify.register(cncRoutes, { prefix: "/api/v1" });
   await fastify.register(acicRoutes, { prefix: "/api/v1" });
   await fastify.register(bateriaRoutes, { prefix: "/api/v1" });
+  await fastify.register(ddmxRoutes, { prefix: "/api/v1" });
   await fastify.register(portateisRoutes, { prefix: "/api/v1" });
   await fastify.register(gargalosRoutes, { prefix: "/api/v1" });
 
