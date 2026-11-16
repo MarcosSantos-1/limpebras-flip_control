@@ -25,7 +25,7 @@ import {
   Loader2,
   MapPin,
   Percent,
-  Radio,
+  Repeat,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -88,6 +88,14 @@ const STATUS_DDMX_OPTIONS: StatusBateriaDdmx[] = ["ALTA", "REGULAR", "BAIXA", "C
 const STATUS_RANK: Record<string, number> = { ALTA: 5, REGULAR: 4, BAIXA: 3, "CRÍTICA": 2, DESATUALIZADA: 1, "SEM LEITURA": 0 };
 
 type SortKey = "bateria" | "exec" | "cargas" | "troca";
+
+const STATUS_CLIMP_OPTIONS = ["ALTA", "REGULAR", "BAIXA", "CRÍTICA", "DESATUALIZADA"];
+
+/** Sigla do serviço no código do setor (ex.: CV10101VJ0001 → VJ). */
+function siglaSetor(setor: string): string {
+  const m = setor.trim().toUpperCase().match(/^[A-Z]{2}\d{5}([A-Z]{2})/);
+  return m ? m[1] : "";
+}
 
 function parseIso(iso?: string | null): Date | null {
   if (!iso) return null;
@@ -265,7 +273,9 @@ function exportDdmxXlsx(modulos: DdmxModulo[], period: string) {
 
 // ===== Componente =====
 
-export function DdmxTab({ period }: { period: string }) {
+export type ClimpInfo = { status: string; pct: number; comunicacao: "ON" | "OFF"; agendada: string | null };
+
+export function DdmxTab({ period, climp }: { period: string; climp: Record<string, ClimpInfo> }) {
   const ddmx = useDdmxState();
   const modulos = ddmx.modulos;
 
@@ -277,6 +287,10 @@ export function DdmxTab({ period }: { period: string }) {
   const [bateriaFilter, setBateriaFilter] = useState<string[]>([]);
   const [agendadaFilter, setAgendadaFilter] = useState("all");
   const [alertaFilter, setAlertaFilter] = useState("all");
+  const [servicoFilter, setServicoFilter] = useState<string[]>([]);
+  const [climpFilter, setClimpFilter] = useState<string[]>([]);
+  const [execFilter, setExecFilter] = useState("all");
+  const [ultimaTrocaFilter, setUltimaTrocaFilter] = useState("all");
   const [sort, setSort] = useState("default");
   const [page, setPage] = useState(1);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -399,8 +413,17 @@ export function DdmxTab({ period }: { period: string }) {
 
   const alertas = useMemo(() => new Map(modulos.map((m) => [m.ddmxCodigo, alertaDdmx(m)])), [modulos]);
 
+  const uniqueServicos = useMemo(
+    () => [...new Set(modulos.flatMap((m) => m.setores.map(siglaSetor).filter(Boolean)))].sort(),
+    [modulos],
+  );
+
+  /** Bateria CLIMP dos mesmos setores (pior status entre os módulos SELIMP ligados). */
+  const climpDe = (m: DdmxModulo): Array<{ selimp: string } & ClimpInfo> =>
+    m.selimpCodigos.flatMap((c) => (climp[c] ? [{ selimp: c, ...climp[c] }] : []));
+
   const lista = useMemo(() => {
-    let r = modulos;
+    let r = [...modulos].sort((a, b) => (a.setores[0] ?? "").localeCompare(b.setores[0] ?? ""));
     if (subFilter.length) r = r.filter((m) => m.subprefeitura && subFilter.includes(m.subprefeitura));
     if (search) {
       const t = search.toLowerCase();
@@ -414,6 +437,30 @@ export function DdmxTab({ period }: { period: string }) {
     }
     if (daysFilter.length) r = r.filter((m) => m.setoresDias.some((s) => daysFilter.includes(s.dias.trim())));
     if (motivoFilter.length) r = r.filter((m) => motivoFilter.includes(m.motivoSugerido));
+    if (servicoFilter.length) r = r.filter((m) => m.setores.some((s) => servicoFilter.includes(siglaSetor(s))));
+    if (climpFilter.length) {
+      r = r.filter((m) => {
+        const c = climpDe(m);
+        if (c.length === 0) return climpFilter.includes("SEM MÓDULO");
+        return c.some((x) => climpFilter.includes(x.status));
+      });
+    }
+    if (execFilter !== "all") {
+      r = r.filter((m) => {
+        const e = m.execucaoMedia30;
+        if (execFilter === "sem") return e == null;
+        if (e == null) return false;
+        return execFilter === "baixa" ? e < 60 : execFilter === "media" ? e >= 60 && e < 80 : e >= 80;
+      });
+    }
+    if (ultimaTrocaFilter !== "all") {
+      r = r.filter((m) => {
+        const d = m.ultimaTroca?.dataTroca;
+        if (ultimaTrocaFilter === "nunca") return !d;
+        if (!d) return false;
+        return ultimaTrocaFilter === "recente" ? inPeriod(d, "30d") : !inPeriod(d, "30d");
+      });
+    }
     if (bateriaFilter.length) r = r.filter((m) => bateriaFilter.includes(m.statusBateria));
     if (agendadaFilter !== "all") {
       r = r.filter((m) =>
@@ -468,7 +515,8 @@ export function DdmxTab({ period }: { period: string }) {
       });
     }
     return r;
-  }, [modulos, subFilter, search, daysFilter, motivoFilter, bateriaFilter, agendadaFilter, alertaFilter, sort, alertas]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modulos, subFilter, search, daysFilter, motivoFilter, bateriaFilter, agendadaFilter, alertaFilter, sort, alertas, servicoFilter, climpFilter, execFilter, ultimaTrocaFilter, climp]);
 
   const totalPages = Math.max(1, Math.ceil(lista.length / ITEMS_PER_PAGE));
   const paginaAtual = Math.min(page, totalPages);
@@ -599,7 +647,6 @@ export function DdmxTab({ period }: { period: string }) {
     toggleSelMode();
   }
 
-  const periodoLabel = period === "all" ? "todo o período" : `últimos ${period.replace("d", "")} dias`;
 
   if (!ddmx.loaded) {
     return (
@@ -612,12 +659,12 @@ export function DdmxTab({ period }: { period: string }) {
   return (
     <div className="space-y-6">
       {/* Hero */}
-      <div className="relative overflow-hidden rounded-2xl border border-violet-400/40 bg-linear-to-br from-violet-600/95 via-indigo-700 to-slate-950 px-6 py-8 shadow-xl shadow-indigo-950/30 ring-1 ring-white/15 sm:px-8">
-        <div className="pointer-events-none absolute -right-24 -top-24 size-72 rounded-full bg-violet-400/15 blur-3xl dark:bg-indigo-500/25" aria-hidden />
+      <div className="relative overflow-hidden rounded-2xl border border-emerald-400/40 bg-linear-to-br from-emerald-600/95 via-teal-700 to-cyan-950 px-6 py-8 shadow-xl shadow-teal-950/30 ring-1 ring-white/15 sm:px-8">
+        <div className="pointer-events-none absolute -right-24 -top-24 size-72 rounded-full bg-teal-400/15 blur-3xl dark:bg-emerald-500/25" aria-hidden />
         <div className="relative flex flex-col gap-8 xl:flex-row xl:items-stretch xl:justify-between xl:gap-10">
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 text-violet-100/95">
-              <Radio className="size-9 shrink-0 text-white opacity-95" aria-hidden />
+            <div className="flex items-center gap-2 text-emerald-100/95">
+              <Repeat className="size-9 shrink-0 text-white opacity-95" aria-hidden />
               <div>
                 <p className="text-xs font-medium uppercase tracking-wider text-white/85">Trocas DDMX</p>
                 <h2 className="text-lg font-semibold text-white">Total de trocas realizadas</h2>
@@ -626,8 +673,8 @@ export function DdmxTab({ period }: { period: string }) {
             <p className="mt-6 text-center text-[clamp(3rem,8vw,4.25rem)] font-bold leading-none tracking-tight text-white tabular-nums drop-shadow-sm sm:text-left">
               {stats.total}
             </p>
-            <p className="mt-3 text-xs text-violet-100/85">
-              Rastreador secundário · {periodoLabel} · {stats.agendadas} agendada(s) em aberto · {stats.juntoClimp} junto com a CLIMP.
+            <p className="mt-3 text-xs text-emerald-100/85">
+              Trocas registradas no painel · {stats.agendadas} agendada(s) em aberto · {stats.juntoClimp} junto com a CLIMP.
             </p>
           </div>
           <div className="grid min-w-[220px] flex-1 grid-cols-1 gap-4 sm:grid-cols-3 xl:max-w-2xl">
@@ -737,7 +784,7 @@ export function DdmxTab({ period }: { period: string }) {
                     <TableCell className="font-medium">{r.m.subprefeitura ?? "—"}</TableCell>
                     <TableCell><SetorCell value={setorLabel(r.m)} /></TableCell>
                     <TableCell className="font-mono text-xs">{r.m.ddmxCodigo}</TableCell>
-                    <TableCell className="text-center font-bold text-violet-600 tabular-nums dark:text-violet-400">{r.total}</TableCell>
+                    <TableCell className="text-center font-bold text-emerald-600 tabular-nums dark:text-emerald-400">{r.total}</TableCell>
                     <TableCell className="text-center text-muted-foreground tabular-nums">{r.juntoClimp}</TableCell>
                     <TableCell className="text-center text-sky-600 tabular-nums dark:text-sky-400">
                       {r.mediaDuracao != null ? `${r.mediaDuracao}d` : "—"}
@@ -757,7 +804,7 @@ export function DdmxTab({ period }: { period: string }) {
         <Card className={cn("border-border/50 shadow-sm backdrop-blur-sm", GLASS_CARD)}>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-foreground">
-              <Battery className="h-5 w-5 text-violet-500" /> Diagnóstico de Baterias DDMX
+              <Battery className="h-5 w-5 text-emerald-500" /> Diagnóstico de Baterias DDMX
             </CardTitle>
             <CardDescription>Última leitura de cada módulo nos despachos (janela de 45 dias)</CardDescription>
           </CardHeader>
@@ -802,7 +849,7 @@ export function DdmxTab({ period }: { period: string }) {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <CardTitle className="flex items-center gap-2 text-foreground">
-                <Table2 className="h-5 w-5 text-violet-500" /> Listagem Geral de Módulos DDMX
+                <Table2 className="h-5 w-5 text-emerald-500" /> Listagem Geral de Módulos DDMX
               </CardTitle>
               <CardDescription>Base para seleção e agendamento de trocas de bateria DDMX</CardDescription>
             </div>
@@ -886,22 +933,56 @@ export function DdmxTab({ period }: { period: string }) {
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative w-[200px]">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input placeholder="Buscar setor, DDMX, CLIMP..." className="h-9 pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
+              <Input placeholder="Buscar setor, DDMX..." className="h-9 pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
             </div>
             <MultiSelect compact className="w-[120px]" placeholder="Sub" emptyLabel="Todas subs" options={uniqueSubs.map((s) => ({ value: s, label: s }))} value={subFilter} onChange={setSubFilter} />
             <MultiSelect compact className="w-[204px]" placeholder="Dias de execução" options={uniqueDays.map((d) => ({ value: d, label: d }))} value={daysFilter} onChange={setDaysFilter} />
             <MultiSelect compact className="w-[160px]" placeholder="Motivo da Troca" options={MOTIVO_OPTIONS.map((m) => ({ value: m, label: m }))} value={motivoFilter} onChange={setMotivoFilter} />
             <MultiSelect compact className="w-[170px]" placeholder="Status da Bateria" options={STATUS_DDMX_OPTIONS.map((s) => ({ value: s, label: s }))} value={bateriaFilter} onChange={setBateriaFilter} />
             <Select value={agendadaFilter} onValueChange={setAgendadaFilter}>
-              <SelectTrigger className="h-9 w-[190px]">
+              <SelectTrigger className="h-9 w-[210px]">
                 <CalendarCheck2 className="mr-1 h-4 w-4 text-muted-foreground" />
                 <SelectValue placeholder="Trocas agendadas" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">Trocas agendadas: Todas</SelectItem>
+                <SelectItem value="all">Agendadas: Todas</SelectItem>
                 <SelectItem value="sim">Com troca programada</SelectItem>
                 <SelectItem value="climp">Pendentes da troca CLIMP</SelectItem>
                 <SelectItem value="nao">Sem troca programada</SelectItem>
+              </SelectContent>
+            </Select>
+            <MultiSelect compact className="w-[130px]" placeholder="Serviço" options={uniqueServicos.map((s) => ({ value: s, label: s }))} value={servicoFilter} onChange={setServicoFilter} />
+            <MultiSelect
+              compact
+              className="w-[170px]"
+              placeholder="Bateria CLIMP"
+              options={[...STATUS_CLIMP_OPTIONS, "SEM MÓDULO"].map((s) => ({ value: s, label: s }))}
+              value={climpFilter}
+              onChange={setClimpFilter}
+            />
+            <Select value={execFilter} onValueChange={setExecFilter}>
+              <SelectTrigger className="h-9 w-[180px]">
+                <Percent className="mr-1 h-4 w-4 text-muted-foreground" />
+                <SelectValue placeholder="Execução" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Execução: Todas</SelectItem>
+                <SelectItem value="baixa">Abaixo de 60%</SelectItem>
+                <SelectItem value="media">De 60% a 80%</SelectItem>
+                <SelectItem value="alta">80% ou mais</SelectItem>
+                <SelectItem value="sem">Sem execução (30d)</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={ultimaTrocaFilter} onValueChange={setUltimaTrocaFilter}>
+              <SelectTrigger className="h-9 w-[190px]">
+                <History className="mr-1 h-4 w-4 text-muted-foreground" />
+                <SelectValue placeholder="Última troca" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Últ. troca: Todas</SelectItem>
+                <SelectItem value="nunca">Nunca trocada</SelectItem>
+                <SelectItem value="recente">Trocada nos últimos 30 dias</SelectItem>
+                <SelectItem value="antiga">Trocada há mais de 30 dias</SelectItem>
               </SelectContent>
             </Select>
             <Select value={alertaFilter} onValueChange={setAlertaFilter}>
@@ -926,6 +1007,31 @@ export function DdmxTab({ period }: { period: string }) {
                 <SelectItem value="ultima-troca-asc">Trocas antigas → recentes</SelectItem>
               </SelectContent>
             </Select>
+            {(search || subFilter.length || daysFilter.length || motivoFilter.length || bateriaFilter.length || servicoFilter.length ||
+              climpFilter.length || agendadaFilter !== "all" || alertaFilter !== "all" || execFilter !== "all" ||
+              ultimaTrocaFilter !== "all" || sort !== "default") ? (
+              <Button
+                size="sm"
+                className={cn("h-9 gap-1.5", BTN_SECONDARY)}
+                onClick={() => {
+                  setSearch("");
+                  setSubFilter([]);
+                  setDaysFilter([]);
+                  setMotivoFilter([]);
+                  setBateriaFilter([]);
+                  setServicoFilter([]);
+                  setClimpFilter([]);
+                  setAgendadaFilter("all");
+                  setAlertaFilter("all");
+                  setExecFilter("all");
+                  setUltimaTrocaFilter("all");
+                  setSort("default");
+                }}
+              >
+                <X className="h-4 w-4" /> Limpar filtros
+              </Button>
+            ) : null}
+            <span className="ml-auto text-xs text-muted-foreground">{lista.length} de {modulos.length} módulos</span>
           </div>
         </CardHeader>
         <CardContent>
@@ -943,13 +1049,14 @@ export function DdmxTab({ period }: { period: string }) {
                     <SortToggle label="Bateria" dir={colSortDir("bateria")} onClick={() => cycleColSort("bateria")} />
                   </TableHead>
                   <TableHead>Status da Bateria</TableHead>
+                  <TableHead>Bat. CLIMP</TableHead>
                   <TableHead className="text-center">
                     <SortToggle label="Execução" dir={colSortDir("exec")} onClick={() => cycleColSort("exec")} />
                   </TableHead>
                   <TableHead className="text-center">
                     <SortToggle label={"Qtd.\nTrocas"} dir={colSortDir("cargas")} onClick={() => cycleColSort("cargas")} />
                   </TableHead>
-                  <TableHead className="text-center">Ult. Troca</TableHead>
+                  <TableHead className="whitespace-nowrap text-center">Ult. Troca</TableHead>
                   <TableHead className="text-center">
                     <div className="flex justify-center">
                       <SortToggle label="Troca" dir={colSortDir("troca")} onClick={() => cycleColSort("troca")} />
@@ -971,7 +1078,7 @@ export function DdmxTab({ period }: { period: string }) {
                       <TableRow
                         role="button"
                         tabIndex={0}
-                        className={cn("border-border/30 hover:bg-muted/20", selMode && sel && "bg-violet-500/10", !selMode && isExpanded && EXPANDED_ROW)}
+                        className={cn("border-border/30 hover:bg-muted/20", selMode && sel && "bg-emerald-500/10", !selMode && isExpanded && EXPANDED_ROW)}
                         onClick={selMode ? (e) => handleRowSelect(m.ddmxCodigo, idx, e) : () => setExpanded((v) => (v === m.ddmxCodigo ? null : m.ddmxCodigo))}
                         onKeyDown={(e) => {
                           if (e.key !== "Enter" && e.key !== " ") return;
@@ -982,7 +1089,7 @@ export function DdmxTab({ period }: { period: string }) {
                       >
                         <TableCell className="w-8 text-center align-middle">
                           {selMode ? (
-                            <span className={cn("inline-flex h-4 w-4 items-center justify-center rounded border transition-colors", sel ? "border-violet-500 bg-violet-500 text-white" : "border-zinc-400 dark:border-zinc-600")}>
+                            <span className={cn("inline-flex h-4 w-4 items-center justify-center rounded border transition-colors", sel ? "border-emerald-500 bg-emerald-500 text-white" : "border-zinc-400 dark:border-zinc-600")}>
                               {sel && <Check className="h-3 w-3" />}
                             </span>
                           ) : isExpanded ? (
@@ -995,11 +1102,7 @@ export function DdmxTab({ period }: { period: string }) {
                         <TableCell className="align-middle"><SetorCell value={setorLabel(m)} /></TableCell>
                         <TableCell className="align-middle">
                           <span className="block font-mono font-semibold">{m.ddmxCodigo}</span>
-                          {m.selimpCodigos.length > 0 && (
-                            <span className="block text-[10px] text-muted-foreground" title="Módulo CLIMP do(s) mesmo(s) setor(es)">
-                              CLIMP {m.selimpCodigos.join(" / ")}
-                            </span>
-                          )}
+
                         </TableCell>
                         <TableCell className="align-middle">
                           <div className="space-y-1 text-xs leading-snug">
@@ -1030,6 +1133,30 @@ export function DdmxTab({ period }: { period: string }) {
                             </InfoTooltip>
                             {renderStatusDdmx(m.statusBateria, false)}
                           </div>
+                        </TableCell>
+                        <TableCell className="align-middle">
+                          {climpDe(m).length === 0 ? (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          ) : (
+                            <div className="space-y-1">
+                              {climpDe(m).map((c) => (
+                                <InfoTooltip
+                                  key={c.selimp}
+                                  text={`Módulo SELIMP ${c.selimp} · ${c.status}\nComunicação ${c.comunicacao}${c.agendada ? `\nTroca CLIMP agendada p/ ${fmtIsoBr(c.agendada)}` : ""}`}
+                                >
+                                  <span className="inline-flex cursor-help items-center gap-1 whitespace-nowrap text-xs">
+                                    {c.comunicacao === "ON" ? (
+                                      <Wifi className="h-3 w-3 shrink-0 text-emerald-500" />
+                                    ) : (
+                                      <WifiOff className="h-3 w-3 shrink-0 text-red-500" />
+                                    )}
+                                    <span className={cn("tabular-nums", getStatusColorClass(c.status))}>{Math.round(c.pct)}%</span>
+                                    {c.agendada && <Clock className="h-3 w-3 shrink-0 text-amber-500" />}
+                                  </span>
+                                </InfoTooltip>
+                              ))}
+                            </div>
+                          )}
                         </TableCell>
                         <TableCell className="text-center align-middle font-medium tabular-nums">{m.execucaoMedia30 != null ? `${m.execucaoMedia30}%` : "—"}</TableCell>
                         <TableCell className="text-center align-middle font-medium tabular-nums">{m.historico.filter((h) => h.status === "concluida").length}</TableCell>
@@ -1079,8 +1206,8 @@ export function DdmxTab({ period }: { period: string }) {
                       </TableRow>
 
                       {!selMode && isExpanded && (
-                        <TableRow className="border-violet-500/20 bg-violet-500/5 hover:bg-violet-500/5">
-                          <TableCell colSpan={13} className="p-0 align-middle">
+                        <TableRow className="border-emerald-500/20 bg-emerald-500/5 hover:bg-emerald-500/5">
+                          <TableCell colSpan={14} className="p-0 align-middle">
                             <div className="space-y-4 px-4 py-4">
                               <div className="grid grid-cols-2 gap-3 lg:grid-cols-6">
                                 <MiniStat label="Trocas registradas" value={m.historico.filter((h) => h.status === "concluida").length} big />
@@ -1113,7 +1240,7 @@ export function DdmxTab({ period }: { period: string }) {
                                     {[...m.execucoes].reverse().slice(0, 20).map((e) => {
                                       const troca = m.historico.find((h) => h.status === "concluida" && h.dataTroca === e.data);
                                       return (
-                                        <div key={e.data} className={cn("rounded-lg border bg-muted/20 px-2 py-2", troca ? "border-violet-500/50" : "border-border/50")}>
+                                        <div key={e.data} className={cn("rounded-lg border bg-muted/20 px-2 py-2", troca ? "border-emerald-500/50" : "border-border/50")}>
                                           <div className="flex items-center justify-between gap-1">
                                             <span className="text-[11px] font-medium text-muted-foreground tabular-nums">
                                               {fmtIsoBr(e.data).slice(0, 5)}
@@ -1141,7 +1268,7 @@ export function DdmxTab({ period }: { period: string }) {
 
                               <div className="rounded-xl border border-border/60 bg-background/60 p-3">
                                 <div className="mb-3 flex items-center gap-2">
-                                  <History className="h-4 w-4 text-violet-500" />
+                                  <History className="h-4 w-4 text-emerald-500" />
                                   <span className="text-sm font-semibold text-foreground">Histórico de trocas DDMX</span>
                                 </div>
                                 {m.historico.length === 0 ? (
@@ -1206,7 +1333,7 @@ export function DdmxTab({ period }: { period: string }) {
                 })}
                 {lista.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={13} className="py-10 text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={14} className="py-10 text-center text-sm text-muted-foreground">
                       Nenhum módulo DDMX encontrado. Cadastre o código DDMX dos setores na aba Setores.
                     </TableCell>
                   </TableRow>

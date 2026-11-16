@@ -122,7 +122,15 @@ import { formatIptDataInstalacaoBr, getFrequenciaDescricao, servicoLabel, mesCor
 import { SetoresTab } from "./setores-tab";
 import { DdmxTab } from "./ddmx-tab";
 import { ddmxDoModuloClimp, useDdmxState } from "./ddmx-state";
-import { DdmxJuntoCheckbox, DdmxTrocadaDialog, ddmxPedeTroca, type DdmxPendente } from "./ddmx-climp";
+import {
+  BateriaModuloCard,
+  DdmxJuntoCheckbox,
+  DdmxLoteLinha,
+  DdmxModuloCards,
+  DdmxTrocadaDialog,
+  ddmxAutoMarcar,
+  type DdmxPendente,
+} from "./ddmx-climp";
 import {
   BTN_AMBER,
   BTN_CYAN,
@@ -1617,8 +1625,9 @@ export default function BateriaDashboardPage() {
   const troca = useTrocaState();
   // Trocas DDMX vinculadas à CLIMP: checkbox no agendamento + confirmação na conclusão.
   const ddmx = useDdmxState();
-  const [agendarComDdmx, setAgendarComDdmx] = useState(false);
-  const [bulkAgendarComDdmx, setBulkAgendarComDdmx] = useState(false);
+  // null = automático (marcado quando a DDMX está desatualizada); boolean = escolha do usuário.
+  const [agendarComDdmx, setAgendarComDdmx] = useState<boolean | null>(null);
+  const [bulkDdmxEscolha, setBulkDdmxEscolha] = useState<Record<string, boolean>>({});
   const [ddmxTrocada, setDdmxTrocada] = useState<{ dataTroca: string; pendentes: DdmxPendente[] } | null>(null);
   // Estado mock (localStorage) de manutenções (data / "não houve")
   const manut = useManutencaoState();
@@ -2365,6 +2374,21 @@ export default function BateriaDashboardPage() {
     }
   }
 
+  /** Bateria CLIMP por módulo SELIMP — exibida na aba Trocas DDMX (controle das duas baterias). */
+  const climpPorSelimp = useMemo(() => {
+    const map: Record<string, { status: string; pct: number; comunicacao: "ON" | "OFF"; agendada: string | null }> = {};
+    for (const m of modules) {
+      const rec = troca.records[m.numeroSelimp];
+      map[m.numeroSelimp] = {
+        status: m.statusBateria,
+        pct: m.bateriaPercentual,
+        comunicacao: m.comunicacao,
+        agendada: rec?.status === "agendada" ? rec.dataAgendada ?? null : null,
+      };
+    }
+    return map;
+  }, [modules, troca.records]);
+
   /** Módulo(s) DDMX dos mesmos setores do módulo CLIMP. */
   function ddmxDe(m: ModuleData) {
     return ddmxDoModuloClimp(ddmx.modulos, m.numeroSelimp, setoresOf(m));
@@ -2436,11 +2460,16 @@ export default function BateriaDashboardPage() {
     setDdmxTrocada(null);
   }
 
+  /** Troca DDMX junto: escolha do usuário ou, por padrão, marcada se a DDMX está desatualizada. */
+  function ddmxMarcadoPara(m: ModuleData, escolha: boolean | null | undefined): boolean {
+    if (escolha != null) return escolha;
+    return ddmxDe(m).some((d) => ddmxAutoMarcar(d.statusBateria));
+  }
+
   function openAgendar(m: ModuleData) {
     setAgendarModule(m);
     setAgendarDate(isoToday());
-    // Sugestão: marcar quando a DDMX também está ruim (desatualizada, sem leitura, crítica ou baixa).
-    setAgendarComDdmx(ddmxDe(m).some((d) => ddmxPedeTroca(d.statusBateria)));
+    setAgendarComDdmx(null);
   }
 
   function confirmAgendar() {
@@ -2451,7 +2480,7 @@ export default function BateriaDashboardPage() {
       dataAgendada: agendarDate,
       tipoTroca: motivoFromModule(agendarModule),
     });
-    if (agendarComDdmx) agendarDdmxJunto([agendarModule], agendarDate);
+    if (ddmxMarcadoPara(agendarModule, agendarComDdmx)) agendarDdmxJunto([agendarModule], agendarDate);
     removerAnaliseAposAgendamento([agendarModule]);
     setAgendarModule(null);
   }
@@ -2515,7 +2544,7 @@ export default function BateriaDashboardPage() {
       })),
     );
     if (bulkAgendarMode === "reagendar") reagendarDdmxVinculada(selectedModules, bulkAgendarDate);
-    else if (bulkAgendarComDdmx) agendarDdmxJunto(selectedModules, bulkAgendarDate);
+    else agendarDdmxJunto(selectedModules.filter((m) => ddmxMarcadoPara(m, bulkDdmxEscolha[m.numeroSelimp])), bulkAgendarDate);
     removerAnaliseAposAgendamento(selectedModules);
     setBulkAgendarOpen(false);
     toggleSelMode();
@@ -3751,7 +3780,7 @@ export default function BateriaDashboardPage() {
                               onClick={() => {
                                 setBulkAgendarMode("agendar");
                                 setBulkAgendarDate(isoToday());
-                                setBulkAgendarComDdmx(selectedModules.some((m) => ddmxDe(m).some((d) => ddmxPedeTroca(d.statusBateria))));
+                                setBulkDdmxEscolha({});
                                 setBulkAgendarOpen(true);
                               }}
                             >
@@ -5251,7 +5280,7 @@ export default function BateriaDashboardPage() {
 
             {/* ===== TROCAS DDMX TAB ===== */}
             <TabsContent value="ddmx" className="space-y-6">
-              <DdmxTab period={ddmxPeriod} />
+              <DdmxTab period={ddmxPeriod} climp={climpPorSelimp} />
             </TabsContent>
 
             {/* ===== SETORES TAB ===== */}
@@ -5468,33 +5497,38 @@ export default function BateriaDashboardPage() {
 
         {/* ===== Modal de Agendamento ===== */}
         <Dialog open={!!agendarModule} onOpenChange={(o) => !o && setAgendarModule(null)}>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 text-base">
                 <CalendarPlus className="h-5 w-5 text-emerald-500" />
                 Agendar troca de bateria
               </DialogTitle>
-              <DialogDescription>Defina a data de agendamento da troca.</DialogDescription>
+              <DialogDescription>Defina a data de agendamento da troca. Bateria CLIMP e DDMX lado a lado.</DialogDescription>
             </DialogHeader>
             {agendarModule && (
               <div className="space-y-4">
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
-                    <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                      <MapPin className="h-3.5 w-3.5 shrink-0" /> Setor
-                    </span>
-                    <span className="mt-0.5 block font-mono text-sm font-medium">{agendarModule.setor}</span>
-                  </div>
-                  <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
-                    <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                      <Hash className="h-3.5 w-3.5 shrink-0" /> Módulo SELIMP
-                    </span>
-                    <div className="mt-0.5 flex items-center gap-2">
-                      <span className="font-medium">{agendarModule.numeroSelimp}</span>
-                      {renderBatteryStatus(agendarModule.statusBateria, false)}
-                    </div>
-                  </div>
+                <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
+                  <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <MapPin className="h-3.5 w-3.5 shrink-0" /> Setor
+                  </span>
+                  <span className="mt-0.5 block font-mono text-sm font-medium">{agendarModule.setor}</span>
                 </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <BateriaModuloCard
+                    titulo="Módulo SELIMP (CLIMP)"
+                    codigo={agendarModule.numeroSelimp}
+                    status={renderBatteryStatus(agendarModule.statusBateria, false)}
+                    pct={agendarModule.bateriaPercentual}
+                    comSinal={agendarModule.comunicacao === "ON"}
+                    detalhe={agendarModule.ultimaComunicacao ? `últ. com. ${agendarModule.ultimaComunicacao}` : undefined}
+                  />
+                  <DdmxModuloCards modulos={ddmxDe(agendarModule)} loaded={ddmx.loaded} />
+                </div>
+                <DdmxJuntoCheckbox
+                  modulos={ddmxDe(agendarModule)}
+                  checked={ddmxMarcadoPara(agendarModule, agendarComDdmx)}
+                  onCheckedChange={setAgendarComDdmx}
+                />
                 <div className="rounded-lg border border-border/60 bg-muted/15 p-3">
                   <div className="mb-2 flex items-center gap-2 text-foreground">
                     <LayoutDashboard className="h-4 w-4 text-emerald-500" />
@@ -5502,7 +5536,6 @@ export default function BateriaDashboardPage() {
                   </div>
                   <SetoresAgendaInfo m={agendarModule} />
                 </div>
-                <DdmxJuntoCheckbox modulos={ddmxDe(agendarModule)} checked={agendarComDdmx} onCheckedChange={setAgendarComDdmx} />
                 <div>
                   <label className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-foreground">
                     <CalendarPlus className="h-4 w-4 text-emerald-500" /> Data Agendamento
@@ -5545,7 +5578,7 @@ export default function BateriaDashboardPage() {
                   Agendada para <strong className="tabular-nums">{fmtIsoBr(troca.records[agendadoModule.numeroSelimp]?.dataAgendada)}</strong>. Conclua, reagende ou cancele esta troca.
                 </div>
                 {ddmxPendentesDe(agendadoModule).length > 0 && (
-                  <div className="min-w-0 break-words rounded-lg border border-violet-500/30 bg-violet-500/5 px-3 py-2.5 text-sm">
+                  <div className="min-w-0 break-words rounded-lg border border-sky-500/30 bg-sky-500/5 px-3 py-2.5 text-sm">
                     Bateria DDMX agendada junto: <strong>{ddmxPendentesDe(agendadoModule).map((d) => d.ddmxCodigo).join(", ")}</strong>.
                     Reagendar ou cancelar aplica também à DDMX; ao concluir você confirma se ela foi trocada.
                   </div>
@@ -5702,6 +5735,13 @@ export default function BateriaDashboardPage() {
                       {renderBatteryStatus(m.statusBateria, false)}
                     </div>
                     <SetoresAgendaInfo m={m} />
+                    {bulkAgendarMode === "agendar" && (
+                      <DdmxLoteLinha
+                        modulos={ddmxDe(m)}
+                        checked={ddmxMarcadoPara(m, bulkDdmxEscolha[m.numeroSelimp])}
+                        onCheckedChange={(v) => setBulkDdmxEscolha((prev) => ({ ...prev, [m.numeroSelimp]: v }))}
+                      />
+                    )}
                   </div>
                 ))}
               </div>
@@ -5713,14 +5753,13 @@ export default function BateriaDashboardPage() {
                 <DatePicker value={bulkAgendarDate} onChange={setBulkAgendarDate} />
               </div>
               {bulkAgendarMode === "agendar" ? (
-                <DdmxJuntoCheckbox
-                  modulos={selectedModules.flatMap((m) => ddmxDe(m))}
-                  checked={bulkAgendarComDdmx}
-                  onCheckedChange={setBulkAgendarComDdmx}
-                />
+                <p className="rounded-lg border border-sky-500/30 bg-sky-500/5 px-3 py-2 text-xs text-foreground">
+                  <strong>{selectedModules.filter((m) => ddmxMarcadoPara(m, bulkDdmxEscolha[m.numeroSelimp]) && ddmxDe(m).length > 0).length}</strong> de{" "}
+                  {selectedModules.length} com troca DDMX junto. Já vêm marcadas as com bateria DDMX desatualizada.
+                </p>
               ) : (
                 selectedModules.some((m) => ddmxPendentesDe(m).length > 0) && (
-                  <p className="rounded-lg border border-violet-500/30 bg-violet-500/5 px-3 py-2 text-xs text-foreground">
+                  <p className="rounded-lg border border-sky-500/30 bg-sky-500/5 px-3 py-2 text-xs text-foreground">
                     As baterias DDMX agendadas junto com estas trocas também serão reagendadas.
                   </p>
                 )
